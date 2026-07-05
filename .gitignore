@@ -1,0 +1,6 @@
+# original copyrighted game files — bring your own copy
+/zeliard/
+# generated from the game files
+/extracted/
+# disassembly of copyrighted binaries — regenerate with tools/disasm.sh
+/disasm/
