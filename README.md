@@ -5,6 +5,8 @@ Reverse engineering of **Zeliard** v1.208 (Game Arts / Sierra On-Line).
 - `zeliard/` — original game files (not committed; supply your own copy)
 - `tools/sarex.py` — .SAR resource archive extractor (format fully verified)
 - `tools/disasm.sh` — regenerates `disasm/` (16-bit ndisasm at true load origins)
+- `tools/sardec.py` — SAR payload decompressor (8-opcode RLE engine, 194/194 verified)
+- `tools/resnames.py` — recovers original resource filenames → `docs/RESOURCES.md`
 - `docs/ARCHITECTURE.md` — boot chain, memory map, SAR format, kernel protocol
 
 Original game files, extracted resources, and disassembly listings stay

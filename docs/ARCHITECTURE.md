@@ -70,22 +70,64 @@ dword into `cs:0xF64`. `0x0D84` reads payload to `[cs:0xF60]` far ptr;
 `0x0D93` closes. On open failure it prompts to insert the disk (patches the
 digit into the prompt string too) and retries.
 
-### Compression (discovered, not yet fully decoded)
+### Service [0x10C] AL modes (dispatch 0x0A84, subtable 0x0ACA)
 
-`0x0D9D`: payloads are staged raw at `(BASE+0x3000):0000` (the top half of the
-256 KB arena), then decompressed by an 8-opcode engine — dispatch
-`and al,7; jmp [cs:bx+0xDBC]`, handlers at
-`0DCC` (literal run: `mov cx,dx; rep movsb`), `0DD1` (RLE fill via
-nibble-keyed lookup table that sits at the head of the stream — hence the
-`00 06`/`00 07` prefixes on graphics entries), plus `0E13, 0E34, 0E73, 0E9C,
-0EBA, 0EF5`. **TODO:** decode all 8 handlers and write a Python decompressor.
+| AL | Handler | Action |
+|---|---|---|
+| 0 | 0x0C01 | swap 0x3800-word buffer `(BASE+0x2000):9000` ↔ `BASE:3000` |
+| 1 | 0x0AD6 | load *system* resource #AH (11-byte records `{archive, res#, name}` at `cs:0xF68` — the `.MDT` map table) to `BASE:C000`, then as AL=2 |
+| 2 | 0x0AFF | **load + decompress** to ES:DI (container below) |
+| 3 | 0x0C2F | load raw to ES:DI (code overlays) |
+| 4 | 0x0B6F | copy cached 4 KB block #AH from `(BASE+0x2000)` bank to `arena:B000`, relocate first 15 words by +0xB000 |
+| 5 | 0x0BAE | load raw, two MT-32 variants: `{u16 lenA, u16 lenB} + blobA + blobB`, pick by `cs:0xFF15` |
+| 6 | 0x0C24 | probe: open/seek only, length → `cs:0xF64` |
+
+AL=2 container: `byte0 == 0` → rest is one compressed stream; `byte0 != 0` →
+`{u8 flag, u16 lenA, u16 lenB}` + two per-video-mode streams (mode 0 = EGA
+uses A, others B; e.g. `font.grp` = ZELRES1[12], `5+0x7C3+0x4D1 = 3225` ✓).
+
+### Compression — DECODED (`tools/sardec.py`, 194/194 entries verified)
+
+`0x0D9D`: stream staged at `(BASE+0x3000):0000`, first byte `& 7` = opcode,
+dispatch table `0x0DBC`. All RLE variants; DX = remaining input:
+
+| Op | Handler | Scheme |
+|---|---|---|
+| 0 | 0DCC | stored (rest literal) |
+| 1 | 0DD1 | table RLE: head = `{key,val}` pairs (key lo-nibble 0) to `0xFF`; byte matching key by hi-nibble → val × (lo-nibble+2) |
+| 2 | 0E13 | marker RLE: marker byte M; byte with hi-nibble == M → next byte × (lo-nibble+3) |
+| 3 | 0E34 | as op 1, nibbles swapped: key by lo-nibble, count = hi-nibble+2 |
+| 4 | 0E73 | as op 2, nibbles swapped: match lo-nibble, count = hi-nibble+3 |
+| 5 | 0E9C | doubled byte `B B n` → B × (n+2) |
+| 6 | 0EBA | byte-keyed `{key,val}` word table to `0xFFFF`; match → count byte `n` from stream, val × (n+2) |
+| 7 | 0EF5 | escape byte E; `E v n` → v × (n+3) |
 
 Other traced kernel services: vectors `0x6AC/0x723/0x881/0x8EF` query the
-input bitmask at `cs:0xFF18`; `0x918` reads `cs:0xFF1B` (timer/frame counter);
-`0x0C01` swaps a 0x3800-word buffer between `(BASE+0x2000):9000` and
-`BASE:3000` (page-flip/undraw buffer). STICK itself calls into the video
-driver via its vector table at `0x2000+` (e.g. `[cs:0x202A]` = draw text/tile,
-used for the "insert disk" prompt).
+input bitmask at `cs:0xFF18`; `0x918` reads `cs:0xFF1B` (frame counter);
+STICK calls the video driver via its own vector table at `0x2000+`
+(`[cs:0x202A]` text/tile draw, used for the "insert disk" prompt).
+
+## Runtime code layout & overlays
+
+All code modules share the single BASE segment; `[cs:0xFF2C]` (= BASE+0x1000)
+is a separate 64 KB **data arena** for graphics/maps. Code overlays are raw
+(AL=3) images whose leading words are **entry-point vectors**; GAME.BIN jumps
+via `jmp [0x6000]` / `jmp [0x6002]` after loading.
+
+| Slot | Origin | Overlays |
+|---|---|---|
+| A | `BASE:6000` | opdemo.bin (entry 0x6002), town.bin (0x6026/0x601E), fight.bin, enddemo.bin |
+| B | `BASE:A000` | select.bin, mole.bin, kingpro/omoypro/armrpro/bankpro/churpro/drugpro/innapro/kenjpro.bin, rokademo.bin — overwrite the spent GAME.BIN boot code |
+
+## Resource names — recovered (`tools/resnames.py` → docs/RESOURCES.md)
+
+167/194 entries have their original filenames embedded in request blocks
+(the kernel ignores the name unless res# = 0, but the developers left them
+in). Highlights: `gd/gt/gf{ega,cga,hgc,tga,mcga}.bin` = per-mode sprite
+renderers (dungeon/town/fight), `eai1-8.bin` = per-cavern enemy AI,
+`mp10..mpa0.mdt` = 31 cavern maps, `*.msd` = music scores
+(zopn/zend/mgt1-2/ugm1-2 + per-cavern mus1-5 via a name directory),
+`ttl1-3.grp` = title screens, `end4-7.grp` = ending art.
 
 ## Support files
 
