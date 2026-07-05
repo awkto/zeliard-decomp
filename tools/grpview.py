@@ -22,7 +22,8 @@ EGA = [(0, 0, 0), (0, 0, 170), (0, 170, 0), (0, 170, 170),
 
 
 def write_png(path: str, w: int, h: int, pix: list) -> None:
-    raw = b"".join(b"\x00" + bytes(c for p in row for c in EGA[p & 15])
+    raw = b"".join(b"\x00" + bytes(min(255, max(0, c))
+                                   for p in row for c in EGA[p % len(EGA)])
                    for row in pix)
 
     def chunk(tag: bytes, data: bytes) -> bytes:
