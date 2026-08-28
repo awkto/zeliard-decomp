@@ -119,6 +119,38 @@ via `jmp [0x6000]` / `jmp [0x6002]` after loading.
 | A | `BASE:6000` | opdemo.bin (entry 0x6002), town.bin (0x6026/0x601E), fight.bin, enddemo.bin |
 | B | `BASE:A000` | select.bin, mole.bin, kingpro/omoypro/armrpro/bankpro/churpro/drugpro/innapro/kenjpro.bin, rokademo.bin — overwrite the spent GAME.BIN boot code |
 
+## Graphics: cell format and MCGA palette — DECODED (`tools/cellsheet.py`, `tools/palette.py`)
+
+Pixel data is PC-88 heritage. A **cell** is 48 bytes = 8 rows × 3 big-endian
+16-bit bitplane words (A, B, C): 16 px per row, 3 bits per pixel,
+`v = C<<2 | B<<1 | A`, bit 15 = leftmost. `v` indexes an 8-colour table:
+0 black · 1 white · 2 red · 3 green · 4 cyan · 5 blue · 6 yellow · 7 magenta
+(`GAME.BIN @A456`).
+
+**MCGA conversion — video service `[0x2044]` (GMMCGA @2C2A):** takes DS:SI =
+bank, CX = cell count; copies the cells to a staging area at `(CS+0x3000):0`
+and rewrites them in place, packing each pair of adjacent 3-bit pixels into one
+6-bit value `left<<3 | right` (8 px → 3 bytes, MSB-first). A 16×8 PC-88 cell
+therefore becomes an **8×8 cell with 64 colours** on MCGA. The fight blitter
+(gfmcga @412F) writes those 6-bit values straight into A000 as VGA colour
+indices (0 = transparent), reading per 3 bytes `b0 b1 b2` →
+`[b1>>2, (b1&3)<<4|b0>>4, (b0&15)<<2|b2>>6, b2&63]`.
+
+**MCGA palette — `GAME.BIN @A41B`** (mode-4 branch of the video-mode jump
+table @A3ED; EGA branch @A3FE does `int 10h AX=1002h` with the 17-byte block
+@A409): for every pair, `DAC[left*8+right] = BASE[left] + BASE[right]`
+per component, BASE from the table above with components 0x00/0x1F — i.e.
+every on-screen colour is the additive blend of two PC-88 colours (0..0x3E of
+0x3F). `tools/palette.py` reproduces the 64 entries. The intro/title renderer
+(gdmcga @425E) programs a different 256-entry scheme (16 base colours × 16
+offsets via a table at `[0x44F8]`) for the demo/ending art — not yet decoded.
+
+Callers: fight.bin loads a bank with `[0x10C]` AL=2 into `arena:8000` then
+`[0x2044]` with CX=0x80 (e.g. roka.grp, cavern rock tiles) or SI=8030/CX=0x66.
+`.grp` files are containers (offset table + metasprite tile maps with 0xFF =
+empty + cell bank); the bank offset must be taken from the header — see the
+metasprite work.
+
 ## Resource names — recovered (`tools/resnames.py` → docs/RESOURCES.md)
 
 167/194 entries have their original filenames embedded in request blocks

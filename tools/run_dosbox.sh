@@ -1,7 +1,9 @@
 #!/bin/sh
 # Ground-truth harness: run Zeliard under DOSBox in a private Xvfb, capture screenshots.
-# usage: tools/run_dosbox.sh OUTDIR [capture-seconds...]
-# Requires: dosbox, xvfb, imagemagick (import). Game files in zeliard/.
+# usage: [KEYS="sec:key sec:key ..."] tools/run_dosbox.sh OUTDIR [capture-seconds...]
+#   KEYS: xdotool key names to press at given seconds, e.g. KEYS="6:Return 9:space 12:Return"
+#   Keys and captures are merged into one timeline. Requires: dosbox, xvfb, xdotool,
+#   imagemagick (import). Game files in zeliard/.
 #
 # Picks a free X display (never a hardcoded one) and aborts if Xvfb fails to
 # start, so DOSBox and the screenshots can never land on someone else's display.
@@ -45,9 +47,20 @@ trap 'kill $DPID $XPID 2>/dev/null || true' EXIT INT TERM
 
 dosbox -conf "$OUT/zel.conf" >/dev/null 2>&1 &
 DPID=$!
+
+# merge "sec:key" presses and "sec" captures into one sorted timeline
+EVENTS=$( { for k in $KEYS; do echo "${k%%:*} key ${k#*:}"; done; for i in $TIMES; do echo "$i shot"; done; } | sort -n -s )
+WIN=""
 t=0
-for i in $TIMES; do
-  sleep $((i - t)); t=$i
-  import -window root "$OUT/shot_$i.png" 2>/dev/null || true
+echo "$EVENTS" | while read -r sec kind arg; do
+  [ -n "$sec" ] || continue
+  d=$((sec - t)); [ $d -gt 0 ] && sleep $d; t=$sec
+  if [ "$kind" = key ]; then
+    [ -n "$WIN" ] || WIN=$(xdotool search --onlyvisible --class dosbox 2>/dev/null | head -1)
+    [ -n "$WIN" ] && xdotool windowfocus --sync "$WIN" 2>/dev/null
+    xdotool key --delay 80 "$arg" 2>/dev/null
+  else
+    import -window root "$OUT/shot_$sec.png" 2>/dev/null || true
+  fi
 done
 echo "captures in $OUT/shot_*.png (display :$D)"
