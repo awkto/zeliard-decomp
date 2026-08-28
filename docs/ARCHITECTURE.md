@@ -151,7 +151,7 @@ offsets via a table at `[0x44F8]`) for the demo/ending art — not yet decoded.
 
 | Family | Resources | Layout | Consumer |
 |---|---|---|---|
-| **cells48** bank | **mpp1-9,a,b.grp** (ZELRES3[74..84], per-cavern map tiles → `arena:8000`, cell 0 = solid-cell list), **dchr.grp** (ZELRES3[54], gates/chests/items → `arena:8C00` = slot 0x40), roka.grp (→ `arena:8000` for the Roka demo), shop portraits king/omoya/armor/bank/church/drug/inn/kenjya.grp (→ `arena:8000`, 256 cells converted by kingpro etc.), en72.grp | plain array of 48-byte cells, index 1-based (`cell N at bank+N*0x30`, 0 = empty) | fight blitter gfmcga @412F via `[0x3008]`; portraits arranged by maps inside the *pro.bin overlays |
+| **cells48** bank | **mpp1-9,a,b.grp** (ZELRES3[74..84], per-cavern map tiles → `arena:8000`, cell 0 = passable-cell list + special-tile lists), **dchr.grp** (ZELRES3[54], gates/chests/items → `arena:8C00` = slot 0x40), roka.grp (→ `arena:8000` for the Roka demo), shop portraits king/omoya/armor/bank/church/drug/inn/kenjya.grp (→ `arena:8000`, 256 cells converted by kingpro etc.), en72.grp | plain array of 48-byte cells, index 1-based (`cell N at bank+N*0x30`, 0 = empty) | fight blitter gfmcga @412F via `[0x3008]`; portraits arranged by maps inside the *pro.bin overlays |
 | **cells32** bank (2 bpp) | enp1-8.grp — per-cavern enemy sprites, chosen from the 11-byte table at fight.bin 9D8D by map byte `[C000+5]`, loaded to `arena:4000` and converted by gfmcga vec_20 @4EDD (`[0x3028]`, CX=0x100) | 32-byte cells: 8 rows × {planeA u16 BE, planeB u16 BE}, 16 px, `v = B<<1|A`. Converter interleaves to 2 bpp and writes a per-row **outline mask** to `A000+cell*8`: `m = A|B; d = m | m>>1 | m<<1; mask bit = pair fully clear in ~d` (horizontal dilation → the black outline). Blit (gfmcga 3599/366E): each **pixel pair** `(left<<2|right)` indexes a 16-entry table → VGA index; 5 tables @4F98/4FA8/4FB8/4FC8/4FD8 selected by `[0x4ff4]` = 4 PC-88 colours each: {blk,wht,red,grn}, {blk,red,cyn,yel}, {blk,wht,cyn,blu}, {blk,blu,yel,mag}, {blk,yel,blu,mag}. Table[0] = black = outline colour; transparency comes from the mask. | fight.bin composes sprites into a 36-column cell layer at `[FF31]` (ring E000–E900, 64 rows) which gfmcga draws over the 28-column background cell buffer at E900 |
 | **hero** | fman.grp (fight hero, loaded to `arena:6000`; `[0x3028]` with SI=6333, CX=0xE6) | `0x000–0x333`: **91 frame maps × 9 bytes** = 3×3 cells row-major, 1-based index into the bank, **bit 7 = horizontal flip**, 0 = empty (frames are 24×24). `0x333–end`: cells32 bank (cell 0 blank). Frame 0-9 stand/walk right, 10-19 left (flipped), then jump/attack/partial overlays. Colours = 2bpp table 0. | fight.bin animation tables (Sprint 5) |
 | **font** | font.grp (AL=2 two-variant container; 3 sections `0006 0606 06A6`) | section 1: 192 glyphs × 8 bytes 1 bpp from char 0x20 | kernel/video text service `[0x202A]` |
@@ -172,7 +172,7 @@ C002 u16 width        map width in 8x8 cells (42..320); the map WRAPS horizontal
 C004 u16 fixtures A   list of {u16 col, u8 row}: three DCHR cells 40,41,42 at col..col+2 (7FB1)
 C006 u16 fixtures B   same layout, DCHR cells 43,44,45 (8163)
 C008 u16 fixtures C   {u16 col|variant<<14, u8 row|state<<6, u8[4]}: DCHR cells 46,47,48 (81AE)
-C00A u16 signs        12-byte records {u16 col, u8 row, u8 letter|flags, ...} drawn 4 rows x 5 (78DD)
+C00A u16 doors        12-byte records {u16 col, u8 row, u8 letter|flags, ...}: door/transition table (DCHR 0x4A + Up, 7A83/7B32), sign drawn 4 rows x 5 (78DD)
 C00C u16 patches      {u16 ptr, u8 mask, u16 ptr, u16 val}* conditional pokes (6BFC)
 C00E u16 init data    passed to video service [0x2010] at level start
 C010 u16 objects      16-byte records {u16 col, u8 row, u8 ?, u8 type, ...}; col 0xFFxx = disabled
@@ -203,7 +203,9 @@ Runs never cross a column; each column totals 64 rows; decoding all
 (ZELRES3[74..84], request table fight.bin `9C43`, chosen by level-record byte +2),
 with `DCHR.GRP` (ZELRES3[54], "dungeon characters": gates, chests, item icons)
 loaded to `arena:8C00` = bank slot `0x40`. Cell 0 of an MPP bank is not graphics:
-its first 24 bytes list the **solid** cell indices (collision, fight.bin 6DF3).
+its first 24 bytes list the **passable** cell indices (collision, fight.bin 6DF3 — callers treat
+"found" as free; mpp1's list contains 0 and not the rock wall 6), followed by conveyor-L/R
+(8018/801C), hazard (8020), updraft (8024) and current-L/R (8028/802C) lists — see docs/FIGHT.md §3.
 Ring buffer: fight.bin keeps 36 columns × 64 rows at `E000` (row stride 0x24),
 `[FF31]` = top-left of the 28×19 window (`+ [0x82]` rows); cells with **bit 7**
 are sprites (`0x80 | object index`, looked up in the C010 table: byte +4 = type)

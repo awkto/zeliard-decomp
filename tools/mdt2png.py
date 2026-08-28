@@ -15,7 +15,7 @@ absolute BASE offset.  Layout (fight.bin is the consumer):
           80-BF count=b&0x3F of value 0 (empty); C0-FF one cell of value b&0x3F.
           Values are 1-based cell indices into the cavern tile bank MPP1..MPPB.GRP
           (ZELRES3[74..84], fight.bin table @9C43, picked by level record byte +2);
-          cell 0 of the bank is a 24-byte list of solid cell indices (fight.bin 6DF3).
+          cell 0 of the bank is a 24-byte list of PASSABLE cell indices (fight.bin 6DF3; see docs/FIGHT.md §3).
   Cell values 0x40..0x66 are DCHR.GRP (ZELRES3[54], loaded to arena:8C00 = bank slot 0x40):
   C004 list of {u16 col, u8 row} -> cells 40,41,42 at col..col+2 (fight.bin 7FB1)
   C006 list of {u16 col, u8 row} -> cells 43,44,45 (8163)

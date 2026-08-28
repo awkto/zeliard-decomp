@@ -32,7 +32,7 @@ Tracking epic for all remaining work. Written to be executable without prior ses
 
 Priority order (each: Ghidra dump → hand-clean to readable C in a new \`src/\` tree, one file per overlay; keep function addresses in comments):
 1. ~~STICK.BIN kernel (~4 KB).~~ DONE (#16): `src/kernel.c` + `docs/SERVICES.md` (11 vectors 0x10C-0x120, [0x10C] modes, INT 8/9, FF-page vars); video drivers: `docs/VIDEO_DRIVERS.md` (35 slots 0x2000-0x2044, 5-driver equivalence table) + `src/video_mcga.c`.
-2. fight.bin (16 KB) — THE game: player physics, combat, damage, scrolling. State page FF00-FF7F variables get names as they're identified.
+2. ~~fight.bin (16 KB).~~ DONE (#17): `src/fight.c` (108 routines), `docs/FIGHT.md` (frame model 236.7 Hz/4×FF33 ticks, cell-granular physics, sword shapes, damage formulas, 16-byte enemy record, AI overlay vectors), `docs/STATE_PAGE.md` (FF00 page + player record 0049-00E8). Static only — DOSBox cross-check pending #19.
 3. town.bin (7 KB) + the 8 *pro.bin shop overlays (small, formulaic dialogue/menu logic).
 4. eai1-8.bin — per-cavern enemy AI (~2 KB each).
 5. select.bin, mole.bin, opdemo/enddemo/rokademo (cutscenes last).
