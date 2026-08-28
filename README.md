@@ -13,6 +13,7 @@ Reverse engineering of **Zeliard** v1.208 (Game Arts / Sierra On-Line).
 - `tools/grp2png.py` — renders .grp graphics (tiles, enemies, hero frames, portraits, font) to PNG; `tools/palette.py` = the MCGA palette
 - `src/kernel.c`, `src/video_mcga.c` — hand-cleaned C of the STICK.BIN kernel and the MCGA video driver (original addresses in comments)
 - `src/fight.c`, `docs/FIGHT.md`, `docs/STATE_PAGE.md` — the cavern game loop: physics, collision, combat, enemy records, AI-overlay interface, FF00 state page
+- `src/town.c`, `src/shops.c`, `docs/TOWN.md` — town walk/dialogue engine, all 8 shops (prices, effects), save-file format, town map format
 - `docs/SERVICES.md`, `docs/VIDEO_DRIVERS.md` — every kernel service vector (0x10C+) and video-driver vector (0x2000+, all 5 drivers) with args and callers
 - `docs/ARCHITECTURE.md` — boot chain, memory map, SAR format, kernel protocol, graphics formats
 

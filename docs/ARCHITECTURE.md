@@ -24,7 +24,7 @@ GAME.BAT → ZELIARD.EXE (3 KB bootstrap loader)
 | `BASE:2000` | Video driver for configured mode (CGA/EGA/HGC/MCGA/Tandy) | GM{CGA,EGA,HGC,MCGA,TGA}.BIN |
 | `BASE:A000` | GAME.BIN — boot dispatcher; sets up state, pulls first overlay from ZELRES1 | GAME.BIN |
 | `BASE+1000:0000` | Overlay/resource arena (game code + data paged in from .SAR) | ZELRES*.SAR entries |
-| `BASE:FF00`–`FF7F` | Global state page: far ptrs to loader services + old INT vectors (`FF00` svc, `FF04` old INT8, `FF79` old INT9), video-mode index `FF14`, joystick flag `FF0A`, MT-32 flag `FF15`, overlay-arena segment `FF2C`, music-driver 8-char name `FF6C`, dozens of game flags | ZELIARD.EXE init |
+| `BASE:FF00`–`FF7F` | Global state page: far ptrs to loader services + old INT vectors (`FF00` svc, `FF04` old INT8, `FF79` old INT9), video-mode index `FF14`, joystick flag `FF0A`, MT-32 flag `FF15`, overlay-arena segment `FF2C`, player name `FF6C` (save-file stem), dozens of game flags | ZELIARD.EXE init |
 | `BASE+FF0:0100` | Music driver (score playback) | MSC{STD,ADLIB,JR,MT}.DRV |
 | `BASE+FF0:1100` | Sound-effect driver | SND{STD,ADLIB,JR}.DRV |
 
@@ -155,8 +155,9 @@ offsets via a table at `[0x44F8]`) for the demo/ending art — not yet decoded.
 | **cells32** bank (2 bpp) | enp1-8.grp — per-cavern enemy sprites, chosen from the 11-byte table at fight.bin 9D8D by map byte `[C000+5]`, loaded to `arena:4000` and converted by gfmcga vec_20 @4EDD (`[0x3028]`, CX=0x100) | 32-byte cells: 8 rows × {planeA u16 BE, planeB u16 BE}, 16 px, `v = B<<1|A`. Converter interleaves to 2 bpp and writes a per-row **outline mask** to `A000+cell*8`: `m = A|B; d = m | m>>1 | m<<1; mask bit = pair fully clear in ~d` (horizontal dilation → the black outline). Blit (gfmcga 3599/366E): each **pixel pair** `(left<<2|right)` indexes a 16-entry table → VGA index; 5 tables @4F98/4FA8/4FB8/4FC8/4FD8 selected by `[0x4ff4]` = 4 PC-88 colours each: {blk,wht,red,grn}, {blk,red,cyn,yel}, {blk,wht,cyn,blu}, {blk,blu,yel,mag}, {blk,yel,blu,mag}. Table[0] = black = outline colour; transparency comes from the mask. | fight.bin composes sprites into a 36-column cell layer at `[FF31]` (ring E000–E900, 64 rows) which gfmcga draws over the 28-column background cell buffer at E900 |
 | **hero** | fman.grp (fight hero, loaded to `arena:6000`; `[0x3028]` with SI=6333, CX=0xE6) | `0x000–0x333`: **91 frame maps × 9 bytes** = 3×3 cells row-major, 1-based index into the bank, **bit 7 = horizontal flip**, 0 = empty (frames are 24×24). `0x333–end`: cells32 bank (cell 0 blank). Frame 0-9 stand/walk right, 10-19 left (flipped), then jump/attack/partial overlays. Colours = 2bpp table 0. | fight.bin animation tables (Sprint 5) |
 | **font** | font.grp (AL=2 two-variant container; 3 sections `0006 0606 06A6`) | section 1: 192 glyphs × 8 bytes 1 bpp from char 0x20 | kernel/video text service `[0x202A]` |
-| **3-section shape containers** | sword.grp (`0006 06D1 1043`), itemp.grp, magic.grp, cpat/mpat/dpat.grp | `{u16 hdr_len=6, u16 off2, u16 off3}` then three sub-resources, each `{u16 data_off, u16 ptr[14]}` (ptrs relative to the sub-resource) → per-item byte scripts (`46 01 23 01 01 22 … ff`) and 16-bit bitmask rows at `data_off` (sword-swing shapes). *pat are loaded by the ZELRES1[6] engine overlay, not by fight.bin — the cavern maps do not use them | **not decoded yet** |
-| **town/demo art** | mman/cman/tman.grp (`GAME.BIN @A1E0` picks MMAN/CMAN by map byte, → `arena:4000` for town.bin), ttl1-3, end4-7, ame/dmaou/hime/… (intro/ending) | tman starts with a pointer table; mman/cman compress poorly and are not cells32; intro art is the gd* renderer's own format with the 256-entry palette (gdmcga @425E) | gtmcga / gdmcga — **not decoded yet** |
+| **3-section shape containers** | sword.grp (`0006 06D1 1043`), itemp.grp, magic.grp | `{u16 hdr_len=6, u16 off2, u16 off3}` then three sub-resources, each `{u16 data_off, u16 ptr[14]}` (ptrs relative to the sub-resource) → per-item byte scripts (`46 01 23 01 01 22 … ff`) and 16-bit bitmask rows at `data_off` (sword-swing shapes). sword shapes decoded in docs/FIGHT.md §6 | partially decoded |
+| **town tiles** | cpat/mpat/dpat.grp (→ `arena:8000` for town.bin) | 0x100 header (type table = which plane is the sky mask, block list, tile-cycle list) + 48-byte cells — docs/TOWN.md | town.bin / gt* renderer (`tools/mdt2png.py --town`) |
+| **town/demo art** | mman/cman/tman.grp (`GAME.BIN @A1E0` picks MMAN/CMAN by map byte, → `arena:4000` for town.bin), ttl1-3, end4-7, ame/dmaou/hime/… (intro/ending) | mman/cman = 5 NPC sprites × 8 frames × 6 cells48 (colour 0 transparent), tman = 46 hero cells48 (docs/TOWN.md); intro art is the gd* renderer's own format with the 256-entry palette (gdmcga @425E) | gtmcga / gdmcga — **not decoded yet** |
 
 `tools/grp2png.py --all OUTDIR` renders every resource with a known family; `tools/cellsheet.py` is the low-level 48-byte viewer.
 
@@ -229,8 +230,9 @@ Cavern *N* normal maps use ai = enemies = 2(N-1); boss rooms use the odd index (
 with enemies = 0xFF. mp73 is the special ZEL2/MPPB map.
 
 **Town maps** (`cmap/mrmp/stmp/bsmp/hlmp/tmmp/drmp/llmp/prmp/esmp.mdt`, ZELRES2[36..45])
-have a different header (pointers at odd offsets, width 0x72..0x140) and are walked by
-town.bin — not decoded yet (see the town.bin issue).
+are raw (not RLE) `width × 8` column-major grids with a different header (level, place label,
+edge exits, doors, cavern entries, dialogue, NPC records, patches) — DECODED in docs/TOWN.md
+(Sprint 6); `tools/mdt2png.py --town OUT` renders all 10.
 
 `tools/mdt2png.py FILE OUT.png` renders a map at 8 px/cell with fixtures composited and
 objects boxed (yellow/cyan/red by type class); `--all OUTDIR` does all 31; `--text` dumps

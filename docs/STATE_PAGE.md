@@ -58,7 +58,7 @@ established the meaning. *uncertain* = inferred from a single use.
 | FF4A | 1 | obj_index | index of the object being processed (passed to the AI) | fight `8D2B`,`8DA5` | fight, AI |
 | FF4B | 1 | menu_result | 8 = warp to town after the item menu | menu overlay | fight `729C` |
 | FF50 | 2 | tick_total | +1 per tick | kernel `027F` | ? |
-| FF6C | 8 | music_drv_name | | loader | |
+| FF6C | 8 | player_name | save-file name (`NAME.USR`, kenjpro A862); name entry town.bin | town/kenjpro | (was mis-named music_drv_name) |
 | FF75 | 1 | sfx_request | sound-effect id: 3 swing, 4 thrust, 6 enemy hit, 7 enemy dies, 8 shield block (dmg), 9 hero hurt, 0xA shield block (shot), 0xB menu, 0x10 coin, 0x11 item, 0x12 corpse, 0x13 potion tick, 0x14 pickup, 0x15 door unlock, 0x16 locked door, 0x17 cast start, 0x18 cast, 0x19 spell end | fight, kernel `07FC` | sound driver |
 | FF79 | 4 | old_int9 | | loader | kernel |
 
@@ -120,8 +120,8 @@ established the meaning. *uncertain* = inferred from a single use.
 | 82 | 1 | scroll_row | 0 | ring row on screen row 0 |
 | 83 | 1 | hero_scr_col | 0x0A (0x0C in caverns) | |
 | 84 | 1 | hero_scr_row | 0x0A | |
-| 85/86 | 1+2 | gold_total | 0 | lifetime gold (`916B`), zeroed on death; *uncertain* |
-| 8B | 2 | gold | 0 | |
+| 85/86 | 1+2 | gold | 0 | gold (24-bit, `916B`, halved on death) — TOWN.md; fight.c calls this `gold_total` |
+| 8B | 2 | almas | 0 | almas (bank exchanges almas→gold, TOWN.md); fight.c calls this `gold` |
 | 8D | 1 | level | 0 | strength term of the damage formulas; *name uncertain* |
 | 8E | 2 | exp | 0 | |
 | 90 | 2 | hp | 0x50 | |

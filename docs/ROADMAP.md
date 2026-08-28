@@ -25,7 +25,7 @@ Tracking epic for all remaining work. Written to be executable without prior ses
 
 1. ~~**Pin the palette (#7).**~~ DONE (#13): `tools/palette.py`, documented in ARCHITECTURE.md. The intro/ending renderer (gdmcga @425E) uses a separate 256-entry palette scheme — decode when the title/ending art is needed.
 2. **Metasprite assembly (#7).** sword.grp layout: header words + offset table + tile maps (0xFF = empty) referencing cell indices. Write \`tools/grp2png.py\` that: parses container, extracts cell bank + maps, composites full sprites. Verify against screenshots (title logo ttl1-3.grp, shop portraits king.grp etc.).
-3. ~~**Maps (#9).**~~ DONE (#15): `tools/mdt2png.py` renders all 31 cavern maps (column-major RLE, 64 rows, MPP1-B tile banks + DCHR fixtures, object table); format in ARCHITECTURE.md "Maps". Town maps (ZELRES2[36-45]) use a different header owned by town.bin — decode with the town.bin overlay.
+3. ~~**Maps (#9).**~~ DONE (#15): `tools/mdt2png.py` renders all 31 cavern maps (column-major RLE, 64 rows, MPP1-B tile banks + DCHR fixtures, object table); format in ARCHITECTURE.md "Maps". Town maps decoded in Sprint 6 (docs/TOWN.md, `mdt2png.py --town`).
 4. **Music (#8).** .msd = score data consumed by MSC*.DRV at (BASE+FF0):0100. Diff MSCSTD vs MSCADLIB decompilations to separate score parsing from device code. Acceptance: .msd → MIDI converter that produces the opening theme recognizably.
 
 ## Phase 2 — decompile game logic (issue #6)
@@ -33,7 +33,7 @@ Tracking epic for all remaining work. Written to be executable without prior ses
 Priority order (each: Ghidra dump → hand-clean to readable C in a new \`src/\` tree, one file per overlay; keep function addresses in comments):
 1. ~~STICK.BIN kernel (~4 KB).~~ DONE (#16): `src/kernel.c` + `docs/SERVICES.md` (11 vectors 0x10C-0x120, [0x10C] modes, INT 8/9, FF-page vars); video drivers: `docs/VIDEO_DRIVERS.md` (35 slots 0x2000-0x2044, 5-driver equivalence table) + `src/video_mcga.c`.
 2. ~~fight.bin (16 KB).~~ DONE (#17): `src/fight.c` (108 routines), `docs/FIGHT.md` (frame model 236.7 Hz/4×FF33 ticks, cell-granular physics, sword shapes, damage formulas, 16-byte enemy record, AI overlay vectors), `docs/STATE_PAGE.md` (FF00 page + player record 0049-00E8). Static only — DOSBox cross-check pending #19.
-3. town.bin (7 KB) + the 8 *pro.bin shop overlays (small, formulaic dialogue/menu logic).
+3. ~~town.bin + 8 *pro.bin shop overlays.~~ DONE (#20): `src/town.c`, `src/shops.c`, `docs/TOWN.md` (town .mdt header, dialogue opcodes, every shop's price/effect table, `NAME.USR` save = raw 256 bytes of BASE:0000, town↔cavern handoff); town maps + *pat/mman/cman graphics decoded, `mdt2png.py --town`.
 4. eai1-8.bin — per-cavern enemy AI (~2 KB each).
 5. select.bin, mole.bin, opdemo/enddemo/rokademo (cutscenes last).
 
