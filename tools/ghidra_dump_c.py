@@ -14,24 +14,48 @@ mem = currentProgram.getMemory()
 base = currentProgram.getMinAddress()
 space = base.getAddressSpace()
 seg_off = base.getOffset()
+img_end = seg_off + mem.getSize()
 
 
 def word_at(addr):
     return mem.getShort(addr) & 0xFFFF
 
 
-first = word_at(base)
-img_end = seg_off + mem.getSize()
-if seg_off <= first < img_end:
-    count = (first - seg_off) // 2
+def seed(addr, name):
+    disassemble(addr)
+    if getFunctionAt(addr) is None:
+        createFunction(addr, name)
+
+
+def seed_table(off, count, prefix):
     for i in range(count):
-        tgt = word_at(base.add(i * 2))
-        if not (seg_off <= tgt < img_end):
-            continue
-        a = space.getAddress(tgt)
-        disassemble(a)
-        if getFunctionAt(a) is None:
-            createFunction(a, "vec_%02d_%04x" % (i, tgt))
+        tgt = word_at(space.getAddress(off + i * 2))
+        if seg_off <= tgt < img_end:
+            seed(space.getAddress(tgt), "%s%02d_%04x" % (prefix, i, tgt))
+
+
+# Optional explicit seeds (arg 2, comma-separated):
+#   0x100          -> entry point at that offset
+#   table:0x10C:11 -> near-pointer vector table of N entries at that offset
+seeded = False
+if len(args) > 1 and args[1]:
+    for spec in args[1].split(","):
+        spec = spec.strip()
+        if spec.startswith("table:"):
+            _, off, n = spec.split(":")
+            seed_table(int(off, 16), int(n, 0), "vec_")
+        else:
+            a = space.getAddress(int(spec, 16))
+            seed(a, "entry_%04x" % a.getOffset())
+        seeded = True
+
+# Default: overlay-style table at the image base whose first word marks its end.
+first = word_at(base)
+if not seeded and seg_off < first < img_end and (first - seg_off) % 2 == 0:
+    seed_table(seg_off, (first - seg_off) // 2, "vec_")
+    seeded = True
+if not seeded:
+    seed(base, "entry_%04x" % seg_off)
 analyzeChanges(currentProgram)
 
 ifc = DecompInterface()

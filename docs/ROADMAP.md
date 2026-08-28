@@ -15,9 +15,8 @@ Tracking epic for all remaining work. Written to be executable without prior ses
 
 - All code shares one 64 KB segment BASE: kernel STICK.BIN @0100 (service vectors: \`call [cs:0x10C]\` load-resource with AL=mode 0-6; see ARCHITECTURE.md), video driver GM*.BIN @2000, renderer overlays (gd/gt/gf*.bin) @3000, engine overlays @6000 (opdemo/town/fight/enddemo), shop overlays @A000, state page @FF00. Data arena = separate segment at \`[cs:0xFF2C]\`.
 - Regenerate everything: \`python3 tools/sarex.py extracted && python3 tools/sardec.py extracted && tools/disasm.sh\`.
-- Ghidra 11.3.2 lives in the session scratchpad (re-download if gone; Java 21 works). Decompile any overlay:
-  \`ghidra_11.3.2_PUBLIC/support/analyzeHeadless /tmp/ghproj p1 -import extracted/ZELRES2/006_data.bin -processor "x86:LE:16:Real Mode" -loader BinaryLoader -loader-baseAddr 0000:3000 -postScript tools/ghidra_dump_c.py /tmp/out.c -scriptPath tools -deleteProject\`
-  (base 3000 for renderers, 6004/6002 region files import at 0000:6000 with 2-4 byte vector header — simplest is import whole file at the slot base minus header bytes, or strip header first.)
+- Ghidra 11.3.2 is installed persistently at `~/opt/ghidra_11.3.2_PUBLIC` (override with `$GHIDRA_HOME`; re-download from github NationalSecurityAgency/ghidra release `Ghidra_11.3.2_build` if missing — Java 21 works). Decompile any binary/overlay with the wrapper:
+  `tools/ghidra.sh BIN SEG:OFF OUT.c [SEEDS]` → e.g. `tools/ghidra.sh extracted/ZELRES2/006_data.bin 0000:3000 /tmp/gfmcga.c` (renderers @3000, GM*.BIN @2000, slot-A overlays @6000, slot-B @A000; overlay-style images whose first word is the end of a vector table are seeded automatically). Binaries without such a table need explicit SEEDS: STICK.BIN = `0x100,0x103,0x106,0x109,table:0x10C:11`. Output has one `/* ===== name @ addr ===== */` block per function.
 - Sprite pixels: 8x8 cells, 48 B/cell, 6-bit packed: per 3 bytes → px=[b1>>2, (b1&3)<<4|(b0>>4), (b0&0xF)<<2|(b2>>6), b2&0x3F], 0=transparent. Banks at arena:8000, cells from +0x30; bank's first 0x100 bytes = palette/color map uploaded via video-driver service [0x2044].
 - Ground truth: \`tools/run_dosbox.sh /tmp/zzz "10 20 30"\` runs the real game (Xvfb+DOSBox) and screenshots at those seconds. Use it to verify every rendering hypothesis.
 

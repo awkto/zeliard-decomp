@@ -7,6 +7,9 @@ Reverse engineering of **Zeliard** v1.208 (Game Arts / Sierra On-Line).
 - `tools/disasm.sh` — regenerates `disasm/` (16-bit ndisasm at true load origins)
 - `tools/sardec.py` — SAR payload decompressor (8-opcode RLE engine, 194/194 verified)
 - `tools/resnames.py` — recovers original resource filenames → `docs/RESOURCES.md`
+- `tools/ghidra.sh` — headless Ghidra decompile of any binary/overlay to C (uses `tools/ghidra_dump_c.py`)
+- `tools/run_dosbox.sh` — ground-truth harness: runs the real game in Xvfb+DOSBox, captures screenshots
+- `docs/ROADMAP.md` — phased plan, mirrors the tracking epic
 - `docs/ARCHITECTURE.md` — boot chain, memory map, SAR format, kernel protocol
 
 Original game files, extracted resources, and disassembly listings stay
