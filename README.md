@@ -10,7 +10,8 @@ Reverse engineering of **Zeliard** v1.208 (Game Arts / Sierra On-Line).
 - `tools/ghidra.sh` — headless Ghidra decompile of any binary/overlay to C (uses `tools/ghidra_dump_c.py`)
 - `tools/run_dosbox.sh` — ground-truth harness: runs the real game in Xvfb+DOSBox, captures screenshots
 - `docs/ROADMAP.md` — phased plan, mirrors the tracking epic
-- `docs/ARCHITECTURE.md` — boot chain, memory map, SAR format, kernel protocol
+- `tools/grp2png.py` — renders .grp graphics (tiles, enemies, hero frames, portraits, font) to PNG; `tools/palette.py` = the MCGA palette
+- `docs/ARCHITECTURE.md` — boot chain, memory map, SAR format, kernel protocol, graphics formats
 
 Original game files, extracted resources, and disassembly listings stay
 untracked — only clean tools and documentation live in this repo.

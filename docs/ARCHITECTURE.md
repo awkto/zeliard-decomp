@@ -145,11 +145,18 @@ every on-screen colour is the additive blend of two PC-88 colours (0..0x3E of
 (gdmcga @425E) programs a different 256-entry scheme (16 base colours × 16
 offsets via a table at `[0x44F8]`) for the demo/ending art — not yet decoded.
 
-Callers: fight.bin loads a bank with `[0x10C]` AL=2 into `arena:8000` then
-`[0x2044]` with CX=0x80 (e.g. roka.grp, cavern rock tiles) or SI=8030/CX=0x66.
-`.grp` files are containers (offset table + metasprite tile maps with 0xFF =
-empty + cell bank); the bank offset must be taken from the header — see the
-metasprite work.
+### .grp resource families (`tools/grp2png.py`, Sprint 2)
+
+| Family | Resources | Layout | Consumer |
+|---|---|---|---|
+| **cells48** bank | roka.grp (cavern rock tiles → `arena:8000`), shop portraits king/omoya/armor/bank/church/drug/inn/kenjya.grp (→ `arena:8000`, 256 cells converted by kingpro etc.), en72.grp | plain array of 48-byte cells, index 1-based (`cell N at bank+N*0x30`, 0 = empty) | fight blitter gfmcga @412F via `[0x3008]`; portraits arranged by maps inside the *pro.bin overlays |
+| **cells32** bank (2 bpp) | enp1-8.grp — per-cavern enemy sprites, chosen from the 11-byte table at fight.bin 9D8D by map byte `[C000+5]`, loaded to `arena:4000` and converted by gfmcga vec_20 @4EDD (`[0x3028]`, CX=0x100) | 32-byte cells: 8 rows × {planeA u16 BE, planeB u16 BE}, 16 px, `v = B<<1|A`. Converter interleaves to 2 bpp and writes a per-row **outline mask** to `A000+cell*8`: `m = A|B; d = m | m>>1 | m<<1; mask bit = pair fully clear in ~d` (horizontal dilation → the black outline). Blit (gfmcga 3599/366E): each **pixel pair** `(left<<2|right)` indexes a 16-entry table → VGA index; 5 tables @4F98/4FA8/4FB8/4FC8/4FD8 selected by `[0x4ff4]` = 4 PC-88 colours each: {blk,wht,red,grn}, {blk,red,cyn,yel}, {blk,wht,cyn,blu}, {blk,blu,yel,mag}, {blk,yel,blu,mag}. Table[0] = black = outline colour; transparency comes from the mask. | fight.bin composes sprites into a 36-column cell layer at `[FF31]` (ring E000–E900, 64 rows) which gfmcga draws over the 28-column background cell buffer at E900 |
+| **hero** | fman.grp (fight hero, loaded to `arena:6000`; `[0x3028]` with SI=6333, CX=0xE6) | `0x000–0x333`: **91 frame maps × 9 bytes** = 3×3 cells row-major, 1-based index into the bank, **bit 7 = horizontal flip**, 0 = empty (frames are 24×24). `0x333–end`: cells32 bank (cell 0 blank). Frame 0-9 stand/walk right, 10-19 left (flipped), then jump/attack/partial overlays. Colours = 2bpp table 0. | fight.bin animation tables (Sprint 5) |
+| **font** | font.grp (AL=2 two-variant container; 3 sections `0006 0606 06A6`) | section 1: 192 glyphs × 8 bytes 1 bpp from char 0x20 | kernel/video text service `[0x202A]` |
+| **3-section shape containers** | sword.grp (`0006 06D1 1043`), itemp.grp, magic.grp, cpat/mpat/dpat.grp | `{u16 hdr_len=6, u16 off2, u16 off3}` then three sub-resources, each `{u16 data_off, u16 ptr[14]}` (ptrs relative to the sub-resource) → per-item byte scripts (`46 01 23 01 01 22 … ff`) and 16-bit bitmask rows at `data_off` (sword-swing shapes). *pat = terrain tile patterns (Sprint 3) | **not decoded yet** |
+| **town/demo art** | mman/cman/tman.grp (`GAME.BIN @A1E0` picks MMAN/CMAN by map byte, → `arena:4000` for town.bin), ttl1-3, end4-7, ame/dmaou/hime/… (intro/ending) | tman starts with a pointer table; mman/cman compress poorly and are not cells32; intro art is the gd* renderer's own format with the 256-entry palette (gdmcga @425E) | gtmcga / gdmcga — **not decoded yet** |
+
+`tools/grp2png.py --all OUTDIR` renders every resource with a known family; `tools/cellsheet.py` is the low-level 48-byte viewer.
 
 ## Resource names — recovered (`tools/resnames.py` → docs/RESOURCES.md)
 
