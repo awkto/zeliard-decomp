@@ -31,7 +31,7 @@ Tracking epic for all remaining work. Written to be executable without prior ses
 ## Phase 2 — decompile game logic (issue #6)
 
 Priority order (each: Ghidra dump → hand-clean to readable C in a new \`src/\` tree, one file per overlay; keep function addresses in comments):
-1. STICK.BIN kernel (~4 KB) — already 60% understood, documents itself.
+1. ~~STICK.BIN kernel (~4 KB).~~ DONE (#16): `src/kernel.c` + `docs/SERVICES.md` (11 vectors 0x10C-0x120, [0x10C] modes, INT 8/9, FF-page vars); video drivers: `docs/VIDEO_DRIVERS.md` (35 slots 0x2000-0x2044, 5-driver equivalence table) + `src/video_mcga.c`.
 2. fight.bin (16 KB) — THE game: player physics, combat, damage, scrolling. State page FF00-FF7F variables get names as they're identified.
 3. town.bin (7 KB) + the 8 *pro.bin shop overlays (small, formulaic dialogue/menu logic).
 4. eai1-8.bin — per-cavern enemy AI (~2 KB each).
@@ -53,4 +53,4 @@ Method per overlay: run ghidra_dump_c.py, then rename functions/globals against 
 
 ## Sub-issue index
 
-#5 kernel/video vector naming (feeds Phase 2), #6 Ghidra decompilation (Phase 2), #7 graphics (Phase 1.1-1.2), #8 music (Phase 1.4), #9 maps (Phase 1.3). File new issues per port milestone when Phase 3 starts.
+~~#5 kernel/video vector naming~~ (done, #16), #6 Ghidra decompilation (Phase 2), #7 graphics (Phase 1.1-1.2), #8 music (Phase 1.4), #9 maps (Phase 1.3). File new issues per port milestone when Phase 3 starts.

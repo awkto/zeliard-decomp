@@ -20,11 +20,11 @@ GAME.BAT → ZELIARD.EXE (3 KB bootstrap loader)
 | Linear (BASE-relative) | Contents | Source file |
 |---|---|---|
 | `BASE:0000` | STDPLY.BIN — tiny standard-player stub (233 b) | STDPLY.BIN |
-| `BASE:0100` | **STICK.BIN — resident kernel.** INT 8/9 handlers at 0100/0103/0106/0109, near-call service vector table (`[0x10C]`, `[0x120]`, `[0x142]`, …), SAR resource loader (owns the `zelres1.sar` name template, digit patched for archive 2/3), joystick I/O | STICK.BIN |
+| `BASE:0100` | **STICK.BIN — resident kernel.** INT 9/8/24h/61h thunks at 0100/0103/0106/0109, 11-slot near-call service vector table `[0x10C]..[0x120]` (see docs/SERVICES.md), SAR resource loader (owns the `zelres1.sar` name template, digit patched for archive 2/3), joystick I/O | STICK.BIN |
 | `BASE:2000` | Video driver for configured mode (CGA/EGA/HGC/MCGA/Tandy) | GM{CGA,EGA,HGC,MCGA,TGA}.BIN |
 | `BASE:A000` | GAME.BIN — boot dispatcher; sets up state, pulls first overlay from ZELRES1 | GAME.BIN |
 | `BASE+1000:0000` | Overlay/resource arena (game code + data paged in from .SAR) | ZELRES*.SAR entries |
-| `BASE:FF00`–`FF7F` | Global state page: far ptrs to loader services + old INT vectors (`FF00` svc, `FF04` old INT8, `FF79` old INT9), video-mode index `FF14`, joystick flag `FF15`, overlay-arena segment `FF2C`, music-driver 8-char name `FF6C`, dozens of game flags | ZELIARD.EXE init |
+| `BASE:FF00`–`FF7F` | Global state page: far ptrs to loader services + old INT vectors (`FF00` svc, `FF04` old INT8, `FF79` old INT9), video-mode index `FF14`, joystick flag `FF0A`, MT-32 flag `FF15`, overlay-arena segment `FF2C`, music-driver 8-char name `FF6C`, dozens of game flags | ZELIARD.EXE init |
 | `BASE+FF0:0100` | Music driver (score playback) | MSC{STD,ADLIB,JR,MT}.DRV |
 | `BASE+FF0:1100` | Sound-effect driver | SND{STD,ADLIB,JR}.DRV |
 
@@ -34,7 +34,7 @@ to 64 KB to `ES:load_offset`.
 
 All loaded binaries are raw headerless 16-bit code (no MZ header); overlays and
 drivers call kernel services via the vector table inside STICK.BIN, e.g.
-`call [cs:0x10C]` / `call [cs:0x120]` / `call [cs:0x142]`.
+`call [cs:0x10C]` / `call [cs:0x120]` — full reference in docs/SERVICES.md; video driver vectors at `0x2000+` in docs/VIDEO_DRIVERS.md.
 
 ## .SAR archive format (verified byte-exact, zero gap anomalies)
 
@@ -74,12 +74,12 @@ digit into the prompt string too) and retries.
 
 | AL | Handler | Action |
 |---|---|---|
-| 0 | 0x0C01 | swap 0x3800-word buffer `(BASE+0x2000):9000` ↔ `BASE:3000` |
+| 0 | 0x0C01 | swap 0x3800 words `BASE:3000-9FFF` ↔ `(BASE+0x2000):9000-FFFF` (gf*.bin+fight.bin parked there by GAME.BIN at boot), then `jmp [cs:BX]` — town↔fight flip without disk I/O |
 | 1 | 0x0AD6 | load *system* resource #AH (11-byte records `{archive, res#, name}` at `cs:0xF68` — the `.MDT` map table) to `BASE:C000`, then as AL=2 |
 | 2 | 0x0AFF | **load + decompress** to ES:DI (container below) |
 | 3 | 0x0C2F | load raw to ES:DI (code overlays) |
-| 4 | 0x0B6F | copy cached 4 KB block #AH from `(BASE+0x2000)` bank to `arena:B000`, relocate first 15 words by +0xB000 |
-| 5 | 0x0BAE | load raw, two MT-32 variants: `{u16 lenA, u16 lenB} + blobA + blobB`, pick by `cs:0xFF15` |
+| 4 | 0x0B6F | install sword block #AH: copy 4 KB sub-resource of sword.grp (cached at `(BASE+0x2000):1800`) to `arena:B000`, relocate first 15 words by +0xB000 |
+| 5 | 0x0BAE | load music score: `{u16 lenA, u16 lenB} + blobA + blobB`, A when `FF15` (MT-32) else B |
 | 6 | 0x0C24 | probe: open/seek only, length → `cs:0xF64` |
 
 AL=2 container: `byte0 == 0` → rest is one compressed stream; `byte0 != 0` →
@@ -102,10 +102,12 @@ dispatch table `0x0DBC`. All RLE variants; DX = remaining input:
 | 6 | 0EBA | byte-keyed `{key,val}` word table to `0xFFFF`; match → count byte `n` from stream, val × (n+2) |
 | 7 | 0EF5 | escape byte E; `E v n` → v × (n+3) |
 
-Other traced kernel services: vectors `0x6AC/0x723/0x881/0x8EF` query the
-input bitmask at `cs:0xFF18`; `0x918` reads `cs:0xFF1B` (frame counter);
+Other kernel services (full table in docs/SERVICES.md): `[0x110..0x11E]` are the
+per-frame hotkey pollers (Ctrl+Q exit, Esc pause, F9 speed → `FF33`, Ctrl+J/K joystick,
+F7 restore) reading the hotkey mask at `cs:0xFF18`; `[0x11A]` is a PRNG seeded by the
+236.7 Hz tick counter `FF1B`; `[0x11C]` = DOS FindFirst/Next (save files `*.usr`).
 STICK calls the video driver via its own vector table at `0x2000+`
-(`[cs:0x202A]` text/tile draw, used for the "insert disk" prompt).
+(`[cs:0x202A]` text draw, used for the "insert disk" prompt).
 
 ## Runtime code layout & overlays
 

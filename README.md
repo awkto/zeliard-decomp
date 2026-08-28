@@ -11,6 +11,8 @@ Reverse engineering of **Zeliard** v1.208 (Game Arts / Sierra On-Line).
 - `tools/run_dosbox.sh` — ground-truth harness: runs the real game in Xvfb+DOSBox, captures screenshots
 - `docs/ROADMAP.md` — phased plan, mirrors the tracking epic
 - `tools/grp2png.py` — renders .grp graphics (tiles, enemies, hero frames, portraits, font) to PNG; `tools/palette.py` = the MCGA palette
+- `src/kernel.c`, `src/video_mcga.c` — hand-cleaned C of the STICK.BIN kernel and the MCGA video driver (original addresses in comments)
+- `docs/SERVICES.md`, `docs/VIDEO_DRIVERS.md` — every kernel service vector (0x10C+) and video-driver vector (0x2000+, all 5 drivers) with args and callers
 - `docs/ARCHITECTURE.md` — boot chain, memory map, SAR format, kernel protocol, graphics formats
 
 Original game files, extracted resources, and disassembly listings stay
