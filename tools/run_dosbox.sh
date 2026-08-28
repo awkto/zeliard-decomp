@@ -2,6 +2,7 @@
 # Ground-truth harness: run Zeliard under DOSBox in a private Xvfb, capture screenshots.
 # usage: [KEYS="sec:key sec:key ..."] tools/run_dosbox.sh OUTDIR [capture-seconds...]
 #   KEYS: xdotool key names to press at given seconds, e.g. KEYS="6:Return 9:space 12:Return"
+#         "+Left" holds a key down, "-Left" releases it (walk across the town: "34:+Left 48:-Left").
 #   Keys and captures are merged into one timeline. Requires: dosbox, xvfb, xdotool,
 #   imagemagick (import). Game files in zeliard/.
 #
@@ -58,7 +59,11 @@ echo "$EVENTS" | while read -r sec kind arg; do
   if [ "$kind" = key ]; then
     [ -n "$WIN" ] || WIN=$(xdotool search --onlyvisible --class dosbox 2>/dev/null | head -1)
     [ -n "$WIN" ] && xdotool windowfocus --sync "$WIN" 2>/dev/null
-    xdotool key --delay 80 "$arg" 2>/dev/null
+    case "$arg" in
+      +*) xdotool keydown "${arg#+}" 2>/dev/null ;;
+      -*) xdotool keyup "${arg#-}" 2>/dev/null ;;
+      *) xdotool key --delay 80 "$arg" 2>/dev/null ;;
+    esac
   else
     import -window root "$OUT/shot_$sec.png" 2>/dev/null || true
   fi

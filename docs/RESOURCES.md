@@ -5,7 +5,7 @@
 | Archive | Index | Name(s) | Referenced by |
 |---|---|---|---|
 | ZELRES1 | 0 | opdemo.bin | GAME.BIN |
-| ZELRES1 | 1 | acrab.grp, btako.grp, ctori.grp, dzela.grp, emeda.grp, flega.grp, gdega.bin, gdrgn.grp, hakma.grp, imao1.grp, jmao2.grp, kmpp1.grp, lmpp2.grp, mmpp3.grp, nmpp4.grp, ompp5.grp, pmpp6.grp, qmpp7.grp, rmpp8.grp, smpp9.grp, tmppa.grp, umppb.grp, vmus1.msd, wmus2.msd, xmus3.msd, ymus4.msd, zmus5.msd | GAME.BIN, ZELRES2/000_data.bin, ZELRES2/011_code.bin, ZELRES2/dec/000_data.dec, ZELRES2/dec/011_code.dec |
+| ZELRES1 | 1 | *(unnamed; an earlier resnames.py run listed acrab.grp…zmus5.msd here — those are the ZELRES3[64..89] records whose printable res# byte was taken as part of the name)* | GAME.BIN, ZELRES2/000_data.bin, ZELRES2/011_code.bin, ZELRES2/dec/000_data.dec, ZELRES2/dec/011_code.dec |
 | ZELRES1 | 2 | gdcga.bin | GAME.BIN, ZELRES2/011_code.bin, ZELRES2/dec/011_code.dec |
 | ZELRES1 | 3 | gdhgc.bin | GAME.BIN, ZELRES2/011_code.bin, ZELRES2/dec/011_code.dec |
 | ZELRES1 | 4 | gdtga.bin | GAME.BIN, ZELRES2/011_code.bin, ZELRES2/dec/011_code.dec |
@@ -165,6 +165,32 @@
 | ZELRES3 | 61 | enp6.grp | ZELRES2/000_data.bin, ZELRES2/dec/000_data.dec |
 | ZELRES3 | 62 | enp7.grp | ZELRES2/000_data.bin, ZELRES2/dec/000_data.dec |
 | ZELRES3 | 63 | enp8.grp | ZELRES2/000_data.bin, ZELRES2/dec/000_data.dec |
+| ZELRES3 | 64 | crab.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 65 | tako.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 66 | tori.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 67 | zela.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 68 | meda.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 69 | lega.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 70 | drgn.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 71 | akma.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 72 | mao1.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 73 | mao2.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 74 | mpp1.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 75 | mpp2.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 76 | mpp3.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 77 | mpp4.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 78 | mpp5.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 79 | mpp6.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 80 | mpp7.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 81 | mpp8.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 82 | mpp9.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 83 | mppa.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 84 | mppb.grp | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 85 | mus1.msd | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 86 | mus2.msd | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 87 | mus3.msd | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 88 | mus4.msd | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
+| ZELRES3 | 89 | mus5.msd | ZELRES2/000_data.bin (fight.bin request tables @9C43/9D8D/9E53; the res# byte 0x41-0x5A is printable, which is why resnames.py mis-filed these under ZELRES1[1]) |
 | ZELRES3 | 90 | mus6.msd | ZELRES2/000_data.bin, ZELRES2/dec/000_data.dec |
 | ZELRES3 | 91 | mus7.msd | ZELRES2/000_data.bin, ZELRES2/dec/000_data.dec |
 | ZELRES3 | 92 | mus8.msd | ZELRES2/000_data.bin, ZELRES2/dec/000_data.dec |

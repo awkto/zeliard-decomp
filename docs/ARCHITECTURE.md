@@ -149,14 +149,88 @@ offsets via a table at `[0x44F8]`) for the demo/ending art — not yet decoded.
 
 | Family | Resources | Layout | Consumer |
 |---|---|---|---|
-| **cells48** bank | roka.grp (cavern rock tiles → `arena:8000`), shop portraits king/omoya/armor/bank/church/drug/inn/kenjya.grp (→ `arena:8000`, 256 cells converted by kingpro etc.), en72.grp | plain array of 48-byte cells, index 1-based (`cell N at bank+N*0x30`, 0 = empty) | fight blitter gfmcga @412F via `[0x3008]`; portraits arranged by maps inside the *pro.bin overlays |
+| **cells48** bank | **mpp1-9,a,b.grp** (ZELRES3[74..84], per-cavern map tiles → `arena:8000`, cell 0 = solid-cell list), **dchr.grp** (ZELRES3[54], gates/chests/items → `arena:8C00` = slot 0x40), roka.grp (→ `arena:8000` for the Roka demo), shop portraits king/omoya/armor/bank/church/drug/inn/kenjya.grp (→ `arena:8000`, 256 cells converted by kingpro etc.), en72.grp | plain array of 48-byte cells, index 1-based (`cell N at bank+N*0x30`, 0 = empty) | fight blitter gfmcga @412F via `[0x3008]`; portraits arranged by maps inside the *pro.bin overlays |
 | **cells32** bank (2 bpp) | enp1-8.grp — per-cavern enemy sprites, chosen from the 11-byte table at fight.bin 9D8D by map byte `[C000+5]`, loaded to `arena:4000` and converted by gfmcga vec_20 @4EDD (`[0x3028]`, CX=0x100) | 32-byte cells: 8 rows × {planeA u16 BE, planeB u16 BE}, 16 px, `v = B<<1|A`. Converter interleaves to 2 bpp and writes a per-row **outline mask** to `A000+cell*8`: `m = A|B; d = m | m>>1 | m<<1; mask bit = pair fully clear in ~d` (horizontal dilation → the black outline). Blit (gfmcga 3599/366E): each **pixel pair** `(left<<2|right)` indexes a 16-entry table → VGA index; 5 tables @4F98/4FA8/4FB8/4FC8/4FD8 selected by `[0x4ff4]` = 4 PC-88 colours each: {blk,wht,red,grn}, {blk,red,cyn,yel}, {blk,wht,cyn,blu}, {blk,blu,yel,mag}, {blk,yel,blu,mag}. Table[0] = black = outline colour; transparency comes from the mask. | fight.bin composes sprites into a 36-column cell layer at `[FF31]` (ring E000–E900, 64 rows) which gfmcga draws over the 28-column background cell buffer at E900 |
 | **hero** | fman.grp (fight hero, loaded to `arena:6000`; `[0x3028]` with SI=6333, CX=0xE6) | `0x000–0x333`: **91 frame maps × 9 bytes** = 3×3 cells row-major, 1-based index into the bank, **bit 7 = horizontal flip**, 0 = empty (frames are 24×24). `0x333–end`: cells32 bank (cell 0 blank). Frame 0-9 stand/walk right, 10-19 left (flipped), then jump/attack/partial overlays. Colours = 2bpp table 0. | fight.bin animation tables (Sprint 5) |
 | **font** | font.grp (AL=2 two-variant container; 3 sections `0006 0606 06A6`) | section 1: 192 glyphs × 8 bytes 1 bpp from char 0x20 | kernel/video text service `[0x202A]` |
-| **3-section shape containers** | sword.grp (`0006 06D1 1043`), itemp.grp, magic.grp, cpat/mpat/dpat.grp | `{u16 hdr_len=6, u16 off2, u16 off3}` then three sub-resources, each `{u16 data_off, u16 ptr[14]}` (ptrs relative to the sub-resource) → per-item byte scripts (`46 01 23 01 01 22 … ff`) and 16-bit bitmask rows at `data_off` (sword-swing shapes). *pat = terrain tile patterns (Sprint 3) | **not decoded yet** |
+| **3-section shape containers** | sword.grp (`0006 06D1 1043`), itemp.grp, magic.grp, cpat/mpat/dpat.grp | `{u16 hdr_len=6, u16 off2, u16 off3}` then three sub-resources, each `{u16 data_off, u16 ptr[14]}` (ptrs relative to the sub-resource) → per-item byte scripts (`46 01 23 01 01 22 … ff`) and 16-bit bitmask rows at `data_off` (sword-swing shapes). *pat are loaded by the ZELRES1[6] engine overlay, not by fight.bin — the cavern maps do not use them | **not decoded yet** |
 | **town/demo art** | mman/cman/tman.grp (`GAME.BIN @A1E0` picks MMAN/CMAN by map byte, → `arena:4000` for town.bin), ttl1-3, end4-7, ame/dmaou/hime/… (intro/ending) | tman starts with a pointer table; mman/cman compress poorly and are not cells32; intro art is the gd* renderer's own format with the 256-entry palette (gdmcga @425E) | gtmcga / gdmcga — **not decoded yet** |
 
 `tools/grp2png.py --all OUTDIR` renders every resource with a known family; `tools/cellsheet.py` is the low-level 48-byte viewer.
+
+## Maps: `.mdt` cavern format — DECODED (`tools/mdt2png.py`, Sprint 3)
+
+`mp10..mpa0.mdt` (ZELRES3[20..50]) are loaded **raw** to `BASE:C000` by kernel
+mode AL=1 (record table `cs:0xF68`, index in AH); every pointer inside is an
+absolute BASE offset. Consumer: fight.bin (addresses below).
+
+```
+C000 u16 level        -> level record (see below)
+C002 u16 width        map width in 8x8 cells (42..320); the map WRAPS horizontally
+C004 u16 fixtures A   list of {u16 col, u8 row}: three DCHR cells 40,41,42 at col..col+2 (7FB1)
+C006 u16 fixtures B   same layout, DCHR cells 43,44,45 (8163)
+C008 u16 fixtures C   {u16 col|variant<<14, u8 row|state<<6, u8[4]}: DCHR cells 46,47,48 (81AE)
+C00A u16 signs        12-byte records {u16 col, u8 row, u8 letter|flags, ...} drawn 4 rows x 5 (78DD)
+C00C u16 patches      {u16 ptr, u8 mask, u16 ptr, u16 val}* conditional pokes (6BFC)
+C00E u16 init data    passed to video service [0x2010] at level start
+C010 u16 objects      16-byte records {u16 col, u8 row, u8 ?, u8 type, ...}; col 0xFFxx = disabled
+C012 u8  cavern       1..10
+C013 u16 start col    0xFFFF = none (entered from another map);  C015 u8 start row
+C016 u8  row bias     10 = normal cavern, 12 = boss room, 13 = mp90
+C017 u16 ?            usually 0, sometimes a pointer
+C019 u16 stream end   == C004: the byte after the tile stream (used to decode backwards)
+C01B     tile stream  column-major RLE, 64 rows per column
+```
+All lists end with a `0xFFFF` word.
+
+**Tile stream** (decoder 6CED/6D57, reverse decoder 6D06 for left scrolling):
+byte `b`, `k = b >> 6`:
+
+| k | bytes | run |
+|---|---|---|
+| 0 | `b v` | `b+1` cells of value `v` |
+| 1 | `b` | `((b>>4)&3)+2` cells of value `(b&15)+1` |
+| 2 | `b` | `b&0x3F` empty cells (value 0) |
+| 3 | `b` | one cell of value `b&0x3F` |
+
+Runs never cross a column; each column totals 64 rows; decoding all
+`width` columns lands exactly on `[C019]` for all 31 maps.
+
+**Cell values** are 1-based indices into the cavern **tile bank** at `arena:8000`
+(48-byte cells, converted by `[0x2044]`): `MPP1..MPP9,MPPA,MPPB.GRP`
+(ZELRES3[74..84], request table fight.bin `9C43`, chosen by level-record byte +2),
+with `DCHR.GRP` (ZELRES3[54], "dungeon characters": gates, chests, item icons)
+loaded to `arena:8C00` = bank slot `0x40`. Cell 0 of an MPP bank is not graphics:
+its first 24 bytes list the **solid** cell indices (collision, fight.bin 6DF3).
+Ring buffer: fight.bin keeps 36 columns × 64 rows at `E000` (row stride 0x24),
+`[FF31]` = top-left of the 28×19 window (`+ [0x82]` rows); cells with **bit 7**
+are sprites (`0x80 | object index`, looked up in the C010 table: byte +4 = type)
+and are drawn by gfmcga 3336/33AB through the 2-bpp sprite path. `E900` holds
+the 28×19 copy of what is on screen (0xFD = force redraw, 0xFF = hero).
+
+**Level record** (at `[C000]`; 7E93/7EBB):
+```
++0 flags   bit0 = 1 → keep current 4000 bank; bits 1-4 = music index into 9E53 table
+           (mgt1,ugm1,mgt2,ugm2,mus1..mus8,mbos,mmao); bit6 → [E6], bit7 → [FF34]
++1 gfx     index into 9C2D table (roka/dchr/rokademo/mman/cman) → arena:4000 when bit0 = 0
++2 tileset index into 9C43 table (MPP1..MPPB) → arena:8000
++3 ai      index into 9CBC table (EAI1..8 interleaved with boss AIs CRAB,TAKO,TORI,ZELA,
+           MEDA,LEGA,DRGN,AKMA,MAO1,MAO2,ZEL2) → BASE:A000 (raw overlay)
++4 enemies index into 9D8D table (ENP1..8 interleaved with boss banks CRAB..MAO2.GRP) →
+           arena:4000; 0xFF = keep
+boss rooms (mpNd) continue: +5 boss bank (copied to +4 at 6117 when the boss appears),
+           +6/+7 post-boss ai/enemies, +8.. {u16 ptr, u16 val}* pokes applied by 72F1
+```
+Cavern *N* normal maps use ai = enemies = 2(N-1); boss rooms use the odd index (boss AI)
+with enemies = 0xFF. mp73 is the special ZEL2/MPPB map.
+
+**Town maps** (`cmap/mrmp/stmp/bsmp/hlmp/tmmp/drmp/llmp/prmp/esmp.mdt`, ZELRES2[36..45])
+have a different header (pointers at odd offsets, width 0x72..0x140) and are walked by
+town.bin — not decoded yet (see the town.bin issue).
+
+`tools/mdt2png.py FILE OUT.png` renders a map at 8 px/cell with fixtures composited and
+objects boxed (yellow/cyan/red by type class); `--all OUTDIR` does all 31; `--text` dumps
+the grid; `--info` prints the header, lists and object table.
 
 ## Resource names — recovered (`tools/resnames.py` → docs/RESOURCES.md)
 
