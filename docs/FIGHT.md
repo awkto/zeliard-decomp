@@ -72,7 +72,7 @@ Cell-value classes used by the collision tests:
 | `passable_wall` (head row, vertical probes, wall-unstick, door/ledge checks) | `6DE5` | value ≥ 0x40 (any DCHR fixture/item, any sprite marker) **or** in the 8000 list |
 | `passable_body` (feet rows when walking, floor under feet) | `6E1B` | value ≥ 0x49 **or** in the list. So DCHR 0x40..0x48 (elevator cells 40-42, gate fixtures 43-48) are solid to the body and can be stood on |
 | `passable_shot` (projectiles) | `6DEC` | same as body |
-| AI `cell_passable_ai` (vec 23) | `94E1` | in the list, or a sprite marker; DCHR items ≥ 0x49 block enemies |
+| AI `cell_passable_ai` (vec 23) | `94E1` | cells < 0x49 passable iff in the list; 0x49..0x7F pass; ≥ 0x80 (sprite markers) block — verified in docs/ENEMIES.md |
 | ladder | `6BBD` | value 1 or 2 |
 | door column | `7A8C` | value 0x4A (DCHR cell 10) |
 | sprite marker | bit 7 | `6DCB` returns the object's `type` byte instead; `type & 0x80` = solid to the hero |
@@ -308,7 +308,7 @@ column (`6776`/`6915`).
 | Address | Content |
 |---|---|
 | `[A000]` | entry. Called per live enemy with **SI = record, DI = ring cell of its old position, `FF4A` = index**, DS=CS=BASE (`8DF7`). In boss maps called once per frame instead of the whole pass (`8D1D`), and once after loading (`7C27`) |
-| `[A002]` | boss info block: +3 u16 video init, +5 u16 EXP, +7 u8 hero screen column, +8 u8 knockback-left flag, +9 u16 gold (0 in eai1) |
+| `[A002]` | boss info block: +3 u16 boss HP (initial bar value, updated by the overlay via video `[200C]`), +5 u16 EXP, +7 u8 camera/hero screen column, +8 u8 knockback-left flag, +9 u16 name-record ptr `{x, u16 y, len, chars}`, +B u16 gold — see docs/ENEMIES.md (boss overlays rebuild the whole C010 list per frame from a part buffer) |
 | `[A006]` | pointer to 8 pointers (per class) to 4-byte drop-id lists |
 | `A008` | u8[8] EXP per class |
 | `A010` | u8[16] contact damage per `type & 0xF` |

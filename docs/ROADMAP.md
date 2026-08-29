@@ -34,7 +34,7 @@ Priority order (each: Ghidra dump → hand-clean to readable C in a new \`src/\`
 1. ~~STICK.BIN kernel (~4 KB).~~ DONE (#16): `src/kernel.c` + `docs/SERVICES.md` (11 vectors 0x10C-0x120, [0x10C] modes, INT 8/9, FF-page vars); video drivers: `docs/VIDEO_DRIVERS.md` (35 slots 0x2000-0x2044, 5-driver equivalence table) + `src/video_mcga.c`.
 2. ~~fight.bin (16 KB).~~ DONE (#17): `src/fight.c` (108 routines), `docs/FIGHT.md` (frame model 236.7 Hz/4×FF33 ticks, cell-granular physics, sword shapes, damage formulas, 16-byte enemy record, AI overlay vectors), `docs/STATE_PAGE.md` (FF00 page + player record 0049-00E8). Static only — DOSBox cross-check pending #19.
 3. ~~town.bin + 8 *pro.bin shop overlays.~~ DONE (#20): `src/town.c`, `src/shops.c`, `docs/TOWN.md` (town .mdt header, dialogue opcodes, every shop's price/effect table, `NAME.USR` save = raw 256 bytes of BASE:0000, town↔cavern handoff); town maps + *pat/mman/cman graphics decoded, `mdt2png.py --town`.
-4. eai1-8.bin — per-cavern enemy AI (~2 KB each).
+4. ~~eai1-8.bin + 11 boss AIs.~~ DONE (#21): `src/ai/` (ai_common.h ABI, eai1-8.c, 11 boss_*.c), `docs/ENEMIES.md` (per-cavern HP/contact/EXP/drop tables + patterns, boss phases). Ghidra mis-decodes DRGN/AKMA/MAO1 (header as code) — those were done from ndisasm.
 5. select.bin, mole.bin, opdemo/enddemo/rokademo (cutscenes last).
 
 Method per overlay: run ghidra_dump_c.py, then rename functions/globals against known anchors (service vectors, FF00 state page, request blocks with embedded filenames). Cross-check behavior in DOSBox.
