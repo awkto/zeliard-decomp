@@ -11,6 +11,18 @@ Overlay ↔ map: level-record byte +3 indexes fight.bin's 11-byte request table 
 18 ZEL2.  Boss rooms (from `mdt2png --info`): mp1d→1, mp2d→3, mp3d→5, mp4d→7, mp5d→9,
 mp6d→11, **mp73→18 (ZEL2, mid-cavern 7)**, mp7d→13, mp8d→15, mp90→16 (MAO1), mpa0→17 (MAO2).
 
+**The table index is NOT the resource number** — a consumer must read the `{archive, res#}`
+pair out of the 11-byte record, because both tables interleave cavern and boss entries.
+For `9CBC` (AI overlays) the ZELRES3 resource numbers by index are
+
+    0:2  1:10  2:3  3:11  4:4  5:12  6:5  7:13  8:6  9:14
+    10:7 11:15 12:8 13:17 14:9 15:18 16:19 17:20 18:16
+
+and `9D8D` (enemy sprite banks, ENP1-8 interleaved with the boss banks CRAB..MAO2.GRP)
+interleaves the same way: index 0 = ENP1, 1 = CRAB.GRP, 2 = ENP2, … 14 = ENP8.
+"Resource = index + 1" happens to be right only for cavern 1, which is why it can pass a
+cavern-1 test and fail everywhere else (it did, in `port/` — see `AI_RES`/`ENP_RES`).
+
 ## 1. AI overlay ABI
 
 Raw image loaded to `BASE:A000` (fight.bin `7EBB`), CS = DS = BASE.

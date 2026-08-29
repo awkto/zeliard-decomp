@@ -11,6 +11,21 @@ static void blit8(uint8_t *fb, const Cell8 *c, int x, int y)
     }
 }
 
+/* gfmcga 412F: a tile-bank cell blitted with colour 0 transparent (sprites) */
+static void blit8t(uint8_t *fb, const Cell8 *c, int x, int y)
+{
+    for (int r = 0; r < 8; r++) {
+        int yy = y + r;
+        if (yy < PF_Y || yy >= PF_Y + PF_H) continue;
+        for (int k = 0; k < 8; k++) {
+            if (!c->px[r][k]) continue;
+            int xx = x + k;
+            if (xx < PF_X || xx >= PF_X + PF_W) continue;
+            fb[yy * FB_W + xx] = c->px[r][k];
+        }
+    }
+}
+
 static void blit2(uint8_t *fb, const Cell2 *c, int x, int y, int flip)
 {
     for (int r = 0; r < 8; r++) {
@@ -144,9 +159,56 @@ static void draw_enemies(uint8_t *fb, const Game *g)
     }
 }
 
+/* 0x8366  projectiles: one tile-bank cell drawn transparently at the shot's
+ * ring cell, inside the window only (ring col 4..0x1F, screen row < 0x12). */
+static void draw_shots(uint8_t *fb, const Game *g)
+{
+    for (int i = 0; i <= MAX_SHOTS; i++) {
+        const Shot *s = &g->shots[i];
+        if (s->col == 0xFF) break;
+        if (!s->col) continue;
+        int sc = (int)s->col - 4;
+        if (sc < 0 || sc >= SCREEN_COLS) continue;
+        int sr = (int)((s->row - g->scroll_row) & 0x3F);
+        if (sr >= SCREEN_ROWS) continue;
+        uint8_t cell = shot_draw_cell(s);
+        if (!cell || !g->tiles->present[cell]) continue;
+        blit8t(fb, &g->tiles->cell[cell], PF_X + sc * 8, PF_Y + sr * 8);
+    }
+}
+
+/* 0x896E  the hero's spell sprites: 2x2 tile-bank cells at the record's cell. */
+static void draw_magic(uint8_t *fb, const Game *g)
+{
+    if (!g->magic_active) return;
+    static const int OFS[4][2] = {{0, 0}, {1, 0}, {0, 1}, {1, 1}};      /* 8C79 */
+    for (int i = 0; i < 4; i++) {
+        const Magic *m = &g->magic[i];
+        uint8_t cells[4];
+        if (!magic_sprite_cells(g, m, cells)) continue;
+        uint8_t rcol;
+        if (ai_map_col_to_ring(g, m->col, &rcol)) continue;
+        int sc = (int)rcol - 4, sr = (int)((m->row - g->scroll_row) & 0x3F);
+        for (int k = 0; k < 4; k++) {
+            int cx = sc + OFS[k][0], cy = sr + OFS[k][1];
+            if (cx < 0 || cx >= SCREEN_COLS || cy < 0 || cy >= SCREEN_ROWS) continue;
+            uint8_t cell = cells[k];
+            if (!cell || !g->tiles->present[cell]) continue;
+            blit8t(fb, &g->tiles->cell[cell], PF_X + cx * 8, PF_Y + cy * 8);
+        }
+    }
+}
+
 void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
 {
     memset(fb, 0, FB_W * FB_H);
+    if (g->walk_in) {                                   /* 7C6E: the walk-in cutscene */
+        if (!h) return;
+        int fr = (g->hero_flags & FACE_LEFT) ? 13 : 0;
+        fr += g->hero_anim & 3;
+        draw_hero_frame(fb, h, fr, 9, 0, g->walk_in_x, 110);
+        return;
+    }
     for (int sr = 0; sr < SCREEN_ROWS; sr++) {
         for (int sc = 0; sc < SCREEN_COLS; sc++) {
             uint8_t v = game_ring_cell(g, sc, sr);
@@ -161,6 +223,8 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
         }
     }
     draw_enemies(fb, g);
+    draw_shots(fb, g);
+    draw_magic(fb, g);
     if (h) draw_hero(fb, g, h);
 }
 

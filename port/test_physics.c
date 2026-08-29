@@ -6,6 +6,7 @@
 #include "map.h"
 #include "gfx.h"
 #include "physics.h"
+#include "enemy.h"
 
 static int fails = 0, checks = 0;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { fails++; fprintf(stderr, "  FAIL %s:%d: ", __FILE__, __LINE__); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
@@ -290,6 +291,141 @@ static void t_mp10(const char *dir)
     CHECK(hcol() >= 230 || hrow() != 7 || G.vstate != V_GROUND || hcol() < 3, "wrapped/moved: col %d row %d", hcol(), hrow());
 }
 
+
+/* ============================================ elevators / moving platforms */
+/* docs/FIGHT.md §5 "Elevators" (7FDC/8074/818E) and the fixture-C patrol
+ * (81AE/8244/8299).  MP10's own records are the fixtures under test. */
+static void t_fixtures(const char *dir)
+{
+    static Map m; static Tileset t;
+    if (map_load_system(&m, dir, 0)) { fprintf(stderr, "  (MP10 not available: skipping)\n"); return; }
+    if (gfx_load_tileset(&t, dir, m.tileset)) return;
+    /* the map's own lists: 2 elevators (A) and 4 patrolling platforms (C) */
+    int na = 0, nb = 0, nc = 0;
+    for (int i = 0; i < m.nfix; i++) { if (m.fix[i].kind == 0) na++; else if (m.fix[i].kind == 1) nb++; else nc++; }
+    CHECK(na == 2 && nb == 0 && nc == 4, "MP10 fixtures: %d A, %d B, %d C", na, nb, nc);
+    CHECK(m.fix[0].col == 48 && m.fix[0].row == 24 && m.fix[0].cell == 0x40, "elevator A0 at (48,24) cell 40");
+    CHECK(m.fix[2].kind == 2 && m.fix[2].var == 1 && m.fix[2].state == 0x80 && m.fix[2].lim_l == 1 && m.fix[2].lim_r == 15,
+          "platform C0: var %d state %02x limits %d..%d", m.fix[2].var, m.fix[2].state, m.fix[2].lim_l, m.fix[2].lim_r);
+
+    /* 7FB1: the three DCHR cells are written into the ring every frame */
+    game_init(&G, &m, &t); G.present = present;
+    game_place(&G, 48, 21, 0); G.nobj = 0;
+    game_first_frame(&G);
+    CHECK(game_ring_cell(&G, 12, 13) == 0x40 && game_ring_cell(&G, 13, 13) == 0x41 &&
+          game_ring_cell(&G, 14, 13) == 0x42, "the elevator's three cells are in the ring: %02x %02x %02x",
+          game_ring_cell(&G, 12, 13), game_ring_cell(&G, 13, 13), game_ring_cell(&G, 14, 13));
+
+    /* 8074: "up" raises the platform (and the hero) one row per frame; the
+     * floor one row under it (row 25) is solid, so "down" is refused. */
+    int r0 = hrow();
+    step(DIR_UP); step(DIR_UP); step(DIR_UP);
+    CHECK(hrow() == r0 - 3 && G.vstate == V_GROUND, "elevator up: row %d -> %d, vstate %02x", r0, hrow(), G.vstate);
+    CHECK(G.fix[0].row == 21, "the platform record followed: row %d", G.fix[0].row);
+    /* 7FDC: "down" brings it back */
+    step(DIR_DOWN); step(DIR_DOWN);
+    CHECK(hrow() == r0 - 1, "elevator down: row %d", hrow());
+    CHECK(G.fix[0].row == 23, "the platform record followed down: row %d", G.fix[0].row);
+    /* the floor blocks it at its home row */
+    step(DIR_DOWN); step(DIR_DOWN); step(DIR_DOWN);
+    CHECK(G.fix[0].row == 24, "the elevator stops on the floor at row %d", G.fix[0].row);
+
+    /* 8244/8299: the fixture-C platform patrols at half speed and carries the
+     * hero, reversing at lim_l with one paused frame. */
+    game_place(&G, 8, 40, 0); G.nobj = 0;
+    game_first_frame(&G);
+    int prev = hcol(), moves = 0;
+    for (int i = 0; i < 12; i++) { step(0); if (hcol() != prev) { moves++; prev = hcol(); } }
+    CHECK(hcol() == 2, "carried left to the limit: col %d", hcol());
+    CHECK(moves == 5, "var 1 moves every other frame: %d steps in 12 frames", moves);
+    for (int i = 0; i < 12; i++) step(0);
+    CHECK(hcol() > 2, "the platform reversed and carried the hero back right: col %d", hcol());
+}
+
+/* ================================================ locked doors and keys */
+/* docs/FIGHT.md §8 / 7E15: a locked door (letter bit7 clear) needs a key; the
+ * key is spent, bit7 is set and the door's story flag is OR-ed with its mask. */
+static void t_keys(const char *dir)
+{
+    static Map m; static Tileset t;
+    if (map_load_system(&m, dir, 0)) return;
+    if (gfx_load_tileset(&t, dir, m.tileset)) return;
+    const Door *locked = NULL;
+    for (int i = 0; i < m.ndoors; i++) if (!(m.doors[i].letter & 0x80)) { locked = &m.doors[i]; break; }
+    CHECK(locked && locked->col == 26 && locked->row == 15, "MP10's locked door is (26,15)");
+    if (!locked) return;
+    CHECK(locked->flag_ptr == 3 && locked->flag_mask == 0x80, "its story flag is [03] bit7");
+
+    game_init(&G, &m, &t); G.present = present;
+    game_place(&G, 26, 16, 0); G.nobj = 0;
+    G.on_door = door_cb; taken = NULL;
+    game_first_frame(&G);
+    G.keys = 0;
+    step(DIR_UP);
+    CHECK(!taken, "a locked door does not open without a key");
+    CHECK(!strcmp(G.message, fight_message(MSG_DOOR_LOCKED)), "message: \"%s\"", G.message);
+    CHECK(G.msg_box == 0xFF, "the message box is up");
+    /* 7210: the box is erased 32 frames later */
+    for (int i = 0; i < 32; i++) step(0);
+    CHECK(G.msg_box == 0 && G.message[0] == 0, "the message box closes after 32 frames");
+
+    G.keys = 2;
+    G.door_msg_latch = 0;
+    step(DIR_UP);
+    CHECK(G.keys == 1, "one key spent, %u left", G.keys);
+    CHECK(G.map->doors[0].letter & 0x80, "the door is now unlocked (letter %02x)", G.map->doors[0].letter);
+    CHECK(G.page[3] & 0x80, "the door's story flag [03] bit7 was set");
+    CHECK(G.sfx_request == 0x15 || sound_count(0x15) > 0, "sound 0x15 requested");
+    step(DIR_UP);
+    CHECK(taken && taken->dest_map == 1 && taken->dest_col == 27, "the unlocked door now opens");
+}
+
+/* ======================================================= the C00C patches */
+/* 0x6BFC: {u16 flag_ptr, u8 mask, {u16 addr, u16 val}.. FFFF}.. FFFF */
+static void t_patches(const char *dir)
+{
+    static Map m; static uint8_t page[256];
+    if (map_load_system(&m, dir, 0)) return;
+    CHECK(m.patches >= 0xC000, "MP10 has a C00C patch list at %04X", m.patches);
+    memset(page, 0, sizeof page);
+    CHECK(map_apply_patches(&m, page) == 0, "no patch fires with a fresh player page");
+    /* every condition byte of the list must be a player-record address */
+    int n = 0;
+    for (int f = 0; f < 256; f++) {
+        memset(page, 0, sizeof page);
+        page[f] = 0xFF;
+        static Map m2;
+        if (map_load_system(&m2, dir, 0)) break;
+        n += map_apply_patches(&m2, page);
+        map_free(&m2);
+    }
+    CHECK(n > 0, "some story flag does fire MP10's patches (%d pokes)", n);
+    map_free(&m);
+}
+
+/* ====================================================== the 26-frame walk-in */
+/* 0x7C6E: after a transition the hero walks in over 26 frames, 8 px each. */
+static void t_walk_in(const char *dir)
+{
+    static Map m; static Tileset t;
+    if (map_load_system(&m, dir, 0)) return;
+    if (gfx_load_tileset(&t, dir, m.tileset)) return;
+    game_init(&G, &m, &t); G.present = present;
+    game_place(&G, 61, 7, 0);
+    G.nobj = 0;
+    game_start_walk_in(&G, 0);
+    CHECK(G.walk_in == 26 && G.walk_in_x == 40 && G.walk_in_dir == 8, "walk-in: %d frames from x=%d", G.walk_in, G.walk_in_x);
+    CHECK(G.hero_entering == 0xFF, "hero_entering is set during the walk-in");
+    for (int i = 0; i < 25; i++) step(0);
+    CHECK(G.walk_in == 1 && G.walk_in_x == 40 + 25 * 8, "after 25 frames x = %d", G.walk_in_x);
+    step(0);
+    CHECK(G.walk_in == 0 && !G.hero_entering, "the walk-in ends after 26 frames");
+    CHECK(G.hero_scr_col == 0x0C && G.hero_scr_row == m.row_bias && G.hero_anim == 0x80,
+          "7D28: hero back on screen column 12, row %d", G.hero_scr_row);
+    game_start_walk_in(&G, 1);
+    CHECK(G.walk_in_x == 256 && G.walk_in_dir == -8 && (G.hero_flags & FACE_LEFT), "entering from the right");
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -304,7 +440,15 @@ int main(int argc, char **argv)
         tests[i].fn();
         fprintf(stderr, "%-14s %s\n", tests[i].name, fails == before ? "ok" : "FAILED");
     }
-    int before = fails; t_mp10(dir); fprintf(stderr, "%-14s %s\n", "mp10", fails == before ? "ok" : "FAILED");
+    struct { const char *name; void (*fn)(const char *); } mtests[] = {
+        {"mp10", t_mp10}, {"fixtures", t_fixtures}, {"keys", t_keys},
+        {"patches", t_patches}, {"walk-in", t_walk_in},
+    };
+    for (size_t i = 0; i < sizeof mtests / sizeof mtests[0]; i++) {
+        int before = fails;
+        mtests[i].fn(dir);
+        fprintf(stderr, "%-14s %s\n", mtests[i].name, fails == before ? "ok" : "FAILED");
+    }
     fprintf(stderr, "%d checks, %d failures\n", checks, fails);
     return fails ? 1 : 0;
 }

@@ -123,14 +123,17 @@ int gfx_load_hero(HeroGfx *h, const char *dir)
     return 0;
 }
 
-/* fight.bin 9D8D: the per-cavern enemy sprite banks ENP1..ENP8 */
-static const int ENP_RES[8] = {56, 57, 58, 59, 60, 61, 62, 63};
+/* fight.bin 9D8D: the enemy sprite bank per level-record byte +4.  The table
+ * interleaves the cavern banks with the boss banks, exactly like the AI table
+ * at 9CBC: 0 ENP1, 1 CRAB, 2 ENP2, 3 TAKO, ... 14 ENP8, 15 AKMA, 16 MAO1,
+ * 17 MAO2.  Values are 0-based ZELRES3 indices (the table's res# minus 1). */
+static const int ENP_RES[18] = {56, 64, 57, 65, 58, 66, 59, 67, 60, 68, 61, 69, 62, 70, 63, 71, 72, 73};
 
 int gfx_load_enemy_cells(EnemyGfx *e, const char *dir, int enp_index)
 {
     pal_init();
     memset(e, 0, sizeof *e);
-    if (enp_index < 0 || enp_index > 7) return -1;
+    if (enp_index < 0 || enp_index > 17) return -1;
     size_t len;
     uint8_t *d = sar_load(dir, 2, ENP_RES[enp_index], 1, &len);
     if (!d) return -1;

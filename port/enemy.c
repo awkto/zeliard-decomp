@@ -15,13 +15,19 @@ static uint16_t ov16(const AiOverlay *o, unsigned addr)
     return (uint16_t)(o->img[off] | o->img[off + 1] << 8);
 }
 
-/* fight.bin 7EBB loads ZELRES3[request+1] (request table 9CBC: 0 EAI1, 1 CRAB,
- * 2 EAI2, ... 18 ZEL2) raw to BASE:A000. */
+/* fight.bin 7EBB loads the AI overlay named by the level record's byte +3
+ * through the request table at 9CBC: 0 EAI1, 1 CRAB, 2 EAI2, 3 TAKO, 4 EAI3,
+ * 5 TORI, 6 EAI4, 7 ZELA, 8 EAI5, 9 MEDA, 10 EAI6, 11 LEGA, 12 EAI7, 13 DRGN,
+ * 14 EAI8, 15 AKMA, 16 MAO1, 17 MAO2, 18 ZEL2 — raw to BASE:A000.  The values
+ * below are the 0-based ZELRES3 indices (the table's res# minus 1). */
+static const int AI_RES[19] = {1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 16, 8, 17, 18, 19, 15};
+
 int ai_load(AiOverlay *o, const char *dir, int ai_index)
 {
     memset(o, 0, sizeof *o);
+    if (ai_index < 0 || ai_index > 18) return -1;
     size_t len;
-    uint8_t *img = sar_load(dir, 2, ai_index + 1, 1, &len);
+    uint8_t *img = sar_load(dir, 2, AI_RES[ai_index], 1, &len);
     if (!img || len < 0xB0) { free(img); return -1; }
     o->img = img; o->len = len; o->index = ai_index;
     memcpy(o->exp, img + 0x08, 8);                                      /* A008 */
@@ -144,7 +150,9 @@ void item_update(Game *g, MapObj *o)
     case 3: {                                                           /* 8EF6 treasure box */
         static const unsigned box[5] = {50, 100, 0, 500, 1000};
         unsigned n = box[(o->phase >> 4) & 3];
-        if (n) { gold_add(g, n); snprintf(g->message, sizeof g->message, "You get %u gold.", n); }
+        static const int msg[5] = {MSG_GOLD50, MSG_GOLD100, MSG_BOX_EMPTY, MSG_GOLD500, MSG_GOLD1000};
+        if (n) gold_add(g, n);
+        game_message(g, fight_message(msg[(o->phase >> 4) & 3]));       /* 9A1E table */
         g->sfx_request = 0x11;
         enemy_remove(g, o);
         return; }
@@ -154,13 +162,19 @@ void item_update(Game *g, MapObj *o)
         snprintf(g->message, sizeof g->message, "%u G", n);
         enemy_remove(g, o);
         return; }
-    case 7: g->keys++;      g->sfx_request = 0x14; snprintf(g->message, sizeof g->message, "You get a Key."); enemy_remove(g, o); return;
-    case 8: g->lion_keys++; g->sfx_request = 0x14; snprintf(g->message, sizeof g->message, "Get the lion's head Key."); enemy_remove(g, o); return;
+    case 7: g->keys++;      g->sfx_request = 0x14; game_message(g, fight_message(MSG_KEY)); enemy_remove(g, o); return;
+    case 8: g->lion_keys++; g->sfx_request = 0x14; game_message(g, fight_message(MSG_LION_KEY)); enemy_remove(g, o); return;
     case 9: g->hp_regen_pending += 10;                          /* 9008: +80 HP */
-        snprintf(g->message, sizeof g->message, "You have recovered."); g->sfx_request = 0x13; enemy_remove(g, o); return;
+        game_message(g, fight_message(MSG_RECOVERED)); g->sfx_request = 0x13; enemy_remove(g, o); return;
     case 0xA: g->hp_regen_pending = (uint16_t)(g->hp_regen_pending + g->max_hp / 8 + 1);   /* 901C */
-        snprintf(g->message, sizeof g->message, "You have recovered full."); g->sfx_request = 0x13; enemy_remove(g, o); return;
-    case 0xE: g->hero_crest = 0xFF; snprintf(g->message, sizeof g->message, "Hero's Crest!"); enemy_remove(g, o); return;
+        game_message(g, fight_message(MSG_RECOVERED_FULL)); g->sfx_request = 0x13; enemy_remove(g, o); return;
+    case 0xB: case 0xC: {                                       /* 909D/9090: shoes by cavern (table 90CA) */
+        static const uint8_t by_cavern[10] = {0, 0, 0, 0, 4, 2, 3, 0, 0, 0};
+        static const int msg[6] = {0, 0, MSG_PIRIKA, MSG_SILKARN, MSG_RUZERIA, 0};
+        int sh = st == 0xC ? 1 : by_cavern[g->map->cavern < 10 ? g->map->cavern : 0];
+        if (sh) { g->shoes = (uint8_t)sh; game_message(g, fight_message(sh == 1 ? MSG_FERUZA : msg[sh])); }
+        g->sfx_request = 0x13; enemy_remove(g, o); return; }
+    case 0xE: g->hero_crest = 0xFF; game_message(g, fight_message(MSG_HERO_CREST)); enemy_remove(g, o); return;
     default:
         fprintf(stderr, "[item] state %X at (%u,%u) picked up (not implemented)\n", st, o->col, o->row);
         enemy_remove(g, o);
@@ -182,9 +196,9 @@ void enemy_spawn(Game *g, MapObj *o)
     if (r == 0 || r == 0x23) return;
     uint8_t dy = (uint8_t)((o->home_row - (g->scroll_row - 2)) & 0x3F);
     if (dy < 0x18 && r >= 3 && r < 0x20) return;                        /* 953B: would pop up on screen */
-    if (o->flags & 0x10) return;                                        /* tall spawns: not implemented */
     int p = game_ring_index(g, o->home_row, r);
-    for (int dr = -1; dr <= 1; dr++)
+    int rows = (o->flags & 0x10) ? 5 : 1;                               /* a tall enemy is 4 rows */
+    for (int dr = -1; dr < rows + 1; dr++)
         for (int dc = -1; dc <= 1; dc++)
             if (g->ring[game_ring_add(p, dr * RING_W + dc)] & 0x80) return;
     o->rcol = r;
@@ -192,15 +206,41 @@ void enemy_spawn(Game *g, MapObj *o)
     o->phase = 0x10; o->hit = 0; o->next = 0; o->link = 0; o->hp = 0;
     g->under_sprite[idx] = g->ring[p];
     g->ring[p] = (uint8_t)(0x80 | idx);
+    if ((o->flags & 0x10) && idx + 1 < g->nobj) {                       /* the lower half of a 2x4 sprite */
+        MapObj *lo = &o[1];
+        lo->col = o->col; lo->rcol = r;
+        lo->row = (uint8_t)((o->row + 2) & 0x3F);
+        lo->type = (uint8_t)(o->home_type + 1);
+        lo->phase = 0x10; lo->hit = 0; lo->next = 0; lo->link = 0; lo->hp = 0;
+        int q = game_ring_add(p, 2 * RING_W);
+        g->under_sprite[idx + 1] = g->ring[q];
+        g->ring[q] = (uint8_t)(0x80 | (idx + 1));
+    }
 }
 
 /* 8DF7 jmp [cs:A000].  Only EAI1 (cavern 1) is ported so far; in the other
  * caverns the enemies stand still but can still be hit and killed. */
 static void ai_entry(Game *g, MapObj *o)
 {
-    if (g->ai && g->ai->index == 0) { eai1_entry(g, o); return; }
-    static int warned = 0;
-    if (!warned) { warned = 1; fprintf(stderr, "[ai] overlay %d is not ported: enemies are inert\n", g->ai ? g->ai->index : -1); }
+    /* fight.bin 9CBC request table: 0 EAI1, 1 CRAB, 2 EAI2, 3 TAKO, 4 EAI3,
+     * 5 TORI, 6 EAI4, 7 ZELA, 8 EAI5, 9 MEDA, 10 EAI6, 11 LEGA, 12 EAI7,
+     * 13 DRGN, 14 EAI8, 15 AKMA, 16 MAO1, 17 MAO2, 18 ZEL2. */
+    switch (g->ai ? g->ai->index : -1) {
+    case 0:  eai1_entry(g, o); return;
+    case 2:  eai2_entry(g, o); return;
+    case 4:  eai3_entry(g, o); return;
+    case 6:  eai4_entry(g, o); return;
+    case 8:  eai5_entry(g, o); return;
+    case 10: eai6_entry(g, o); return;
+    case 12: eai7_entry(g, o); return;
+    case 14: eai8_entry(g, o); return;
+    default: break;
+    }
+    static int warned = -1;
+    if (warned != (g->ai ? g->ai->index : -1)) {
+        warned = g->ai ? g->ai->index : -1;
+        fprintf(stderr, "[ai] overlay %d is a boss overlay and is not ported: enemies are inert\n", warned);
+    }
     if (!o->hp) o->hp = 1;
     if (o->hit & 0x20) enemy_take_damage(g, o);
 }

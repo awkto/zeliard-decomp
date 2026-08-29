@@ -18,9 +18,20 @@ static const struct { uint8_t archive, res; const char *name; } SYSMAP[] = {
     {1, 41, "HLMP"}, {1, 42, "TMMP"}, {1, 43, "DRMP"}, {1, 44, "LLMP"}, {1, 45, "PRMP"}, {1, 46, "ESMP"},
 };
 
+void map_free(Map *m) { free(m->raw); m->raw = NULL; m->rawlen = 0; }
+
 int map_parse(Map *m, const uint8_t *d, size_t len)
 {
+    uint8_t *keep;                              /* keep the image itself for 6BFC */
+    if (d == m->raw) { keep = m->raw; m->raw = NULL; }      /* re-parse after a patch */
+    else {
+        keep = malloc(len ? len : 1);
+        if (keep) memcpy(keep, d, len);
+        free(m->raw); m->raw = NULL;
+        d = keep ? keep : d;
+    }
     memset(m, 0, sizeof *m);
+    m->raw = keep; m->rawlen = keep ? len : 0;
     if (len < 0x1B) return -1;
     m->width = u16(d, 2);
     if (m->width < 1 || m->width > MAP_MAX_WIDTH) return -1;
@@ -47,16 +58,23 @@ int map_parse(Map *m, const uint8_t *d, size_t len)
             while (n-- && row < MAP_ROWS) m->grid[c][row++] = (uint8_t)v;
         }
     }
-    /* fixture lists A/B/C */
+    /* fixture lists A (C004) / B (C006) / C (C008) — see struct Fixture */
     const struct { int ptr_off, size, cell; } FL[3] = {{4, 3, 0x40}, {6, 3, 0x43}, {8, 7, 0x46}};
     for (int k = 0; k < 3; k++) {
         size_t o = u16(d, FL[k].ptr_off) - BASE;
-        while (o + 3 <= len && u16(d, o) != 0xFFFF && m->nfix < 256) {
+        while (o + (size_t)FL[k].size <= len && u16(d, o) != 0xFFFF && m->nfix < 256) {
             Fixture *f = &m->fix[m->nfix++];
             f->col = u16(d, o) & 0x3FFF; f->row = d[o + 2] & 0x3F; f->cell = (uint8_t)FL[k].cell;
+            f->kind = (uint8_t)k;
+            if (k == 2) {                                   /* 81AE / 8299 */
+                f->var = (uint8_t)((u16(d, o) >> 14) & 3);
+                f->state = (uint8_t)(d[o + 2] & 0xC0);
+                f->lim_l = u16(d, o + 3); f->lim_r = u16(d, o + 5);
+            }
             o += FL[k].size;
         }
     }
+    m->patches = u16(d, 0xC);
     /* doors */
     size_t o = u16(d, 0xA) - BASE;
     while (o + 12 <= len && u16(d, o) != 0xFFFF && m->ndoors < 64) {
@@ -107,4 +125,45 @@ void map_from_text(Map *m, int width, const char *const rows[MAP_ROWS])
             m->grid[c][r] = (uint8_t)v;
         }
     }
+}
+
+/* 0x6BFC  the conditional poke list at [C00C].  Every record is
+ * {u16 flag_ptr, u8 mask, {u16 addr, u16 val}... 0xFFFF}; when
+ * (*flag_ptr & mask) != 0 each addr (a BASE offset) is set to val.  The
+ * shipped lists poke the map image itself (door records, tile stream, object
+ * table), so the port applies them to the raw .mdt and re-parses it. */
+int map_apply_patches(Map *m, const uint8_t page[256])
+{
+    if (!m->raw || !m->patches) return 0;
+    uint8_t *d = m->raw;
+    size_t len = m->rawlen;
+    size_t o = (size_t)(m->patches - BASE);
+    int applied = 0, guard = 0;
+    while (o + 3 <= len && ++guard < 256) {
+        uint16_t fp = u16(d, o);
+        if (fp == 0xFFFF) break;
+        uint8_t mask = d[o + 2];
+        o += 3;
+        int on = page && (page[fp & 0xFF] & mask) != 0;
+        while (o + 4 <= len) {
+            uint16_t addr = u16(d, o);
+            if (addr == 0xFFFF) { o += 2; break; }
+            if (on) {
+                uint16_t val = u16(d, o + 2);
+                if (addr >= BASE && (size_t)(addr - BASE) + 1 < len) {
+                    d[addr - BASE] = (uint8_t)val;
+                    d[addr - BASE + 1] = (uint8_t)(val >> 8);
+                    applied++;
+                }
+            }
+            o += 4;
+        }
+    }
+    if (applied) {
+        char name[16];
+        memcpy(name, m->name, sizeof name);
+        map_parse(m, m->raw, m->rawlen);                    /* map_parse re-uses the image */
+        memcpy(m->name, name, sizeof name);
+    }
+    return applied;
 }

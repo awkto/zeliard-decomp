@@ -91,6 +91,7 @@ static void scroll_left(Game *g)                                                
     if (--g->scroll_col < 0) g->scroll_col = g->map->width - 1;
     memmove(g->ring + 1, g->ring, RING_SIZE - 1);
     ring_put_column(g, 0, g->scroll_col);
+    shots_shift(g, 1);                                                  /* 864E */
 }
 static void scroll_right(Game *g)                                                                       /* 68A0 */
 {
@@ -98,6 +99,7 @@ static void scroll_right(Game *g)                                               
     int c = g->scroll_col + 0x23; if (c >= g->map->width) c -= g->map->width;
     ring_put_column(g, 0x23, c);
     if (++g->scroll_col == g->map->width) g->scroll_col = 0;
+    shots_shift(g, 0);                                                  /* 8639 */
 }
 static void scroll_up(Game *g)   { g->scroll_row = (uint8_t)((g->scroll_row - 1) & 0x3F); }             /* 6621 */
 static void scroll_down(Game *g) { g->scroll_row = (uint8_t)((g->scroll_row + 1) & 0x3F); }             /* 6B2E */
@@ -109,6 +111,11 @@ static void walk_right(Game *g);
 static int  try_move_left(Game *g);
 static int  try_move_right(Game *g);
 static int  floor_under_hero(Game *g);
+static int  elevator_up(Game *g);
+static int  elevator_down(Game *g);
+static int  fixture_ride(Game *g);
+static void message_tick(Game *g);
+static void walk_in_step(Game *g);
 
 static void stop_rising(Game *g) { g->conveyor = 0; g->vstate = V_FALL; }                              /* 65BA */
 static void turn_around(Game *g) { g->hero_flags ^= FACE_LEFT; if (!g->on_ladder) g->hero_anim = 0x80; }   /* 6824 */
@@ -255,6 +262,21 @@ static void ladder_mount(Game *g)
     if (is_ladder(g->ring[wrap_down(tl + 2)])) { if (!(g->hero_flags & FACE_LEFT)) walk_right(g); return; }
 }
 
+/* 0x7E15  spend a key (dflags bit0 = lion key) on a locked door: the letter's
+ * bit 7 is set so the next "up" opens it, and the door's story flag is OR-ed
+ * with its mask.  Returns 1 when the door was unlocked. */
+static int door_unlock(Game *g, Door *d)
+{
+    uint8_t *n = (d->dflags & 1) ? &g->lion_keys : &g->keys;
+    if (!*n) return 0;
+    (*n)--;
+    g->sfx_request = 0x15;
+    d->letter |= 0x80;
+    if (d->flag_ptr != 0xFFFF) g->page[d->flag_ptr & 0xFF] |= d->flag_mask;   /* 7E39 */
+    game_message(g, (d->dflags & 1) ? fight_message(MSG_LION_KEY) : fight_message(MSG_KEY));
+    return 1;
+}
+
 /* 7A83: returns 1 when it consumed the "up" (door entered, message, or side step) */
 static int door_check(Game *g)
 {
@@ -264,17 +286,20 @@ static int door_check(Game *g)
     if (g->ring[wrap_down(s + 1)] != DOOR_CELL) return 0;
     int col = game_hero_map_col(g);
     int row = (g->hero_scr_row - 1 + g->scroll_row) & 0x3F;
-    const Door *d = NULL;
+    Door *d = NULL;
     for (int i = 0; i < g->map->ndoors; i++)
-        if (g->map->doors[i].col == col && g->map->doors[i].row == row) { d = &g->map->doors[i]; break; }
+        if (g->map->doors[i].col == col && g->map->doors[i].row == row) { d = &((Map *)g->map)->doors[i]; break; }
     if (!d) return 0;
-    if (!(d->letter & 0x80)) {
-        /* 7E15: would consume a key / lion key; keys are stubbed */
-        if (!g->door_msg_latch) {
+    if (!(d->letter & 0x80)) {                                          /* 7AF7: locked */
+        if (door_unlock(g, (Door *)d)) {                                /* 7E15: a key opens it */
+            g->hero_anim = 0x80; g->ice_steps = 0;                      /* 7B03 */
+            return 1;
+        }
+        g->hero_anim = 0x80; g->ice_steps = 0;
+        if (!g->door_msg_latch) {                                       /* 7B0D */
             g->door_msg_latch = 0xFF;
-            snprintf(g->message, sizeof g->message, "Can't open this door.");
-            fprintf(stderr, "[door] locked door at (%d,%d) -> map %02x (%d,%d): %s\n",
-                    d->col, d->row, d->dest_map, d->dest_col, d->dest_row, g->message);
+            g->sfx_request = 0x16;
+            game_message(g, fight_message(MSG_DOOR_LOCKED));            /* 9AC5 */
         }
         return 1;
     }
@@ -290,7 +315,7 @@ static void jump_up(Game *g)
 {
     g->regen_tick = 0;
     if (door_check(g)) return;                                          /* 7AF6 pops jump_up's return */
-    /* elevator_up (8074): elevators are not implemented yet */
+    if (elevator_up(g)) return;                                         /* 8074 */
     ladder_mount(g);
     rise(g);
 }
@@ -302,7 +327,7 @@ static void down_pressed(Game *g)
 {
     g->regen_tick = 0;
     if (g->conveyor) return;
-    /* elevator_down (7FDC): not implemented */
+    if (elevator_down(g)) return;                                        /* 7FDC */
     int s = wrap_down(game_hero_cell(g) + 0x6D);                         /* row+3, col+1 */
     if (is_ladder(g->ring[s])) {
         for (;;) {
@@ -391,7 +416,7 @@ static int gravity(Game *g)
 {
     if (g->on_updraft) return 1;
     if (g->vstate & 0x80) return 1;
-    /* elevator_ride (818E): not implemented */
+    if (fixture_ride(g)) return 1;                                      /* 818E */
     conveyor_check(g);
     if (floor_under_hero(g)) return land(g);
 
@@ -498,20 +523,188 @@ static void signs_draw(Game *g)
     }
 }
 
-/* 7FB1 / 8163 / 81AE: fixture cells written into the ring each frame (static; the
- * elevator motion and fixture-C variants are not implemented). */
+/* ------------------------------------------------------------- fixtures */
+/* Fixture lists A/B/C (docs/FIGHT.md §5, src/fight.c 7FB1 / 8163 / 81AE).
+ * The cells live only in the ring, so every frame the previous three cells are
+ * restored from the map grid and the new ones written (8352 writes into
+ * under_sprite[] when a sprite marker covers the cell). */
+
+/* 0x82F8  ring column of a fixture's leftmost cell; -1 when off the ring. */
+static int fixture_rcol(const Game *g, uint16_t col)
+{
+    int d = (int)col - g->scroll_col;
+    if (d < 0) d += g->map->width;
+    return (d < 0 || d > 0x21) ? -1 : d;
+}
+
+/* 0x8352  write a cell into the ring, or under a sprite marker. */
+static void fixture_put(Game *g, int p, uint8_t v)
+{
+    uint8_t cur = g->ring[p];
+    if (cur & 0x80) { int i = cur & 0x7F; if (i < MAX_OBJS) g->under_sprite[i] = v; return; }
+    g->ring[p] = v;
+}
+static uint8_t map_cell(const Game *g, int col, int row)
+{
+    while (col < 0) col += g->map->width;
+    while (col >= g->map->width) col -= g->map->width;
+    return g->map->grid[col][row & 0x3F];
+}
+static void fixture_erase(Game *g, Fixture *f)
+{
+    if (!f->drawn) return;
+    f->drawn = 0;
+    int rc = fixture_rcol(g, f->drawn_col);
+    if (rc < 0) return;
+    for (int k = 0; k < 3 && rc + k < RING_W; k++)
+        fixture_put(g, game_ring_index(g, f->drawn_row, (uint8_t)(rc + k)),
+                    map_cell(g, (int)f->drawn_col + k, f->drawn_row));
+}
+static void fixture_draw_one(Game *g, Fixture *f)
+{
+    int rc = fixture_rcol(g, f->col);
+    if (rc < 0) return;
+    for (int k = 0; k < 3 && rc + k < RING_W; k++)
+        fixture_put(g, game_ring_index(g, f->row, (uint8_t)(rc + k)), (uint8_t)(f->cell + k));
+    f->drawn = 1; f->drawn_col = f->col; f->drawn_row = f->row;
+}
+
+/* 0x82B4  is the hero standing on this fixture?  (grounded, its row is the row
+ * under his feet, and one of its three columns is under his body). */
+static int hero_on_fixture(const Game *g, const Fixture *f)
+{
+    if (g->vstate || g->on_ladder) return 0;
+    if ((uint8_t)((g->hero_scr_row + g->scroll_row + 3) & 0x3F) != (f->row & 0x3F)) return 0;
+    int rc = fixture_rcol(g, f->col);
+    if (rc < 0) return 0;
+    int hc = g->hero_scr_col + 4;
+    return hc >= rc && hc < rc + 3;
+}
+
+/* 0x8244/0x8252  fixture C: patrol between lim_l and lim_r, carrying the hero. */
+static void fixture_c_move(Game *g, Fixture *f)
+{
+    if (!f->var) return;
+    if (f->var == 1 && !(g->fixture_anim & 1)) return;                  /* 824A: half speed */
+    uint8_t paused = (uint8_t)(f->state & 0x40);
+    f->state &= (uint8_t)~0x40;                                         /* 8255 */
+    if (paused) return;
+    int carry = hero_on_fixture(g, f);
+    int col;
+    if (!(f->state & 0x80)) {                                           /* 8265: moving right */
+        col = f->col + 1;
+        if (col >= g->map->width) col -= g->map->width;
+        if (carry) try_move_right(g);                                   /* 8276: 684C */
+    } else {                                                            /* 8280: moving left */
+        col = (int)f->col - 1;
+        if (col < 0) col += g->map->width;
+        if (carry) try_move_left(g);                                    /* 8291: 66A5 */
+    }
+    f->col = (uint16_t)col;
+    uint16_t lim = (f->state & 0x80) ? f->lim_l : f->lim_r;             /* 827B / 8296 */
+    if (col == (int)lim) { f->state ^= 0x80; f->state |= 0x40; }        /* 82AB */
+}
+
+/* the live copy of the map's fixture lists (they move, the map must not) */
+static void fixtures_load(Game *g)
+{
+    g->nfix = g->map->nfix;
+    if (g->nfix > 256) g->nfix = 256;
+    for (int i = 0; i < g->nfix; i++) { g->fix[i] = g->map->fix[i]; g->fix[i].drawn = 0; }
+    g->fixture_anim = 0;
+}
+
 static void fixtures_draw(Game *g)
 {
-    for (int i = 0; i < g->map->nfix; i++) {
-        const Fixture *f = &g->map->fix[i];
-        for (int k = 0; k < 3; k++) {
-            int mc = f->col + k; if (mc >= g->map->width) mc -= g->map->width;
-            int d = mc - g->scroll_col; if (d < 0) d += g->map->width;
-            if (d < 0 || d >= RING_W) continue;
-            int p = (f->row & 0x3F) * RING_W + d;
-            if (!(g->ring[p] & 0x80)) g->ring[p] = (uint8_t)(f->cell + k);
-        }
+    g->fixture_anim++;                                                  /* 81AE */
+    for (int i = 0; i < g->nfix; i++) fixture_erase(g, &g->fix[i]);
+    for (int i = 0; i < g->nfix; i++) {
+        Fixture *f = &g->fix[i];
+        if (f->kind == 2) fixture_c_move(g, f);
+        fixture_draw_one(g, f);
     }
+}
+
+/* 0x814C  which of the three cells of a `first`-based fixture is `v`?
+ * Returns the offset 0..2, or -1. */
+static int fixture_cell_index(uint8_t v, uint8_t first) { return (uint8_t)(v - first) < 3 ? v - first : -1; }
+
+/* 0x8109  the record whose leftmost cell sits `idx` cells left of the hero's
+ * body column, on the row under his feet. */
+static Fixture *fixture_under_hero(Game *g, int kind, int idx)
+{
+    int col = g->scroll_col + g->hero_scr_col + 4 + 1 - idx;
+    while (col >= g->map->width) col -= g->map->width;
+    while (col < 0) col += g->map->width;
+    uint8_t row = (uint8_t)((g->scroll_row + g->hero_scr_row + 3) & 0x3F);
+    for (int i = 0; i < g->nfix; i++)
+        if (g->fix[i].kind == kind && g->fix[i].col == (uint16_t)col && (g->fix[i].row & 0x3F) == row)
+            return &g->fix[i];
+    return NULL;
+}
+
+/* 0x8024  move a platform one row (dr = +1 down, -1 up) if the three cells it
+ * would occupy are empty and free of sprites.  Returns 1 when it moved. */
+static int fixture_shift_row(Game *g, Fixture *f, int dr)
+{
+    int rc = fixture_rcol(g, f->col);
+    if (rc < 0) return 0;
+    uint8_t nrow = (uint8_t)((f->row + dr) & 0x3F);
+    int probe = game_ring_index(g, nrow, (uint8_t)rc);
+    for (int k = -1; k < 3; k++) {                                      /* 802B: also the cell left of it */
+        int p = game_ring_add(probe, k);
+        if (k < 0) { if (g->ring[p] & 0x80) return 0; continue; }
+        if (g->ring[p] != 0) return 0;                                  /* 803C: must be empty */
+    }
+    fixture_erase(g, f);
+    f->row = nrow;
+    fixture_draw_one(g, f);
+    return 1;
+}
+
+/* 0x7FDC  "down" on an elevator (fixture A): the platform and the hero sink
+ * one row.  Returns 1 when the rest of down_pressed must be skipped (8000). */
+static int elevator_down(Game *g)
+{
+    if (g->on_ladder) return 0;
+    uint8_t v = g->ring[wrap_down(game_hero_cell(g) + 0x6D)];            /* row+3, col+1 */
+    int idx = fixture_cell_index(v, 0x40);
+    if (idx < 0) return 0;
+    Fixture *f = fixture_under_hero(g, 0, idx);
+    if (!f) return 0;
+    if (!fixture_shift_row(g, f, 1)) return 0;
+    g->hero_anim = 0x80;
+    scroll_down(g);                                                     /* 8006 */
+    return 1;
+}
+
+/* 0x8074  "up" on an elevator: the platform and the hero rise one row. */
+static int elevator_up(Game *g)
+{
+    if (g->on_ladder) return 0;
+    if (!passable_wall(g->ring[wrap_up(game_hero_cell(g) - 0x23)])) return 0;   /* 8085: head room */
+    uint8_t v = g->ring[wrap_down(game_hero_cell(g) + 0x6D)];
+    int idx = fixture_cell_index(v, 0x40);
+    if (idx < 0) return 0;
+    Fixture *f = fixture_under_hero(g, 0, idx);
+    if (!f) return 0;
+    if (!fixture_shift_row(g, f, -1)) return 0;
+    g->hero_anim = 0x80;
+    scroll_up(g);
+    return 1;
+}
+
+/* 0x818E  a fixture-B gate sinks one row per frame while it carries the hero. */
+static int fixture_ride(Game *g)
+{
+    uint8_t v = g->ring[wrap_down(game_hero_cell(g) + 0x6D)];
+    int idx = fixture_cell_index(v, 0x43);
+    if (idx < 0) return 0;
+    Fixture *f = fixture_under_hero(g, 1, idx);
+    if (!f) return 0;
+    if (!fixture_shift_row(g, f, 1)) return 0;
+    scroll_down(g);                                                     /* 81AB */
+    return 1;
 }
 
 /* 74A0: hazard tiles (damage is logged/counted only) */
@@ -550,20 +743,26 @@ static void frame(Game *g)
     g->hero_map_row = (uint8_t)((g->hero_scr_row + g->scroll_row) & 0x3F);
     fixtures_draw(g);
     signs_draw(g);
+    magic_update(g);                                                    /* 8AAD */
     if (!g->boss_defeated) enemies_update(g);                           /* 8D19 */
     g->hero_hit_flash = 0; g->hero_hit = 0;
     hero_enemy_contact(g);                                              /* 751F */
-    /* shots_update / orbs_update (8422/86FC): no projectiles yet */
+    shots_update(g);                                                    /* 8422 */
+    orbs_update(g);                                                     /* 86FC */
     hazard_check(g);
     if (g->map->cavern == 7 && g->shoes != 5 && ((++g->heat_timer & 0x3F) == 0)) {   /* 704F */
         g->hero_hit_flash = 0xFF; g->sfx_request = 9; hero_damage(g, 0x0F);
-        snprintf(g->message, sizeof g->message, "It's too hot !!");
+        game_message(g, fight_message(MSG_TOO_HOT));                    /* 9BB9 */
     }
+    message_tick(g);                                                    /* 7210 */
     if (g->hero_dead) g->hero_hit_flash = 0; else g->hero_hidden = 0;
     g->frame_no++;
     g->rng += 20;                                                       /* FF1B: ticks per frame at speed 5 */
+    sound_request(g);                                                   /* FF75 -> the sound stub */
     if (g->present) g->present(g);                                      /* draw + wait 4*speed ticks + poll input */
+    orbs_update(g);                                                     /* 7133: the second orb pass */
     sword_apply(g);                                                     /* 7147: second half of the frame */
+    sound_request(g);
     if (g->hero_dead) return;
     if (g->hp == 0) { hero_die(g); return; }                            /* 718C */
     if (++g->regen_tick >= 0x10) {                                      /* 719E */
@@ -594,11 +793,12 @@ static void ladder_step(Game *g)
 
 void game_step(Game *g)
 {
+    if (g->walk_in) { walk_in_step(g); return; }                        /* 7C6E */
     if (g->on_ladder) { ladder_step(g); return; }
     sword_input(g);                                                     /* 6E3B */
     ice_slide_step(g);
     frame(g);
-    /* magic_input (87B0): stub */
+    magic_input(g);                                                     /* 87B0 */
     unstick_from_wall(g);
     hero_knockback(g);                                                  /* 6412 */
     if (++g->crouch_release == 2) g->crouching = 0;
@@ -615,7 +815,10 @@ void game_init(Game *g, const Map *m, const Tileset *t)
     g->hero_anim = 0x80; g->hp = g->max_hp = 0x50;
     g->sword = 1;                                                       /* the training sword */
     g->rng = 0x1234;
+    g->town_map = 0x81;                                                 /* [C5] Muralla Town */
     g->max_rise = 2; g->hero_scr_col = 0x0C; g->hero_scr_row = m->row_bias; g->hero_home_row = m->row_bias;
+    shots_clear(g);
+    for (int i = 0; i < 4; i++) g->orbs[i].phase = 0xFF;                /* 7A04 */
 }
 
 void game_place(Game *g, int col, int row, int face_left)
@@ -629,8 +832,12 @@ void game_place(Game *g, int col, int row, int face_left)
     g->hero_anim = 0x80; g->vstate = V_GROUND; g->on_ladder = 0; g->crouching = 0;
     g->fall_rows = g->rise_rows = 0; g->diag_jump = 0;
     g->attacking = 0; g->attack_var = 0; g->hero_dead = 0; g->death_anim = 0;
+    g->casting = g->magic_active = g->cast_timer = 0;
+    shots_clear(g);                                                     /* 83DB */
+    for (int i = 0; i < 4; i++) { g->magic[i].live = 0; g->orbs[i].phase = 0xFF; }
     g->entry_col = col; g->entry_row = row; g->entry_face = (uint8_t)(face_left ? 1 : 0);
     ring_fill(g);
+    fixtures_load(g);
     enemies_load(g);
 }
 
@@ -638,4 +845,73 @@ void game_enter(Game *g, const Map *m, const Tileset *t, int dest_col, int dest_
 {
     g->map = m; g->tiles = t;
     game_place(g, dest_col, dest_row + 1, face_left);                    /* 7DC1: scroll_row = dest_row+1-row_bias */
+}
+
+/* ------------------------------------------------------------- messages */
+/* fight.bin's message table at 9A1E: {u16 x, chars, 0xFF} records.  The port
+ * keeps the strings (the box renderer 740E/7210 is not ported) and the
+ * 32-frame lifetime of msg_box_a (7210: the box is erased when the low 5 bits
+ * of 9EED wrap). */
+static const char *const MESSAGES[MSG_COUNT] = {
+    "You get 50 golds.",            /* 9A1E */
+    "You get 100 golds.",           /* 9A32 */
+    "You get 500 golds.",           /* 9A47 */
+    "You get 1000 golds.",          /* 9A5C */
+    "You get a Key.",               /* 9A72 */
+    "You have recovered.",          /* 9A83 */
+    "You have recovered full.",     /* 9A99 */
+    "Shield broken.",               /* 9AB4 */
+    "Can't open this door.",        /* 9AC5 */
+    "Nothing in the box.",          /* 9ADD */
+    "You get the Hero's Crest.",    /* 9AF3 */
+    "You get the Ruzeria shoes.",   /* 9B0F */
+    "You get the Glory Crest.",     /* 9B2C */
+    "You get the Pirika shoes.",    /* 9B47 */
+    "You get the Feruza shoes.",    /* 9B63 */
+    "You get the Silkarn shoes.",   /* 9B7F */
+    "Get the Enchantment sword.",   /* 9B9C */
+    "It's too hot !!",              /* 9BB9 */
+    "Get the lion's head Key.",     /* 9BCB */
+};
+const char *fight_message(int idx) { return (idx >= 0 && idx < MSG_COUNT) ? MESSAGES[idx] : ""; }
+
+/* 0x73E0 */
+void game_message(Game *g, const char *text)
+{
+    snprintf(g->message, sizeof g->message, "%s", text);
+    g->msg_timer = 0; g->msg_box = 0xFF;
+}
+/* 0x7210  the box is erased 32 frames later. */
+static void message_tick(Game *g)
+{
+    if (!g->msg_box) return;
+    g->msg_timer = (uint8_t)((g->msg_timer + 1) & 0x1F);
+    if (!g->msg_timer) { g->msg_box = 0; g->message[0] = 0; }
+}
+
+/* ------------------------------------------------------------- walk-in */
+/* 0x7C6E  after a map transition the hero walks in over 26 frames on a blank
+ * playfield: the sprite starts at x = 40 (or 256 when entering facing left)
+ * and moves 8 px per frame, hero_anim advancing every frame. */
+void game_start_walk_in(Game *g, int face_left)
+{
+    g->walk_in = 0x1A;
+    g->walk_in_x = face_left ? 0x40 * 4 : 0x0A * 4;                     /* 7C7A / 7CB9 */
+    g->walk_in_dir = face_left ? -8 : 8;
+    if (face_left) g->hero_flags |= FACE_LEFT; else g->hero_flags &= (uint8_t)~FACE_LEFT;
+    g->hero_entering = 0xFF;
+}
+static void walk_in_step(Game *g)
+{
+    g->hero_anim++;                                                     /* 7C82 */
+    g->frame_no++;
+    g->rng += 20;
+    if (g->present) g->present(g);
+    g->walk_in_x += g->walk_in_dir;
+    if (--g->walk_in <= 0) {
+        g->walk_in = 0; g->hero_entering = 0;
+        g->hero_anim = 0x80;                                            /* 7D36 */
+        g->hero_scr_col = 0x0C;                                         /* 7D28 */
+        g->hero_scr_row = g->map->row_bias; g->hero_home_row = g->map->row_bias;
+    }
 }

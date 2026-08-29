@@ -150,3 +150,77 @@ int ai_ride_current(Game *g, MapObj *o)
     }
     return 0;
 }
+
+/* ==================================================================== */
+/* Helpers the AI overlays share (each overlay has its own copy of these  */
+/* routines; the port keeps one).                                        */
+/* ==================================================================== */
+
+/* eai1 A4E8 / eai2 A8F4 / eai5 A5C2 */
+uint8_t ai_hero_dirx(const Game *g, const MapObj *e, int range, int *facing_hero, uint8_t *dx)
+{
+    int d = (int)(int8_t)(uint8_t)(g->hero_map_row - e->row);
+    if (d < 0) d = -d;
+    if (dx) *dx = (uint8_t)(e->rcol < 0x11 ? 0x11 - e->rcol : e->rcol - 0x11);
+    *facing_hero = 0;
+    if (d >= range) return 0xFF;
+    if (e->rcol < 0x11) { *facing_hero = (e->hit & 0x80) != 0; return 0x80; }
+    *facing_hero = (e->hit & 0x80) == 0;
+    return 0;
+}
+uint8_t ai_hero_dir(const Game *g, const MapObj *e, int range, int *facing_hero)
+{
+    return ai_hero_dirx(g, e, range, facing_hero, NULL);
+}
+
+/* eai2 A653 / A549 / A5CE: the 2x4 sprite occupies (row..row+3, rcol..rcol+1)
+ * across two consecutive records.  A step needs the four cells of the column
+ * (or row) it moves into to be ai-passable and free of sprite markers. */
+int ai_tall_step(Game *g, MapObj *e, int dir)
+{
+    MapObj *lo = e + 1;
+    int p = game_ring_index(g, e->row, e->rcol);
+    if (dir == 6) {                                                     /* A653 down */
+        if (e->rcol < 1 || e->rcol > 0x22) return 1;
+        for (int c = 0; c < 2; c++)
+            if (!ai_cell_passable(g, rcell(g, p, D(4, c)))) return 1;   /* A679 */
+        e->row = (uint8_t)((e->row + 1) & 0x3F);
+        lo->row = (uint8_t)((lo->row + 1) & 0x3F);
+        return 0;
+    }
+    int right = (dir == 0);
+    if (right) { if (e->rcol >= 0x22) return 1; } else { if (e->rcol < 2) return 1; }
+    int dc = right ? 2 : -1;
+    for (int r = 0; r < 4; r++)                                         /* A56F / A5F4 */
+        if (!ai_cell_passable(g, rcell(g, p, D(r, dc)))) return 1;
+    for (int r = 1; r <= 4; r++)                                        /* the column above must be sprite-free */
+        if (rcell(g, p, D(-r, dc)) & 0x80) return 1;
+    if (right) { if (++e->col >= g->map->width) e->col = 0; e->rcol++; }
+    else       { e->col = (uint16_t)(e->col ? e->col - 1 : g->map->width - 1); e->rcol--; }
+    lo->col = e->col; lo->rcol = e->rcol;
+    return 0;
+}
+
+/* eai2 A6BF: the lower record follows the upper one's frame and facing. */
+void ai_tall_sync(Game *g, MapObj *e)
+{
+    (void)g;
+    e[1].phase = e->phase;
+    e[1].hit = (uint8_t)((e->hit & 0x80) | (e[1].hit & 0x7F));
+}
+
+/* eai2 A6AB: either half was hit — the source bits come from the lower record
+ * (the original quirk), both halves are marked stunned, the upper takes it. */
+void ai_tall_take_hit(Game *g, MapObj *e)
+{
+    uint8_t a = (uint8_t)((e[1].hit & 0xBF) | 0x20);
+    e->hit = a; e[1].hit = (uint8_t)(a | 0x60);
+    enemy_take_damage(g, e);
+}
+/* eai5 A435 / eai7 A71E: the same but with the upper record's own source. */
+void ai_tall_take_hit_own(Game *g, MapObj *e)
+{
+    uint8_t a = (uint8_t)((e->hit & 0xBF) | 0x20);
+    e->hit = a; e[1].hit = (uint8_t)(a | 0x60);
+    enemy_take_damage(g, e);
+}

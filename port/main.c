@@ -10,6 +10,7 @@
 #include "render.h"
 #include "png.h"
 #include "enemy.h"
+#include "town.h"
 #ifdef HAVE_SDL
 #include <SDL.h>
 #endif
@@ -25,6 +26,14 @@ typedef struct {
     AiOverlay ai;
     EnemyGfx  egfx;
     DigitFont font;
+    /* the town side of the loop (docs/TOWN.md) */
+    TownMap     tmap;
+    TownTiles   ttiles;
+    TownSprites tspr;
+    TownHero    thero;
+    Town        town;
+    int      in_town;                   /* 0 = fight.bin, 1 = town.bin */
+    int      town_tiles_idx, town_spr_idx;
     int      ai_index, enp_index;
     uint8_t  fb[FB_W * FB_H];
     int      headless;
@@ -46,17 +55,22 @@ typedef struct {
 static void usage(void)
 {
     fprintf(stderr,
-        "usage: zeliard [--dir GAMEDIR] [--map N] [--pos COL ROW] [--headless] [--screenshot N out.png]\n"
-        "               [--script SCRIPT] [--scale N] [--speed N] [--verbose]\n"
+        "usage: zeliard [--dir GAMEDIR] [--map N] [--pos COL ROW] [--town N] [--headless]\n"
+        "               [--screenshot N out.png] [--script SCRIPT] [--scale N] [--speed N]\n"
+        "               [--frames N] [--sound] [--verbose]\n"
         "  --dir       directory holding ZELRES1-3.SAR (default: zeliard/, ../zeliard/)\n"
         "  --map N     system map index (0 = MP10 .. 0x1E = MPA0; default 0)\n"
         "  --pos C R   hero top-left map cell (default: the MURALLA door in MP10, 61 7)\n"
+        "  --town N    start in town N (0 cmap .. 9 esmp; 1 = Muralla) instead of a cavern\n"
+        "  --town-col C / --town-scr S / --town-anim F FACE / --town-npc I F\n"
+        "              exact town placement, used by `make verify`\n"
         "  --screenshot N FILE   dump the framebuffer after N rendered frames (implies --headless)\n"
         "  --script S  headless input: tokens like R10 (hold Right 10 frames), UR2, D3, .5 (idle 5),\n"
-        "              letters U D L R and X (sword), separated by spaces/commas\n"
+        "              letters U D L R, X (sword) and M (magic), separated by spaces/commas\n"
         "  --speed N   FF33 speed (frame = 4*N ticks; default 5 = 84.5 ms)\n"
         "  --scale N   window scale (default 3)\n"
-        "  --frames N  quit after N rendered frames (SDL and headless)\n");
+        "  --frames N  quit after N rendered frames (SDL and headless)\n"
+        "  --sound     log every FF75 sound request the engine produces\n");
 }
 
 static int script_next(App *a)
@@ -74,6 +88,7 @@ static int script_next(App *a)
             else if (c == 'L' || c == 'l') d |= DIR_LEFT;
             else if (c == 'R' || c == 'r') d |= DIR_RIGHT;
             else if (c == 'X' || c == 'x') b |= 1;
+            else if (c == 'M' || c == 'm') b |= 2;
             else if (c == '.') ;
             else break;
             a->script_pos++;
@@ -103,6 +118,7 @@ static void dump_png(App *a, Game *g)
 static void set_buttons(Game *g, uint8_t b)
 {
     if ((b & 1) && !(g->buttons & 1)) g->btn1_edge = 0xFF;
+    if ((b & 2) && !(g->buttons & 2)) g->btn2_edge = 0xFF;
     g->buttons = b;
 }
 
@@ -168,6 +184,109 @@ static void present(Game *g)
 #endif
 }
 
+/* ---------------------------------------------------------------- town */
+static void town_present(Town *t)
+{
+    App *a = t->user;
+    if (a->verbose)
+        fprintf(stderr, "town frame %4u  hero map col %3d scr %3d scroll %3d anim %u flags %02x%s%s\n",
+                t->frame_no, town_hero_col(t), t->hero_scr_col, t->scroll_col, t->hero_anim, t->hero_flags,
+                t->message[0] ? "  msg: " : "", t->message);
+    if (a->max_frames && t->frame_no >= a->max_frames) a->quit = 1;
+    if (a->headless) {
+        if (a->shot_path && t->frame_no == a->shot_frame) {
+            static uint8_t rgb[FB_W * FB_H * 3];
+            town_render(a->fb, t);
+            render_hud(a->fb, t->g, &a->font);
+            render_to_rgb(a->fb, rgb);
+            if (png_write_rgb(a->shot_path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", a->shot_path);
+            else fprintf(stderr, "wrote %s (town frame %u, hero col %d)\n", a->shot_path, t->frame_no, town_hero_col(t));
+        }
+        if (!script_next(a)) { if (!a->shot_path || t->frame_no >= a->shot_frame) a->quit = 1; t->dirs = 0; t->buttons = 0; }
+        else {
+            if ((a->script_btns & 1) && !(t->buttons & 1)) t->btn1_edge = 0xFF;
+            t->dirs = a->script_dirs; t->buttons = a->script_btns;
+        }
+        return;
+    }
+#ifdef HAVE_SDL
+    static uint8_t rgb[FB_W * FB_H * 3];
+    town_render(a->fb, t);
+    render_hud(a->fb, t->g, &a->font);
+    render_to_rgb(a->fb, rgb);
+    SDL_UpdateTexture(a->tex, NULL, rgb, FB_W * 3);
+    SDL_RenderClear(a->ren);
+    SDL_RenderCopy(a->ren, a->tex, NULL, NULL);
+    SDL_RenderPresent(a->ren);
+    char title[768];
+    snprintf(title, sizeof title, "Zeliard - %s  col %d  LIFE %u/%u  GOLD %u  %.400s", t->map->label,
+             town_hero_col(t), t->g->hp, t->g->max_hp, (unsigned)t->g->gold, t->message);
+    SDL_SetWindowTitle(a->win, title);
+    static Uint64 next = 0;
+    Uint64 now = SDL_GetPerformanceCounter(), freq = SDL_GetPerformanceFrequency();
+    if (next == 0 || now > next + freq) next = now;
+    next += (Uint64)(a->frame_ms / 1000.0 * (double)freq);
+    for (;;) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_QUIT) a->quit = 1;
+            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) a->quit = 1;
+        }
+        now = SDL_GetPerformanceCounter();
+        if (now >= next || a->quit) break;
+        Uint64 rem = (next - now) * 1000 / freq;
+        SDL_Delay(rem > 2 ? 1 : 0);
+    }
+    const Uint8 *k = SDL_GetKeyboardState(NULL);
+    uint8_t d = 0;
+    if (k[SDL_SCANCODE_UP] || k[SDL_SCANCODE_W] || k[SDL_SCANCODE_Z]) d |= DIR_UP;
+    if (k[SDL_SCANCODE_DOWN] || k[SDL_SCANCODE_S]) d |= DIR_DOWN;
+    if (k[SDL_SCANCODE_LEFT] || k[SDL_SCANCODE_A]) d |= DIR_LEFT;
+    if (k[SDL_SCANCODE_RIGHT] || k[SDL_SCANCODE_D]) d |= DIR_RIGHT;
+    t->dirs = d;
+    uint8_t b = 0;
+    if (k[SDL_SCANCODE_SPACE] || k[SDL_SCANCODE_X]) b |= 1;
+    if ((b & 1) && !(t->buttons & 1)) t->btn1_edge = 0xFF;
+    t->buttons = b;
+#endif
+}
+
+/* town.bin 601E: (re)load the map's tile bank and NPC sprite set */
+static int town_load_banks(App *a)
+{
+    if (a->town_tiles_idx != a->tmap.tileset) {
+        if (town_load_tiles(&a->ttiles, a->dir, a->tmap.tileset)) { fprintf(stderr, "cannot load the town tile bank\n"); return -1; }
+        a->town_tiles_idx = a->tmap.tileset;
+    }
+    if (a->town_spr_idx != a->tmap.gfx) {
+        if (town_load_sprites(&a->tspr, a->dir, a->tmap.gfx)) { fprintf(stderr, "cannot load the NPC sprites\n"); return -1; }
+        a->town_spr_idx = a->tmap.gfx;
+    }
+    return 0;
+}
+
+/* fight.bin 7B79 / 99E0: leave the cavern for town `idx`, hero at map column
+ * `col` (< 0 = the map's own C013 start column, the death return). */
+static int enter_town(Game *g, int idx, int col, int died)
+{
+    App *a = g->user;
+    if (town_load_map(&a->tmap, a->dir, idx)) { fprintf(stderr, "[town] cannot load town map %d\n", idx); return 0; }
+    int np = town_apply_patches(&a->tmap, g->page);                     /* 6AED */
+    if (town_load_banks(a)) return 0;
+    town_init(&a->town, &a->tmap, &a->ttiles, &a->tspr, &a->thero, g);
+    a->town.user = a; a->town.present = town_present;
+    town_place(&a->town, col < 0 ? a->tmap.start_col : col, 0);
+    g->cur_map = (uint8_t)(0x80 | idx);
+    g->town_map = g->cur_map;
+    a->in_town = 1;
+    fprintf(stderr, "[town] %s (%d columns, %s, %d NPCs, %d patches)%s: hero at column %d\n",
+            a->tmap.label, a->tmap.width, a->tmap.tileset == 0 ? "cpat" : a->tmap.tileset == 1 ? "mpat" : "dpat",
+            a->tmap.nnpcs, np, died ? " - the Sage revives you" : "", town_hero_col(&a->town));
+    if (died) snprintf(a->town.message, sizeof a->town.message,
+                       "While you were unconscious, the spirits brought you here...");
+    return 1;
+}
+
 /* fight.bin 7EBB: (re)load the AI overlay and the enemy sprite bank named by
  * the map's level record (+3 AI request index, +4 ENPn). */
 static void load_enemy_banks(App *a, Game *g, const Map *m)
@@ -185,22 +304,25 @@ static void load_enemy_banks(App *a, Game *g, const Map *m)
     g->egfx = a->egfx.ncells ? &a->egfx : NULL;
 }
 
+static int enter_cavern(App *a, Game *g, int sys_map, int col, int row, int face_left);
+
 static int on_door(Game *g, const Door *d)
 {
     App *a = g->user;
-    if (d->dest_row == 0xFF) {
-        fprintf(stderr, "[door] town map %02x is outside the cavern engine — staying put\n", d->dest_map | 0x80);
-        return 0;
-    }
+    if (d->dest_row == 0xFF)                                    /* 7B76: dest_map | 0x80 = a town */
+        return enter_town(g, d->dest_map & 0x7F, d->dest_col, 0);
     int slot = a->cur ^ 1;
     if (map_load_system(&a->maps[slot], a->dir, d->dest_map)) {
         fprintf(stderr, "[door] cannot load system map %02x\n", d->dest_map);
         return 0;
     }
+    int np = map_apply_patches(&a->maps[slot], g->page);        /* 6BFC */
+    if (np) fprintf(stderr, "[map] %d C00C patches applied\n", np);
     if (gfx_load_tileset(&a->tiles[slot], a->dir, a->maps[slot].tileset)) return 0;
     a->cur = slot;
     load_enemy_banks(a, g, &a->maps[slot]);
     game_enter(g, &a->maps[slot], &a->tiles[slot], d->dest_col, d->dest_row, (d->letter & 0x40) != 0);
+    game_start_walk_in(g, (d->letter & 0x40) != 0);             /* 7C6E */
     fprintf(stderr, "[door] entered %s (cavern %d, %d cols, tileset MPP%c) at hero (%d,%d)\n", a->maps[slot].name,
             a->maps[slot].cavern, a->maps[slot].width, "123456789AB"[a->maps[slot].tileset],
             game_hero_map_col(g), game_hero_map_row(g));
@@ -220,12 +342,78 @@ static const char *find_dir(const char *hint)
     return "zeliard";
 }
 
+/* town.bin 6FF8 goto_cavern: the MAP_CAVES record hands the hero to fight.bin. */
+static int enter_cavern(App *a, Game *g, int sys_map, int col, int row, int face_left)
+{
+    int slot = a->cur ^ 1;
+    if (map_load_system(&a->maps[slot], a->dir, sys_map)) {
+        fprintf(stderr, "[town] cannot load cavern map %d\n", sys_map);
+        return 0;
+    }
+    int np = map_apply_patches(&a->maps[slot], g->page);
+    if (gfx_load_tileset(&a->tiles[slot], a->dir, a->maps[slot].tileset)) return 0;
+    a->cur = slot;
+    load_enemy_banks(a, g, &a->maps[slot]);
+    g->map = &a->maps[slot]; g->tiles = &a->tiles[slot];
+    game_place(g, col, row, face_left);
+    game_start_walk_in(g, face_left);                                   /* 7C6E */
+    g->cur_map = (uint8_t)sys_map;
+    a->in_town = 0;
+    fprintf(stderr, "[cavern] %s (cavern %d, %d cols, %d patches): hero at (%d,%d)\n",
+            a->maps[slot].name, a->maps[slot].cavern, a->maps[slot].width, np,
+            game_hero_map_col(g), game_hero_map_row(g));
+    return 1;
+}
+
+/* town.bin 61FC: run one town frame and act on what it asked for. */
+static void town_frame(App *a, Game *g)
+{
+    Town *t = &a->town;
+    t->action = 0;
+    town_step(t);
+    if (!t->action) return;
+    switch (t->action) {
+    case TOWN_TO_CAVERN: {                                              /* 6FF8 */
+        int i = t->action_arg;
+        if (i < 0 || i >= a->tmap.ncaves) { fprintf(stderr, "[town] no cave record %d\n", i); break; }
+        const TownCave *c = &a->tmap.caves[i];
+        g->page[6] = 0xFF;                                              /* 702E: [06] entered a cavern */
+        enter_cavern(a, g, c->map, c->col, c->row, c->side & 1);
+        break; }
+    case TOWN_TO_TOWN: {                                                /* 6CE1 */
+        int left = (t->action_arg & 0x100) != 0, dest = t->action_arg & 0xFF;
+        if (town_load_map(&a->tmap, a->dir, dest)) break;
+        town_apply_patches(&a->tmap, g->page);
+        if (town_load_banks(a)) break;
+        town_init(t, &a->tmap, &a->ttiles, &a->tspr, &a->thero, g);
+        t->user = a; t->present = town_present;
+        /* 6CE4 / 6D22: reappear at the far end of the new map */
+        t->scroll_col = left ? a->tmap.width - 0x24 : 0;
+        t->hero_scr_col = left ? 0x1A : 0;
+        t->hero_flags = (uint8_t)(left ? 1 : 0);
+        town_npc_markers_reset(t);
+        g->cur_map = (uint8_t)(0x80 | dest);
+        g->town_map = g->cur_map;
+        fprintf(stderr, "[town] -> %s (%d columns)\n", a->tmap.label, a->tmap.width);
+        break; }
+    case TOWN_SHOP:
+        fprintf(stderr, "[town] shop %d (%s) is not implemented\n", t->action_arg,
+                (const char *[]){"king", "omoya", "sage", "armour", "drug", "church", "bank", "inn"}[t->action_arg & 7]);
+        snprintf(t->message, sizeof t->message, "(shop not implemented)");
+        break;
+    case TOWN_PAST_DOOR:
+        fprintf(stderr, "[town] the doorway to the past is not implemented\n");
+        break;
+    }
+    t->action = 0;
+}
+
 int main(int argc, char **argv)
 {
     App a; memset(&a, 0, sizeof a);
     a.frame_ms = FRAME_MS_DEFAULT; a.scale = 3;
     const char *dir = NULL;
-    int map_idx = 0, pos_col = -1, pos_row = -1;
+    int map_idx = 0, pos_col = -1, pos_row = -1, start_in_town = -1, town_col = -1, town_scr = -1, town_anim = -1, town_face = 0, npc_i = -1, npc_f = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--dir") && i + 1 < argc) dir = argv[++i];
         else if (!strcmp(argv[i], "--map") && i + 1 < argc) map_idx = (int)strtol(argv[++i], NULL, 0);
@@ -236,11 +424,19 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) a.scale = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) a.max_frames = (unsigned)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--speed") && i + 1 < argc) a.frame_ms = FRAME_MS_DEFAULT * atoi(argv[++i]) / 5.0;
+        else if (!strcmp(argv[i], "--town") && i + 1 < argc) start_in_town = (int)strtol(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--town-col") && i + 1 < argc) town_col = (int)strtol(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--town-scr") && i + 1 < argc) town_scr = (int)strtol(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--town-npc") && i + 2 < argc) { npc_i = atoi(argv[++i]); npc_f = atoi(argv[++i]); }
+        else if (!strcmp(argv[i], "--town-anim") && i + 2 < argc) { town_anim = atoi(argv[++i]); town_face = atoi(argv[++i]); }
+        else if (!strcmp(argv[i], "--sound")) sound_set_log(1);
         else if (!strcmp(argv[i], "--verbose") || !strcmp(argv[i], "-v")) a.verbose = 1;
         else { usage(); return 2; }
     }
     a.dir = find_dir(dir);
     if (map_load_system(&a.maps[0], a.dir, map_idx)) { fprintf(stderr, "cannot load map %d from %s\n", map_idx, a.dir); return 1; }
+    { static uint8_t page0[256]; int np = map_apply_patches(&a.maps[0], page0);
+      if (np) fprintf(stderr, "[map] %d C00C patches applied\n", np); }
     if (gfx_load_tileset(&a.tiles[0], a.dir, a.maps[0].tileset)) { fprintf(stderr, "cannot load tileset\n"); return 1; }
     if (gfx_load_hero(&a.hero, a.dir)) { fprintf(stderr, "cannot load fman.grp\n"); return 1; }
 
@@ -276,8 +472,26 @@ int main(int argc, char **argv)
 #endif
     if (a.headless && a.shot_path && a.shot_frame == 0) a.shot_frame = 1;
 
-    game_first_frame(&g);
-    while (!a.quit) game_step(&g);
+    a.town_tiles_idx = a.town_spr_idx = -1;
+    if (town_load_hero(&a.thero, a.dir)) fprintf(stderr, "note: no tman.grp (town hero sprites)\n");
+    g.on_town = enter_town;
+    if (start_in_town >= 0) {
+        if (!enter_town(&g, start_in_town, town_col, 0)) return 1;
+        if (town_scr >= 0) {                       /* exact scroll/hero placement for make verify */
+            a.town.scroll_col = town_scr;
+            if (town_col >= 0) a.town.hero_scr_col = town_col - 4 - town_scr;
+            town_npc_markers_reset(&a.town);
+        }
+        if (town_anim >= 0) { a.town.hero_anim = (uint8_t)town_anim; a.town.hero_flags = (uint8_t)town_face; }
+        if (npc_i >= 0 && npc_i < a.tmap.nnpcs) {
+            a.tmap.npcs[npc_i].anim = (uint8_t)(npc_f & 3);
+            a.tmap.npcs[npc_i].sprite = (uint8_t)(((npc_f >> 3) & 7) | ((npc_f & 4) ? 0 : 0x80));
+            a.tmap.npcs[npc_i].type = 7;
+        }
+    } else {
+        game_first_frame(&g);
+    }
+    while (!a.quit) { if (a.in_town) town_frame(&a, &g); else game_step(&g); }
 
     fprintf(stderr, "stopped after %u frames: hero map (%d,%d), LIFE %u/%u, EXP %u, GOLD %u, %u hazard frames, %u deaths\n",
             g.frame_no, game_hero_map_col(&g), game_hero_map_row(&g), g.hp, g.max_hp, g.exp, (unsigned)g.gold,

@@ -68,7 +68,52 @@ void hero_die(Game *g);                                 /* 718C / 98FC */
 void gold_add(Game *g, unsigned n);                     /* 917C */
 void exp_add(Game *g, unsigned n);                      /* 9715 */
 
-/* ------------------------------------------------------ the eai1 classes */
+/* --------------------------------------- projectiles / magic (shots.c) */
+void    shots_clear(Game *g);                           /* vec 30 83DB */
+void    shot_spawn(Game *g, const Shot *tmpl);          /* vec 29 8611 */
+void    shots_update(Game *g);                          /* 8422 */
+void    shots_shift(Game *g, int right);                /* 8639 / 864E */
+uint8_t shot_draw_cell(const Shot *s);                  /* 83AD anim mask */
+void    magic_input(Game *g);                           /* 87B0 */
+void    magic_update(Game *g);                          /* 8AAD */
+int     magic_sprite_cells(const Game *g, const Magic *m, uint8_t out[4]);  /* 896E */
+void    orbs_update(Game *g);                           /* 86FC */
+void    orbs_arm(Game *g, int n, uint8_t speed, uint8_t hits);
+
+/* ---------------------------------------------------------- sound (sound.c) */
+void    sound_request(Game *g);          /* consume FF75 */
+const char *sound_name(uint8_t id);
+void    sound_set_log(int on);
+unsigned sound_count(uint8_t id);
+
+/* ------------------------------------ helpers shared by the eai overlays */
+#define FACING_RIGHT 0x80       /* hit bit 7 */
+#define HIT_STUN     0x20       /* hit bit 5 */
+/* eai1 A4E8 / eai2 A8F4 / eai3 A625 / eai5 A5C2: 0xFF when the hero is `range`
+ * or more rows away, else the facing bit that points at him; *facing_hero is
+ * set when the enemy already faces him.  *dx (optional) = |0x11 - rcol|. */
+uint8_t ai_hero_dir(const Game *g, const MapObj *e, int range, int *facing_hero);
+uint8_t ai_hero_dirx(const Game *g, const MapObj *e, int range, int *facing_hero, uint8_t *dx);
+/* eai2 A653/A549/A5CE: the 2x4 "tall" sprite's steps.  dir 0 = right, 4 =
+ * left, 6 = down; 1 = blocked (both records move together). */
+int  ai_tall_step(Game *g, MapObj *e, int dir);
+void ai_tall_sync(Game *g, MapObj *e);          /* A6BF */
+void ai_tall_take_hit(Game *g, MapObj *e);      /* A6AB */
+void ai_tall_take_hit_own(Game *g, MapObj *e);  /* eai5 A435 / eai7 A71E */
+/* the eai1 bat states, reused verbatim by the eai2 "bird" (A923) */
+void eai1_bat_idle(Game *g, MapObj *e);
+void eai1_bat_wake(Game *g, MapObj *e);
+void eai1_bat_chase(Game *g, MapObj *e);
+void eai1_bat_retreat(Game *g, MapObj *e);
+
+/* ------------------------------------------------------ the eai overlays */
 void eai1_entry(Game *g, MapObj *o);                    /* A254 */
+void eai2_entry(Game *g, MapObj *o);
+void eai3_entry(Game *g, MapObj *o);
+void eai4_entry(Game *g, MapObj *o);
+void eai5_entry(Game *g, MapObj *o);
+void eai6_entry(Game *g, MapObj *o);
+void eai7_entry(Game *g, MapObj *o);
+void eai8_entry(Game *g, MapObj *o);
 
 #endif

@@ -21,7 +21,7 @@ void hero_damage_shielded(Game *g, unsigned dmg)
     dmg = (dmg >> 1) >> ((g->shield + 1) >> 1);
     if (g->shield_hp <= dmg) {
         g->shield = 0; g->shield_hp = 0;
-        snprintf(g->message, sizeof g->message, "Shield broken.");
+        game_message(g, fight_message(MSG_SHIELD_BROKEN));
     } else g->shield_hp = (uint16_t)(g->shield_hp - dmg);
     hero_damage(g, dmg); g->sfx_request = 8;
 }
@@ -30,21 +30,25 @@ void hero_damage_shielded(Game *g, unsigned dmg)
 void exp_add(Game *g, unsigned n)  { unsigned v = g->exp + n; g->exp = (uint16_t)(v > 0xFFFF ? 0xFFFF : v); }
 void gold_add(Game *g, unsigned n) { g->gold += n; if (g->gold > 0xFFFFFF) g->gold = 0xFFFFFF; }
 
-/* 0x98FC  Death.  The original plays a 3-frame animation, blinks for 30
- * frames, then exp += 127 - 2*level, gold /= 2, hp = max_hp and hands over to
- * the town overlay.  There is no town here, so the port restarts the hero at
- * the position he entered the map with. */
+/* 0x98FC  Death: 30 blinking frames, then the penalties of 99AD and the
+ * hand-off to the town engine (99E0: cur_map = town_map, the hero reappears at
+ * the town map's own start column and the Sage's "While you were unconscious"
+ * text runs).  With no town hooked up the port restarts at the map entry. */
 void hero_die(Game *g)
 {
     g->deaths++;
-    unsigned bonus = (unsigned)(2 * g->level) >= 127 ? 0 : 127 - 2 * (unsigned)g->level;
-    exp_add(g, bonus);
-    g->gold /= 2;
-    g->hp = g->max_hp;
+    if (!g->jashiin_defeated) {                                         /* 99AD */
+        unsigned bonus = (unsigned)(2 * g->level) >= 127 ? 0 : 127 - 2 * (unsigned)g->level;
+        exp_add(g, bonus);                                              /* 99C6: exp += 127 - 2*level */
+        g->gold = 0;                                                    /* 99C9: the 24-bit GOLD is lost */
+        g->almas >>= 1;                                                 /* 99D4: ALMAS halved */
+    } else g->town_map = 0x80;                                          /* 99B4: the ending goes to the castle */
+    g->hp = g->max_hp;                                                  /* 99D8 */
     g->hero_dead = 0; g->hero_hidden = 0; g->death_anim = 0;
-    snprintf(g->message, sizeof g->message, "Garland died (%u).", g->deaths);
-    fprintf(stderr, "[death] hero died at frame %u; exp +%u, gold halved, restart at (%d,%d)\n",
-            g->frame_no, bonus, g->entry_col, g->entry_row);
+    g->cur_map = g->town_map ? g->town_map : 0x81;
+    fprintf(stderr, "[death] hero died at frame %u (death %u); gold lost, almas halved\n", g->frame_no, g->deaths);
+    if (g->on_town && g->on_town(g, g->cur_map & 0x7F, -1, 1)) return;  /* 99E0 */
+    game_message(g, "Garland died.");
     game_place(g, g->entry_col, g->entry_row, g->entry_face);
 }
 

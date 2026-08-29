@@ -29,6 +29,36 @@
 #define DOOR_CELL 0x4A
 
 #define MAX_OBJS 128            /* ED20 has 128 saved cells, so 128 markers max */
+#define MAX_SHOTS 31            /* EB80 holds 31 live projectiles (8611) */
+
+/* EB80: a 13-byte enemy projectile (docs/FIGHT.md §6, src/fight.c struct shot).
+ * `col`/`row` are *ring* coordinates; the shot moves one cell per frame. */
+typedef struct {
+    uint8_t  col;               /* +0  ring column; 0 = dead, 0xFF = end of list */
+    uint8_t  row;               /* +1  ring row */
+    uint8_t  cell;              /* +2  bank cell; bits 6-7 pick the anim mask {0,1,3,7} (83D7) */
+    uint8_t  age;               /* +3 */
+    uint8_t  life;              /* +4  dies at age >= life unless flags & 0x40 */
+    uint8_t  flags;             /* +5  bits0-2 direction, 0x08 through walls, 0x40 scripted */
+    uint8_t  damage;            /* +6 */
+    uint16_t drawn;             /* +7  screen ptr | 0x8000 while drawn (port: 0/1) */
+    const uint8_t *script;      /* +9  direction byte per age, 0xFF ends the shot (85F2) */
+    uint8_t  last_col, last_row;/* +B, +C */
+} Shot;
+
+/* EB15: one of the hero's four spell sprites (884D/88A8/88F8) */
+typedef struct {
+    uint16_t col;               /* +0  map column (0xFFFF = end of list) */
+    uint8_t  row;               /* +2  ring row */
+    uint8_t  dir;               /* +3  bit0 1 = moving right; bit7 = hit something (8AF2) */
+    uint8_t  age;               /* +4  only record 0 is counted for multi-sprite spells */
+    uint8_t  anim;              /* +5  0..2 */
+    uint8_t  rcol, srow;        /* +6, +7 */
+    uint8_t  live;              /* port: 0 once the record is retired (col high byte 0xFF) */
+} Magic;
+
+/* EB60: one of the four orbiting spheres (86FC), 7 bytes */
+typedef struct { uint8_t phase, speed, hits; } Orb;
 
 struct AiOverlay;
 
@@ -39,6 +69,10 @@ typedef struct Game Game;
 typedef void (*PresentFn)(Game *g);
 /* door transition (docs/FIGHT.md §8): return 1 if the caller switched maps */
 typedef int (*DoorFn)(Game *g, const Door *d);
+/* hand-off to the town engine (99E0 / 72D9): `col` < 0 means "use the map's
+ * own start column"; `died` is the sage path.  Return 1 when the shell took
+ * over, 0 to fall back to restarting in the cavern. */
+typedef int (*TownFn)(Game *g, int town_index, int col, int died);
 
 struct Game {
     const Map     *map;
@@ -114,7 +148,22 @@ struct Game {
     uint8_t  btn1_edge;             /* FF1D */
     uint8_t  hit_side[4];           /* 9F0E..9F11 */
     uint16_t contact_damage;        /* 9F12 */
-    uint8_t  sfx_request;           /* FF75 (logged only) */
+    uint8_t  sfx_request;           /* FF75, consumed by sound_request() */
+
+    /* projectiles / magic / orbs (docs/FIGHT.md §6, shots.c) */
+    Shot     shots[MAX_SHOTS + 1];
+    uint8_t  projectile_count;      /* 9F1F */
+    Magic    magic[4];
+    Orb      orbs[4];
+    uint8_t  magic_sel;             /* [9D] 1..7 */
+    uint8_t  magic_count[7];        /* [AB] */
+    uint8_t  magic_max[7];          /* [B4] */
+    uint8_t  casting;               /* FF3C */
+    uint8_t  magic_active;          /* FF3E */
+    uint8_t  cast_timer;            /* 9F2B */
+    uint8_t  magic_hit_any;         /* 9F2A */
+    uint8_t  btn2_edge;             /* FF1E */
+    unsigned magic_casts, shots_fired;  /* port counters for the tests */
     uint8_t  heat_timer;            /* 9F25 */
     uint8_t  boss_map, boss_room, boss_cutscene, boss_defeated;
     uint16_t rng;                   /* kernel [11A] KRN_RANDOM source (FF1B) */
@@ -122,6 +171,27 @@ struct Game {
     uint8_t  death_anim;            /* 9F28 */
     int      entry_col, entry_row;  /* where hero_die() puts him back */
     uint8_t  entry_face;
+    uint8_t  town_map;              /* [C5] the town to return to, default 0x81 = Muralla */
+    uint8_t  cur_map;               /* [C4] */
+    uint8_t  jashiin_defeated;      /* [49] */
+    TownFn   on_town;
+
+    /* fixtures: the live copy of the map's A/B/C lists (they move) */
+    Fixture  fix[256];
+    int      nfix;
+    uint8_t  fixture_anim;          /* 9F07 */
+
+    /* the STDPLY player-record page, for the C00C patch conditions (6BFC) */
+    uint8_t  page[256];
+
+    /* messages (7210/73E0): a box stays up for 32 frames */
+    uint8_t  msg_timer;             /* 9EED */
+    uint8_t  msg_box;               /* 9EEF */
+
+    /* the 26-frame walk-in after a map transition (7C6E) */
+    int      walk_in;               /* frames left */
+    int      walk_in_x;             /* pixel x of the sprite */
+    int      walk_in_dir;           /* +8 / -8 px per frame */
 
     /* port side */
     uint8_t  dirs;                  /* INT 61h AL: current direction bits */
@@ -156,5 +226,14 @@ int  game_ring_index(const Game *g, uint8_t row, uint8_t col);     /* 6D6E ring_
 int  game_ring_add(int p, int delta);                              /* 6D82/6D8E wrap */
 int  game_push_hero(Game *g, int left);      /* 66A5 / 684C try_move; 1 = blocked */
 void game_knock_fall(Game *g);               /* 64A2: one row of fall after a knockback */
+void game_message(Game *g, const char *text);/* 73E0: show a message box for 32 frames */
+const char *fight_message(int idx);          /* the 9A1E text table */
+/* fight.bin 9A1E message indices */
+enum { MSG_GOLD50, MSG_GOLD100, MSG_GOLD500, MSG_GOLD1000, MSG_KEY, MSG_RECOVERED,
+       MSG_RECOVERED_FULL, MSG_SHIELD_BROKEN, MSG_DOOR_LOCKED, MSG_BOX_EMPTY,
+       MSG_HERO_CREST, MSG_RUZERIA, MSG_GLORY_CREST, MSG_PIRIKA, MSG_FERUZA,
+       MSG_SILKARN, MSG_ENCHANT_SWORD, MSG_TOO_HOT, MSG_LION_KEY, MSG_COUNT };
+/* 7C6E: start the 26-frame walk-in (face_left = enter from the right) */
+void game_start_walk_in(Game *g, int face_left);
 
 #endif

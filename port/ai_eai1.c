@@ -10,9 +10,6 @@
  * class 3 hedgehog HP 1  contact 8   EXP 3 */
 #include "enemy.h"
 
-#define FACING_RIGHT 0x80
-#define HIT_STUN     0x20
-
 /* vec-2 direction codes: 0 R, 1 RU, 2 U, 3 LU, 4 L, 5 LD, 6 D, 7 RD */
 static const uint8_t hop_r[4]  = {1, 0, 0, 7};                 /* A71F  RU, R, R, RD */
 static const uint8_t hop_l[4]  = {3, 4, 4, 5};                 /* A723  LU, L, L, LD */
@@ -34,7 +31,7 @@ static const uint8_t jump_l[8] = {2, 3, 3, 4, 4, 5, 5, 6};     /* A72F */
 /* 0xA2A5  Idle (frame 0): phase counts down 0x10 per frame; at 0 it wakes when
  * its ring column is 0x0B..0x1A (6 cells left .. 9 right of the hero's body
  * column 0x11). */
-static void bat_idle(Game *g, MapObj *e)
+void eai1_bat_idle(Game *g, MapObj *e)
 {
     (void)g;
     if (e->phase) { e->phase = (uint8_t)(e->phase - 0x10); return; }
@@ -43,7 +40,7 @@ static void bat_idle(Game *g, MapObj *e)
 }
 
 /* 0xA2D0  Wake-up: frames 1, 2, 3, then chase. */
-static void bat_wake(Game *g, MapObj *e)
+void eai1_bat_wake(Game *g, MapObj *e)
 {
     (void)g;
     e->phase = (uint8_t)((e->phase + 1) & 7);
@@ -60,7 +57,7 @@ static void bat_anim(MapObj *e)
 /* 0xA2E3  Chase: one cell per frame diagonally toward the hero, no gravity
  * except directly above/below him; backs off when the hero was hurt this
  * frame or it is blocked below. */
-static void bat_chase(Game *g, MapObj *e)
+void eai1_bat_chase(Game *g, MapObj *e)
 {
     bat_anim(e);                                                        /* A2E3 */
     if (g->hero_hit_flash) { e->next = 0xC0; return; }                  /* A2E6 */
@@ -82,7 +79,7 @@ drop:
 
 /* 0xA383  Retreat: a diagonal-up step in the facing direction (flipping the
  * facing) plus one step up, a 2-frame pause, then 7 idle frames. */
-static void bat_retreat(Game *g, MapObj *e)
+void eai1_bat_retreat(Game *g, MapObj *e)
 {
     if (e->next & 0x20) {                                               /* A383 */
         e->phase = (uint8_t)((e->phase - 1) & 7);                       /* A3BD */
@@ -104,10 +101,10 @@ static void bat_update(Game *g, MapObj *e)
     if (!e->hp) e->hp = 2;                                              /* A276 */
     if (e->hit & HIT_STUN) { enemy_take_damage(g, e); return; }         /* A280 */
     switch ((e->next >> 6) & 3) {                                       /* A28B, table A29D */
-    case 0: bat_idle(g, e); break;
-    case 1: bat_wake(g, e); break;
-    case 2: bat_chase(g, e); break;
-    default: bat_retreat(g, e); break;
+    case 0: eai1_bat_idle(g, e); break;
+    case 1: eai1_bat_wake(g, e); break;
+    case 2: eai1_bat_chase(g, e); break;
+    default: eai1_bat_retreat(g, e); break;
     }
 }
 
@@ -128,19 +125,8 @@ static void snail_update(Game *g, MapObj *e)
 
 /* ==================================================================== frog */
 
-/* 0xA4E8 / 0xA6F0  Where is the hero?  0xFF when he is `range` or more rows
- * away; otherwise the facing bit that points at him, with *facing_hero set
- * when the enemy already faces him. */
-static uint8_t hero_dir(const Game *g, const MapObj *e, int range, int *facing_hero)
-{
-    int d = (int)(int8_t)(uint8_t)(g->hero_map_row - e->row);
-    if (d < 0) d = -d;
-    *facing_hero = 0;
-    if (d >= range) return 0xFF;
-    if (e->rcol < 0x11) { *facing_hero = (e->hit & FACING_RIGHT) != 0; return FACING_RIGHT; }
-    *facing_hero = (e->hit & FACING_RIGHT) == 0;
-    return 0;
-}
+/* 0xA4E8 / 0xA6F0: the shared hero_dir (ai.c) */
+#define hero_dir(g, e, r, f) ai_hero_dir((g), (e), (r), (f))
 
 /* 0xA4A2  Hop: phase 2..5 -> RU, R, R, RD (or the mirrored list), one step per
  * frame; blocked and not facing the hero -> turn around. */

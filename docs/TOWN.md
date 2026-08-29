@@ -93,7 +93,8 @@ C007 u16 ->exits      4-byte records {flags, dest, gfx, tileset}; NO terminator:
 C009 u16 ->doors      {u16 col, u8 dest} .. FFFF; the hero (2 columns) must stand at col-1..col+1 (6E46)
                        dest 0..7 shop overlay (0 king 1 omoya 2 sage 3 armour 4 drug 5 church 6 bank 7 inn)
                        dest 8.. cavern entry (dest-8);  dest FF = "doorway to the past" (prmp only)
-C00B u16 ->caves      5-byte records {u16 col, u8 row, u8 side, u8 map}, indexed (no terminator)
+C00B u16 ->caves      5-byte records {u16 col, u8 row, u8 side, u8 map}, indexed (no terminator;
+                      size it from the largest cave index used by the door and edge-exit records)
 C00D u16 ->dialogue   u16 ptr[] to 0xFF-terminated scripts (§6)
 C00F u16 ->npcs       8-byte records .. FFFF (below)
 C011 u16 ->range      {u16 min_col, u16 max_col}: walkers turn around here (== end of the grid)
@@ -214,7 +215,8 @@ Hero: screen column `hero_scr_col` (0..0x1B), rows 5-7; NPCs on row 5-7 too.  Di
 * **Walk step** (6781/67F4): the ground cell (row 7) of the column just beyond the hero's 2
   columns must not be in the tile bank's block list (686E), and no NPC with flags 0x40 may stand on
   the target column (6890).  Then `hero_anim = (hero_anim+1)&3`, facing bit updated, and either the
-  hero moves (columns 0x0B..0x10 are the free zone) or the map scrolls (`scroll_col`, `FF2A ±8`,
+  hero moves (columns 0x0B..0x10 are the free zone; `6781` tests `hero_scr_col >= 0x0B`
+  *before* decrementing, so walking left settles the hero on **0x0A**) or the map scrolls (`scroll_col`, `FF2A ±8`,
   near/far parallax strips).  Scrolling stops at `scroll_col == 0` / `width-0x24`; beyond that the
   hero walks to the edge and `hero_scr_col` becomes 0xFF or 0x1C.
 * **Edge exit** (6CB5): pick the exit record; town→town: `change_town_map` (6D30: `[C4] = 0x80|dest`,

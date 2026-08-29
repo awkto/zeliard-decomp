@@ -10,13 +10,14 @@ SDL_LIBS   ?= $(shell pkg-config --libs sdl2 2>/dev/null || sdl2-config --libs 2
 # machine-local overrides (SDL_CFLAGS / SDL_LIBS), not meant to be committed
 -include local.mk
 
-CORE = sar.o gfx.o map.o physics.o render.o png.o enemy.o ai.o ai_eai1.o combat.o
+CORE = sar.o gfx.o map.o physics.o render.o png.o enemy.o ai.o combat.o shots.o sound.o \
+       ai_eai1.o ai_eai2.o ai_eai3.o ai_eai4.o ai_eai5.o ai_eai6.o ai_eai7.o ai_eai8.o town.o
 ifneq ($(strip $(SDL_LIBS)),)
   CFLAGS += -DHAVE_SDL $(SDL_CFLAGS)
   LIBS   += $(SDL_LIBS)
 endif
 
-all: zeliard test_physics test_combat
+all: zeliard test_physics test_combat test_town
 
 zeliard: main.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
@@ -27,16 +28,20 @@ test_physics: test_physics.o $(CORE)
 test_combat: test_combat.o $(CORE)
 	$(CC) -o $@ $^
 
-%.o: %.c sar.h gfx.h map.h physics.h render.h png.h enemy.h
+test_town: test_town.o $(CORE)
+	$(CC) -o $@ $^
+
+%.o: %.c sar.h gfx.h map.h physics.h render.h png.h enemy.h town.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: test_physics test_combat
+test: test_physics test_combat test_town
 	./test_physics
 	./test_combat
+	./test_town
 
 # start position vs docs/screenshots/cavern.png, and the cavern-1 frog sprite
 # vs docs/screenshots/cavern_enemy.png (needs python3 + Pillow)
-verify: zeliard test_combat
+verify: zeliard test_combat test_town
 	./zeliard --dir ../zeliard --screenshot 1 /tmp/zel_start.png
 	python3 tools/compare_shot.py /tmp/zel_start.png ../docs/screenshots/cavern.png
 	python3 tools/compare_shot.py /tmp/zel_start.png ../docs/screenshots/cavern.png \
@@ -52,8 +57,20 @@ verify: zeliard test_combat
 		--box 192 14 16 8 --label "ceiling snail (lower half)"
 	python3 tools/compare_shot.py /tmp/zel_frog.png ../docs/screenshots/cavern_enemy.png \
 		--label "cavern_enemy playfield"
+	# the town at the right end of Muralla (scroll_col 179, Garland on map column 209,
+	# walk frame 3 facing right) vs docs/screenshots/town.png
+	./zeliard --dir ../zeliard --town 1 --town-scr 179 --town-col 209 --town-anim 3 0 \
+		--screenshot 1 /tmp/zel_town.png --frames 1
+	python3 tools/compare_shot.py /tmp/zel_town.png ../docs/screenshots/town.png \
+		--box 48 102 32 40 --label "town tiles, screen cols 0-3"
+	python3 tools/compare_shot.py /tmp/zel_town.png ../docs/screenshots/town.png \
+		--box 104 102 24 40 --label "town tiles, screen cols 7-9"
+	python3 tools/compare_shot.py /tmp/zel_town.png ../docs/screenshots/town.png \
+		--box 144 102 112 40 --label "town tiles, screen cols 12-25"
+	python3 tools/compare_shot.py /tmp/zel_town.png ../docs/screenshots/town.png \
+		--box 256 118 16 24 --label "town hero sprite (tman, frame 3)"
 
 clean:
-	rm -f *.o zeliard test_physics test_combat
+	rm -f *.o zeliard test_physics test_combat test_town
 
 .PHONY: all test verify clean

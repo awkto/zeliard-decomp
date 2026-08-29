@@ -258,7 +258,9 @@ again until its AI clears the bit.
 * **Regeneration:** +2 HP every 16 frames of no action (`719E`, `regen_tick`
   reset by jump/walk/down); potions add to `hp_regen_pending`, +8 HP per
   frame (`70E0`). Death at HP 0 (`718C`, unless `[0x7F]`): 3-frame animation,
-  `exp += 127 − 2*level`, gold halved, HP restored, back to town (`98FC`).
+  `exp += 127 − 2*level`, **the 24-bit GOLD `[85..87]` is cleared and ALMAS `[8B]` is
+  halved** (`98FC`/`99AD`; see docs/TOWN.md §10 for the register names), HP restored,
+  back to town.
 
 ### Enemy projectiles (`EB80` list, 13 bytes, ≤31 live, spawned by vector 29)
 Move 1 cell per frame in one of 8 directions (table `85C2`; 0 = right,
