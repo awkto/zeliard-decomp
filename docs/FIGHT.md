@@ -154,6 +154,14 @@ The sprite is 3×3 cells but the **solid body is the middle column only**
 * **Crouch:** "down" on the ground (`6AF9`); cleared 2 frames after the key
   is released. Lowers the sword origin by one row (`6F2B`) and removes the
   head row from hazard/contact/wall tests.
+* **Cavern layout, and the post-boss reward.** The `mpNd` boss rooms are entered
+  through the map's **locked** door (MP10's at (26,15) — which is why MP10's header
+  start is (26,16); MP20's at (171,54)) and left through the door `72F1` creates on
+  the hero's column, which lands on a shelf nothing else reaches.  The conveyor
+  "staircases" are one-way slopes by design.  Caveat: `72F1`'s third poke writes the
+  reward record's row as **5** in MP1D (13 in MP2D/MP3D), which is five to ten rows
+  above any floor in those rooms — so either that field is not a ring row, or the
+  reward (a Key, `type & 0x1F == 0x16`) is collected some other way.  Unresolved.
 * **MP10's boss corridor** is sealed left by the block at columns 119-122 and
   right by a conveyor staircase pushing right (`walk_left` refuses while
   `conveyor == 1`, and `gravity` skips `conveyor_check` while `vstate & 0x80`),

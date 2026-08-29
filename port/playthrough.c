@@ -287,27 +287,43 @@ const PStep PLAY_ROUTE_START[] = {
 };
 
 /* Route 2 — caverns 1, 2 and 3 with their bosses and the shops between them.
- * Each boss room is *entered* with the shell call its door makes (P_GOTO with
- * the door's own destination cell); from there everything — the encounter
- * card, the fight, the reward, the post-boss exit door, the locked door into
- * Satono and the shops — is played by the autopilot. */
+ *
+ * Cavern 1 is now *walked*: Satono's left edge is a cavern exit that comes out
+ * on MP10's boss shelf at (128,33) (docs/DOSBOX_RECIPE.md §9), so the route
+ * walks the 13 columns to the unlocked door at (141,32), goes through it, and
+ * comes back out of MP1D through the exit door 72F1 puts on the hero's own
+ * column.  No shell call and no fabricated position anywhere in that leg.
+ *
+ * Caverns 2 and 3 still *enter* their boss rooms with the shell call the door
+ * makes (P_GOTO with the door's own destination cell), because both of those
+ * doors sit on a shelf that is only reachable across a whole cavern and the
+ * autopilot cannot yet hold a route that long (port/README.md, "The MP10
+ * walking route").  Everything after the door — the encounter card, the fight,
+ * the reward, the post-boss exit door and the shops — is played.
+ *
+ * There is no step for the boss reward: 72F1's third poke writes the reward
+ * record's row (MP1D 5, MP2D/MP3D 13) and every one of them lands five to ten
+ * rows above the room's only floor, out of jump range.  The old route asked for
+ * MP1D (38,16) / MP2D (33,20), which are not where the record ends up; those
+ * steps passed on the "within two cells" fallback without ever collecting
+ * anything (`keys` stayed 0 through the whole run), so they are gone until the
+ * reward's real placement is understood. */
 const PStep PLAY_ROUTE_BOSSES[] = {
-  {P_GOTO,       1,47,  NULL,      "MP10 door (141,32) -> MP1D (47,14)", 14},
+  {P_TOWN_GOTO,  2, 4,  NULL,      "Satono Town, column 4", 0},
+  {P_TOWN_EDGE,  0, 0,  NULL,      "off Satono's left edge -> MP10 (128,33)", 0},
+  {P_CAV_DOOR, 141,32,  NULL,      "MP10: walk to the door at (141,32) -> MP1D (47,14)", 0},
   {P_BOSS,       0, 0,  NULL,      "MP1D: Cangrejo", 0},
-  {P_CAV_CELL,  38,16,  NULL,      "MP1D: the boss reward (a Key) at (38,16)", 0},
-  {P_CAV_DOOR,  -1, 0,  NULL,      "MP1D: the exit door 72F1 put there -> MP10", 0},
-  {P_TOWN_GOTO,  2, 4,  NULL,      "MP10 door (128,32) -> Satono Town, column 4", 0},
+  {P_CAV_DOOR,  -1, 0,  NULL,      "MP1D: the exit door 72F1 put there -> MP10 (141,32)", 0},
+  {P_TOWN_GOTO,  2, 4,  NULL,      "back to Satono (MP10's (128,32) door wants a key)", 0},
   {P_TOWN_SHOP,185, 0,  "22yc",    "Satono weapon shop: the best sword it stocks", 0},
   {P_TOWN_SHOP, 92, 0,  "1yc",     "Satono: the Sage levels him up", 0},
   {P_GOTO,       4,41,  NULL,      "MP20 door (190,47) -> MP2D (41,18)", 18},
   {P_BOSS,       0, 0,  NULL,      "MP2D: Pulpo", 0},
-  {P_CAV_CELL,  33,20,  NULL,      "MP2D: the boss reward at (33,20)", 0},
   {P_CAV_DOOR,  -1, 0,  NULL,      "MP2D: the exit door -> MP20", 0},
   {P_TOWN_GOTO,  3,60,  NULL,      "Bosque village (MP30's town door at (185,18))", 0},
   {P_TOWN_SHOP, 81, 0,  "30yc",    "Bosque weapon shop: a shield", 0},
   {P_GOTO,       7,52,  NULL,      "MP31 door (174,4) -> MP3D (52,21)", 21},
   {P_BOSS,       0, 0,  NULL,      "MP3D: Pollo", 0},
-  {P_CAV_CELL,  33,20,  NULL,      "MP3D: the boss reward at (33,20)", 0},
   {P_CAV_DOOR,  -1, 0,  NULL,      "MP3D: the exit door -> MP31", 0},
   {P_END, 0, 0, NULL, NULL, 0},
 };

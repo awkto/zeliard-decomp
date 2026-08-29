@@ -141,7 +141,8 @@ int shell_enter_cavern(Shell *s, int sys_map, int col, int row, int face_left)
     shell_load_enemy_banks(s, &s->maps[slot]);
     g->map = &s->maps[slot]; g->tiles = &s->tiles[slot];
     game_place(g, col, row, face_left);
-    game_start_walk_in(g, face_left);                                   /* 7C6E */
+    if (g->boss_room) game_boss_room_intro(g);                          /* 61A8 */
+    else game_start_walk_in(g, face_left);                              /* 7C6E */
     g->cur_map = (uint8_t)sys_map;
     s->in_town = 0;
     s->transitions++;
@@ -174,7 +175,9 @@ static int on_door(Game *g, const Door *d)
     if (d->dflags & 0x80) {                                     /* 7C18 */
         LOG(s, "[tear] a Tear of Esmesanti (%u of 9)\n", (unsigned)(g->page[0xA0] + 1));
         tear_cutscene(s);
-    } else
+    } else if (g->boss_room)
+        game_boss_room_intro(g);                                /* 61A8 */
+    else
         game_start_walk_in(g, (d->letter & 0x40) != 0);         /* 7C6E */
     s->transitions++;
     LOG(s, "[door] entered %s (cavern %d, %d cols, tileset MPP%c) at hero (%d,%d)\n", s->maps[slot].name,
@@ -276,6 +279,15 @@ static void town_frame(Shell *s)
 
 void shell_frame(Shell *s)
 {
-    if (s->in_town) town_frame(s);
-    else game_step(&s->g);
+    if (s->in_town) { town_frame(s); return; }
+    int was_intro = s->g.boss_room != 0;
+    game_step(&s->g);
+    /* 61BE/61DB: the [E6] intro ends when the boss overlay clears [E6]
+     * (boss_mao1 A36A); the main loop then loads system map 0x1E and puts the
+     * hero at (0x18,0x0D) for the last fight. */
+    if (was_intro && !s->g.boss_room && !s->g.hero_dead) {
+        s->g.boss_intro = 0;
+        LOG(s, "[boss] the [E6] walk-in is over: loading MPA0 at (0x18,0x0D)\n");
+        shell_enter_cavern(s, 0x1E, 0x18, 0x0D + 1, 0);   /* 7DC1 puts him a row below the entry cell */
+    }
 }

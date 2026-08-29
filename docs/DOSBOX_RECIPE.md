@@ -186,3 +186,15 @@ Two gotchas:
   0.45 s leaves every input landing mid-air — use ~1.3 s between taps underground.
 * **Reduce captures with `convert -sample` (nearest neighbour), never `-resize`** — any
   interpolation turns an exact-pixel comparison into roughly 25%.
+
+### 9.1 Reaching any cavern (per-town cave tables)
+
+Every town's `[C00B]` cave table is indexed by **both** its edge exits and its doors, so a
+`.usr` naming any town leaves you one step from a cavern — "no cavern 4-9 door is within
+reach of a town" is wrong.  That is how `cavern4`..`cavern8`, `town_helada`, `town_tumba`,
+`town_pureza`, `town_llama` and `boss_paguro` (cavern 7's boss, straight through Llama's
+column-222 door) were captured.
+
+Restore keys, precisely: **F7** → `Sure?(Y/N)` → `y` → **Down** moves the *list* cursor →
+**Space copies the highlighted name into the input box** → **Enter** accepts.  Send all
+three as holds (`+key`/`-key`), not taps.

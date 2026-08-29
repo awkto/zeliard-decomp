@@ -37,15 +37,19 @@ mountain and cave backdrops with their three parallax strips, and `encnt.grp`'s
 `town.png` and `menu.png` now match the port over the **whole 320x200 screen**.
 The `.usr` save file **round-trips
 through the real game**: a file written by `port/` loads under DOS with F7
-"Restore Game", which is how the cavern-2, cavern-3 and Cangrejo captures in
-`docs/screenshots/` were taken (see "Ground truth" below).
+"Restore Game", and because *every* town's map records carry a cave entry that
+is now enough to reach the second half of the game — cavern 4, 5, 6 and 8, four
+more towns and **Paguro**, cavern 7's boss, were captured that way for this
+milestone and are diffed in `make verify` (see "Ground truth" below).  Cavern 1's
+intended route was worked out at the same time, and the Cangrejo fight is now
+entered and left through its own doors with nobody at the keyboard.
 
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 9 test binaries
-make test            # physics (135) + combat/AI (171) + town (138) + boss (584) + shop (118)
-                     #   + status (87) + playthrough (23) + audio (305) + cutscene (46) = 1607 assertions
-make verify          # 58 headless renders diffed against the DOSBox captures in docs/screenshots/,
+make test            # physics (139) + combat/AI (171) + town (138) + boss (594) + shop (118)
+                     #   + status (87) + playthrough (38) + audio (305) + cutscene (46) = 1636 assertions
+make verify          # 99 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
 make playthrough     # the same two routes as test_playthrough, with the step-by-step log
 ./zeliard            # the real boot: the opening demo, then Felishika's Castle
@@ -545,10 +549,13 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   not scripted at all.  Shops are answered frame by frame: the driver pages the text
   with the select button and walks the cursor to the row the route names, using the
   `in_menu` / `menu_row` that `menu_select` now publishes.
-* `test_physics.c` — 135 assertions (idle, walk, walls, jumps, ceilings, gaps, edge
-  fall, ladders, conveyor, hazard, MP10 door/platform, **elevators and the fixture-C
+* `test_physics.c` — 139 assertions (idle, walk, walls, jumps, ceilings, gaps, edge
+  fall, ladders, conveyor, hazard, MP10 door/platform, elevators and the fixture-C
   patrol, locked doors + keys + the message-box lifetime, the C00C patch list, the
-  26-frame walk-in**).
+  26-frame walk-in, **and the ring/`[80]` alignment after scrolling both ways** —
+  the last one walks MP10's entrance shelf 40 columns east and back and checks that
+  ring column *i* is still map column `scroll_col + i` on every step, which is the
+  regression guard for the `scroll_right` bug below).
 * `test_combat.c` — 149 assertions: the eai1 tables, the damage formulas, contact and
   knockback, sword kills, EXP, drops, the bat wake window, the frog hop, **the eight
   projectile directions, the 31-shot cap, life/wall death, shot damage and the
@@ -557,7 +564,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   the sound stub; every eai overlay's A008/A010 tables and a 200-frame run of each
   cavern's AI; the tall (2×4) spawn**.  It also renders the DOSBox capture's scene
   for `make verify`.
-* `test_boss.c` — 584 assertions: the `[A002]` block of **all eleven** boss
+* `test_boss.c` — 594 assertions: the `[A002]` block of **all eleven** boss
   overlays against docs/ENEMIES.md §3 (HP, EXP, gold, camera column, knock-left,
   start cell, contact damage, the name record); mp1d's level record (boss bit 7,
   AI 1 = CRAB, bank +5, post-boss banks +6/+7, an *empty* C010 list and no door);
@@ -616,8 +623,9 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   `menu_result = 8`; selecting a spell into `[9D]` and wearing an item into
   `[9E]` through the real cursor; the row change; the Enter debounce; and the
   window frames and header colours in the rendered framebuffer.
-* `test_playthrough.c` — 23 assertions over two autopilot runs and two fixture
-  crossings (`make playthrough` prints them step by step):
+* `test_playthrough.c` — 38 assertions over two autopilot runs, two fixture
+  crossings and a survey of cavern 1's topology (`make playthrough` prints the
+  routes step by step):
   * **route 1, the opening**, played end to end with nobody at the keyboard: the
     castle, the King's 1000 gold, the road east into Muralla Town, the weapon shop
     (the Clay shield through the real menu widget), the cavern gate at column 205,
@@ -626,10 +634,23 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     into the cavern.  Asserts the gold, the shield, the level, the LIFE and that both
     hand-offs happened.
   * **route 2, caverns 1-3 and their bosses**: MP1D/Cangrejo, MP2D/Pulpo and
-    MP3D/Pollo, each fought to the 40-frame death, the reward collected, and the exit
-    door 72F1 puts on the hero's column taken back out into MP10 / MP20 / MP31, with
-    Satono's smith and Sage and Bosque's smith in between.  Asserts three bosses,
-    no deaths, the boss EXP and gold and three shops.
+    MP3D/Pollo, each fought to the 40-frame death and the exit door 72F1 puts on the
+    hero's column taken back out into MP10 / MP20 / MP31, with Satono's smith and
+    Sage and Bosque's smith in between.  **Cavern 1 is now walked**: the route steps
+    off Satono Town's left edge, which is the town's own cave record into MP10
+    (128,33), walks the 13 columns along the shelf to the unlocked door at (141,32)
+    and goes through it, so the Cangrejo fight is entered and left through real
+    doors with no shell call and no fabricated position.  Asserts three bosses, no
+    deaths, the boss EXP and gold, three shops and four doors taken.
+  * **cavern 1's topology**, surveyed three ways, because it is what the walking
+    route depends on: from the Muralla gate at (61,7) the graph reaches 1073 of
+    MP10's 1542 nodes and, of its six doors, only the MURALLA door back out and
+    **(159,50) into MP21** — not the boss door and not the locked one; from where
+    MP21's (15,50) door lands the hero, (95,50), the locked boss door at (26,15)
+    *and* MP10's own Key item are both reachable; and from where Satono's left edge
+    drops him the two doors on the boss shelf are.  It also pins the col-165 ladder,
+    whose nodes exist only because the survey now hangs the hero on a ladder the way
+    65C5 does.
   * **the fixture rides**: that the elevator shaft at column 48 is a node at every
     row 8024 lets the platform reach and not only at the row the record starts on,
     that the whole of fix[2]'s patrol (columns 1..15 at row 43) is standable while
@@ -865,10 +886,11 @@ simply fails and leaves whatever 7EBB already loaded in place.  The rule is now
   emitters were read instruction by instruction, which is where the AKMA face
   patch ("2 columns × 1 row", not the other way round) and MAO1's pose-2 class
   came from.  Only the *animation* is now unverified against the original —
-  there is DOSBox ground truth for Cangrejo but not for the later bosses,
-  because none of their doors is within reach of a town.
-* **The per-boss idle animation hooks** and the `[E6]` boss-room walk-in (only
-  mp90 uses it) are still skipped.  The part hit bit **is** written now: eight of
+  there is DOSBox ground truth for Cangrejo and (new this milestone) for
+  **Paguro**, cavern 7's boss, whose room MP73 is straight through Llama Town's
+  column-222 door; the other nine boss rooms still have no town door.
+* **The per-boss idle animation hooks** are still skipped (the `[E6]` boss-room
+  walk-in is in — see "Corrections found while walking cavern 1").  The part hit bit **is** written now: eight of
   the eleven overlays carry `or byte [si+5],0x20` in their part emitter (CRAB
   `A6BC`, TAKO `A44D`, TORI `A510`, MEDA `A4F5`, LEGA `A501`, DRGN `A644`, AKMA
   `A5D1`, MAO2 `A763`), gated on the overlay's own hit variable, and ZELA, ZEL2
@@ -879,15 +901,16 @@ simply fails and leaves whatever 7EBB already loaded in place.  The rule is now
   which is half the damage the port used to do.
 * **The encounter card is in** — `encnt.grp` decoded through gfmcga's own 28x5
   cell map, "ENCOUNTER!" in the two reds on black, flashing twelve half-frames
-  starting with the card up (60BC draws it before the loop).  Boss maps still skip
-  the `[E6]` boss-room walk-in (only mp90 uses it) and the per-boss idle animations
-  the shop `[A002]` hooks would drive.
+  starting with the card up (60BC draws it before the loop).  The `[E6]` boss-room
+  walk-in (61A8, only mp90 uses it) runs now, including 61DB's hand-off to MPA0;
+  the per-boss idle animations the shop `[A002]` hooks would drive still do not.
 * **Shop details.**  The bank's amount entry is simplified to "deposit/withdraw
   everything" (the original's 24-bit Up/Down/Left/Right entry is not ported), the
   sage's name-entry dialog and `*.usr` file browser are replaced by `--name`, and the
   shopkeepers' idle animations (the `[A002]` hooks: the smith's eyes and mouth, the
   priest, the innkeeper's blink, the drug shop's pot, the sage's ritual aura) do not
-  run — the portraits are static.  omoypro (the Princess' chamber, the ending
+  run — the portraits are static.  The eight hook entry points are listed under
+  "What is left of milestone (e)".  omoypro (the Princess' chamber, the ending
   hand-off) is loaded but only draws its picture.
 * **The dialogue box's yes/no widget** (`74D3`) now runs for both opcodes: `81`
   (the bsmp sentry: Yes → script 12, No → 13) and `89` (llmp's Asbestos cape:
@@ -1056,7 +1079,7 @@ Muralla's `"30yc"` is *Buy shield → the first shield → Yes → leave*.
 
 ## Ground truth
 
-`make verify` compares 58 boxes of headless renders against the DOSBox captures
+`make verify` compares 99 boxes of headless renders against the DOSBox captures
 in `docs/screenshots/`; all of them are at 100 %, and **eight** of them are the
 whole 320×200 screen — including all five intro captures (`intro_prologue`,
 `intro_demon`, `title`, `demo_balcony` and `demo_dialogue`), which the port
@@ -1120,53 +1143,156 @@ The captures are `import`ed at 640×480 and reduced with `convert -sample
 320x240` — a **nearest-neighbour** reduction.  `-resize` interpolates and turns
 every exact-pixel comparison into a ~25 % match; that cost an hour once.
 
-Cangrejo's is the only boss capture there can be for now: of the eleven boss
-doors, only MP1D's is within reach of a town (13 columns from Satono's left
-edge).  The next nearest is MP6D's at (309,41), six columns from where Dorado
-Town drops into MP60 but eight rows up and locked.
+### Every town is a door into the second half of the game
+
+The "only Satono is useful" reading above was wrong, and it was what made
+caverns 4-9 look out of reach.  A town map's `[C007]` **exit** records and its
+`[C009]` **door** records both index the same `[C00B]` cave table, and *every*
+town has cave records — so a `.usr` that names any town map in `[C4]` and any
+column in `[80]`/`[83]` puts the hero one edge step or one `Up` away from a
+cavern the port had never been checked against.  `port/` writes exactly such a
+save; the restore recipe above is unchanged.
+
+| town | how it reaches a cavern |
+|---|---|
+| Muralla (1) | the gate at column 205 → MP10 (61,7) |
+| Satono (2) | left edge → MP10 (128,33) *(the boss shelf)*; right edge → MP20 (6,62) |
+| Bosque (3) | column 185 → MP30 (185,19); column 149 → MP31 (149,14) |
+| **Helada (4)** | left edge → **MP40** (86,22); right edge → MP41 (16,22) |
+| **Tumba (5)** | left edge → **MP50** (94,11); right edge → MP50 (131,10) |
+| **Dorado (6)** | left edge → MP61 (31,6); right edge → **MP60** (315,49) |
+| **Llama (7)** | column 269 → MP70 (1,22); column 8 → MP70 (152,7); **column 222 → MP73 (27,13), cavern 7's boss room** |
+| **Pureza (8)** | left edge → **MP80** (111,21) |
+| Esco (9) | column 205 → MP81 (123,6) |
+
+Nine captures were taken that way for this milestone and all nine are in
+`make verify`:
+
+| capture | save | in DOSBox |
+|---|---|---|
+| `town_helada.png` | Helada, column 86 | the restore itself |
+| `cavern4.png` — MP40 "Cavern of Glacial", the ice tileset | Helada, column 4 | hold Left 2.5 s: off the left edge |
+| `town_tumba.png` | Tumba, column 4 | the restore itself |
+| `cavern5.png` — MP50 | Tumba, column 4 | hold Left 2.5 s |
+| `cavern6.png` — MP60 "Cavern of Tesoro" | Dorado, column 210 | the restore lands on the last walkable column, and town.bin takes the right-edge exit itself |
+| `town_pureza.png` | Pureza, column 4 | the restore itself |
+| `cavern8.png` — MP80 | Pureza, column 4 | hold Left 2.5 s |
+| `town_llama.png` | Llama, column 222 | the restore itself |
+| `boss_paguro.png` — **MP73, cavern 7's boss "Paguro"** | Llama, column 222 | tap Up: the town door at 222 is a *cave* record and it opens straight into the boss room |
+
+So a boss capture no longer needs a long cavern walk at all: Llama's column-222
+door is a boss room's front door.  The port reproduces `boss_paguro.png` at
+`--map 0x15 --pos 27 13`, frame 20, at 100 % everywhere except a 16 px band at
+the left wall (screen x 48-63) and the hero/boss sprites themselves — that band
+is the only piece of the second half that does *not* match yet and is worth a
+look; everything else, tileset, HUD, the `ENEMY` gauge and the `[A002]` name
+record, is pixel-exact.
+
+The only boss door still out of reach this way is MP6D's at (309,41), six
+columns from where Dorado Town drops into MP60 but eight rows up and locked.
 
 ## What is left of milestone (e), and after
 
-1. **MP10's boss door still cannot be walked to from the Muralla gate — and the
-   fixtures were not why.**  The survey now rides them (see `nav.c` above) and
-   crosses both of MP10's floorless gaps, and the two navigator bugs the work turned
-   up are fixed, but the entrance is still a 764-node island of the map's 1542.  Two
-   *one-way* barriers hold it, and both are the original's:
-   * the staircase at **columns 14-18, rows 19-22** is roofed with MPP1's tile
-     `0x0B`, which the tileset's own list at `[0x18]` marks as a **left-pushing
-     conveyor** (`0x0C` at `[0x1C]` is its right-pushing twin).  `walk_right`
-     (67C6) refuses to move while `conveyor == 2`, so the staircase can be walked
-     *down* and never up — the exact mirror of the right-pushing staircase at
-     columns 153-156 that docs/FIGHT.md §5 already records for the boss corridor;
-   * the second frontier, (97,39) → (93,39), is solid rock: columns 95-97 are
-     impassable from row 26 to row 42 and columns 95-105 from row 33 to row 38.
+1. **Cavern 1's intended route, found — and two port bugs with it.**  The
+   entrance is no longer an island: from the Muralla gate the survey now reaches
+   **1073** of MP10's 1542 nodes and, of the six doors, the MURALLA door back out
+   **and (159,50) into MP21**.  What was hiding it:
+   * **`scroll_right` (68A0) filled the ring's new column from the *old* `[80]`.**
+     The original does `inc word [0x80]` *first* and only then `mov ax,[0x80];
+     add ax,0x23` for the column it writes into ring column `0x23`; the port
+     wrote `scroll_col + 0x23` before the increment, i.e. one map column short.
+     Because every later scroll shifts that column inwards, the error spread
+     across the whole ring: after walking east the hero's own collision cell was
+     the map cell *west* of where `[80]` said he was.  Nothing caught it — the
+     start-of-map captures are all taken before any scrolling and the renderer
+     reads the same (wrong) ring — but it made the survey graph and the live
+     physics disagree everywhere, which is what the navigator kept tripping over.
+     `test_physics.c`'s "scroll ring" case walks 40 columns each way and diffs the
+     whole ring against the map after every step.
+   * **the survey never hung the hero on a ladder.**  `standable()` counts a cell
+     with no floor as a node when a ladder is in the hero's body column (which is
+     what 62DB's `ladder_step` keeps him on), but the probe placed him there with
+     `[FF39]` clear, so gravity dropped him on frame 1 and every such cell looked
+     like a hole.  `probe_grab_ladder` now leaves him the way `ladder_mount`
+     (65C5) does.  MP10's col-165 and col-112 ladders — the way down from the
+     entrance shelf — were entirely invisible before.
 
-   Neither the Ruzeria shoes (`max_rise` 4, tried) nor the C00C patch list (it only
-   unlocks doors) opens either.  Started instead from MP10's *own* header start
-   (26,16) — the cell beside the locked door — **1494 of the 1542 nodes and four of
-   the six doors are reachable**, including the boss door, so the map is fine and it
-   is the Muralla gate that lands the hero on the far side of the two barriers.
-   Whatever the intended route through cavern 1 is, it is not a walk from (61,7);
-   finding it is the next piece of work.  Until then `PLAY_ROUTE_BOSSES` still
-   enters each boss room with `shell_enter_cavern` at the door's own destination
-   cell — the same call the door and the town gate make — and starts from the
-   character the shops would have built by then (level 16, the Knight's sword, the
-   Honor shield, 20 000 gold; the LIFE went up when the hit throttle halved the
-   damage the blade does to a boss).  Both deviations are in one place
-   (`playthrough.c` / `test_playthrough.c`) and are the only ones.  The same work
-   *did* open MP20: its locked door to MP2D at (171,54) is now reachable from the
-   Satono entry, where before the entry cell was not even a node.
-2. **The remaining town machinery**: the shopkeeper idle hooks.  The ympd/ckpd
-   backdrops, all three parallax strips, ENCNT.GRP, the HUD's grey panel + stone
-   frame + item-slot frames and the row of Tear slots are done.
+   The route the map intends is now readable off the graph, and it is not a walk
+   to the boss door at all:
+
+   > Muralla gate → MP10 (61,7) → the long way round to **door 5 at (159,50)** →
+   > MP21 (79,50) → MP21's **(15,50)** → back into MP10 at **(95,50)** → the
+   > **Key** item at (99,41) → the *locked* door at **(26,15)** the Key opens →
+   > MP1D → Cangrejo → the exit door 72F1 puts on the hero's column → MP10
+   > **(141,32)**, the boss shelf → the **(128,32)** door → Satono Town.
+
+   That is why MP10's header start is (26,16), the cell beside the locked door,
+   and why (141,32) and (128,32) sit on a 32-node shelf nothing else reaches: the
+   shelf is where the boss room lets you *out*, not how you get in.  MP20 is built
+   the same way — locked door 3 at (171,54) in, unlocked door 4 at (190,47) out
+   onto the shelf that carries door 5 to MP30 — and its header start is at door 3
+   as well.  `PLAY_ROUTE_BOSSES` now walks cavern 1 for real (Satono's left edge →
+   the shelf → (141,32) → Cangrejo → the exit door), and the topology above is
+   asserted in `test_playthrough.c`.
+
+   Two things still stand in the way of walking the *whole* of it:
+   * **the executor, not the planner.**  The planner finds the Muralla→door-5
+     path (about 300 macros, a full lap of the 240-column ring), and the
+     executor now follows most of it — with waypoints it reached 13 of 16 — but
+     it still loses the ride on fix[5], the platform that patrols columns
+     118-127 at row 0 and carries the hero across the only gap in the row-61
+     floor.  A node in the graph is a *cell*, and the state the probe ran from
+     is not: this sprint added the three parts of it that bit hardest (the hero
+     must be facing the way `game_place` left the probe, must not be in 6B41's
+     two-frame post-fall crouch, and an edge that the live run does not
+     reproduce three times is dropped), plus a recovery for the off-graph cells
+     6B76 lets the hero rest in and a "walk with the platform" rule, but a
+     patrolling platform's *phase* is still not part of a node.
+   * **MP1D's reward is out of reach.**  72F1's third poke writes the reward
+     record's row, and for MP1D that is **row 5** — ten rows above the room's only
+     floor, in an otherwise empty box (MP2D and MP3D are the same at row 13).  It
+     is a Key (`type & 0x1F == 0x16`), and it is the key MP10's (128,32) door into
+     Satono wants, so until it can be collected the route takes `P_TOWN_GOTO` back
+     to Satono.  The old route asked for MP1D (38,16) and MP2D (33,20), which are
+     not where the record lands; those steps were passing on the "within two
+     cells" fallback without ever picking anything up (`keys` stayed 0 through the
+     whole run) and have been removed rather than left lying.
+
+2. **The remaining town machinery: the shopkeeper idle hooks.**  Everything else —
+   the ympd/ckpd backdrops, all three parallax strips (now with the right *phase*,
+   see below), ENCNT.GRP, the HUD's grey panel + stone frame + item-slot frames and
+   the row of Tear slots — is done.  The hook is town.bin's `idle_poll` 7042, which
+   calls `[cs:0xA002]` whenever `[7C42]` says a shop overlay is loaded; the word at
+   each overlay's `A002` is its entry:
+
+   | overlay | `[A000]` | `[A002]` idle hook |
+   |---|---|---|
+   | kingpro | A004 | **A3A2** |
+   | omoypro | A005 | A004 |
+   | armrpro | A004 | **A90F** |
+   | bankpro | A004 | **A728** |
+   | churpro | A004 | **A1D7** |
+   | drugpro | A004 | **A644** |
+   | innapro | A004 | **A22F** |
+   | kenjpro | A027 | **AB47** |
+
+   armrpro's (A90F) is a plain blink/lip-sync state machine: it does nothing unless
+   `[BC23]`, waits for `[FF50] >= 2`, counts `[BC24]` up to 0x1E, then steps
+   `[BC25]`/`[BC26]` through a small script and redraws one cell.  Porting it is a
+   day's work per overlay plus a DOSBox capture of a keeper mid-blink to check it
+   against; `shop_armour.png` is phase 0 and cannot tell the difference.
 3. **The rest of the sound**: the MT-32 driver (`MSCMT.DRV` over blob A, which
    `tools/msd2mid.py --mt` already decodes) and the Tandy SN76496 pair
    (`MSCJR.DRV` + `SNDJR.DRV`); `SNDADLIB`'s `15A3` ambient/proximity routine, which
    needs `FF08` (fight.bin `774E`) to be computed first; and the Esc pause box, which
    is the only caller of `INT 60h AX=3`.
-4. **More ground truth**: caverns 4-9, a town dialogue box, and the later bosses
-   — the last of which needs either a long scripted cavern walk in DOSBox or a
-   way to replay the port's own input stream there.
+4. **More ground truth.**  Caverns 4, 5, 6 and 8, four more towns and cavern 7's
+   boss are now captured and in `make verify` (see "Every town is a door into the
+   second half of the game" above); no long scripted cavern walk was needed after
+   all, because every town's `[C00B]` cave records put a cavern one step from a
+   restore.  What is still uncaptured: caverns 7 and 9 (MP70 / MP81, both one town
+   door away — the same recipe, just not run yet), a town dialogue box, and the
+   nine bosses other than Cangrejo and Paguro, whose rooms have no town door.
    `docs/screenshots/menu.png` turned out to be a capture of the **select.bin status
    screen** (Enter in Felishika's Castle on a fresh game), not a shorter town menu, and
    `make verify` diffs the port's own status screen against it.
@@ -1175,6 +1301,81 @@ Town drops into MP60 but eight rows up and locked.
    `+Right`/`-Right` + `+Up`/`-Up` tap pairs at 0.45 s intervals from 28 s
    (docs/DOSBOX_RECIPE.md §5's edge-stop-and-scan pattern, scanning *right* from the
    Muralla entry to the first door at column 39), captured at 43 s.
+
+## Corrections found while walking cavern 1 (issue #28)
+
+Each of these was checked against `ndisasm` of the extracted overlay before it was
+written down; the addresses are the ones to look at.
+
+**`port/physics.c` — `scroll_right` (fight.bin `68A0`) was one column out.**
+
+```
+000068A0  FF068000          inc word [0x80]        ; [80] first
+000068A4  A18000            mov ax,[0x80]
+000068A7  052300            add ax,0x23            ; ... then the new column
+...
+000068C8  BF23E0            mov di,0xE023          ; into ring column 0x23
+```
+
+The port bumped `scroll_col` *after* fetching `scroll_col + 0x23`, so ring column
+0x23 got the map column one to the west; every later scroll shifts that column
+inwards, so the whole ring ends up one column behind `[80]`.  `scroll_left`
+(`66F8`) was already right — it does `dec word [0x80]` first too.  Nothing in
+`make verify` could see it (every capture is taken before the map has scrolled,
+and the renderer reads the same ring), but it made the hero's collisions read the
+cell west of the one `game_hero_map_col` reports, which is why the navigator's
+graph and the live physics disagreed all over MP10.  Fixed, with
+`test_physics.c`'s "scroll ring" case as the guard.
+
+**`[FF2A]` is not the parallax phase.**  town.bin `6157`:
+
+```
+00006157  A08000            mov al,[0x80]
+0000615C  D1E0 D1E0 D1E0    shl ax,1 x3            ; scroll_col * 8
+00006162  0517C0            add ax,0xC017
+00006165  A32AFF            mov [0xff2a],ax
+```
+
+and it moves by `±8` at `67DC`/`6856` exactly when `[80]` moves.  So `[FF2A]` is
+the running pointer to the leftmost visible column of the town's tile stream
+(8 bytes per column, `C017` is the stream's base), it is re-derived from `[80]`
+every time a map is set up, and it can never diverge from `scroll_col`.  It is
+used as a *pointer* — `add bx,[0xff2a]` at 6264/6305/6790/6803/6987 — never as a
+pixel offset.
+
+**The parallax phase *does* diverge, and it is not `scroll_col`.**  The three
+backdrop strips are rotated in place in video memory by the gtmcga vectors
+`GT_SCROLL_FAR_*` / `GT_SCROLL_NEAR_*` (`3677`/`36F1`, `3628`/`36A4`), 4 / 8 / 16 px
+per scrolling step.  There is no counter behind them: the phase is however many
+steps have been rotated since the *backdrop painter* last drew them, so it starts
+at **0** whenever a map is set up.  That is the same as `scroll_col * step` for a
+hero who walked in from the left edge — which is every capture the port had — and
+different after an F7 restore into a town that is already scrolled.  Measured:
+restoring into Helada Town at column 86 (`scroll_col` 69), the port's strips were
+52 / 104 / 96 px ahead of the original's, i.e. exactly `scroll_col * {4,8,16}`
+mod 112, and the real phase was 0.  `Town.back_steps` now carries the count and
+`town_render` uses it; `--town-scr`, which exists to reproduce a *walked-to*
+capture, sets it to `scroll_col`.  Three of the new `make verify` boxes are the
+strips of a restored town.
+
+**The `[E6]` boss-room walk-in (fight.bin `61A8`/`61BE`/`61DB`) is in.**  MP90
+(system map `0x1D`) is the one level whose record has bit 6.  The main loop puts
+the camera at `scroll_col = 0x29` with `hero_scr_col = 5`, refills the ring and
+hands the frame to the boss overlay, which walks Alguien's intro and clears
+`[E6]` (`boss_mao1` `A36A`); the loop then loads system map `0x1E` (MPA0) and
+places the hero at `(0x18,0x0D)` for the last fight.  `game_boss_room_intro()`,
+`shell_frame`'s hand-off and `test_boss.c`'s "[E6] room" case cover all three
+steps; before this the port set `[E6]` and then simply ran the ordinary `7C6E`
+walk-in and never loaded MPA0.
+
+**The navigator's node model** (not the original's, but worth recording).  A node
+is a cell; the state the survey probed from is not.  Four things that made an
+edge unrepeatable in a live run are now handled: the hero must be facing the way
+`game_place` left the probe (6824 spends a frame turning, and 65C5 only mounts a
+ladder on the side he faces), he must not be inside 6B41's two-frame post-fall
+crouch (a crouch swallows the step), the walks-off guard must not veto a move the
+probe *measured* as a drop, and an edge the live run fails to reproduce three
+times is dropped.  What is still missing is a patrolling platform's phase.
 
 ## Corrections found while porting the cutscenes (issue #30)
 

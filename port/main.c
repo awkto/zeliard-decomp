@@ -569,12 +569,14 @@ int main(int argc, char **argv)
     }
     player_page_push(g);
     shell_load_enemy_banks(sh, &sh->maps[0]);
+    int explicit_pos = pos_col >= 0;
     if (pos_col < 0) {
         if (map_idx == 0) { pos_col = 61; pos_row = 7; }                 /* mrmp.mdt cavern entry (61,7): the MURALLA door */
         else if (sh->maps[0].start_col != 0xFFFF) { pos_col = sh->maps[0].start_col; pos_row = sh->maps[0].start_row; }
         else { pos_col = 16; pos_row = sh->maps[0].row_bias; }
     }
     game_place(g, pos_col, pos_row, 0);
+    if (g->boss_room && !explicit_pos) game_boss_room_intro(g);          /* 61A8 */
     fprintf(stderr, "%s: cavern %d, %d columns, tileset MPP%c; hero at (%d,%d), scroll (%d,%d)\n", sh->maps[0].name,
             sh->maps[0].cavern, sh->maps[0].width, "123456789AB"[sh->maps[0].tileset], game_hero_map_col(g),
             game_hero_map_row(g), g->scroll_col, g->scroll_row);
@@ -614,6 +616,10 @@ int main(int argc, char **argv)
         if (!shell_enter_town(g, start_in_town, town_col, 0)) return 1;
         if (town_scr >= 0) {                       /* exact scroll/hero placement for make verify */
             sh->town.scroll_col = town_scr;
+            /* the captures --town-scr reproduces were reached by *walking*
+             * east from the map's left edge, so the backdrop strips have been
+             * rotated once per column since they were painted */
+            sh->town.back_steps = town_scr;
             if (town_col >= 0) sh->town.hero_scr_col = town_col - 4 - town_scr;
             town_npc_markers_reset(&sh->town);
         }

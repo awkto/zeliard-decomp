@@ -16,6 +16,7 @@
 #include "render.h"
 #include "enemy.h"
 #include "boss.h"
+#include "shell.h"
 
 static int fails = 0, checks = 0;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { fails++; fprintf(stderr, "  FAIL %s:%d: ", __FILE__, __LINE__); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
@@ -669,6 +670,46 @@ static void t_generic(void)
     for (unsigned i = 0; i < sizeof G6 / sizeof G6[0]; i++) run_overlay(G6[i].ai, G6[i].map, G6[i].name);
 }
 
+/* 61A8/61BE/61DB: MP90 (system map 0x1D) is the one level whose record has
+ * bit6, the "[E6] boss room" the hero walks into from the left under MAO1's
+ * control; when the overlay clears [E6] (A36A) the main loop loads MPA0 and
+ * puts him at (0x18,0x0D) for the last fight. */
+static void t_e6_room(void)
+{
+    static Shell sh;
+    memset(&sh, 0, sizeof sh);
+    sh.quiet = 1;
+    if (shell_init(&sh, G_DIR, 0x1D)) { CHECK(0, "cannot load MP90"); return; }
+    Game *g = &sh.g;
+    g->present = NULL;
+    CHECK((sh.maps[0].lvl_flags & 0x40) != 0, "MP90 level flags %02X: bit6 -> [E6]", sh.maps[0].lvl_flags);
+    CHECK((sh.maps[0].lvl_flags & 0x80) == 0, "MP90 is *not* an FF34 boss map");
+    shell_load_enemy_banks(&sh, &sh.maps[0]);
+    CHECK(g->boss_room == 0xFF, "[E6] is set when MP90 is entered");
+    game_place(g, sh.maps[0].width / 2, sh.maps[0].row_bias, 0);
+    game_boss_room_intro(g);
+    CHECK(g->scroll_col == 0x29 && g->hero_scr_col == 5,
+          "61A8 puts the camera at 0x29 with the hero 5 columns in (got %d/%u)",
+          g->scroll_col, g->hero_scr_col);
+    CHECK(g->boss_intro == 0xFF, "[9F26] boss_intro is set for the walk-in");
+    CHECK(!g->walk_in, "the ordinary 7C6E walk-in does not run in an [E6] room");
+    /* run the intro out: the overlay clears [E6] and shell_frame loads MPA0 */
+    g->hp = g->max_hp = 9999;
+    int loaded = 0;
+    for (int f = 0; f < 900 && !loaded; f++) {
+        g->dirs = 0; g->buttons = 0;
+        shell_frame(&sh);
+        if (g->map != &sh.maps[0] || !strcmp(g->map->name, "MPA0")) loaded = 1;
+    }
+    CHECK(loaded, "the [E6] intro ends and 61DB loads the next map");
+    if (loaded) {
+        CHECK(!strcmp(g->map->name, "MPA0"), "it is MPA0 (got %s)", g->map->name);
+        CHECK(game_hero_map_col(g) == 0x18 && game_hero_map_row(g) == 0x0D + 1,
+              "621F + 7DC1 place him at (0x18,0x0D+1) (got %d,%d)", game_hero_map_col(g), game_hero_map_row(g));
+        CHECK(g->boss_map == 0xFF, "MPA0 is an FF34 boss map: the last fight starts");
+    }
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -685,7 +726,7 @@ int main(int argc, char **argv)
         {"drgn tables", t_drgn}, {"akma tables", t_akma},
         {"mao1 script", t_mao1}, {"mao2 tables", t_mao2},
         {"boss banks", t_boss_banks},
-        {"drgn/akma/mao", t_generic},
+        {"drgn/akma/mao", t_generic}, {"[E6] room", t_e6_room},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = fails;

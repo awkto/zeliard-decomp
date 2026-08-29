@@ -426,6 +426,82 @@ static void t_walk_in(const char *dir)
     CHECK(G.walk_in_x == 256 && G.walk_in_dir == -8 && (G.hero_flags & FACE_LEFT), "entering from the right");
 }
 
+/* cells 78DD's door arches cover, which are painted over the tile stream */
+static int under_arch(const Map *m, int col, int row)
+{
+    for (int i = 0; i < m->ndoors; i++) {
+        int dc = (int)m->doors[i].col, dr = m->doors[i].row;
+        int d = col - dc; if (d < -(int)m->width / 2) d += m->width; if (d > (int)m->width / 2) d -= m->width;
+        if (d >= -2 && d <= 4 && row >= dr - 1 && row <= dr + 4) return 1;
+    }
+    return 0;
+}
+static int ring_mismatch(const Game *g, const Map *m)
+{
+    int bad = 0;
+    for (int c = 0; c < 36; c++) {
+        int mc = (g->scroll_col + c) % m->width;
+        for (int r = 0; r < MAP_ROWS; r++) {
+            if (under_arch(m, mc, r)) continue;
+            if (g->ring[r * 36 + c] >= 0x40) continue;   /* DCHR: arch / fixture */
+            if (g->ring[r * 36 + c] != m->grid[mc][r]) { bad++; break; }
+        }
+    }
+    return bad;
+}
+
+/* 68A0/66F8: the ring window must stay aligned with [80] however far the hero
+ * has scrolled.  68A0 bumps [80] *before* it fetches the column it writes into
+ * ring column 0x23; doing it the other way round leaves the ring one map column
+ * to the left of what [80] says, and because every later scroll shifts that
+ * column inwards the error spreads across the whole ring -- the hero's own
+ * collisions then read the cell west of the one he is standing in, which is
+ * what hid MP10's route from the navigator. */
+static void t_scroll_ring(const char *dir)
+{
+    Map m; Tileset t;
+    memset(&m, 0, sizeof m); memset(&t, 0, sizeof t);
+    if (map_load_system(&m, dir, 0) || gfx_load_tileset(&t, dir, m.tileset)) {
+        fprintf(stderr, "  (skipped: no game files in %s)\n", dir);
+        return;
+    }
+    game_init(&G, &m, &t);
+    G.present = NULL;
+    game_place(&G, 61, 7, 0);
+    G.nobj = 0;                       /* enemies write markers into the ring */
+    game_first_frame(&G);
+    /* walk east along the entrance shelf; after every step the 36 columns of
+     * the ring must be map columns scroll_col .. scroll_col+35, except where
+     * 78DD has painted a door arch over them */
+    int bad_r = 0, bad_l = 0, steps = 0;
+    for (int i = 0; i < 40; i++) {
+        step(DIR_RIGHT);
+        if (G.vstate != V_GROUND) break;
+        steps++;
+        bad_r += ring_mismatch(&G, &m);
+    }
+    CHECK(steps > 20, "the entrance shelf walk ran (%d steps east)", steps);
+    CHECK(bad_r == 0, "after scrolling east the ring still matches [80] (%d bad columns)", bad_r);
+    /* and the same walking back west, which uses 66F8 instead */
+    for (int i = 0; i < 40; i++) {
+        step(DIR_LEFT);
+        if (G.vstate != V_GROUND) break;
+        bad_l += ring_mismatch(&G, &m);
+    }
+    CHECK(bad_l == 0, "after scrolling west the ring still matches [80] (%d bad columns)", bad_l);
+    /* and the cell the hero collides with is map column game_hero_map_col()+1
+     * (66A5/684C test ring[tl] and ring[tl+2] around it) */
+    int mism = 0;
+    for (int i = 0; i < 20; i++) {
+        step(DIR_RIGHT);
+        int hc = (game_hero_map_col(&G) + 1) % m.width, hr = game_hero_map_row(&G);
+        if (under_arch(&m, hc, hr)) continue;
+        if (game_ring_cell(&G, G.hero_scr_col + 1, G.hero_scr_row) != m.grid[hc][hr]) mism++;
+    }
+    CHECK(mism == 0, "the hero's collision column reads the map cell it should (%d misses)", mism);
+    map_free(&m);
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -442,7 +518,7 @@ int main(int argc, char **argv)
     }
     struct { const char *name; void (*fn)(const char *); } mtests[] = {
         {"mp10", t_mp10}, {"fixtures", t_fixtures}, {"keys", t_keys},
-        {"patches", t_patches}, {"walk-in", t_walk_in},
+        {"patches", t_patches}, {"walk-in", t_walk_in}, {"scroll ring", t_scroll_ring},
     };
     for (size_t i = 0; i < sizeof mtests / sizeof mtests[0]; i++) {
         int before = fails;

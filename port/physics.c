@@ -99,10 +99,17 @@ static void scroll_left(Game *g)                                                
 }
 static void scroll_right(Game *g)                                                                       /* 68A0 */
 {
+    /* 68A0 bumps [80] *first* (`inc word [0x80]`) and only then fetches the
+     * column it writes into ring column 0x23 (`mov ax,[0x80]; add ax,0x23`),
+     * so the new column is scroll_col+0x23 with scroll_col already advanced.
+     * Doing it the other way round leaves the whole ring one map column to
+     * the left of what [80] says, and because every later scroll shifts that
+     * column inwards the error spreads across the ring: the hero's collisions
+     * then read the cell west of the one he is standing in. */
+    if (++g->scroll_col == g->map->width) g->scroll_col = 0;
     memmove(g->ring, g->ring + 1, RING_SIZE - 1);
     int c = g->scroll_col + 0x23; if (c >= g->map->width) c -= g->map->width;
     ring_put_column(g, 0x23, c);
-    if (++g->scroll_col == g->map->width) g->scroll_col = 0;
     shots_shift(g, 0);                                                  /* 8639 */
 }
 static void scroll_up(Game *g)   { g->scroll_row = (uint8_t)((g->scroll_row - 1) & 0x3F); }             /* 6621 */
@@ -886,6 +893,20 @@ void game_enter(Game *g, const Map *m, const Tileset *t, int dest_col, int dest_
 {
     g->map = m; g->tiles = t;
     game_place(g, dest_col, dest_row + 1, face_left);                    /* 7DC1: scroll_row = dest_row+1-row_bias */
+}
+
+/* 61A8: a level whose record has bit6 ([E6]) is a "boss room" the hero walks
+ * into from the left under the boss overlay's own control.  The main loop puts
+ * the camera at column 0x29 with the hero five columns in and refills the ring
+ * before it hands the frame to the boss AI, which clears [E6] when the intro
+ * is over (61BE).  MP90 (system map 0x1D, Alguien) is the only one. */
+void game_boss_room_intro(Game *g)
+{
+    g->boss_intro = 0xFF;
+    g->scroll_col = 0x29;
+    g->hero_scr_col = 5;
+    g->walk_in = 0; g->hero_entering = 0;
+    ring_fill(g);
 }
 
 /* ------------------------------------------------------------- messages */

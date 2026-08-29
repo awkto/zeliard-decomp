@@ -182,7 +182,7 @@ view).  NPC frame = `arena:4000 + sprite*48 + ((anim&3) + 4*facing_right)*6` (34
 | 14..29 | far backdrop strip, scrolled 4 px per step — **underground (`ckpd`) only**.  Above ground `ympd` paints a single 224×88 panorama at (48,14), so these rows are part of it and never scroll |
 | 30..77 | backdrop painted by ympd/ckpd (mountains / cave ceiling), static.  Both painters actually reach **y 101**, not 77 — rows 78..101 are the strip `GT_CAPTURE_BACKDROP` grabs |
 | 78..141 | the 8 map rows (28 × 8 px cells at x = 48 + col*8); rows 0-2 show the strip captured from y 78..101 behind masked pixels |
-| 142..149 / 150..157 | near ground strips scrolled 8 / 16 px per step (`GT_SCROLL_NEAR_*`).  Phase for all three strips = `scroll_col × {4, 8, 16}` modulo their own 112 px width (verified: `town.png` at `scroll_col` 179 is 88 px / 64 px along) |
+| 142..149 / 150..157 | near ground strips scrolled 8 / 16 px per step (`GT_SCROLL_NEAR_*`).  gtmcga rotates the strips **in place**, so the phase is (steps walked since the backdrop painter last ran) × `{4, 8, 16}` modulo their own 112 px width — equal to `scroll_col × {4,8,16}` only when the hero walked in from an edge (as in `town.png` at `scroll_col` 179 = 88 px / 64 px along), and **0 after an F7 restore into a scrolled town** (measured against DOSBox restoring into Helada at column 86: a `scroll_col`-derived phase is 52/104/96 px out) |
 | 158.. | HUD (LIFE bar, PLACE, GOLD `[85..87]`, ALMAS `[8B]`, sword/item/magic icons) |
 
 Hero: screen column `hero_scr_col` (0..0x1B), rows 5-7; NPCs on row 5-7 too.  Dialogue boxes:

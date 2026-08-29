@@ -713,7 +713,7 @@ static void walk_left(Town *t)
     t->hero_flags |= 1;
     if (t->hero_scr_col >= 0x0B) { t->hero_scr_col--; return; }         /* 67BF */
     if (t->scroll_col == 0)      { t->hero_scr_col--; return; }         /* 67CB: can reach -1 */
-    t->scroll_col--;
+    t->scroll_col--; t->back_steps--;                                   /* GT_SCROLL_*_LEFT */
 }
 static void walk_right(Town *t)
 {
@@ -723,7 +723,7 @@ static void walk_right(Town *t)
     t->hero_flags &= (uint8_t)~1;
     if (t->hero_scr_col < 0x10) { t->hero_scr_col++; return; }          /* 6832 */
     if (t->scroll_col + 1 == t->map->width - 0x23) { t->hero_scr_col++; return; }   /* 683E: can reach 0x1C */
-    t->scroll_col++;
+    t->scroll_col++; t->back_steps++;                                   /* GT_SCROLL_*_RIGHT */
 }
 
 /* 0x623F  Space: an NPC 1..3 columns ahead answers (unless flags & 0xC0). */
@@ -928,9 +928,12 @@ static void blit_cell8(uint8_t *fb, const Cell8 *c, const uint8_t sky[8][8],
 }
 /* GT_SCROLL_FAR_* / GT_SCROLL_NEAR_* (gtmcga 3677/3628): a walking step that
  * scrolls the map slides the y14 strip 4 px, the y142 strip 8 and the y150
- * strip 16, all three 112 px wide and repeated once.  The phase is therefore
- * `scroll_col * step` modulo 112, which is what the two DOSBox town captures
- * show (Muralla at scroll_col 179 is 88 px / 64 px along). */
+ * strip 16, all three 112 px wide and repeated once.  The vectors rotate the
+ * pixels where they lie, so the phase is `back_steps * step` modulo 112 --
+ * steps taken since the backdrop painter last drew the strips, not
+ * `scroll_col * step`.  The two agree everywhere the hero walked in from an
+ * edge (Muralla at scroll_col 179 is 88 px / 64 px along) and differ after an
+ * F7 restore into a scrolled town, which is how it was measured. */
 static void blit_strip(uint8_t *fb, const uint8_t strip[][112], int rows, int y, int shift)
 {
     shift = ((shift % 112) + 112) % 112;
@@ -963,10 +966,10 @@ void town_render(uint8_t *fb, const Town *t)
     if (bd) {
         for (int y = bd->back_y0; y < bd->back_y1 && y < TOWN_Y; y++)
             memcpy(fb + y * FB_W + 48, bd->back + y * FB_W + 48, 224);
-        if (bd->has_far) blit_strip(fb, bd->far14, 16, 14, t->scroll_col * 4);
+        if (bd->has_far) blit_strip(fb, bd->far14, 16, 14, t->back_steps * 4);
         else for (int y = 14; y < bd->back_y0; y++) memset(fb + y * FB_W + 48, 0, 224);
-        blit_strip(fb, bd->near142, 8, 142, t->scroll_col * 8);
-        blit_strip(fb, bd->near150, 8, 150, t->scroll_col * 16);
+        blit_strip(fb, bd->near142, 8, 142, t->back_steps * 8);
+        blit_strip(fb, bd->near150, 8, 150, t->back_steps * 16);
     } else {
         for (int y = 14; y < TOWN_Y; y++) memset(fb + y * FB_W + 48, SKY_IDX, 224);
     }

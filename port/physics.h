@@ -270,6 +270,8 @@ void game_init(Game *g, const Map *m, const Tileset *t);
 void game_place(Game *g, int col, int row, int face_left);
 /* switch maps through a door (7DC1 scroll_to_entry) */
 void game_enter(Game *g, const Map *m, const Tileset *t, int dest_col, int dest_row, int face_left);
+/* 61A8: the [E6] boss-room walk-in camera (scroll_col 0x29, hero 5 columns in) */
+void game_boss_room_intro(Game *g);
 /* one iteration of the 629C main loop (renders one frame, more while climbing) */
 void game_step(Game *g);
 /* the initial frame() call before the loop (6254) */

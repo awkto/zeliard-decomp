@@ -111,6 +111,16 @@ struct Town {
     Game        *g;                 /* the shared player record (gold, hp, keys, page) */
 
     int      scroll_col;            /* [80] */
+    /* The three backdrop strips are *rotated in place* in video memory by the
+     * gtmcga vectors GT_SCROLL_FAR_* / GT_SCROLL_NEAR_* (3677/36F1, 3628/36A4),
+     * 4 / 8 / 16 px per scrolling step.  There is no counter behind them: the
+     * phase is simply how many steps have been rotated since the backdrop
+     * painter last drew them, so it starts at 0 whenever a map is set up --
+     * including an F7 restore into a town that is already scrolled, which is
+     * where deriving it from `scroll_col` goes wrong (measured against a
+     * DOSBox restore into Helada Town at column 86: the port was 52 / 104 / 96
+     * px ahead, exactly `scroll_col * {4,8,16}`). */
+    int      back_steps;            /* scrolling steps since the backdrop was painted */
     int      hero_scr_col;          /* [83] 0..0x1B; -1 / 0x1C = off the left / right edge */
     uint8_t  hero_flags;            /* [C2] bit0 facing left */
     uint8_t  hero_anim;             /* [E7] 0..3 walk, 4 = back view */

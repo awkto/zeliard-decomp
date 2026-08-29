@@ -241,6 +241,123 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	./zeliard --dir ../zeliard --intro-act 3 --screenshot 24272 /tmp/zel_dialogue.png
 	python3 tools/compare_shot.py /tmp/zel_dialogue.png ../docs/screenshots/demo_dialogue.png \
 		--box 0 0 320 200 --label "storm demo: the throne-room dialogue + lip-sync, WHOLE screen"
+	# Helada Town and cavern 4, the first ground truth for the second half of
+	# the game (issue #28): a .usr the port wrote is restored under DOS with F7
+	# (docs/DOSBOX_RECIPE.md §9) straight into Helada, and walking off its left
+	# edge is the town's own cave record -> MP40 "Cavern of Glacial".
+	./zeliard --dir ../zeliard --town 4 --town-col 86 --level 20 --life 900 --sword 4 \
+		--shield 4 --gold 20000 --headless --frames 2 --screenshot 1 /tmp/zel_helada.png
+	python3 tools/compare_shot.py /tmp/zel_helada.png ../docs/screenshots/town_helada.png \
+		--box 48 14 224 40 --label "Helada: the ckpd far strip after an F7 restore (phase 0)"
+	python3 tools/compare_shot.py /tmp/zel_helada.png ../docs/screenshots/town_helada.png \
+		--box 48 30 224 56 --label "Helada: the ckpd cave backdrop"
+	python3 tools/compare_shot.py /tmp/zel_helada.png ../docs/screenshots/town_helada.png \
+		--box 48 142 224 16 --label "Helada: the near ground strips after a restore (phase 0)"
+	python3 tools/compare_shot.py /tmp/zel_helada.png ../docs/screenshots/town_helada.png \
+		--box 51 174 136 10 --label "Helada HUD PLACE box + \"Helada Town\""
+	python3 tools/compare_shot.py /tmp/zel_helada.png ../docs/screenshots/town_helada.png \
+		--box 51 186 66 10 --label "Helada HUD GOLD box (20000)"
+	python3 tools/compare_shot.py /tmp/zel_helada.png ../docs/screenshots/town_helada.png \
+		--box 84 163 100 6 --label "Helada HUD LIFE bar (900)"
+	./zeliard --dir ../zeliard --town 4 --town-col 4 --level 20 --life 900 --sword 4 \
+		--shield 4 --gold 20000 --headless --frames 120 --script "L20 .90" \
+		--screenshot 60 /tmp/zel_cav4.png
+	python3 tools/compare_shot.py /tmp/zel_cav4.png ../docs/screenshots/cavern4.png \
+		--box 48 14 224 80 --label "MP40 playfield above the hero (MPP5 ice tileset)"
+	python3 tools/compare_shot.py /tmp/zel_cav4.png ../docs/screenshots/cavern4.png \
+		--box 48 134 224 24 --label "MP40 floor"
+	python3 tools/compare_shot.py /tmp/zel_cav4.png ../docs/screenshots/cavern4.png \
+		--box 51 174 136 10 --label "MP40 HUD PLACE box + \"Cavern of Glacial\""
+	python3 tools/compare_shot.py /tmp/zel_cav4.png ../docs/screenshots/cavern4.png \
+		--box 51 186 66 10 --label "MP40 HUD GOLD box (20000)"
+	python3 tools/compare_shot.py /tmp/zel_cav4.png ../docs/screenshots/cavern4.png \
+		--box 0 0 48 200 --label "MP40: the left stone frame"
+	# cavern 5 (MP50 "Cavern of Peligro"... the HUD calls it by cavern 5's name)
+	# from Tumba Town's left edge, and Tumba itself
+	./zeliard --dir ../zeliard --town 5 --town-col 4 --level 24 --life 1100 --sword 5 \
+		--shield 5 --gold 30000 --headless --frames 2 --screenshot 1 /tmp/zel_tumba.png
+	python3 tools/compare_shot.py /tmp/zel_tumba.png ../docs/screenshots/town_tumba.png \
+		--box 48 14 224 40 --label "Tumba: the backdrop after an F7 restore"
+	python3 tools/compare_shot.py /tmp/zel_tumba.png ../docs/screenshots/town_tumba.png \
+		--box 48 142 224 16 --label "Tumba: the near ground strips (phase 0)"
+	python3 tools/compare_shot.py /tmp/zel_tumba.png ../docs/screenshots/town_tumba.png \
+		--box 51 174 136 10 --label "Tumba HUD PLACE box + \"Tumba Town\""
+	./zeliard --dir ../zeliard --town 5 --town-col 4 --level 24 --life 1100 --sword 5 \
+		--shield 5 --gold 30000 --headless --frames 130 --script "L20 .100" \
+		--screenshot 60 /tmp/zel_cav5.png
+	python3 tools/compare_shot.py /tmp/zel_cav5.png ../docs/screenshots/cavern5.png \
+		--box 48 14 224 80 --label "MP50 playfield above the hero"
+	python3 tools/compare_shot.py /tmp/zel_cav5.png ../docs/screenshots/cavern5.png \
+		--box 48 134 224 24 --label "MP50 floor"
+	python3 tools/compare_shot.py /tmp/zel_cav5.png ../docs/screenshots/cavern5.png \
+		--box 51 174 136 10 --label "MP50 HUD PLACE box"
+	python3 tools/compare_shot.py /tmp/zel_cav5.png ../docs/screenshots/cavern5.png \
+		--box 51 186 66 10 --label "MP50 HUD GOLD box (30000)"
+	# cavern 6 (MP60 "Cavern of Tesoro") at Dorado Town's own cave record
+	# (315,49), where walking off Dorado's right edge lands
+	./zeliard --dir ../zeliard --map 0x0e --pos 315 49 --level 28 --life 1300 --sword 5 \
+		--shield 5 --gold 40000 --headless --frames 3 --screenshot 2 /tmp/zel_cav6.png
+	python3 tools/compare_shot.py /tmp/zel_cav6.png ../docs/screenshots/cavern6.png \
+		--box 56 14 26 120 --label "MP60 (MPP7 brick tileset), left of the first chain"
+	python3 tools/compare_shot.py /tmp/zel_cav6.png ../docs/screenshots/cavern6.png \
+		--box 106 14 50 78 --label "MP60 above the DORADO door"
+	python3 tools/compare_shot.py /tmp/zel_cav6.png ../docs/screenshots/cavern6.png \
+		--box 170 14 32 120 --label "MP60 right of the door"
+	python3 tools/compare_shot.py /tmp/zel_cav6.png ../docs/screenshots/cavern6.png \
+		--box 51 174 136 10 --label "MP60 HUD PLACE box + \"Cavern of Tesoro\""
+	python3 tools/compare_shot.py /tmp/zel_cav6.png ../docs/screenshots/cavern6.png \
+		--box 272 0 48 200 --label "MP60: the right stone frame"
+	# Pureza Town and cavern 8 (MP80), the deepest ground truth so far: the
+	# same restore, then off Pureza's left edge into the town's cave record
+	./zeliard --dir ../zeliard --town 8 --town-col 4 --level 34 --life 1800 --sword 6 \
+		--shield 6 --gold 60000 --headless --frames 2 --screenshot 1 /tmp/zel_pureza.png
+	python3 tools/compare_shot.py /tmp/zel_pureza.png ../docs/screenshots/town_pureza.png \
+		--box 48 14 224 40 --label "Pureza: the backdrop after an F7 restore"
+	python3 tools/compare_shot.py /tmp/zel_pureza.png ../docs/screenshots/town_pureza.png \
+		--box 48 142 224 16 --label "Pureza: the near ground strips (phase 0)"
+	python3 tools/compare_shot.py /tmp/zel_pureza.png ../docs/screenshots/town_pureza.png \
+		--box 51 174 136 10 --label "Pureza HUD PLACE box + \"Pureza Town\""
+	python3 tools/compare_shot.py /tmp/zel_pureza.png ../docs/screenshots/town_pureza.png \
+		--box 84 163 100 6 --label "Pureza HUD LIFE bar (1800)"
+	./zeliard --dir ../zeliard --map 0x17 --pos 111 21 --level 34 --life 1800 --sword 6 \
+		--shield 6 --gold 60000 --headless --frames 3 --screenshot 2 /tmp/zel_cav8.png
+	python3 tools/compare_shot.py /tmp/zel_cav8.png ../docs/screenshots/cavern8.png \
+		--box 48 14 40 80 --label "MP80 playfield, left of the hanging sprite"
+	python3 tools/compare_shot.py /tmp/zel_cav8.png ../docs/screenshots/cavern8.png \
+		--box 106 14 166 80 --label "MP80 playfield, right of it"
+	python3 tools/compare_shot.py /tmp/zel_cav8.png ../docs/screenshots/cavern8.png \
+		--box 48 134 224 24 --label "MP80 floor"
+	python3 tools/compare_shot.py /tmp/zel_cav8.png ../docs/screenshots/cavern8.png \
+		--box 51 174 136 10 --label "MP80 HUD PLACE box"
+	python3 tools/compare_shot.py /tmp/zel_cav8.png ../docs/screenshots/cavern8.png \
+		--box 51 186 66 10 --label "MP80 HUD GOLD box (60000)"
+	# Llama Town -- the whole 320x200 screen, restored straight in front of the
+	# town door at column 222 -- and the room behind that door: MP73, cavern 7's
+	# boss "Paguro", the first capture of a boss the port had never been checked
+	# against.
+	./zeliard --dir ../zeliard --town 7 --town-col 222 --level 34 --life 1800 --sword 6 \
+		--shield 6 --gold 60000 --headless --frames 2 --screenshot 1 /tmp/zel_llama.png
+	python3 tools/compare_shot.py /tmp/zel_llama.png ../docs/screenshots/town_llama.png \
+		--label "Llama Town: the whole screen after an F7 restore (hero masked)"
+	python3 tools/compare_shot.py /tmp/zel_llama.png ../docs/screenshots/town_llama.png \
+		--box 48 14 224 40 --label "Llama: the backdrop and far strip"
+	python3 tools/compare_shot.py /tmp/zel_llama.png ../docs/screenshots/town_llama.png \
+		--box 48 142 224 16 --label "Llama: the near ground strips (phase 0)"
+	python3 tools/compare_shot.py /tmp/zel_llama.png ../docs/screenshots/town_llama.png \
+		--box 51 174 136 10 --label "Llama HUD PLACE box + \"Llama Town\""
+	./zeliard --dir ../zeliard --map 0x15 --pos 27 13 --level 34 --life 1800 --sword 6 \
+		--shield 6 --gold 60000 --headless --frames 22 --script ".200" \
+		--screenshot 20 /tmp/zel_paguro.png
+	python3 tools/compare_shot.py /tmp/zel_paguro.png ../docs/screenshots/boss_paguro.png \
+		--box 64 14 92 120 --label "MP73 boss room, left of Paguro"
+	python3 tools/compare_shot.py /tmp/zel_paguro.png ../docs/screenshots/boss_paguro.png \
+		--box 190 14 82 120 --label "MP73 boss room, right of him"
+	python3 tools/compare_shot.py /tmp/zel_paguro.png ../docs/screenshots/boss_paguro.png \
+		--box 64 130 208 28 --label "MP73 boss room floor"
+	python3 tools/compare_shot.py /tmp/zel_paguro.png ../docs/screenshots/boss_paguro.png \
+		--box 51 186 66 10 --label "MP73 HUD name box + \"Paguro\""
+	python3 tools/compare_shot.py /tmp/zel_paguro.png ../docs/screenshots/boss_paguro.png \
+		--box 272 0 48 200 --label "MP73: the right stone frame"
 	# and the gd decoders themselves against tools/grp2png.py's, the reference
 	# implementation that produced docs/screenshots/intro_art.png
 	python3 tools/compare_gdart.py ../zeliard

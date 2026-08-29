@@ -51,6 +51,7 @@ typedef struct Nav {
      * efix = fixture index + 1 (0 = the edge needs no fixture), efixpos = the
      * column (kind 2) or row (kinds 0/1) it was probed at. */
     uint8_t  efix[NAV_MAX_EDGE];
+    uint8_t  efail[NAV_MAX_EDGE];   /* times the live run did not reproduce the edge */
     uint16_t efixpos[NAV_MAX_EDGE];   /* | NAV_FIXDIR when it was probed moving left */
     int      efirst[NAV_MAX_NODE + 1];
     int      nedge;
@@ -61,6 +62,7 @@ typedef struct Nav {
 
     /* execution */
     int      cur_macro, cur_frame, last_macro;
+    int      cur_edge;              /* the edge the macro in flight came from */
     int      expect_node;
     int      stall, same, last_col, last_row;
     int      fixwait;               /* frames spent waiting for a platform */

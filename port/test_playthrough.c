@@ -3,16 +3,21 @@
  * check: a real run of the two engines, the shops, the key doors, the boss
  * protocol and the post-boss transitions, with nobody at the keyboard. */
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <stdlib.h>
 #include "playthrough.h"
 #include "player.h"
 
 static int checks, failures;
-static void ck(int cond, const char *what)
+static void ck(int cond, const char *what, ...)
 {
     checks++;
-    if (!cond) { failures++; printf("  FAIL %s\n", what); }
+    if (!cond) {
+        va_list ap; va_start(ap, what);
+        failures++; printf("  FAIL "); vprintf(what, ap); printf("\n");
+        va_end(ap);
+    }
 }
 
 static Play p;
@@ -104,6 +109,115 @@ static void fixture_rides(const char *dir, int verbose)
     ck(f2 > 0, "fixture rides: crossed the fix[3] gap westward");
 }
 
+
+/* ------------------------------------------------------- cavern topology */
+/* Where cavern 1's own doors let a player go.  MP10's boss shelf (the SATONO
+ * door at (128,32) and the MP1D door at (141,32)) is a 32-node island reached
+ * only from Satono or out of the boss room; the way *in* from the Muralla gate
+ * is the long way round -- door 5 at (159,50) into MP21, MP21's (15,50) back
+ * into MP10 at (95,50), the Key at (99,41), and the locked door at (26,15)
+ * that the Key opens into MP1D.  These checks pin that chain down, because it
+ * is what the survey has to keep finding for the route to exist at all. */
+static Shell csh;
+static Nav   cnav;
+static int survey(const char *dir, int map_idx, int col, int row)
+{
+    memset(&csh, 0, sizeof csh);
+    memset(&cnav, 0, sizeof cnav);
+    csh.quiet = 1;
+    if (shell_init(&csh, dir, map_idx)) return -1;
+    Game *g = &csh.g;
+    g->present = NULL;
+    game_place(g, col, row, 0);
+    nav_goal_cell(&cnav, g, col, row);
+    nav_step(&cnav, g);
+    return cnav.nnode;
+}
+/* forward-reachable set from the hero's cell, as a node bitmap in `seen` */
+static uint8_t seen[NAV_MAX_NODE];
+static int reach_from(int col, int row)
+{
+    memset(seen, 0, sizeof seen);
+    int start = -1;
+    for (int dr = 0; dr <= 2 && start < 0; dr++)
+        for (int dc = -1; dc <= 1 && start < 0; dc++)
+            if (col + dc >= 0 && col + dc < csh.g.map->width && cnav.node_of[col + dc][(row + dr) & 63] >= 0)
+                start = cnav.node_of[col + dc][(row + dr) & 63];
+    if (start < 0) return 0;
+    static int q[NAV_MAX_NODE];
+    int h = 0, n = 0;
+    q[n++] = start; seen[start] = 1;
+    while (h < n)
+        for (int e = cnav.efirst[q[h]], v = q[h++]; e < cnav.efirst[v + 1]; e++)
+            if (!seen[cnav.eto[e]]) { seen[cnav.eto[e]] = 1; q[n++] = cnav.eto[e]; }
+    return n;
+}
+static int door_reachable(int col, int row)
+{
+    for (int d = -1; d <= 1; d++) {
+        int c = col + d;
+        if (c < 0 || c >= csh.g.map->width) continue;
+        int i = cnav.node_of[c][(row + 1) & 63];
+        if (i >= 0 && seen[i]) return 1;
+    }
+    return 0;
+}
+static void cavern_routes(const char *dir, int verbose)
+{
+    /* MP10 from the Muralla gate (the town record's (61,7)) */
+    int nn = survey(dir, 0, 61, 7);
+    if (nn < 0) { ck(0, "cavern routes: cannot load MP10"); return; }
+    ck(nn > 1400, "MP10: the survey found the whole cavern (%d nodes)", nn);
+    int n1 = reach_from(61, 7);
+    if (verbose) printf("  MP10 from the Muralla gate (61,7): %d/%d nodes\n", n1, nn);
+    ck(n1 > 1000, "MP10: the Muralla gate reaches most of the cavern (%d nodes)", n1);
+    ck(door_reachable(159, 50), "MP10: door 5 (159,50) -> MP21 is reachable from the Muralla gate");
+    ck(!door_reachable(141, 32), "MP10: the MP1D door (141,32) is *not* reachable from the gate");
+    ck(!door_reachable(26, 15), "MP10: the locked boss door (26,15) is not reachable from the gate either");
+    /* the col-165 ladder: (164,20) is held up by nothing but the ladder, so it
+     * is a node only because the probe hangs the hero on it the way 65C5 does */
+    ck(cnav.node_of[164][20] >= 0 && cnav.node_of[164][19] >= 0, "MP10: the col-165 ladder is nodes");
+    int up = 0;
+    if (cnav.node_of[164][20] >= 0)
+        for (int e = cnav.efirst[cnav.node_of[164][20]]; e < cnav.efirst[cnav.node_of[164][20] + 1]; e++)
+            if (cnav.nrow[cnav.eto[e]] < 20) up = 1;
+    ck(up, "MP10: a hero hanging at (164,20) can climb the ladder (not fall off it)");
+
+    /* MP21, entered where MP10's door 5 puts him */
+    int n21 = survey(dir, 3, 78, 51);
+    ck(n21 > 0, "MP21 loaded");
+    reach_from(78, 51);
+    ck(door_reachable(15, 50), "MP21: the (15,50) door back into MP10 (95,50) is reachable");
+
+    /* MP10 again, where that door lands: the Key and the locked boss door */
+    survey(dir, 0, 94, 51);
+    int n2 = reach_from(94, 51);
+    if (verbose) printf("  MP10 from MP21's (95,50) door: %d nodes\n", n2);
+    ck(door_reachable(26, 15), "MP10: the locked boss door (26,15) is reachable from (95,50)");
+    int key = -1;
+    for (int i = 0; i < csh.g.map->nobj; i++)
+        if ((csh.g.map->objs[i].type & 0x1F) == 0x16) key = i;
+    ck(key >= 0, "MP10 carries a Key item (C010 type & 0x1F == 0x16)");
+    if (key >= 0) {
+        int kc = csh.g.map->objs[key].col, kr = csh.g.map->objs[key].row, ok = 0;
+        for (int dc = -2; dc <= 2 && !ok; dc++)
+            for (int dr = -2; dr <= 2 && !ok; dr++) {
+                int c = kc + dc, r = (kr + dr) & 63;
+                if (c < 0 || c >= csh.g.map->width) continue;
+                int i = cnav.node_of[c][r];
+                if (i >= 0 && seen[i]) ok = 1;
+            }
+        ck(ok, "MP10: the Key at (%d,%d) can be walked to from (95,50)", kc, kr);
+    }
+    /* and the shelf itself: from where Satono's left edge drops him, the two
+     * doors on it are one short walk away and nothing else is */
+    survey(dir, 0, 128, 33);
+    int n3 = reach_from(128, 33);
+    if (verbose) printf("  MP10 boss shelf from Satono's left edge: %d nodes\n", n3);
+    ck(door_reachable(141, 32), "MP10: the MP1D door is reachable from the Satono edge exit");
+    ck(door_reachable(128, 32), "MP10: so is the SATONO door back out");
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -148,10 +262,13 @@ int main(int argc, char **argv)
         ck(g->exp > 0, "route 2: the bosses paid EXP");
         ck((unsigned)g->gold > 0, "route 2: the bosses paid gold");
         ck(p.shops_visited >= 3, "route 2: shopping between the caverns");
+        ck(p.doors_taken >= 4, "route 2: cavern 1's boss room is walked into and out of "
+                               "through its own doors (%u doors taken)", p.doors_taken);
 
     }
 
     fixture_rides(dir, verbose);
+    cavern_routes(dir, verbose);
 
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;
