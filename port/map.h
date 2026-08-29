@@ -60,6 +60,10 @@ typedef struct {
     uint8_t *raw;   size_t rawlen;            /* the decompressed .mdt, kept for 6BFC */
 } Map;
 
+/* the {x4, y, xoff, len, chars} place-name record video [2010] draws
+ * (fight.bin 6185: si = [C00E]), or NULL */
+const uint8_t *map_place_record(const Map *m);
+
 /* decode a raw (decompressed) .mdt image (a copy is kept in m->raw) */
 int map_parse(Map *m, const uint8_t *d, size_t len);
 void map_free(Map *m);

@@ -32,6 +32,7 @@ static int town_parse_raw(TownMap *m, uint8_t *d, size_t len, int index)
         m->town_flags = d[lv + 3]; m->tileset = d[lv + 4];
     }
     size_t lab = u16(d, 4) - BASE;
+    m->label_ptr = u16(d, 4);
     if (lab + 4 < len) {
         int n = d[lab + 3];
         if (n > 23) n = 23;
@@ -670,6 +671,48 @@ void town_place(Town *t, int col, int face_left)
     if (t->hero_scr_col > 0x1B) t->hero_scr_col = 0x1B;
     t->hero_flags = (uint8_t)(face_left ? 1 : 0);
     t->hero_anim = 1;
+    npc_place_markers(t);
+}
+
+/* town.bin keeps the hero's town position inside the same BASE:0000 page the
+ * save file is a raw image of: [80] scroll_col (6157), [83] hero_scr_col
+ * (6CB5), [C2] hero_flags (67BA/682D) and [C4] cur_map (6D30).  The port keeps
+ * them in `Town`, so they have to be written back before kenjpro A862 dumps the
+ * page and read again after town.bin 7592 loads one. */
+/* town.bin 614E: VID_LABEL_TEXT(si = [C004]). */
+const uint8_t *town_place_record(const TownMap *m)
+{
+    if (!m || !m->raw || m->label_ptr < 0xC000) return NULL;
+    size_t o = (size_t)(m->label_ptr - 0xC000);
+    if (o + 4 >= m->rawlen || o + 4 + m->raw[o + 3] > m->rawlen) return NULL;
+    return m->raw + o;
+}
+
+void town_page_push(Town *t)
+{
+    uint8_t *p = t->g->page;
+    p[0x80] = (uint8_t)t->scroll_col;
+    p[0x81] = (uint8_t)(t->scroll_col >> 8);
+    p[0x83] = (uint8_t)t->hero_scr_col;
+    p[0xC2] = t->hero_flags;
+    p[0xE7] = t->hero_anim;
+    t->g->cur_map = (uint8_t)(0x80 | t->map->index);
+    t->g->town_map = t->g->cur_map;
+    p[0xC4] = t->g->cur_map;
+    p[0xC5] = t->g->town_map;
+}
+
+void town_page_pull(Town *t)
+{
+    const uint8_t *p = t->g->page;
+    int sc = p[0x80] | p[0x81] << 8;
+    int max = t->map->width - 0x24;
+    if (sc < 0) sc = 0;
+    if (sc > max) sc = max;
+    t->scroll_col = sc;
+    t->hero_scr_col = p[0x83] > 0x1B ? 0x1B : p[0x83];
+    t->hero_flags = (uint8_t)(p[0xC2] & 1);
+    t->hero_anim = (uint8_t)(p[0xE7] & 3);
     npc_place_markers(t);
 }
 

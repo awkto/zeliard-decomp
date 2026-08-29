@@ -157,3 +157,32 @@ windows are ≈24 px.  `+key`/`-key` hold and release a key (`xdotool keydown/ke
 | `cavern_enemy.png` | AB 60 s | frog + ceiling snail, LIFE already red (reproduced 100% by `port/`, `make verify`) |
 | `cavern_enemies.png` | AB 60 s | 3× crops of both enemies |
 | `cavern_vs_mp10.png` | BB 56 s | play area vs. mdt2png window (§6) |
+| `shop_armour.png` | scan §5 | Muralla weapon shop: greeting + main menu |
+| `cavern2.png` | F7 restore (§9) | MP20 "Cavern of Peligro", MPP2 tileset — port matches 100% |
+| `cavern3.png` | F7 restore (§9) | MP30 "Cavern of Madera", MPP3 + two enp5 enemies — 100% |
+| `boss_cangrejo.png` | F7 restore (§9) | MP1D, the Cangrejo fight — 98.15% of the playfield (only the claw and the hero's animation phase differ) |
+| `town_satono.png` | F7 restore (§9) | Satono Town, the ckpd underground backdrop |
+| `restore_menu.png` | F7 | the Restore Game name box and file list |
+
+
+## 9. Reaching deep locations: the save-file route (verified)
+
+A `NAME.USR` written by `port/` **loads in the real game**: F7 "Restore Game" →
+`Sure?(Y/N)` → `y` → Down/Space to pick the file → Enter.  The restored game came up with
+the exact gold, level, sword, shield durability and hero column the port had saved, which
+round-trip-validates our save format (kenjpro `A862`: a raw 256-byte image of BASE:0000,
+no header).  town.bin keeps the hero's town position inside those same bytes (`[80]`
+scroll_col, `[83]` hero_scr_col, `[C2]` facing, `[E7]` walk frame, `[C4]` town map), so the
+save also fixes where you reappear.
+
+A restore always lands in a **town**, so pick one whose gate or edge exit comes out where
+you want.  Satono's two edge exits are both cavern entries — that is how the Cangrejo room
+is reachable: save at Satono column 5, walk off the left edge into MP10 (128,33), then
+13 columns right to the unlocked door at (141,32).
+
+Two gotchas:
+
+* **`Up` is jump inside a cavern** and a jump lasts ~10 frames, so the town scan spacing of
+  0.45 s leaves every input landing mid-air — use ~1.3 s between taps underground.
+* **Reduce captures with `convert -sample` (nearest neighbour), never `-resize`** — any
+  interpolation turns an exact-pixel comparison into roughly 25%.

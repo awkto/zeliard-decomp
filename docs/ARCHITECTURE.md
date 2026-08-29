@@ -223,7 +223,10 @@ the 28×19 copy of what is on screen (0xFD = force redraw, 0xFF = hero).
            MEDA,LEGA,DRGN,AKMA,MAO1,MAO2,ZEL2) → BASE:A000 (raw overlay)
 +4 enemies index into 9D8D table (ENP1..8 interleaved with boss banks CRAB..MAO2.GRP) →
            arena:4000; 0xFF = keep
-boss rooms (mpNd) continue: +5 boss bank (copied to +4 at 6117 when the boss appears),
+boss rooms (mpNd) continue: +5 boss bank — 6117 copies it over +4 **unconditionally**
+           (`mov al,[si+5] / mov [si-1],al`), so when +5 is 0xFF (mpa0, whose boss bank is
+           already in +4 = 17 MAO2.GRP) the request fails and 7EBB's own +4 bank is what
+           stays loaded; a consumer must use +4 unless it is 0xFF, then +5,
            +6/+7 post-boss ai/enemies, +8.. {u16 ptr, u16 val}* pokes applied by 72F1
 ```
 Cavern *N* normal maps use ai = enemies = 2(N-1); boss rooms use the odd index (boss AI)

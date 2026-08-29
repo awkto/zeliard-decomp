@@ -85,10 +85,14 @@ static void load_banks_by_index(Shell *s, Game *g, int ai_index, int enp_index)
 void shell_load_enemy_banks(Shell *s, const Map *m)
 {
     Game *g = &s->g;
-    /* 6117: in a boss room the level record's +5 bank replaces +4 (0xFF =
-     * "keep"), and the AI overlay named by +3 is the boss overlay. */
-    int enp = m->enemies;
-    if (enp == 0xFF || boss_overlay_p(m->ai)) enp = m->boss_bank;
+    /* 6117: entering a boss map copies the level record's +5 bank over +4 and
+     * loads it.  +4 == 0xFF means the ordinary load at 7EBB found nothing, so
+     * the boss bank is the one that ends up in arena:4000; when +4 IS a real
+     * bank (mp90's 16, mpa0's 17) it is already loaded and 6117's request for
+     * bank 0xFF simply fails, leaving it in place.  Taking +5 unconditionally
+     * for every boss overlay left MPA0 (the final boss) with no sprite bank at
+     * all — "cannot load enemy bank 255" — and Jashiin invisible. */
+    int enp = (m->enemies != 0xFF) ? m->enemies : m->boss_bank;
     load_banks_by_index(s, g, m->ai, enp);
     audio_music((m->lvl_flags >> 1) & 0x0F);                            /* fight.bin 7E93 -> the 9E53 table */
     g->boss_map  = (uint8_t)((m->lvl_flags & 0x80) ? 0xFF : 0);         /* -> FF34 */

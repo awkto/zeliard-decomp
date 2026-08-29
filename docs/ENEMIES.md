@@ -219,6 +219,13 @@ wings (4), legs (3), head (4).  Hovers over the hero every 2nd frame (columns �
 cells left, damage 40) from (col+4, row+4).  Damage ×2, ×8 on the head (class 0, contact
 56); sound 0x29; a hit ends a dive.  Death: 40 frames, sound 0x2C.
 
+### Boss HUD (all eleven overlays)
+
+A boss's `[A002]+9` name record has **y = 0xBB in every overlay** — the GOLD row.  `6150`
+draws it through video `[2010]` while `6C55`/`6C87` put ENEMY where PLACE normally goes,
+so a boss room's HUD reads `LIFE / ENEMY <bar> / <boss name>  ALMAS` with **no GOLD line**.
+Confirmed against `docs/screenshots/boss_cangrejo.png`.
+
 ### Agar (`boss_zela.c`) and Paguro (`boss_zel2.c`)
 4×3 parts, `type` = pose (0..4) and `phase` = part index (roles swapped).  Hops (1/16 per
 frame) toward the hero, columns 0x11..0x32; while a shot is pending walks toward him at half

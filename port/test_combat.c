@@ -13,6 +13,7 @@
 #include "physics.h"
 #include "render.h"
 #include "enemy.h"
+#include "text.h"
 #include "png.h"
 
 static int fails = 0, checks = 0;
@@ -283,7 +284,7 @@ static int render_frog_shot(const char *dir, const char *out, int phase)
         G.nobj = 2;
     }
     render_frame(fb, &G, &hero);
-    render_hud(fb, &G, NULL);
+    render_hud(fb, &G, NULL, NULL, NULL);
     render_to_rgb(fb, rgb);
     return png_write_rgb(out, rgb, FB_W, FB_H);
 }
@@ -562,6 +563,72 @@ static void t_tall_spawn(void)
     CHECK(G.ring[p] == 0x80 && G.ring[game_ring_add(p, 2 * RING_W)] == 0x81, "both markers are in the ring");
 }
 
+/* The HUD strip (render.c): the four [2004] gauge troughs, the [200E] labels
+ * and the [2010] place name.  `make verify` compares all of it against the
+ * DOSBox captures pixel for pixel; these checks pin the geometry so a
+ * regression shows up without Pillow. */
+static void t_hud(void)
+{
+    static uint8_t fb[FB_W * FB_H];
+    TextFont tf;
+    memset(&G, 0, sizeof G);
+    G.max_hp = G.hp = 0x50; G.gold = 12345; G.almas = 7;
+    int have_font = text_load_font(&tf, G_DIR) == 0;
+    CHECK(have_font, "font.grp loaded (the [F504] narrow glyphs)");
+    memset(fb, 0xEE, sizeof fb);
+    render_hud(fb, &G, NULL, have_font ? &tf : NULL, NULL);
+    /* the strip starts at y 158 and nothing above it is touched */
+    CHECK(fb[157 * FB_W + 100] == 0xEE, "render_hud leaves the playfield alone");
+    /* the four troughs: row 0 black, rows 1..8 dark blue 0x05, row 9 the
+     * bright blue lip 0x2D, starting one column right of 48 + bh */
+    static const struct { int bh, bl, w; const char *what; } BAR[4] = {
+        {0x02, 0x04, 0x21, "LIFE"}, {0x02, 0x10, 0x88, "PLACE"},
+        {0x02, 0x1C, 0x42, "GOLD"}, {0x48, 0x1C, 0x42, "ALMAS"},
+    };
+    for (int i = 0; i < 4; i++) {
+        int x = 48 + BAR[i].bh + 1, y = 158 + BAR[i].bl;
+        CHECK(fb[y * FB_W + x] == 0x00, "%s trough row 0 is black", BAR[i].what);
+        CHECK(fb[(y + 4) * FB_W + x + BAR[i].w - 1] == 0x05, "%s trough is 0x05 to its last column", BAR[i].what);
+        CHECK(fb[(y + 9) * FB_W + x] == 0x2D, "%s trough has the bright blue lip", BAR[i].what);
+        CHECK(fb[(y + 4) * FB_W + x - 1] != 0x05, "%s trough starts at 48 + bh + 1 = %d", BAR[i].what, x);
+    }
+    if (have_font) {
+        /* [200E] draws green (PC-88 3 = 0x1B) with a red shadow (2 = 0x12);
+         * the labels sit inside their troughs */
+        int green = 0, red = 0;
+        for (int y = 163; y < 171; y++)
+            for (int x = 51; x < 84; x++) {
+                if (fb[y * FB_W + x] == 0x1B) green++;
+                if (fb[y * FB_W + x] == 0x12) red++;
+            }
+        CHECK(green > 20 && red > 20, "\"LIFE\" is drawn green-on-red (%d/%d px)", green, red);
+        /* [2010] the place name is white on blue; with no record there is none */
+        int white = 0;
+        for (int y = 175; y < 183; y++)
+            for (int x = 88; x < 187; x++) if (fb[y * FB_W + x] == 0x09) white++;
+        CHECK(white == 0, "no place record -> no place name");
+        static const uint8_t rec[] = {0x16, 0xAF, 0x00, 4, 'T','E','S','T'};
+        render_hud(fb, &G, NULL, &tf, rec);
+        white = 0;
+        for (int y = 175; y < 183; y++)
+            for (int x = 88; x < 187; x++) if (fb[y * FB_W + x] == 0x09) white++;
+        CHECK(white > 20, "a place record draws white glyphs at x4*4 (%d px)", white);
+    }
+    /* in a boss room the GOLD line becomes the boss's own name record */
+    G.boss_map = 0xFF; G.boss.active = 1; G.boss.hp0 = G.boss.hp = 100;
+    snprintf(G.boss.name, sizeof G.boss.name, "Cangrejo");
+    G.boss.name_x4 = 0x10; G.boss.name_y = 0xBB; G.boss.name_xoff = 0;
+    memset(fb, 0, sizeof fb);
+    render_hud(fb, &G, NULL, have_font ? &tf : NULL, NULL);
+    if (have_font) {
+        int white = 0;
+        for (int y = 187; y < 195; y++)
+            for (int x = 64; x < 117; x++) if (fb[y * FB_W + x] == 0x09) white++;
+        CHECK(white > 20, "the boss name is drawn in the GOLD box (%d px)", white);
+    }
+    if (have_font) { /* nothing to free: TextFont is a plain struct */ }
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -577,6 +644,7 @@ int main(int argc, char **argv)
         {"sword", t_sword}, {"drops", t_drop}, {"bat wake", t_bat_wake}, {"frog hop", t_frog_hop},
         {"shots", t_shots}, {"magic", t_magic}, {"orbs", t_orbs}, {"sound", t_sound},
         {"eai tables", t_overlays}, {"eai run", t_overlay_run}, {"tall spawn", t_tall_spawn},
+        {"hud", t_hud},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = fails;

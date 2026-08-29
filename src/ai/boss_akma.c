@@ -17,7 +17,8 @@
  * three wing positions: 25/16/18 parts, classes 0/1/2 + 5).  Then two
  * patches: the wing tips, 5 columns x 2 rows at buffer (3, 13) [right] /
  * (5, 13) [left] from A92C / A918 (+10 on odd frames: A53C), and the face,
- * 1 column x 2 rows at (10, 9) [right] / (0, 9) [left] from A94A / A940 +
+ * **2 columns x 1 row** at (10, 9) [right] / (0, 9) [left] (A570 writes the
+ * second byte at di+0x10, i.e. the next column, not the next row) from A94A / A940 +
  * 2*face (face 0 normal, 2/3 attacking, 1 death).
  * Part records (A57E..A613): {col = boss_col + c, row = boss_row + r, type =
  * class (not solid), hit = FACING_RIGHT while flying right (so the A070

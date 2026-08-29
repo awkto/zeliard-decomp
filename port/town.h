@@ -31,6 +31,7 @@ typedef struct {
     uint8_t   music, gfx, town_flags, tileset, town_id;
     uint16_t  start_col;                        /* C013, used by the death return (99F4) */
     char      label[24];
+    uint16_t  label_ptr;                        /* C004: the {x4,y,xoff,len,chars} record itself */
     TownExit  exits[8];   int nexits;
     TownDoor  doors[16];  int ndoors;
     TownCave  caves[8];   int ncaves;
@@ -66,6 +67,8 @@ int  town_load_tiles(TownTiles *t, const char *dir, int index);
 int  town_load_sprites(TownSprites *s, const char *dir, int index);
 int  town_load_hero(TownHero *h, const char *dir);
 const char *town_dialogue(const TownMap *m, int script);
+/* town.bin 614E: VID_LABEL_TEXT(si = [C004]) — "Muralla Town" and friends */
+const uint8_t *town_place_record(const TownMap *m);
 
 typedef struct Town Town;
 typedef void (*TownPresentFn)(Town *t);
@@ -128,6 +131,11 @@ void town_place(Town *t, int col, int face_left);
 /* one iteration of the 61FC main loop; sets t->action when it wants to leave */
 void town_step(Town *t);
 int  town_hero_col(const Town *t);                  /* scroll_col + hero_scr_col + 4 */
+/* the town position inside the save page ([80]/[83]/[C2]/[E7]/[C4]): pushed
+ * before kenjpro A862 writes NAME.USR, pulled after town.bin 7592 reads one */
+void town_page_push(Town *t);
+void town_page_pull(Town *t);
+
 int  town_cell_walkable(const Town *t, uint8_t v);  /* 686E */
 void town_npc_update(Town *t);                      /* 6B1C */
 void town_npc_markers_reset(Town *t);               /* 6C2B */

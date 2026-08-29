@@ -272,9 +272,46 @@ static void hud_digits(uint8_t *fb, const DigitFont *f, unsigned v, int x, int y
     }
 }
 
-void render_hud(uint8_t *fb, const Game *g, const DigitFont *font)
+/* town.bin 6C72 / fight.bin 6C33: the four positioned narrow-font labels, and
+ * the ENEMY label fight.bin 6C8F puts where PLACE goes in a boss room.  The
+ * bytes are the records' own ({x4, y, xoff, len, chars} — town.bin 6C93..6CB4,
+ * fight.bin 6C44/6C4C/6C8F); [200E] draws them green on a red shadow. */
+static const uint8_t HUD_LIFE[]  = {0x0E, 0xA3, 0x00, 4, 'L','I','F','E'};
+static const uint8_t HUD_ALMAS[] = {0x1E, 0xBB, 0x03, 5, 'A','L','M','A','S'};
+static const uint8_t HUD_GOLD[]  = {0x0D, 0xBB, 0x01, 4, 'G','O','L','D'};
+static const uint8_t HUD_PLACE[] = {0x0D, 0xAF, 0x01, 5, 'P','L','A','C','E'};
+static const uint8_t HUD_ENEMY[] = {0x0D, 0xAF, 0x02, 5, 'E','N','E','M','Y'};
+
+static void hud_label(uint8_t *fb, const struct TextFont *tf, const uint8_t *r)
+{   /* [200E] vid_label_hud: PC-88 green fg, red shadow */
+    vid_label_narrow(fb, tf, (const char *)r + 4, r[3], r[0], r[1], r[2], 3, 2);
+}
+
+/* [2004] vid_gauge_bar (MCGA 2195): `w` one-pixel columns starting one column
+ * right of 48 + bh, ten rows from 158 + bl — row 0 black, rows 1..8 the dark
+ * blue trough and row 9 the bright blue lip.  The four HUD boxes are
+ *   LIFE  (town 60CF: bh 02 bl 04 w 21)   PLACE/ENEMY ([2012]: 02 / 10 / 88)
+ *   GOLD  (town 60DB / fight 6C7B: 02 1C 42)   ALMAS (town 60E7: 48 1C 42)
+ * fight.bin only redraws the ENEMY/GOLD ones — the other two survive from the
+ * town, because nothing ever clears the HUD strip. */
+static void vid_gauge_bar(uint8_t *fb, int bh, int bl, int w)
+{
+    int x0 = 48 + bh + 1, y0 = 158 + bl;
+    for (int x = x0; x < x0 + w && x < FB_W; x++) {
+        if (y0 >= 0 && y0 < FB_H) fb[y0 * FB_W + x] = 0x00;
+        for (int r = 1; r <= 8; r++) if (y0 + r < FB_H) fb[(y0 + r) * FB_W + x] = 0x05;
+        if (y0 + 9 < FB_H) fb[(y0 + 9) * FB_W + x] = 0x2D;
+    }
+}
+
+void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
+                const struct TextFont *tf, const uint8_t *place)
 {
     for (int y = HUD_Y; y < FB_H; y++) memset(fb + y * FB_W, 0, FB_W);
+    vid_gauge_bar(fb, 0x02, 0x04, 0x21);            /* LIFE */
+    vid_gauge_bar(fb, 0x02, 0x10, 0x88);            /* PLACE / ENEMY */
+    vid_gauge_bar(fb, 0x02, 0x1C, 0x42);            /* GOLD */
+    vid_gauge_bar(fb, 0x48, 0x1C, 0x42);            /* ALMAS */
     unsigned wmax = g->max_hp / 8, wcur = g->hp / 8;
     if (wmax > 100) wmax = 100;
     if (wcur > wmax) wcur = wmax;
@@ -286,11 +323,6 @@ void render_hud(uint8_t *fb, const Game *g, const DigitFont *font)
      * line carries the boss HP — a blue trough at (50,174) 136 px wide with
      * the same red/white pair at (84,175), [A002]+3 full scale. */
     if ((g->boss_map || g->boss_room) && g->boss.active && g->boss.hp0) {
-        for (int x = 0; x < 136; x++) {
-            fb[174 * FB_W + 50 + x] = 0x00;
-            for (int r = 1; r <= 8; r++) fb[(174 + r) * FB_W + 50 + x] = 0x05;
-            fb[183 * FB_W + 50 + x] = 0x2D;
-        }
         unsigned bmax = g->boss.hp0 / 8, bcur = g->boss.hp / 8;
         if (bmax > 100) bmax = 100;
         if (bcur > bmax) bcur = bmax;
@@ -299,8 +331,25 @@ void render_hud(uint8_t *fb, const Game *g, const DigitFont *font)
             if (x < bcur) for (int r = 0; r < 5; r++) fb[(175 + r) * FB_W + 84 + x] = 0x1B;
         }
     }
-    hud_digits(fb, font, (unsigned)g->gold, 76, 187, 6);
+    int boss = (g->boss_map || g->boss_room) && g->boss.active;
+    /* 6C55/6150: a boss room has no GOLD line — the boss's [A002]+9 name record
+     * sits in the GOLD box (its own y is 0xBB) and the PLACE label becomes
+     * ENEMY (6C8F).  ALMAS and the LIFE bar are the same either way. */
+    if (!boss) hud_digits(fb, font, (unsigned)g->gold, 76, 187, 6);
     hud_digits(fb, font, g->almas, 152, 187, 5);
+    if (tf) {
+        hud_label(fb, tf, HUD_LIFE);
+        hud_label(fb, tf, HUD_ALMAS);
+        if (!boss) hud_label(fb, tf, HUD_GOLD);
+        hud_label(fb, tf, boss ? HUD_ENEMY : HUD_PLACE);
+        /* [2010] vid_label_text: white on a blue shadow */
+        if (boss && g->boss.name[0])
+            vid_label_narrow(fb, tf, g->boss.name, (int)strlen(g->boss.name),
+                             g->boss.name_x4, g->boss.name_y, g->boss.name_xoff, 1, 5);
+        else if (place)
+            vid_label_narrow(fb, tf, (const char *)place + 4, place[3],
+                             place[0], place[1], place[2], 1, 5);
+    }
 }
 
 void render_to_rgb(const uint8_t *fb, uint8_t *rgb)

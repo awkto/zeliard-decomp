@@ -75,6 +75,9 @@ int boss_init(Game *g)
      * the second field a u16 y, which only works for the five bosses whose
      * x offset happens to be 0. */
     if (b->name_ptr) {
+        b->name_x4   = boss_img8(g, b->name_ptr);
+        b->name_y    = boss_img8(g, b->name_ptr + 1);
+        b->name_xoff = boss_img8(g, b->name_ptr + 2);
         unsigned len = boss_img8(g, b->name_ptr + 3);
         if (len > sizeof b->name - 1) len = sizeof b->name - 1;
         for (unsigned i = 0; i < len; i++) b->name[i] = (char)boss_img8(g, b->name_ptr + 4 + i);
@@ -82,9 +85,7 @@ int boss_init(Game *g)
     }
     b->col = b->start_col; b->row = b->start_row; b->hp = b->hp0;
     g->boss_knock_left = b->knock_left;                            /* 6150 -> 9F01 */
-    b->ported = (uint8_t)(b->index == BOSS_CRAB || b->index == BOSS_TAKO || b->index == BOSS_TORI ||
-                          b->index == BOSS_ZELA || b->index == BOSS_ZEL2 ||
-                          b->index == BOSS_MEDA || b->index == BOSS_LEGA);
+    b->ported = 1;                  /* all eleven overlays are ported */
     /* 60E6: six flashes of the ENCNT.GRP encounter card, 0x41 ticks apart */
     g->encounter_frames = 12;
     g->boss.parts = 0;
@@ -126,6 +127,22 @@ void boss_shot_template(const Game *g, unsigned addr, Shot *out)
     out->life   = boss_img8(g, addr + 4);
     out->flags  = boss_img8(g, addr + 5);
     out->damage = boss_img8(g, addr + 6);
+}
+
+void boss_paste(Game *g, uint8_t *buf, int bw, int bh, int x, int y,
+                int cols, int bpc, unsigned list, unsigned bm)
+{
+    unsigned k = 0;
+    for (int c = 0; c < cols; c++)
+        for (int j = 0; j < bpc; j++) {
+            uint8_t bits = boss_img8(g, bm++);
+            for (int i = 0; i < 8; i++) {
+                if (!(bits & (0x80 >> i))) continue;
+                uint8_t v = boss_img8(g, list + k++);
+                int bx = x + c, by = y + j * 8 + i;
+                if (bx >= 0 && bx < bw && by >= 0 && by < bh) buf[bx * bh + by] = v;
+            }
+        }
 }
 
 void boss_parts_begin(Game *g) { g->nobj = 0; g->boss.parts = 0; }
@@ -184,6 +201,10 @@ void boss_update(Game *g)
     case BOSS_ZELA: case BOSS_ZEL2: boss_zela_entry(g); return;
     case BOSS_MEDA: boss_meda_entry(g); return;
     case BOSS_LEGA: boss_lega_entry(g); return;
+    case BOSS_DRGN: boss_drgn_entry(g); return;
+    case BOSS_AKMA: boss_akma_entry(g); return;
+    case BOSS_MAO1: boss_mao1_entry(g); return;
+    case BOSS_MAO2: boss_mao2_entry(g); return;
     default: boss_generic_entry(g); return;
     }
 }

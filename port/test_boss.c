@@ -319,6 +319,13 @@ static void run_overlay(int ai_index, int sysmap, const char *name)
         /* magic 7 alone can empty the smaller bars: put the boss back on its feet */
         G.boss.hp = G.boss.hp0; G.boss_cutscene = 0; G.boss_dying = 0; G.boss.death_cnt = 0;
     }
+    /* MAO1's script has no death branch at all (A23C never tests [FF2E]) —
+     * its overlay is a cutscene, so the fight below does not apply to it. */
+    if (ai_index == BOSS_MAO1) {
+        CHECK(!G.boss_cutscene && !G.boss_defeated, "MAO1 never enters a death cutscene");
+        ai_unload(&o); map_free(&m);
+        return;
+    }
     /* kill it and check the 40-frame death and the reward */
     boss_damage(&G, 0xFFFF);
     CHECK(G.boss.hp == 0 && G.boss_cutscene == 0xFF, "%s: HP 0 -> cutscene", name);
@@ -408,7 +415,178 @@ static void t_layers(void)
     } else CHECK(0, "LEGA overlay");
 }
 
-/* the six overlays that still run on the generic protocol placeholder */
+/* ---- the four overlays ported last -------------------------------------- */
+/* Every table below is read out of the shipped overlay image, so these checks
+ * are against the original's own data, not against transcribed constants. */
+
+static int pcount(unsigned bm, int n)
+{
+    int k = 0;
+    for (int i = 0; i < n; i++) k += __builtin_popcount(boss_img8(&G, bm + (unsigned)i));
+    return k;
+}
+
+/* boss_paste consumes one list byte per set bit, so a layer is only
+ * self-consistent when the byte list is exactly as long as the bitmap's
+ * popcount.  That is also how the layer/bitmap pointer pairs were told apart
+ * in the first place (the same argument as t_layers). */
+static void t_drgn(void)
+{
+    AiOverlay o;
+    if (ai_load(&o, G_DIR, BOSS_DRGN)) { CHECK(0, "DRGN overlay"); return; }
+    memset(&G, 0, sizeof G); G.ai = &o; G.boss.info = boss_img16(&G, 0xA002);
+    CHECK(G.boss.info == 0xAA3C, "DRGN [A002] = AA3C, got %04X", G.boss.info);
+    /* the pose layer: 12 bitmap bytes, 11 poses, 10-11 parts each */
+    static const int want[11] = {11, 11, 11, 11, 10, 11, 10, 11, 11, 11, 11};
+    for (int p = 0; p < 11; p++)
+        CHECK(pcount(boss_img16(&G, 0xA810 + 2 * p), 12) == want[p],
+              "DRGN pose %d has %d parts (want %d)", p, pcount(boss_img16(&G, 0xA810 + 2 * p), 12), want[p]);
+    CHECK(pcount(boss_img16(&G, 0xA8FD), 11) == 15 && pcount(boss_img16(&G, 0xA8FF), 11) == 12,
+          "DRGN body frames are 15 and 12 parts");
+    CHECK(pcount(0xA8D7, 7) == 8, "DRGN's hind legs share one 8-part bitmap");
+    CHECK(pcount(0xA87D, 4) == 3, "DRGN's tail is the 3 bytes at A87A");
+    /* the head-hit reaction tables end with bit 7 set on their last entry */
+    CHECK((boss_img8(&G, 0xA4B4 + 6) & 0x80) && (boss_img8(&G, 0xA4BB + 6) & 0x80),
+          "both reaction tables end with the 0x80 flag");
+    CHECK((boss_img8(&G, 0xA4B4) & 0x7F) == 0x0A, "the low reaction starts at pose 0x0A");
+    ai_unload(&o);
+}
+
+static void t_akma(void)
+{
+    AiOverlay o;
+    if (ai_load(&o, G_DIR, BOSS_AKMA)) { CHECK(0, "AKMA overlay"); return; }
+    memset(&G, 0, sizeof G); G.ai = &o; G.boss.info = boss_img16(&G, 0xA002);
+    CHECK(G.boss.info == 0xAA06, "AKMA [A002] = AA06, got %04X", G.boss.info);
+    /* 13 columns x 2 bitmap bytes; the three wing frames have 25/16/18 parts,
+     * and the mirrored (left) tables have exactly the same counts */
+    static const int want[3] = {25, 16, 18};
+    for (int a = 0; a < 3; a++) {
+        CHECK(pcount(boss_img16(&G, 0xA876 + 2 * a), 26) == want[a],
+              "AKMA wing %d (right) has %d parts (want %d)", a, pcount(boss_img16(&G, 0xA876 + 2 * a), 26), want[a]);
+        CHECK(pcount(boss_img16(&G, 0xA870 + 2 * a), 26) == want[a],
+              "AKMA wing %d (left) matches", a);
+    }
+    /* the flight path: high above the top row at the near end, row 1 at the far
+     * end, and the two tables are each other's mirror image */
+    for (int i = 0; i < 21; i++)
+        CHECK(boss_img8(&G, 0xA954 + i) == boss_img8(&G, 0xA969 + 20 - i),
+              "AKMA path[%d]: A954 and A969 mirror", i);
+    CHECK(boss_img8(&G, 0xA954) == 60 && boss_img8(&G, 0xA954 + 20) == 1,
+          "the right-bound path runs from row 60 down to row 1");
+    ai_unload(&o);
+}
+
+static void t_mao1(void)
+{
+    AiOverlay o;
+    if (ai_load(&o, G_DIR, BOSS_MAO1)) { CHECK(0, "MAO1 overlay"); return; }
+    memset(&G, 0, sizeof G); G.ai = &o; G.boss.info = boss_img16(&G, 0xA002);
+    CHECK(G.boss.info == 0xA581, "MAO1 [A002] = A581, got %04X", G.boss.info);
+    /* the script: 135 bytes ending in 0xFF, three 0x80|n text commands, three
+     * 0xC0 clears and one 0xE0 sound */
+    int len = 0, texts = 0, clears = 0, sounds = 0, poses = 0;
+    for (int i = 0; i < 200; i++) {
+        uint8_t c = boss_img8(&G, 0xA3BB + (unsigned)i);
+        len = i + 1;
+        if (c == 0xFF) break;
+        if (!(c & 0x80)) { poses++; CHECK(c <= 0x0A, "MAO1 script pose %u is 0..0x0A", c); }
+        else if ((c & 0xF0) == 0x80) texts++;
+        else if ((c & 0xF0) == 0xC0) clears++;
+        else if ((c & 0xF0) == 0xE0) sounds++;
+    }
+    CHECK(len == 135, "MAO1's script is 135 bytes, got %d", len);
+    CHECK(texts == 3 && clears == 3 && sounds == 1,
+          "MAO1 shows 3 texts, clears 3 times and plays one sound (%d/%d/%d)", texts, clears, sounds);
+    CHECK(poses == 127, "the other %d bytes are poses", poses);
+    /* the three strings, {u16 x, chars, 0xFF} */
+    static const char *want[3] = {"Finally, you reached me.", "I enjoyed your show.", "Come on!"};
+    for (int t = 0; t < 3; t++) {
+        unsigned sp = boss_img16(&G, 0xA442 + 2u * (unsigned)t);
+        char buf[64]; unsigned n = 0;
+        for (unsigned a = sp + 2; n < sizeof buf - 1; a++) {
+            uint8_t c = boss_img8(&G, a);
+            if (c == 0xFF) break;
+            buf[n++] = (char)c;
+        }
+        buf[n] = 0;
+        CHECK(strncmp(buf, want[t], strlen(want[t])) == 0, "MAO1 text %d = \"%s\"", t, buf);
+    }
+    /* poses 0..2 are class 0 only; the later ones bring in classes 1..6 */
+    int cls0 = 1, clsmax = 0;
+    for (int p = 0; p < 11; p++) {
+        unsigned ls = boss_img16(&G, 0xA495 + 2 * p);
+        int n = pcount(boss_img16(&G, 0xA52F + 2 * p), 6);
+        for (int i = 0; i < n; i++) {
+            int cls = boss_img8(&G, ls + (unsigned)i) >> 4;
+            if (p < 2 && cls != 0) cls0 = 0;
+            if (cls > clsmax) clsmax = cls;
+        }
+    }
+    /* src/ai/boss_mao1.c and docs/ENEMIES.md say "poses 0..2 use class 0 only";
+     * the image disagrees — pose 2's list ([A4BA]) already carries 0x18/0x16/
+     * 0x17, i.e. class 1.  Only poses 0 and 1 are pure class 0. */
+    CHECK(cls0, "MAO1 poses 0-1 are the class-0 human figure");
+    CHECK(clsmax == 6, "the demon grows up to class 6, got %d", clsmax);
+    ai_unload(&o);
+}
+
+static void t_mao2(void)
+{
+    AiOverlay o;
+    if (ai_load(&o, G_DIR, BOSS_MAO2)) { CHECK(0, "MAO2 overlay"); return; }
+    memset(&G, 0, sizeof G); G.ai = &o; G.boss.info = boss_img16(&G, 0xA002);
+    CHECK(G.boss.info == 0xAC03, "MAO2 [A002] = AC03, got %04X", G.boss.info);
+    for (int p = 0; p < 14; p++) {
+        int r = pcount(boss_img16(&G, 0xAAE1 + 2 * p), 6);
+        int l = pcount(boss_img16(&G, 0xAA71 + 2 * p), 6);
+        CHECK(r == l && r >= 7 && r <= 9, "MAO2 pose %d: %d parts right / %d left", p, r, l);
+    }
+    static const uint8_t strike[10] = {0, 0, 7, 7, 9, 10, 10, 11, 11, 12};
+    for (int i = 0; i < 10; i++)
+        CHECK(boss_img8(&G, 0xA46F + i) == strike[i], "MAO2 strike[%d]", i);
+    static const uint8_t death[10] = {8, 8, 8, 12, 12, 12, 13, 13, 11, 11};
+    for (int i = 0; i < 10; i++)
+        CHECK(boss_img8(&G, 0xABF9 + i) == death[i], "MAO2 death pose[%d]", i);
+    /* the jump arc: 14 entries then 0x80, six rows up and six back down */
+    int up = 0, down = 0, fwd = 0, n = 0;
+    for (; n < 20; n++) {
+        if (boss_img8(&G, 0xA666 + 3u * (unsigned)n) == 0x80) break;
+        int8_t dr = (int8_t)boss_img8(&G, 0xA666 + 3u * (unsigned)n + 1);
+        fwd += boss_img8(&G, 0xA666 + 3u * (unsigned)n) ? 1 : 0;
+        if (dr < 0) up -= dr; else down += dr;
+    }
+    CHECK(n == 14, "MAO2's jump is 14 frames, got %d", n);
+    CHECK(up == 6 && down == 6, "it rises 6 rows and falls 6 (%d/%d)", up, down);
+    CHECK(fwd == 8, "with 8 forward frames (2 cells each), got %d", fwd);
+    ai_unload(&o);
+}
+
+/* the level records of the eleven boss maps, and the bank 6117 ends up with.
+ * MPA0's +5 is 0xFF while its +4 names MAO2.GRP, so taking +5 unconditionally
+ * left the final boss with no sprite bank at all. */
+static void t_boss_banks(void)
+{
+    static const struct { int sys; const char *name; int ai, enp, bank, want; } B[] = {
+        { 1, "MP1D", 1, 0xFF, 1, 1}, { 4, "MP2D", 3, 0xFF, 3, 3}, { 7, "MP3D", 5, 0xFF, 5, 5},
+        {10, "MP4D", 7, 0xFF, 7, 7}, {13, "MP5D", 9, 0xFF, 9, 9}, {17, "MP6D", 11, 0xFF, 11, 11},
+        {21, "MP73", 18, 0xFF, 7, 7}, {22, "MP7D", 13, 0xFF, 13, 13}, {28, "MP8D", 15, 0xFF, 15, 15},
+        {29, "MP90", 16, 16, -1, 16}, {30, "MPA0", 17, 17, 0xFF, 17},
+    };
+    for (unsigned i = 0; i < sizeof B / sizeof B[0]; i++) {
+        Map m; memset(&m, 0, sizeof m);
+        if (map_load_system(&m, G_DIR, B[i].sys)) { CHECK(0, "%s", B[i].name); continue; }
+        CHECK(m.ai == B[i].ai, "%s level record +3 = %d (want %d)", B[i].name, m.ai, B[i].ai);
+        CHECK(m.enemies == B[i].enp, "%s +4 = %d (want %d)", B[i].name, m.enemies, B[i].enp);
+        if (B[i].bank >= 0)
+            CHECK(m.boss_bank == B[i].bank, "%s +5 = %d (want %d)", B[i].name, m.boss_bank, B[i].bank);
+        int enp = (m.enemies != 0xFF) ? m.enemies : m.boss_bank;
+        CHECK(enp == B[i].want, "%s loads sprite bank %d (want %d)", B[i].name, enp, B[i].want);
+        map_free(&m);
+    }
+}
+
+/* the four overlays ported last: DRGN, AKMA, MAO1 (the cutscene) and MAO2 */
 static void t_generic(void)
 {
     static const struct { int ai, map; const char *name; } G6[] = {
@@ -431,7 +609,10 @@ int main(int argc, char **argv)
         {"crab damage", t_damage}, {"crab death", t_death}, {"post-boss", t_post_boss},
         {"tako", t_tako}, {"tori", t_tori}, {"zela", t_zela}, {"zel2", t_zel2},
         {"meda", t_meda}, {"lega", t_lega}, {"layer tables", t_layers},
-        {"generic", t_generic},
+        {"drgn tables", t_drgn}, {"akma tables", t_akma},
+        {"mao1 script", t_mao1}, {"mao2 tables", t_mao2},
+        {"boss banks", t_boss_banks},
+        {"drgn/akma/mao", t_generic},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = fails;

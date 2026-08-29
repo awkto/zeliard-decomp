@@ -54,6 +54,12 @@ uint16_t boss_img16(const Game *g, unsigned addr);
  * (source & 0x1F) | 0x80 when `weak` says the part is a weak point, or 0.
  * `weak` may be NULL (no weak points). */
 uint8_t boss_readback(Game *g, int (*weak)(uint8_t type));
+/* the layer paste every image-composing overlay shares (DRGN A758, AKMA A7CC,
+ * MAO1 A2D3, MAO2 A939): for `cols` columns take `bpc` bitmap bytes, and for
+ * every set bit (bit 7 = the layer's first row) one byte off `list`, writing
+ * them into a column-major buffer of `bh` rows at (x, y). */
+void boss_paste(Game *g, uint8_t *buf, int bw, int bh, int x, int y,
+                int cols, int bpc, unsigned list, unsigned bm);
 /* step 3: rebuild the record list */
 void boss_parts_begin(Game *g);
 void boss_part(Game *g, uint16_t col, uint8_t row, uint8_t type, uint8_t phase);
@@ -77,6 +83,10 @@ void boss_tori_entry(Game *g);
 void boss_zela_entry(Game *g);           /* also ZEL2 (the same code) */
 void boss_meda_entry(Game *g);
 void boss_lega_entry(Game *g);
-void boss_generic_entry(Game *g);        /* DRGN/AKMA/MAO1/MAO2 */
+void boss_drgn_entry(Game *g);
+void boss_akma_entry(Game *g);
+void boss_mao1_entry(Game *g);
+void boss_mao2_entry(Game *g);
+void boss_generic_entry(Game *g);        /* nothing uses it now; kept as the fallback */
 
 #endif

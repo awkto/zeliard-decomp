@@ -78,7 +78,9 @@ static void usage(void)
         "  --potions L comma list of drug ids 0..7 into the five [A6..AA] slots (Enter -> USE:)\n"
         "  --spells L  comma list of spell numbers 1..7 to mark learned at [BB..C1]\n"
         "  --name NAME the NAME.USR the sage's \"Record Experience\" writes\n"
-        "  --load NAME restore NAME.USR (town.bin 7592) before starting\n");
+        "  --load NAME restore NAME.USR (town.bin 7592) before starting; the page's\n"
+        "              [C4] picks the town and [80]/[83] the column\n"
+        "  --save NAME write NAME.usr for the state just set up and exit (kenjpro A862)\n");
 }
 
 static int script_next(App *a)
@@ -116,7 +118,7 @@ static void dump_png(App *a, Game *g)
     static uint8_t rgb[FB_W * FB_H * 3];
     if (g->status) memcpy(a->fb, status_framebuffer(g->status), FB_W * FB_H);
     else render_frame(a->fb, g, &a->sh.hero);
-    render_hud(a->fb, g, &a->sh.font);
+    render_hud(a->fb, g, &a->sh.font, &a->sh.tfont, map_place_record(g->map));
     itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, g);
     render_to_rgb(a->fb, rgb);
     if (png_write_rgb(a->shot_path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", a->shot_path);
@@ -165,7 +167,7 @@ static void present(Game *g)
     static uint8_t rgb[FB_W * FB_H * 3];
     if (g->status) memcpy(a->fb, status_framebuffer(g->status), FB_W * FB_H);
     else render_frame(a->fb, g, &a->sh.hero);
-    render_hud(a->fb, g, &a->sh.font);
+    render_hud(a->fb, g, &a->sh.font, &a->sh.tfont, map_place_record(g->map));
     itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, g);
     render_to_rgb(a->fb, rgb);
     SDL_UpdateTexture(a->tex, NULL, rgb, FB_W * 3);
@@ -232,7 +234,7 @@ static void town_present(Town *t)
             if (t->status) memcpy(a->fb, status_framebuffer(t->status), FB_W * FB_H);
             else if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
             else town_render(a->fb, t);
-            render_hud(a->fb, t->g, &a->sh.font);
+            render_hud(a->fb, t->g, &a->sh.font, &a->sh.tfont, town_place_record(t->map));
             itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, t->g);
             render_to_rgb(a->fb, rgb);
             if (png_write_rgb(a->shot_path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", a->shot_path);
@@ -257,7 +259,7 @@ static void town_present(Town *t)
     if (t->status) memcpy(a->fb, status_framebuffer(t->status), FB_W * FB_H);
     else if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
     else town_render(a->fb, t);
-    render_hud(a->fb, t->g, &a->sh.font);
+    render_hud(a->fb, t->g, &a->sh.font, &a->sh.tfont, town_place_record(t->map));
     itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, t->g);
     render_to_rgb(a->fb, rgb);
     SDL_UpdateTexture(a->tex, NULL, rgb, FB_W * 3);
@@ -315,7 +317,7 @@ int main(int argc, char **argv)
     int dbg_sword = -1, dbg_shield = -1, dbg_level = -1, dbg_life = -1;
     long dbg_gold = -1;
     const char *dbg_potions = NULL, *dbg_spells = NULL;
-    const char *save_name = "ZELIARD", *load_name = NULL;
+    const char *save_name = "ZELIARD", *load_name = NULL, *save_now = NULL;
     const char *wav_path = NULL;
     int want_audio = 1, audio_backend = AUDIO_ADLIB, music_force = -2;
     for (int i = 1; i < argc; i++) {
@@ -347,6 +349,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--spells") && i + 1 < argc) dbg_spells = argv[++i];
         else if (!strcmp(argv[i], "--name") && i + 1 < argc) save_name = argv[++i];
         else if (!strcmp(argv[i], "--load") && i + 1 < argc) load_name = argv[++i];
+        else if (!strcmp(argv[i], "--save") && i + 1 < argc) save_now = argv[++i];
         else if (!strcmp(argv[i], "--verbose") || !strcmp(argv[i], "-v")) a.verbose = 1;
         else { usage(); return 2; }
     }
@@ -371,6 +374,11 @@ int main(int argc, char **argv)
         fprintf(stderr, "[save] %s.usr restored: LIFE %u/%u, level %u, EXP %u, GOLD %u\n",
                 load_name, g->hp, g->max_hp, g->level, g->exp, (unsigned)g->gold);
     else if (load_name) fprintf(stderr, "[save] cannot read %s.usr\n", load_name);
+    /* town.bin 7592 restarts GAME.BIN, which loads the map [C4] names (A1CB)
+     * and jumps into town.bin's boot entry: a restore always resumes in the
+     * town the page records, at the column it records. */
+    int restored_town = (load_name && start_in_town < 0 && (g->page[0xC4] & 0x80)) ? (g->page[0xC4] & 0x7F) : -1;
+    if (restored_town >= 0) start_in_town = restored_town;
     if (dbg_sword >= 0)  g->sword = (uint8_t)dbg_sword;                  /* [92] */
     if (dbg_shield >= 1 && dbg_shield <= 6) {                            /* [93]/[94]/[96] */
         g->shield = (uint8_t)dbg_shield;
@@ -431,6 +439,7 @@ int main(int argc, char **argv)
             if (town_col >= 0) sh->town.hero_scr_col = town_col - 4 - town_scr;
             town_npc_markers_reset(&sh->town);
         }
+        if (restored_town >= 0 && town_col < 0 && town_scr < 0) town_page_pull(&sh->town);
         if (town_anim >= 0) { sh->town.hero_anim = (uint8_t)town_anim; sh->town.hero_flags = (uint8_t)town_face; }
         if (npc_i >= 0 && npc_i < sh->tmap.nnpcs) {
             sh->tmap.npcs[npc_i].anim = (uint8_t)(npc_f & 3);
@@ -439,6 +448,15 @@ int main(int argc, char **argv)
         }
     } else {
         game_first_frame(g);
+    }
+    if (save_now) {                     /* kenjpro A862 without walking to a Sage */
+        if (sh->in_town) town_page_push(&sh->town); else player_page_push(g);
+        if (player_save_usr(g, sh->dir, save_now)) { fprintf(stderr, "[save] cannot write %s.usr\n", save_now); return 1; }
+        fprintf(stderr, "[save] %s/%s.usr: map %02X, town column %d, LIFE %u/%u, level %u, EXP %u, GOLD %u\n",
+                sh->dir, save_now, g->page[0xC4], sh->in_town ? town_hero_col(&sh->town) : -1,
+                g->hp, g->max_hp, g->level, g->exp, (unsigned)g->gold);
+        audio_shutdown();
+        return 0;
     }
     while (!a.quit) shell_frame(sh);
 

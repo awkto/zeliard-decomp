@@ -170,3 +170,12 @@ int map_apply_patches(Map *m, const uint8_t page[256])
     }
     return applied;
 }
+
+/* fight.bin 6185: VID_2010(si = [C00E]) — the map's own place-name label. */
+const uint8_t *map_place_record(const Map *m)
+{
+    if (!m || !m->raw || m->vidinit < 0xC000) return NULL;
+    size_t o = (size_t)(m->vidinit - 0xC000);
+    if (o + 4 >= m->rawlen || o + 4 + m->raw[o + 3] > m->rawlen) return NULL;
+    return m->raw + o;
+}

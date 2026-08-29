@@ -4,7 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "town.h"
+#include "player.h"
 #include "enemy.h"
 
 static int fails = 0, checks = 0;
@@ -294,6 +296,95 @@ static void t_dialogue_menu(const char *dir)
     CHECK(!(G.page[0x34] & 0x40), "and gives no cape");
 }
 
+/* The NAME.USR save file (kenjpro A862 / town.bin 7592).  The file is a raw
+ * 256-byte image of BASE:0000, so the hero's town position ([80] scroll_col,
+ * [83] hero_scr_col, [C2] facing, [C4] cur_map) travels in it with the player
+ * record — that is what makes a port-written .usr loadable by the real game's
+ * F7 "Restore Game". */
+static void t_save(const char *dir)
+{
+    if (load(dir, 2)) { fprintf(stderr, "  (no stmp)\n"); return; }
+    memset(&G, 0, sizeof G);
+    G.user = NULL;
+    CHECK(player_load_stdply(&G, dir) == 0, "STDPLY.BIN loaded");
+    town_place(&T, 210, 1);
+    G.gold = 20000; G.almas = 7; G.level = 12; G.max_hp = G.hp = 600;
+    G.sword = 3; G.shield = 4; G.shield_hp = 300; G.keys = 2;
+    town_page_push(&T);
+    CHECK(G.page[0x80] == (uint8_t)T.scroll_col, "[80] = scroll_col %d", T.scroll_col);
+    CHECK(G.page[0x83] == (uint8_t)T.hero_scr_col, "[83] = hero_scr_col %d", T.hero_scr_col);
+    CHECK(G.page[0xC2] == 1, "[C2] bit0 = facing left");
+    CHECK(G.page[0xC4] == 0x82, "[C4] = 0x80|2 (Satono), got %02X", G.page[0xC4]);
+    CHECK(town_hero_col(&T) == 210, "the hero is on column 210, got %d", town_hero_col(&T));
+
+    const char *tmp = "/tmp";
+    CHECK(player_save_usr(&G, tmp, "ZELTEST") == 0, "kenjpro A862 wrote ZELTEST.usr");
+    char path[256]; snprintf(path, sizeof path, "%s/ZELTEST.usr", tmp);
+    FILE *f = fopen(path, "rb");
+    CHECK(f != NULL, "the file exists");
+    if (f) {
+        uint8_t buf[300];
+        size_t n = fread(buf, 1, sizeof buf, f);
+        fclose(f);
+        CHECK(n == 256, "it is exactly 256 bytes with no header, got %zu", n);
+        CHECK(memcmp(buf, G.page, 256) == 0, "and byte-identical to the page");
+        /* the three fields the real game's restore reads first */
+        CHECK(buf[0xC4] == 0x82, "file [C4] = 82");
+        CHECK(buf[0x8D] == 12, "file [8D] = level 12");
+        CHECK(page_gold24(buf, 0x85) == 20000, "file [85..87] = 20000 gold");
+    }
+
+    /* town.bin 7592: load the file back over BASE:0000 and resume there */
+    Game H; memset(&H, 0, sizeof H);
+    CHECK(player_load_usr(&H, tmp, "ZELTEST") == 0, "restore_game 7592 read it back");
+    CHECK(H.gold == 20000 && H.level == 12 && H.max_hp == 600, "the record survived");
+    CHECK(H.sword == 3 && H.shield == 4 && H.shield_hp == 300, "so did the equipment");
+    CHECK(H.keys == 2 && H.almas == 7, "and the keys / almas");
+    CHECK(H.cur_map == 0x82, "cur_map picks the town to reload");
+    Town T2; Game *save_g = T.g;
+    T2 = T; T2.g = &H;
+    town_page_pull(&T2);
+    CHECK(T2.scroll_col == T.scroll_col, "scroll_col came back: %d", T2.scroll_col);
+    CHECK(T2.hero_scr_col == T.hero_scr_col, "hero_scr_col came back: %d", T2.hero_scr_col);
+    CHECK(T2.hero_flags == 1, "facing came back");
+    CHECK(town_hero_col(&T2) == 210, "the hero resumes on column 210, got %d", town_hero_col(&T2));
+    T.g = save_g;
+    remove(path);
+}
+
+/* The two towns the DOSBox ground-truth captures were taken from: the edge
+ * exits that reach cavern 2 and the door that reaches cavern 3 (docs/TOWN.md
+ * §3 C007/C009/C00B).  These are the routes port/README.md documents. */
+static void t_capture_routes(const char *dir)
+{
+    if (load(dir, 2)) { fprintf(stderr, "  (no stmp)\n"); return; }
+    CHECK(M.width == 215, "Satono Town is 215 columns, got %d", M.width);
+    int nleft = 0, nright = 0;
+    for (int i = 0; i < M.nexits; i++) {
+        const TownExit *e = &M.exits[i];
+        if (!(e->flags & 0x80)) continue;                       /* not a cavern entry */
+        const TownCave *c = &M.caves[e->dest];
+        if (e->flags & 1) { nleft++;
+            CHECK(c->map == 0 && c->col == 128 && c->row == 33,
+                  "Satono's left edge -> MP10 (128,33), got map %d (%d,%d)", c->map, c->col, c->row); }
+        else { nright++;
+            CHECK(c->map == 2 && c->col == 6 && c->row == 62,
+                  "Satono's right edge -> MP20 (6,62), got map %d (%d,%d)", c->map, c->col, c->row); }
+    }
+    CHECK(nleft == 1 && nright == 1, "both Satono edges are cavern entries");
+
+    if (load(dir, 3)) { fprintf(stderr, "  (no bsmp)\n"); return; }
+    const TownDoor *d = NULL;
+    for (int i = 0; i < M.ndoors; i++) if (M.doors[i].col == 142) d = &M.doors[i];
+    CHECK(d != NULL, "Bosque has a door at column 142");
+    if (d) {
+        CHECK(d->dest >= 8, "it is a cavern gate (dest %d)", d->dest);
+        const TownCave *c = &M.caves[d->dest - 8];
+        CHECK(c->map == 5 && c->col == 185 && c->row == 19,
+              "Bosque column 142 -> MP30 (185,19), got map %d (%d,%d)", c->map, c->col, c->row);
+    }
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -307,6 +398,7 @@ int main(int argc, char **argv)
         {"town map", t_map}, {"walk", t_walk}, {"doors", t_doors},
         {"edges", t_edges}, {"npcs", t_npcs}, {"hand-off", t_handoff},
         {"dialogue menu", t_dialogue_menu},
+        {"save file", t_save}, {"capture routes", t_capture_routes},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = fails;

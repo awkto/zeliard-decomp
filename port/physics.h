@@ -74,7 +74,8 @@ typedef struct Boss {
     uint16_t exp;                   /* +5 */
     uint8_t  cam_col;               /* +7  hero screen column (6FE8) */
     uint8_t  knock_left;            /* +8  -> 9F01 */
-    uint16_t name_ptr;              /* +9  -> {u8 x4, u16 y, u8 len, chars} */
+    uint16_t name_ptr;              /* +9  -> {u8 x4, u8 y, u8 xoff, u8 len, chars} */
+    uint8_t  name_x4, name_y, name_xoff;   /* that record's own position (6162) */
     uint16_t gold;                  /* +B */
     char     name[24];
     /* live state */
@@ -82,7 +83,7 @@ typedef struct Boss {
     uint16_t hp;
     uint8_t  death_cnt;
     uint8_t  parts;                 /* parts placed this frame */
-    uint8_t  ported;                /* 0 = the generic placeholder overlay */
+    uint8_t  ported;                /* 1 = a line-by-line overlay port (all eleven) */
     /* per-overlay private state (only one boss is ever live) */
     uint8_t  pose, walk_dir, parity, u1, u2, u3, u4, u5, u6, u7, u8_, u9;
     uint8_t  st[24];                /* the overlay's own byte variables */

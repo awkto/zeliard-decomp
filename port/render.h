@@ -14,7 +14,13 @@
 #define PF_H 144                    /* 18 rows visible; the 19th window row is under the HUD */
 
 void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h);     /* fb: FB_W*FB_H VGA indices */
-void render_hud(uint8_t *fb, const Game *g, const DigitFont *font);   /* LIFE bar, GOLD, ALMAS */
+/* LIFE bar, GOLD/ALMAS digits, the four narrow-font labels and the place name.
+ * `tf` supplies the [F504] narrow glyphs (NULL = bars and digits only) and
+ * `place` is the {x4, y, xoff, len, chars} record video [2010] draws: the
+ * cavern map's [C00E] or the town map's [C004]. */
+struct TextFont;
+void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
+                const struct TextFont *tf, const uint8_t *place);
 void render_window(uint8_t *fb, int x, int y, int w, int h, int framed);   /* [2000] */
 void render_to_rgb(const uint8_t *fb, uint8_t *rgb);                  /* FB_W*FB_H*3 */
 

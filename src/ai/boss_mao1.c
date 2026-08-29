@@ -38,7 +38,8 @@
  * (col = boss_col + 2c, row = boss_row + 2r), list [A495 + 2*pose], bitmap
  * [A52F + 2*pose] (one byte per column, bit 7 = row 0).  Part records:
  * {type = class, phase = frame, hit = 0}; no solid bit, no contact damage.
- * Poses 0..2 use class 0 only (6-10 parts: the small human form), 3..6
+ * Poses 0 and 1 use class 0 only (6-10 parts: the small human form); pose 2's
+ * list at [A4BA] starts 18 16 17, i.e. it already includes class 1.  Poses 3..6
  * classes 1-2 (11-13 parts), 7..0xA add classes 3..6 (12-17 parts): Jashiin
  * grows from the human figure into the demon.
  */

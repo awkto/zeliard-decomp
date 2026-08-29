@@ -802,6 +802,7 @@ static void sage_action(Shop *s, uint8_t op)
         case 2: say(s, img16(s, 0xB5EB + 2u * (unsigned)(s->town_id - 1))); print_text(s);
                 say(s, 0xADBF); return;
         default:                                                /* A178 Record Experience */
+            if (s->t) town_page_push(s->t);      /* [80]/[83]/[C2]: the page is the file */
             if (player_save_usr(g, s->dir, g->player_name[0] ? g->player_name : "ZELIARD") == 0) {
                 s->saved = 1;
                 say(s, 0xAF7C);                                 /* "I shall record your experiences." */

@@ -19,14 +19,20 @@ an OPL2 core written for this port plays the AdLib arrangement of the original
 `.msd` scores on the original tick model, the town and every cavern get the
 score their level record names, and the `FF75` sound effects run through
 `SNDADLIB.DRV`'s own tracks and patches; `--speaker` plays the PC-speaker
-arrangement instead.
+arrangement instead.  **Every one of the eleven boss overlays is ported** —
+DRGN, AKMA, MAO1 and MAO2 were the last four — and the HUD now draws its own
+gauge troughs, the LIFE / PLACE / GOLD / ALMAS labels and the place name, all
+pixel-identical to the DOSBox captures.  The `.usr` save file **round-trips
+through the real game**: a file written by `port/` loads under DOS with F7
+"Restore Game", which is how the cavern-2, cavern-3 and Cangrejo captures in
+`docs/screenshots/` were taken (see "Ground truth" below).
 
 ```
 cd port
-make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 6 test binaries
-make test            # physics (135) + combat/AI (149) + town (85) + boss (313) + shop (118)
-                     #   + status (87) + playthrough (14) + audio (305) = 1206 assertions
-make verify          # headless renders diffed against the DOSBox captures in docs/screenshots/
+make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 8 test binaries
+make test            # physics (135) + combat/AI (171) + town (114) + boss (574) + shop (118)
+                     #   + status (87) + playthrough (14) + audio (305) = 1518 assertions
+make verify          # 42 headless renders diffed against the DOSBox captures in docs/screenshots/
 make playthrough     # the same two routes as test_playthrough, with the step-by-step log
 ./zeliard            # play cavern 1 (needs ../zeliard/ZELRES1-3.SAR or zeliard/ in the cwd)
 ./zeliard --town 1   # start in Muralla Town instead
@@ -35,6 +41,9 @@ make playthrough     # the same two routes as test_playthrough, with the step-by
 ./zeliard --map 0 --potions 0,5,6,7 --spells 1,3,6 # then Enter: the status screen with something in it
 ./zeliard --speaker                                # PC-speaker music instead of AdLib
 ./zeliard --headless --frames 1600 --script ".1600" --music 4 --dump-audio mus1.wav
+./zeliard --town 2 --town-col 210 --gold 20000 --level 12 --save ZCAV2   # write ZCAV2.usr
+./zeliard --load ZCAV2                             # ... and resume exactly there
+./zeliard --map 22 --level 20 --life 900           # the Dragon (mp7d); 28 = Alguien, 30 = Jashiin
 ```
 
 SDL2 is optional at build time.  Without the dev package the same binary is built
@@ -91,8 +100,11 @@ Command line: `--dir GAMEDIR`, `--map N` (system map index, 0 = MP10 … 0x1E = 
 `--pos COL ROW` (hero top-left map cell), `--town N` (start in town N: 0 cmap, 1 mrmp
 Muralla, … 9 esmp), `--speed N` (FF33 speed, default 5 = 84.5 ms/frame), `--scale N`,
 `--headless`, `--sword N`/`--shield N`/`--level N`/`--life N`/`--gold N` (write the
-player record directly; the shops do it properly), `--name NAME` / `--load NAME`
-(the NAME.USR the sage writes / restore it, town.bin 7592),
+player record directly; the shops do it properly), `--name NAME` (the NAME.USR the
+sage's "Record Experience" writes), `--save NAME` (write NAME.usr for the state the
+rest of the command line sets up and exit — kenjpro A862 without walking to a Sage)
+and `--load NAME` (town.bin 7592: restore the file, and with no `--town` resume in
+the town its `[C4]` names at the column `[80]`/`[83]` name),
 `--screenshot N FILE` (dump after N rendered frames),
 `--script "R6 U3 .6 XL2"` (headless input: hold Right 6 frames, Up 3, idle 6,
 sword+Left 2; letters U D L R, X = sword, M = magic combine, `.` = nothing),
@@ -192,9 +204,41 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   column 0x0E, retreats right for 20 frames after a hit before column 0x2F, and
   on pose 6 launches the projectile **part** along its 17-step path (A5D8) that
   explodes below column 0x12; damage is sword ×2, orb ×1, magic ⅛.
-* `boss_generic.c` — the protocol-only placeholder for DRGN, AKMA, MAO1 and
-  MAO2: correct info block, hits, HP, death and rewards, but not the
-  original's part composition or movement.
+* `boss_drgn.c` — **the Dragon** (cavern 7).  `boss_paste` builds a 29×10 cell
+  buffer out of five layers — neck+head pose (12 columns), body (11), front and
+  hind legs (7 each) and tail (4) — from the image's own pointer tables; the
+  parts are solid (`type|0x80`) while it lives.  It walks left one cell every
+  second frame to column 0x10, picks its pose from the distance to the window's
+  left edge, and from a rest pose 1/4 per frame winds up for 6 frames and then
+  breathes a 13×8 flame image (class 8/9, sword-immune) for 10.  Damage is ½ for
+  the sword, ⅛ for magic and orbs, doubled on the class-0 head, which also makes
+  it rear up through a 7-pose reaction table and back off eight cells.
+* `boss_akma.c` — **Alguien** (cavern 8), a 13×16 buffer: the body from three
+  wing frames, the wing-tip patch (5×2 at buffer (3,13) / (5,13), alternating
+  every other frame) and the face patch, which A570 writes as **two columns of
+  one row**, not one column of two.  It flies two cells a frame along the fixed
+  swoop tables A954/A969, climbs two rows a frame at each end until row 0x3D,
+  turns and fires a diagonal beam of class-6 parts that grows a segment a frame
+  to 8 (7 when steep) and then retracts.  Damage is the full
+  `damage_for_source()` — no scaling and no weak point.
+* `boss_mao1.c` — **Jashiin's appearance** (mp90).  Not a fight: a 135-byte
+  script at A3BB, one byte per frame, that steps the 6×8 two-cell-spaced image
+  from the human figure (class 0) into the demon (classes 1..6), shows the
+  overlay's three texts, plays sound 0x38 and finally clears `[E6]` so the map
+  carries on as an ordinary level.  Nothing reads the hit bits and nothing
+  touches HP, so there is no death branch at all.
+* `boss_mao2.c` — **Jashiin** (mpa0, the final boss), a 6×9 buffer with 14
+  poses.  Phase 1 is the teleport-and-strike loop: he appears 4 or 24 columns
+  along from the window, flickers in over 5 frames (immune), holds the 5-frame
+  throw `{0,0,7,7,9}` or cast `{10,10,11,11,12}` — the only frames he can be
+  hurt in — flickers out and stays gone until his projectile is spent.  Under
+  200 HP phase 2 keeps him visible at exactly 8 columns from the hero, jumping
+  the 14-frame arc at A666 when a wall stops him and throwing 1/16 per frame at
+  range, and **regenerating 80 HP every 32 frames**: back at 800 he drops into
+  phase 1 again.  Both projectiles are contact parts, not fight.bin shots, so
+  the shield does not apply to them.
+* `boss_generic.c` — the protocol-only fallback.  Nothing uses it any more; it
+  is kept for an overlay index the port does not know.
 * `ai_eai1.c` … `ai_eai8.c` — **all eight cavern AI overlays**, ported line by line from
   `src/ai/eai*.c` with the address tags kept: bat/snail/frog/hedgehog (1); tall plant
   shooter, blue slime, red spitting frog, bird (2); ceiling spider, red hopper,
@@ -325,7 +369,15 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
 * `render.c` — 320×200 VGA-index framebuffer, playfield 28×19 cells at (48,14), hero
   sprite in the three gfmcga passes, enemy/item sprites as 2×2 cells from `enpN.grp`,
   **projectiles and magic sprites as transparent tile-bank cells** (gfmcga 412F), the
-  **walk-in cutscene**, and the HUD (LIFE bar, GOLD/ALMAS digits).  `town_render`
+  **walk-in cutscene**, and the **HUD**: the four `[2004]` gauge troughs (LIFE
+  51,162 w33 · PLACE/ENEMY 51,174 w136 · GOLD 51,186 w66 · ALMAS 121,186 w66,
+  row 0 black, rows 1-8 dark blue, row 9 the bright lip), the LIFE and ENEMY
+  bars, the GOLD/ALMAS digits, the four `[200E]` narrow-font labels (their own
+  records out of town.bin 6C93..6CB4 and fight.bin 6C44/6C4C/6C8F, green on a
+  red shadow) and the `[2010]` place name — the cavern map's `[C00E]`, the town
+  map's `[C004]` or, in a boss room, the boss's `[A002]+9` record, whose own y
+  is 0xBB: the boss name replaces the GOLD line, as PLACE is replaced by ENEMY.
+  All of that is compared pixel for pixel by `make verify`.  `town_render`
   draws the town: 28 × 8 cells at y 78, NPCs and the hero as 2×3 tman/mman sprites.
 * `shell.c` / `shell.h` — **the two-engine shell**, lifted out of `main.c` so every
   front end takes the same code path.  It owns the map/tileset/AI-overlay/enemy-bank
@@ -578,19 +630,47 @@ facing right.
    out: the 3 belongs to `\` (which prints as an apostrophe); `I` advances 5.  The
    table itself is verbatim and drives a text box that is pixel-identical to the
    DOSBox capture.
+21. `src/ai/boss_akma.c` calls Alguien's face patch "1 column x 2 rows"; A570 writes
+   the second byte at `di + 0x10`, i.e. the **next column**, so it is 2 columns x 1
+   row.  (The wing-tip patch, which uses `di + 0x0E` after two `movsb`, really is
+   5 columns x 2 rows.)
+22. `src/ai/boss_mao1.c` and `docs/ENEMIES.md` §3 say Jashiin's poses 0..2 "use class
+   0 only".  Pose 2's byte list (`[A4BA]`) starts `18 16 17`, i.e. **class 1** — only
+   poses 0 and 1 are the pure class-0 human figure.
+23. Not a correction but a gap worth recording: a boss's `[A002]+9` name record has
+   y = **0xBB** in all eleven overlays, which is the GOLD row, and `6150` draws it
+   through `[2010]` while `6C55`/`6C87` put ENEMY where PLACE goes.  So in a boss
+   room the HUD reads `LIFE / ENEMY <bar> / <boss name> ALMAS` — there is no GOLD
+   line at all.  The DOSBox capture `boss_cangrejo.png` confirms it.
+
+**A port bug worth calling out** (found while porting MAO2, fixed in `shell.c`):
+`shell_load_enemy_banks` took the level record's `+5` bank whenever the map's AI
+index was a boss overlay.  For the ten `mpNd` rooms that is right — their `+4` is
+0xFF — but **mpa0's `+4` is 17 (MAO2.GRP) and its `+5` is 0xFF**, so the final
+boss map ended up with *no* sprite bank ("cannot load enemy bank 255") and
+Jashiin was invisible, under the generic overlay as much as under the new one.
+6117 copies `+5` over `+4` unconditionally; when `+5` is 0xFF that request
+simply fails and leaves whatever 7EBB already loaded in place.  The rule is now
+"`+4` unless it is 0xFF, then `+5`", which is what all eleven maps want, and
+`test_boss.c`'s `boss banks` case pins every one of them.
 
 ## Stubbed / not yet implemented
 
-* **Four of the eleven boss overlays.**  CRAB, TAKO, TORI, ZELA, ZEL2, MEDA and
-  LEGA are ported; DRGN, AKMA, MAO1 and MAO2 run on `boss_generic.c`, which is the
-  protocol only — the right `[A002]` numbers, hits, HP, the 40-frame death and the
-  rewards, but a placeholder block of class-0 parts instead of their real image and
-  movement.  `src/ai/boss_meda.c`, `boss_lega.c`, `boss_drgn.c`, `boss_akma.c`,
-  `boss_mao1.c` and `boss_mao2.c` hold the behaviour that still has to be written
-  (the Ghidra output for DRGN/AKMA/MAO1 is unusable, so three of the four would
-  have to come out of the ndisasm listings).  Vista's tentacle-pose *index* and
-  Tarso's face-patch slot are the only inferred pieces in the seven that are
-  ported; everything else is the image's own data.
+* **Boss overlays: all eleven are ported.**  Vista's tentacle-pose *index* and
+  Tarso's face-patch slot are the only inferred pieces; everything else — every
+  layer table, pose list, column bitmap, path, script and string — is read out
+  of the overlay image at run time.  The four that were on `boss_generic.c`
+  (DRGN, AKMA, MAO1, MAO2) were written against `ndisasm` listings of the
+  images, because the Ghidra output for three of them is unusable; the compose
+  routines (DRGN A758, AKMA A7CC, MAO1 A2D3, MAO2 A939) and the record
+  emitters were read instruction by instruction, which is where the AKMA face
+  patch ("2 columns × 1 row", not the other way round) and MAO1's pose-2 class
+  came from.  Only the *animation* is now unverified against the original —
+  there is DOSBox ground truth for Cangrejo but not for the later bosses,
+  because none of their doors is within reach of a town.
+* **The per-boss idle animation hooks** and the `[E6]` boss-room walk-in (only
+  mp90 uses it) are still skipped, and a part's hit-flash bit (`hit |= 0x20`
+  when a hit was read back) is not written, so a struck boss does not flash.
 * **The encounter card** is 12 blank flashes of the right length in the right
   rectangle; ENCNT.GRP itself (the "!" card art) is not decoded.  Boss maps also
   skip the `[E6]` boss-room walk-in (only mp90 uses it) and the per-boss idle
@@ -630,8 +710,13 @@ facing right.
   is simplified to "collect on overlap".
 * The swing length is a 6-frame approximation: the original's `attack_var` is
   driven by gfmcga 3E45, which has not been decoded.
-* HUD: only the LIFE bar and the GOLD/ALMAS digits.  No frame, no PLACE/GOLD
-  narrow-font labels, no item/magic icons, no sign text.
+* HUD: the four gauge troughs, the LIFE/ENEMY bars, the GOLD/ALMAS digits, the
+  narrow-font labels and the place name are all pixel-exact now.  What is still
+  missing is the **grey panel behind them and the stone frame around the
+  playfield** (drawn once at boot and never redrawn, so nothing in fight.bin or
+  town.bin draws it), the white item/magic slot frames and the sign text.
+  Because the panel is missing, the HUD area outside the troughs is black
+  instead of grey.
 * Music: the MT-32 (`MSCMT.DRV`, blob A) and Tandy/PCjr (`MSCJR.DRV`, SN76496) back
   ends are not implemented — `msd.c` parses both arrangements (the Tandy tracks feed
   the speaker) but only OPL2 and the speaker are synthesised.  `SNDJR.DRV`'s effect
@@ -755,6 +840,71 @@ Muralla's `"30yc"` is *Buy shield → the first shield → Yes → leave*.
 * **Cell-granular everything.**  No sub-cell positions exist anywhere (8 px steps,
   ≈11.8 fps at speed 5); smoothing would be a deliberate deviation for later.
 
+## Ground truth
+
+`make verify` compares 42 boxes of headless renders against the DOSBox captures
+in `docs/screenshots/`; all of them are at 100 %.  Five of the captures were
+taken for this milestone, and getting them is worth writing down because it also
+**validated the save format end to end**.
+
+### The `.usr` round trip
+
+`port/` writes `NAME.USR` in kenjpro A862's own format — a raw 256-byte image of
+`BASE:0000`, no header — and the file the port writes **loads in the real game
+under DOSBox**.  The page carries the hero's town position as well as his
+record: `[80]` scroll_col, `[83]` hero_scr_col, `[C2]` facing, `[E7]` walk frame
+and `[C4]` the town map, so a restore resumes exactly where the save was taken.
+`town_page_push` / `town_page_pull` (town.c) keep the port's `Town` and the page
+in step; `--save NAME` writes the file for whatever state the command line sets
+up and `--load NAME` restores it, entering the town `[C4]` names at the column
+`[80]`/`[83]` name, which is what GAME.BIN A1CB + town.bin's boot entry do.
+
+Loading one in the original:
+
+```
+tools/run_dosbox.sh OUT ...           # with the single .usr copied into OUT/dos/zeliard/
+KEYS="6:Return 9:Return 16:Return     # recipe A: skip the intro, stand in the castle
+      22:F7 24:+y 24.15:-y            # F7 -> "Restore Game / Sure?(Y/N)" -> y
+      28:+Down 28.15:-Down            # the file list is {Re-Start, <your .usr>}
+      30:+space 30.15:-space          # Space copies the highlighted name into the box
+      32:+Return 32.2:-Return"        # Enter accepts; GAME.BIN restarts in restored mode
+```
+
+Keep exactly **one** `*.usr` in the directory so the list is unambiguous.  The
+restore is done by ≈40 s (the game reloads GAME.BIN and the town map).
+
+### Reaching the deep captures
+
+The restore always lands in a **town** (GAME.BIN A097 loads the map `[C4]` names
+and jumps into town.bin), so the trick is to pick a town whose gate or edge
+comes out next to what you want.  Satono Town is the useful one: both its edge
+exits are cavern entries (`stmp` `[C007]`: flags 0x81 → cave record 0, flags
+0x80 → record 1).
+
+| capture | save | in DOSBox |
+|---|---|---|
+| `cavern2.png` — MP20 "Cavern of Peligro", MPP2 | Satono, column 210 | hold Right 0.5 s: off the right edge → MP20 (6,62) |
+| `cavern3.png` — MP30 "Cavern of Madera", MPP3 + two enp5 enemies | Bosque, column 142 | tap Up: the cave gate at column 142 → MP30 (185,19) |
+| `boss_cangrejo.png` — MP1D, the Cangrejo fight | Satono, column 5 | tap Left: off the left edge → **MP10 (128,33)**, then walk right 13 columns to the unlocked boss door at (141,32) → MP1D |
+| `town_satono.png` — Satono Town, the ckpd underground backdrop | Satono, column 5 | the restore itself |
+| `restore_menu.png` — Felishika's Castle with the F7 name box | — | recipe A + F7 |
+
+The scan into MP1D is the edge-stop-and-scan pattern again, but with **1.3 s
+between the pairs**: `Up` is *jump* in a cavern and a jump takes about ten
+frames, so a scan at the town's 0.45 s spacing spends every input mid-air.
+`port/zeliard --map 0 --pos 128 33 --script "R13 .2 U2"` shows the port doing
+the same walk, and the port agrees with the original that only columns 141 and
+142 open the door.
+
+The captures are `import`ed at 640×480 and reduced with `convert -sample
+320x240` — a **nearest-neighbour** reduction.  `-resize` interpolates and turns
+every exact-pixel comparison into a ~25 % match; that cost an hour once.
+
+Cangrejo's is the only boss capture there can be for now: of the eleven boss
+doors, only MP1D's is within reach of a town (13 columns from Satono's left
+edge).  The next nearest is MP6D's at (309,41), six columns from where Dorado
+Town drops into MP60 but eight rows up and locked.
+
 ## What is left of milestone (e), and after
 
 1. **The autopilot cannot yet cross MP10's lower level unaided.**  It plays the
@@ -772,29 +922,22 @@ Muralla's `"30yc"` is *Buy shield → the first shield → Yes → leave*.
    sword, the Honor shield, 20 000 gold), because the autopilot also cannot farm the
    6800 gold the Spirit sword costs.  Both deviations are in one place
    (`playthrough.c` / `test_playthrough.c`) and are the only ones.
-2. **The four remaining boss overlays** (DRGN, AKMA, MAO1, MAO2).  The protocol, the
-   part machinery and the rewards are done and shared, so each one is "read the
-   layer/pose tables out of the image and port the state machine" — the same shape as
-   `boss_tako.c` / `boss_tori.c` / `boss_meda.c`.  DRGN, AKMA and MAO1 need the
-   ndisasm listings because the Ghidra output for them is unusable.
-3. **The remaining town machinery**: the parallax strips and the ympd/ckpd backdrops,
-   the shopkeeper idle hooks, ENCNT.GRP, the HUD frame / labels / icons.
-4. **The rest of the sound**: the MT-32 driver (`MSCMT.DRV` over blob A, which
+2. **The remaining town machinery**: the parallax strips and the ympd/ckpd
+   backdrops (neither module is decoded), the shopkeeper idle hooks, ENCNT.GRP,
+   and the HUD's grey panel + stone frame + item-slot frames.  The HUD's
+   troughs, labels, bars, digits and place name are done and verified.
+3. **The rest of the sound**: the MT-32 driver (`MSCMT.DRV` over blob A, which
    `tools/msd2mid.py --mt` already decodes) and the Tandy SN76496 pair
    (`MSCJR.DRV` + `SNDJR.DRV`); `SNDADLIB`'s `15A3` ambient/proximity routine, which
    needs `FF08` (fight.bin `774E`) to be computed first; and the Esc pause box, which
    is the only caller of `INT 60h AX=3`.
-5. **More ground truth**: DOSBox captures of caverns 2-9, of a boss encounter and of
-   a town dialogue box, so `make verify` can cover the remaining tilesets, the boss
-   HP bar and the dialogue renderer.  The port writes `NAME.USR` in kenjpro A862's own
-   format (a raw 256-byte image of BASE:0000, no header), so the fastest route
-   to a deep capture is to play the port to the spot, "Record Experience" at a Sage,
-   drop the `.usr` next to the real ZELIARD.EXE and load it in DOSBox — which also
-   round-trip-validates the save format.
+4. **More ground truth**: caverns 4-9, a town dialogue box, and the later bosses
+   — the last of which needs either a long scripted cavern walk in DOSBox or a
+   way to replay the port's own input stream there.
    `docs/screenshots/menu.png` turned out to be a capture of the **select.bin status
    screen** (Enter in Felishika's Castle on a fresh game), not a shorter town menu, and
    `make verify` diffs the port's own status screen against it.
-   `docs/screenshots/shop_armour.png` was captured for this milestone with
+   `docs/screenshots/shop_armour.png` was captured for milestone (d) with
    `KEYS="6:Return 9:Return 16:Return 20:+Right 27.5:-Right"` followed by 26
    `+Right`/`-Right` + `+Up`/`-Up` tap pairs at 0.45 s intervals from 28 s
    (docs/DOSBOX_RECIPE.md §5's edge-stop-and-scan pattern, scanning *right* from the
