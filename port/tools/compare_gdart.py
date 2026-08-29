@@ -31,15 +31,11 @@ def main():
     for (arc, idx), nm in G.resource_names().items():
         names.setdefault(nm, (arc, idx))
     ok = bad = 0
-    # hou.grp is the one entry where the two tables disagree on purpose: the
-    # gdmcga sprite table at 3617 is {u16 ptr, u8 rows, u8 wbytes} (CX is read
-    # as the word at +2, so CL = rows), which makes its frames 6 x 32 and
-    # 4 x 24, not the 32 x 6 / 24 x 4 that tools/grp2png.py and
-    # docs/CUTSCENES.md still have.  See the port README.
+    # Every entry is diffed, hou.grp included: tools/grp2png.py's GD_ART now
+    # has the same 6 x 32 / 4 x 24 frame geometry port/gd.c does (the gdmcga
+    # sprite table at 3617 is {u16 ptr, u8 rows, u8 wbytes} — 348E reads CX as
+    # the word at +2, so CL = rows), and the same himp/seip lip-sync tails.
     for name in G.GD_ART:
-        if name == "hou.grp":
-            print("  note hou.grp: geometry corrected in port/gd.c (see 3617); not diffed")
-            continue
         arc, idx = names[name]
         r = subprocess.run([os.path.join(ROOT, "zeliard"), "--dir", GAMEDIR,
                             "--gd-art", name, OUT], capture_output=True)

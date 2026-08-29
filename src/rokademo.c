@@ -33,7 +33,9 @@
  *   [C2]  hero facing (bit 0 = left)
  *   [E7]  hero animation frame
  *   [FF1A] frame tick counter (cleared, then waited on)
- *   [FF33] speed divider (F9), [FF75] sound-effect request
+ *   [FF26] music "score finished" flag (A371 waits for the fanfare to end)
+ *   [FF33] speed divider (F9), [FF75] sound-effect request 0x1A footstep,
+ *          0x1B flash, 0x1C flight sparkle
  */
 
 typedef unsigned char u8;
@@ -45,8 +47,19 @@ typedef unsigned short u16;
 #define VID_SAVE_RECT  (*(void(*)())0x2026)  /* AH x8, AL y, CH w8, CL rows, DI dst */
 #define VID_RESTORE    (*(void(*)())0x2028)
 #define VID_TEAR_ICON  (*(void(*)())0x203E)  /* AL 0/1 icon, BH x4, BL y — 16x13 */
-#define GF_BLIT_CELL   (*(void(*)())0x3022)  /* AL cell, BH x4, BL y — 8x8 from arena:6000 */
-#define GF_DRAW_SWORD  (*(void(*)())0x3024)  /* equipped sword picture [0x92] at (144,86) */
+#define GF_BLIT_CELL   (*(void(*)())0x3022)  /* AL cell, BH x4, BL y — the 8x8 32-byte
+                                                cell at arena:6000 + AL*0x20, expanded
+                                                2 bits -> 1 byte by 4975 and `stosb`'d:
+                                                a **fully opaque** blit, no mask (4933) */
+#define GF_DRAW_SWORD  (*(void(*)())0x3024)  /* the raised sword, at (144,86) — 16x24 px,
+                                                one of three 96-byte 2-bpp pictures
+                                                **embedded in gfmcga.bin** at 4A31 /
+                                                4A91 / 4AF1, picked by [0x92] through the
+                                                six-entry table at 4A25 (so swords 1-3
+                                                share one picture, 4-5 the next, 6 the
+                                                last).  Not itemp.grp.  Colour 0 is
+                                                transparent, 1/2 -> [4FF5] = 8 and
+                                                3 -> [4FF6] = 9 (4092)                 */
 #define GF_SPARKLE     (*(void(*)())0x3026)  /* AL frame (bit7 = big), BX x px, CL y */
 #define GF_CONVERT_2BPP (*(void(*)())0x3028) /* DS:SI bank, BP mask dst, CX cells */
 #define INT60H_PLAY(ax)  /* int 60h — AX=0 start score at DS:SI, AX=1 stop */
@@ -56,12 +69,18 @@ static const u8 req_mfan[] = { 2, 0x5F, "MFAN.MSD" };   /* A584 — ZELRES3[94] 
 static const u8 req_dman[] = { 2, 0x36, "DMAN.GRP" };   /* A58F — ZELRES3[53] hero cells */
 
 /*
- * A435: nine 3x3 frame maps, **column-major** (the inner loop steps y, the
+ * A435: **ten** 3x3 frame maps, **column-major** (the inner loop steps y, the
  * outer steps x — unlike fman.grp's row-major maps, docs/ARCHITECTURE.md).
  * Values are 0-based cell indices into the converted dman.grp bank.
- * Frames 0-3 = walk right, 4 = stand, 5-8 = raise the crystal.
+ * Frames 0-3 = walk right, 4 = stand, 5-9 = raise the crystal.
+ *
+ * There are ten, not nine: A435 + 10*9 = A48F, which is `wait_frame`'s first
+ * instruction (`mov cl,[0xff33]`), so the table runs right up to it.  Frame 9
+ * is the "sword fully raised" pose the loop at A0AE leaves [E7] on (it stops
+ * when [E7] reaches 9, and A0CA then draws that frame), and it is the only one
+ * that uses cell 0x35 — the last cell in dman.grp.
  */
-static const u8 hero_frame[9][9] = {          /* A435 */
+static const u8 hero_frame[10][9] = {         /* A435 */
     { 0x00,0x02,0x04, 0x01,0x03,0x05, 0x00,0x00,0x06 },
     { 0x07,0x09,0x0B, 0x08,0x0A,0x0C, 0x00,0x00,0x00 },
     { 0x00,0x02,0x0E, 0x01,0x0D,0x0F, 0x00,0x00,0x10 },
@@ -71,12 +90,14 @@ static const u8 hero_frame[9][9] = {          /* A435 */
     { 0x1F,0x00,0x23, 0x20,0x21,0x24, 0x00,0x22,0x25 },
     { 0x1F,0x00,0x23, 0x20,0x26,0x28, 0x00,0x27,0x29 },
     { 0x1F,0x00,0x23, 0x2A,0x2C,0x28, 0x2B,0x2D,0x29 },
+    { 0x2E,0x31,0x23, 0x2F,0x32,0x34, 0x30,0x33,0x35 },   /* A483 — frame 9  */
 };
 
 /* A569: x (pixels) of the tear slot on the top border, per tear 1..9.
-   The same eight positions GAME.BIN uses at @A3D3 (x4 * 4), plus a ninth. */
+   The same nine positions GAME.BIN's HUD painter uses at @A3D3 (x4 * 4). */
 static const u8 tear_x[9]  = { 0x3C,0xF4,0x54,0xDC,0x6C,0xC4,0x84,0xAC,0x98 };
-/* A572: the BX (BH = x4, BL = y = 0) passed to [0x203E] for the same slots. */
+/* A572: the BX (BH = x4, BL = y = 0) passed to [0x203E] for the same slots —
+   byte for byte GAME.BIN's own table at A3D3 (docs/VIDEO_DRIVERS.md §1.2). */
 static const u16 tear_bx[9] = { 0x0F00,0x3D00,0x1500,0x3700,0x1B00,
                                 0x3100,0x2100,0x2B00,0x2600 };
 
@@ -159,8 +180,11 @@ void tear_cutscene(void)                                            /* A002 */
     GF_CONVERT_2BPP(/*DS:SI*/arena + 0x6000, /*BP*/0xD000, /*CX*/0x100);
                                                      /* A026 256 cells32     */
 
-    if (++tears /*[0xA0]*/ > 9) { tears = 9; tear_icon = 1; }  /* A03B..A04F */
-    else                          tear_icon = 0;
+    /* A03B: `inc [0xA0] / mov al,0 / cmp [0xA0],9 / jc A04F` — the clamp is
+       `>= 9`, not `> 9`, so the ninth (last) Tear is the one drawn with the
+       alternate [0x203E] icon (AL = 1), exactly as GAME.BIN A3C1 does. */
+    if (++tears /*[0xA0]*/ >= 9) { tears = 9; tear_icon = 1; }  /* A03B..A04F */
+    else                           tear_icon = 0;
     VID_TEAR_ICON(tear_icon, /*BH*/0x25, /*BL*/0x52);   /* A052 the crystal  */
                                                         /* appears at (148,82) */
     facing /*[0xC2]*/ &= 0xFE;                          /* A05A face right   */
@@ -185,7 +209,7 @@ void tear_cutscene(void)                                            /* A002 */
         draw_hero(0x24, 0x6E);
         wait_frame(); wait_frame();
     }
-    draw_hero(0x24, 0x6E);                                        /* A0CA   */
+    draw_hero(0x24, 0x6E);           /* A0CA — [E7] == 9 here: the tenth map */
     GF_DRAW_SWORD();                        /* A0D0 sword held up at (144,86) */
 
     /* --- the crystal takes off ----------------------------------------- */
@@ -248,9 +272,13 @@ void tear_cutscene(void)                                            /* A002 */
 
     /* --- fanfare, wait for the player, then walk off right -------------- */
     INT60H_PLAY(0);                       /* A363 play mfan.msd @arena:3000 */
-    while (!key_return /*[FF26]*/)        /* A371 wait for Return           */
+    /* A371 `test byte [0xff26],0xff / jz A371` — [FF26] is the music driver's
+       "score finished" flag (the same one opdemo spins on at 62C7), not the
+       Return key.  There is no keypress wait anywhere in this cutscene: it
+       simply holds the pose until the fanfare has played out. */
+    while (!music_stopped /*[FF26]*/)                             /* A371   */
         ;
-    INT60H_PLAY(1);                       /* A37B stop the music            */
+    INT60H_PLAY(1);                       /* A37B stop the score            */
 
     VID_WINDOW(0, 0x24, 0x56, 0x06, 0x18);  /* A37D erase the raised sword  */
     for (frame = 8; frame >= 5; frame--) {                        /* A38A   */

@@ -150,7 +150,11 @@ GD_MODES = {
 GD_ART = {
     # --- opdemo: prologue -------------------------------------------------
     "nec.grp":   ("mask", 2, [(0, 44, 104, "p3", 1, 0), (13728, 16, 64, "p3", 1, 0)]),
-    "hou.grp":   ("mask", 2, [(0, 32, 6, "spr", 4, 0x180), (0x600, 24, 4, "spr", 4, 0xC0)]),
+    # gdmcga's sprite table at 3617 is {u16 ptr, u8 rows, u8 wbytes} — 348E
+    # reads CX as the *word at +2*, so CL (rows) is byte +2 and CH (the byte
+    # width) is byte +3: four 6 x 32 frames 0x180 apart, then four 4 x 24
+    # 0xC0 apart.  Decoded that way they are radiating orbs, not bolts.
+    "hou.grp":   ("mask", 2, [(0, 6, 32, "spr", 4, 0x180), (0x600, 4, 24, "spr", 4, 0xC0)]),
     "dmaou.grp": ("mask", 3, [(0, 18, 32, "p12", 4, 0x480), (0x1380, 34, 48, "p21", 5, 0xCC0)]),
     # --- opdemo: title ----------------------------------------------------
     "ttl1.grp":  ("rle", 4, [(0, 49, 128, "p3", 1, 0)]),
@@ -174,10 +178,12 @@ GD_ART = {
     "oup.grp":   ("mask", 6, [(0, 24, 88, "p3", 1, 0), (0x18C0, 14, 32, "p3", 6, 1344),
                               (0x3840, 11, 16, "p3", 3, 528)]),
     # --- enddemo ----------------------------------------------------------
-    # himp/seip also carry ~6 KB / ~3 KB past the portrait (lip-sync frames,
-    # like yuup/oup — unused by enddemo, so their layout is unconfirmed)
-    "himp.grp":  ("mask", 6, [(0, 24, 88, "p3", 1, 0)]),
-    "seip.grp":  ("mask", 6, [(0, 24, 88, "p3", 1, 0)]),
+    # himp/seip carry their lip-sync banks past the portrait: enddemo's 0xBn
+    # (6 mouths 9x24 stride 648 at 0x18C0, then 3 eyes 10x24 stride 720 at
+    # 0x27F0) and 0x8n (one bank of 7x24 frames, stride 504, at 0x18C0).
+    "himp.grp":  ("mask", 6, [(0, 24, 88, "p3", 1, 0), (0x18C0, 9, 24, "p3", 6, 648),
+                              (0x27F0, 10, 24, "p3", 3, 720)]),
+    "seip.grp":  ("mask", 6, [(0, 24, 88, "p3", 1, 0), (0x18C0, 7, 24, "p3", 6, 504)]),
     # new1: a 96x265 strip; enddemo 6A1E scrolls an 88-row window up through it
     "new1.grp":  ("mask", 6, [(0, 24, 265, "p3", 1, 0)]),
     "new2.grp":  ("mask", 7, [(0, 28, 100, "p3", 1, 0)]),

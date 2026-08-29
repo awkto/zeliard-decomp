@@ -103,7 +103,7 @@ routines clobber freely (AX BX CX DX SI DI BP ES; DS preserved where noted).
 | 2038 | `vid_label_asciiz` | DS:SI ASCIIZ, BH x4, BL y, CL x offset px | narrow-font label (white, no shadow) | 22DB | 234A | 23C1 | 23C9 | 2394 | town 0x752D: `bx=([FF54]+…)`, `cl=0` |
 | 203A | `vid_icon_sec4` | AL **0-based**, BH, BL | section 4 (`[E208]`) | 2718 | 2811 | 287B | 2890 | 28A7 | select 0xA7CC: `bx=0x2E75, al=0` |
 | 203C | `vid_icon_sec2` | AL 0-based, BH, BL | section 2 (`[E204]`) | 2730 | 2829 | 2893 | 28A8 | 28BF | select 0xA835 |
-| 203E | `vid_tear_icon` | AL 0/1, BH x4, BL y | one of two built-in 16×13 icons (0 = blue/pink orb, 1 = green/red face); 0x80 = transparent | 2A1C | 2C19 | 2BF8 | 2CAF | 2C5B | GAME 0xA3C8: `bx=table[A3D3][i]` (x4 15,61,21,55,27,49,33,43), `al=0` → orbs along y=0 (the collected Tears row on the top border — uncertain) |
+| 203E | `vid_tear_icon` | AL 0/1, BH x4, BL y | one of two built-in 16×13 icons (0 = blue/pink orb, 1 = green/red face); 0x80 = transparent | 2A1C | 2C19 | 2BF8 | 2CAF | 2C5B | GAME `A3A5`: while `[FF00] & 1`, for `i` in `0..[A0]-1` call it with `bx = table[A3D3][i]` and `al = (i == 8)` — the **nine** collected-Tear slots along y=0 on the top border. The table has nine words, `0F00 3D00 1500 3700 1B00 3100 2100 2B00 2600` (x4 15,61,21,55,27,49,33,43,38), and the ninth uses `AL = 1`, the other picture. `rokademo.bin` `A572` holds the same nine (docs/CUTSCENES.md §5) |
 | 2040 | `vid_dissolve_playfield` | – | 8-step dissolve of the playfield to black (masks 01,03,…,FF rotating per row, 0x1F40-iteration delay per step) | 2130 | 2124 | 214E | 2143 | 2124 | fight 0x99A8 (after `int 60h ax=1`) |
 | 2042 | `vid_clear_screen` | – | whole screen to 0 | 2C01 | 2D66 | 2E63 | 2E02 | 2DC3 | town 0x7617 (after loading overlay to A000) |
 | 2044 | `vid_convert_cells` | DS:SI bank, CX count | copy CX×48-byte PC-88 cells to staging, rewrite bank in native format (§2) | 2C2A | 2D99 | **2E92 = `ret`** | 2E37 | 2DF6 | fight 0x6205: `ds=[FF2C], si=0x8030, cx=0x66` (DCHR bank) |
@@ -282,6 +282,10 @@ on Tandy) and the bar-composition masks.
 * HUD geometry (LIFE bar green, PLACE at y=175, GOLD at x=76 and ALMAS at
   x=152 on y=187, item/magic boxes at 222/250) matches the DOSBox capture
   `tools/run_dosbox.sh` at 40 s (town screen).
+* `[0x203E]`'s icons are **no longer uncertain**: they are the Tears of
+  Esmesanti (`[0xA0]`), painted by GAME.BIN `A3A5` from the nine-entry table at
+  `A3D3` and awarded by `rokademo.bin` (docs/CUTSCENES.md §5,
+  docs/STATE_PAGE.md `[A0]`).
 * Marked uncertain: the cga2/mode-6 appearance, which of `[0x90]/[0xB2]` is
-  max, the `[0x94]` meaning, the purpose of the `[0x203E]` icons, and the exact
-  `[FF77]` semantics beyond "set for the opening demo".
+  max, the `[0x94]` meaning, and the exact `[FF77]` semantics beyond "set for
+  the opening demo".

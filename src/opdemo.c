@@ -39,6 +39,9 @@ typedef unsigned char u8;
 typedef unsigned short u16;
 
 /* ---- gdmcga, BASE:3000 (docs/CUTSCENES.md §6) -------------------------- */
+/* AL of 3002/3004/301A picks the dissolve: AL == 0 runs an *additive* OR pass
+   first and the copy pass after it (16 passes in all), AL != 0 only the copy
+   pass (8).  301A forces AL = 0 at 3159.  See docs/CUTSCENES.md §1.          */
 #define GD_DRAW2       (*(void(*)())0x3002)  /* AL, ES:DI src, BH x4, BL y, CH w, CL h
                                                 2 planes -> colours 0,1,8,9; dissolve  */
 #define GD_DRAW3       (*(void(*)())0x3004)  /* same, 3 planes -> colours 0..7; dissolve */
@@ -56,7 +59,10 @@ typedef unsigned short u16;
 #define GD_TILE_MAP    (*(void(*)())0x301C)  /* DS:SI = 25x34 tile map over ttl2.grp   */
 #define GD_SPARKLE     (*(void(*)())0x301E)  /* AL step — the title-screen twinkle     */
 #define GD_FX_20       (*(void(*)())0x3020)  /* AX = variant — built-in "rain of sand" */
-#define GD_DRAW_MASKED (*(void(*)())0x3022)  /* AL = plane-present mask (1|2|4)        */
+#define GD_DRAW_MASKED (*(void(*)())0x3022)  /* AL = plane-present mask (1|2|4); the
+                                                blit is its own 8x13-row interlace over
+                                                the fixed 288x104 window at (16,16) and
+                                                *clears* what the picture misses      */
 #define GD_BOX         (*(void(*)())0x3024)  /* BH,BL,CH,CL — 0xFF-coloured picture box */
 #define GD_FX_26       (*(void(*)())0x3026)  /* plane fix-up then GD_DRAW3_FAST        */
 #define GD_WIPE        (*(void(*)())0x3028)  /* 0x44-step horizontal aperture wipe     */
@@ -196,29 +202,74 @@ static void play_typed_text(const u8 *p)                            /* 62D1 */
 }
 
 /* =======================================================================
- * 6358 / 6497 / 6D04 — the three text scrollers.  All three do the same
- * thing with a different window: clear the 64 KB scratch, then for every
- * line of the block render it into gdmcga's 320x10 text buffer and scroll
- * the scratch up ten rows, compositing it over the picture (the scroll
- * blitter ANDs the screen with 0x9999 and ORs in `text & 0x6666`, so the
- * background may only use colour bits 0 and 3 — which is exactly what
- * GD_DRAW2 produces).  A line ends with 0x0D, the block with 0xFF.
+ * 6358 / 6497 / 6D04 — the three text scrollers.  They are **three separate
+ * routines**, not one parameterised one: each is the same loop open-coded
+ * with its own window, its own act's `wait_ticks` and its own flush count.
+ * The loop clears the 64 KB scratch, then for every line of the block
+ * renders it into gdmcga's 320x10 text buffer and scrolls the scratch up ten
+ * rows, compositing it over the picture (the scroll blitter ANDs the screen
+ * with 0x9999 and ORs in `text & 0x6666`, so the background may only use
+ * colour bits 0 and 3 — which is exactly what GD_DRAW2 produces).  A line
+ * ends with 0x0D, the block with 0xFF.
+ *
+ * All three clear the scratch with the *same* rect — `mov bx,0x0020` /
+ * `mov cx,0x5078`, i.e. BH=0x00 BL=0x20 CH=0x50 CL=0x78 — but 6D04 then
+ * scrolls a different window (`mov bx,0x0014` / `mov cx,0x50A0`) and flushes
+ * **0xA0** rows instead of 0x78 at the end.  The flush count is always the
+ * window height, so the last page always leaves the window completely.
  * ======================================================================= */
-static void scroll_block(const char *p, u8 x4, u8 y, u8 w, u8 h,
-                         void (*wait)(u8))                  /* 6358/6497/6D04 */
+static void scroll_prologue(const char *p)                          /* 6358 */
 {
-    GD_CLEAR_SCRATCH(/*BH*/0x20, /*BL*/0x00, /*CH*/0x50, /*CL*/0x78);
+    GD_CLEAR_SCRATCH(/*BH*/0x00, /*BL*/0x20, /*CH*/0x50, /*CL*/0x78);
     do {
         GD_TEXT_LINE(p);                       /* renders up to 0x0D / 0xFF  */
         p = /* SI after the terminator */ 0;
         for (int i = 10; i; i--) {             /* ten one-row scroll steps   */
-            GD_TEXT_SCROLL(/*AL row*/10 - i, x4, y, w, h);
-            wait(0x1C);
+            GD_TEXT_SCROLL(/*AL row*/10 - i, /*BH*/0x00, /*BL*/0x20, 0x50, 0x78);
+            wait_ticks(0x1C);                                     /* 6382   */
         }
     } while (p[-1] != 0xFF);                                      /* 638B   */
     for (int i = 0x78; i; i--) {               /* 6391 scroll the last page off */
-        GD_TEXT_SCROLL(0, x4, y, w, h);
-        wait(0x1C);
+        GD_TEXT_SCROLL(0, 0x00, 0x20, 0x50, 0x78);
+        wait_ticks(0x1C);
+    }
+}
+
+/* 6497 — byte-for-byte 6358 with `wait_ticks_act2` in place of `wait_ticks`. */
+static void scroll_staff(const char *p)                             /* 6497 */
+{
+    GD_CLEAR_SCRATCH(0x00, 0x20, 0x50, 0x78);
+    do {
+        GD_TEXT_LINE(p);
+        p = 0;
+        for (int i = 10; i; i--) {
+            GD_TEXT_SCROLL(10 - i, 0x00, 0x20, 0x50, 0x78);
+            wait_ticks_act2(0x1C);                                /* 64C1   */
+        }
+    } while (p[-1] != 0xFF);                                      /* 64CA   */
+    for (int i = 0x78; i; i--) {                                  /* 64D0   */
+        GD_TEXT_SCROLL(0, 0x00, 0x20, 0x50, 0x78);
+        wait_ticks_act2(0x1C);
+    }
+}
+
+/* 6D04 — the epilogue's.  Scratch cleared with the same rect, but the window
+ * is (0,20) 320 x 160 (`mov bx,0x0014` / `mov cx,0x50A0`) and the final flush
+ * is 0xA0 rows, not 0x78. */
+static void scroll_epilogue(const char *p)                          /* 6D04 */
+{
+    GD_CLEAR_SCRATCH(0x00, 0x20, 0x50, 0x78);                     /* 6D05   */
+    do {
+        GD_TEXT_LINE(p);                                          /* 6D11   */
+        p = 0;
+        for (int i = 10; i; i--) {
+            GD_TEXT_SCROLL(10 - i, /*BH*/0x00, /*BL*/0x14, 0x50, 0xA0);
+            wait_ticks_act3(0x1C);                                /* 6D2D   */
+        }
+    } while (p[-1] != 0xFF);                                      /* 6D36   */
+    for (int i = 0xA0; i; i--) {                                  /* 6D3C   */
+        GD_TEXT_SCROLL(0, 0x00, 0x14, 0x50, 0xA0);
+        wait_ticks_act3(0x1C);
     }
 }
 
@@ -244,7 +295,7 @@ void act1_prologue(void)                                            /* 6002 */
     VID_CLEAR();
     GD_PALETTE(1);                        /* 0 blk / 1 blue / 8 grey / 9 grey */
     GD_DRAW2(0xFF, arena, 0x4000, 0x12, 0x20, 0x2C, 0x68);        /* 60B3   */
-    scroll_block(prologue_text, /*x4*/0x00, /*y*/0x20, 0x50, 0x78, wait_ticks);
+    scroll_prologue(prologue_text);                                /* 60B8   */
 
     /* --- same picture in full colour, then the storm ------------------- */
     GD_PALETTE(2);                                                /* 60BB   */
@@ -271,8 +322,10 @@ void act1_prologue(void)                                            /* 6002 */
     tick = 0; wait_ticks(0xF0);
     play_typed_text(demon_speech);                                /* 617E   */
     tick = 0; wait_ticks(0xF0);
-    GD_FACE_EYES(1, 0x17, 0x20); wait_ticks(0x0F);                /* 618B   */
-    GD_FACE_EYES(2, 0x17, 0x20); wait_ticks(0xF0);                /* 619F   */
+    /* 618B/619F load AL *directly* (`mov al,2` / `mov al,3`) — unlike the
+       6151 loop above, which does `dec al` first — so these are frames 2 and 3. */
+    GD_FACE_EYES(2, 0x17, 0x20); wait_ticks(0x0F);                /* 618B   */
+    GD_FACE_EYES(3, 0x17, 0x20); wait_ticks(0xF0);                /* 619F   */
     VID_WINDOW(0, /*BH*/0x00, /*BL*/0x94, /*CH*/0x50, /*CL*/0x1E); /* 61BB  */
 
     /* --- the title screen ---------------------------------------------- */
@@ -288,12 +341,13 @@ void act1_prologue(void)                                            /* 6002 */
     wait_ticks(0xF0);
     GD_DRAW3(0, arena, 0x4000, 0x0B, 0x48, 0x31, 0x80);  /* 624B ttl1 necklace */
     tick = 0;
-    unpack_rle(arena, 0xB000, arena, 0x4000);     /* 6260 ttl3              */
+    unpack_rle(CS, 0xB000, arena, 0x4000);   /* 6260 ttl3 — 61EC loaded it   */
+                                             /*      to CS:B000, and DS = CS */
     wait_ticks(0xF0);
     GD_DRAW_AO(arena, 0x4000, 0x07, 0x0F, 0x41, 0x70);   /* 6276 the logo   */
     tick = 0;
-    unpack_rle(arena, 0xA000, arena, 0x4000);     /* 628B ttl2 (RLE, like   */
-                                              /*      the other ttl*)   */
+    unpack_rle(CS, 0xA000, arena, 0x4000);   /* 628B ttl2 (RLE, like the     */
+                                             /*      other ttl*), from CS:A000 */
     GD_TILE_MAP(ttl2_map);                        /* 6291 the corner scroll */
     wait_ticks(0xF0);
 
@@ -328,7 +382,7 @@ void act2_credits(void)                                             /* 640C */
     INT60H_PLAY(0);                                               /* 643A   */
     btn_event = 0; last_key = 0;
     GD_PALETTE(1);
-    scroll_block(staff_text, 0x00, 0x20, 0x50, 0x78, wait_ticks_act2); /* 6497 */
+    scroll_staff(staff_text);                                     /* 6497   */
 end_act2:                                                         /* 6477   */
     music_fade = 8;
     VID_CLEAR();
@@ -371,13 +425,13 @@ void act3_storm_demo(void)                                          /* 6540 */
     mask_demon_over_picture(CS + 0x2000, 0);      /* 6653 = 6ED8            */
     GD_DRAW3_FAST(arena, 0x4000, 0x04, 0x10, 0x48, 0x68);
     play_narration(); play_narration();
-    GD_DRAW_MASKED(7, CS + 0x2000, 0x0000, 0x28, 0x17, 0x22, 0x30);  /* 6681 */
+    GD_DRAW_MASKED(7, CS + 0x2000, 0x0000, 0x17, 0x28, 0x22, 0x30);  /* 6681 */
     play_narration(); play_narration();
     demon_eyes_to_scratch(2);                                     /* 668E   */
-    GD_DRAW3_FAST(CS + 0x2000, 0, 0x28, 0x17, 0x22, 0x30);
+    GD_DRAW3_FAST(CS + 0x2000, 0, 0x17, 0x28, 0x22, 0x30);        /* 66A1   */
     tick = 0; wait_ticks_act3(0x0F);
     demon_eyes_to_scratch(3);                                     /* 66B3   */
-    GD_DRAW3_FAST(CS + 0x2000, 0, 0x28, 0x17, 0x22, 0x30);
+    GD_DRAW3_FAST(CS + 0x2000, 0, 0x17, 0x28, 0x22, 0x30);        /* 66C6   */
 
     LOAD_RES(2, req_isi, CS, 0xA000);                             /* 66D5   */
     unpack_mask(CS, 0xA000, arena, 0x4000);
@@ -394,7 +448,7 @@ void act3_storm_demo(void)                                          /* 6540 */
 
     LOAD_RES(2, req_sei, CS, 0xA000);                             /* 6758   */
     unpack_mask(CS, 0xA000, arena, 0x4000);
-    GD_DRAW_MASKED(5, arena, 0x4000, 0x10, 0x16, 0x24, 0x68);     /* 6776 the Spirit */
+    GD_DRAW_MASKED(5, arena, 0x4000, 0x16, 0x10, 0x24, 0x68);     /* 6776 the Spirit */
     play_narration();
     GD_FX_20(0);
     play_narration();
@@ -411,10 +465,10 @@ void act3_storm_demo(void)                                          /* 6540 */
     play_narration(); play_narration();
     GD_FX_20(0);
     GD_PALETTE(6);
-    GD_BOX(0x15, 0x0A, 0x1A, 0x5D);               /* 680F left picture box  */
-    GD_DRAW3_FAST(arena, 0x4000, 0x18, 0x0B, 0x18, 0x58);         /* 6822   */
-    GD_BOX(0x15, 0x2C, 0x1A, 0x5D);               /* 682D right picture box */
-    GD_DRAW3_FAST(arena, 0x8000, 0x18, 0x2D, 0x18, 0x58);         /* 6840   */
+    GD_BOX(0x0A, 0x15, 0x1A, 0x5D);               /* 680F left picture box  */
+    GD_DRAW3_FAST(arena, 0x4000, 0x0B, 0x18, 0x18, 0x58);         /* 6822   */
+    GD_BOX(0x2C, 0x15, 0x1A, 0x5D);               /* 682D right picture box */
+    GD_DRAW3_FAST(arena, 0x8000, 0x2D, 0x18, 0x18, 0x58);         /* 6840   */
     play_narration(); play_narration();
 
     LOAD_RES(2, req_maop, CS, 0xA000);                            /* 6855   */
@@ -422,15 +476,15 @@ void act3_storm_demo(void)                                          /* 6540 */
     GD_FX_20(0);
     GD_PALETTE(8);
     GD_BOX(0x15, 0x15, 0x31, 0x5D);                               /* 687D   */
-    GD_FX_26(arena, 0x8000, 0x18, 0x16);                          /* 688D   */
+    GD_FX_26(arena, 0x8000, 0x16, 0x18);                          /* 688D   */
     play_narration(); play_narration();
     for (u16 bx = 0x1515, dx = 0x315D, n = 0x18; n; n--) {        /* 68A1   */
         tick = 0;  GD_BOX(bx, dx);  wait_ticks_act3(0x0F);
         bx += 0x0100;  dx -= 0x0100;   /* the box grows one column per step */
     }
-    GD_BOX(0x15, 0x2C, 0x1A, 0x5D);                               /* 68C5   */
-    GD_BOX(0x15, 0x0A, 0x1A, 0x5D);
-    GD_DRAW3_FAST(arena, 0x4000, 0x18, 0x0B, 0x18, 0x58);
+    GD_BOX(0x2C, 0x15, 0x1A, 0x5D);                               /* 68C5   */
+    GD_BOX(0x0A, 0x15, 0x1A, 0x5D);                               /* 68D0   */
+    GD_DRAW3_FAST(arena, 0x4000, 0x0B, 0x18, 0x18, 0x58);         /* 68E3   */
     play_narration(); play_narration();
     for (u16 bx = 0x2C15, dx = 0x1A5D, n = 0x18; n; n--) {        /* 68F7   */
         tick = 0;  GD_BOX(bx, dx);  wait_ticks_act3(0x0F);
@@ -455,7 +509,7 @@ void act3_storm_demo(void)                                          /* 6540 */
     tick = 0; wait_ticks_act3(0xF0);
     GD_DRAW2(0xFF, arena, 0x4000, 0x08, 0x08, 0x40, 0xC0);   /* 69E6 dim it */
     GD_PALETTE(1);
-    scroll_block(epilogue_text, 0x00, 0x14, 0x50, 0xA0, wait_ticks_act3); /* 69F6 */
+    scroll_epilogue(epilogue_text);                               /* 69F6   */
     for (int n = 10; n; n--) wait_ticks_act3(0xC8);                   /* 69FC   */
     /* falls into hand_back_to_game */
 }
@@ -479,8 +533,17 @@ void hand_back_to_game(void)                                        /* 6A41 */
  * puts up the next picture and calls again.
  *
  *   0x20..0x7F  a character
- *   0x80..0x8F  right speaker: n<6 mouth frame n, n>=6 eye frame n-6
- *   0x90..0x9F  left speaker: likewise
+ *   0x80..0x8F  right speaker: n<6 mouth frame n, n>=6 eye frame n-6.  Costs
+ *               **no** ticks — the handler returns to 6A80, not 6A7B.
+ *   0x90..0x9F  left speaker: likewise, and likewise free
+ *   0xA0..0xEA  **not dispatched** — 6B2B only tests 0x80/0x90, so these fall
+ *               all the way through the 0xFB..0xEB chain, which saves the click
+ *               id at 6B85, walks it through 0x3D..0x41 and restores it at
+ *               6BD1: an exact no-op that still pays one 0x10-tick wait.  The
+ *               script does use two of them — `0xA0` at 7C00 and `0xA2` at
+ *               7DE3 — dead lip-sync codes for a talking head this act never
+ *               puts up.  (enddemo's copy of this engine really does dispatch
+ *               0xA0/0xB0/0xC0; see src/enddemo.c.)
  *   0xEB..0xF0  set the per-character click sfx (0x41,0x40,0x3F,0x3E,0x3D,0)
  *   0xF1/0xF2/0xF3/0xF7  start line 3 / 2 / 1 / 0 (x = 0)
  *   0xF5        pause 0xF0 ticks;  0xF6  pause 3 x 0xF0
@@ -493,10 +556,21 @@ void hand_back_to_game(void)                                        /* 6A41 */
 void play_narration(void)                                     /* 6A75/6A80 */
 {
     tick = 0;                                                     /* 6A75   */
+    int skip_wait = 0;
     for (;;) {
-        wait_ticks_act3(0x10);                                        /* 6A7B   */
-        u8 c = *narr_p++;
-        if (c & 0x80) { if (!narration_control(c)) return; continue; }
+        /* 6A7B — every byte costs 0x10 ticks *except* a lip-sync code: the
+           four exits of the 0x8n/0x9n handlers (6C53, 6C74, 6CA0, 6CC1) jump
+           back to the fetch at **6A80**, not to 6A7B, so a mouth/eye change is
+           free and the lips track the syllables rather than the characters. */
+        if (!skip_wait) wait_ticks_act3(0x10);
+        skip_wait = 0;
+        u8 c = *narr_p++;                                         /* 6A86   */
+        if (c & 0x80) {
+            if (!narration_control(c)) return;                    /* 6B21   */
+            if ((c & 0xF0) == 0x80 || (c & 0xF0) == 0x90)
+                skip_wait = 1;                    /* 6C53/6C74/6CA0/6CC1    */
+            continue;
+        }
 
         if (c != ' ' && c != '.' && c != ',' && c != '"' && c != '\'')
             sfx = narr_click;                                     /* 6AA6   */
@@ -514,13 +588,16 @@ void play_narration(void)                                     /* 6A75/6A80 */
 }
 
 /* 6C28 / 6C77 — the two lip-sync sprite sets.  Both are 3-plane pictures
- * inside the *p.grp portrait file that is already in the arena:
- *   0x8n  right speaker (oup.grp @ arena:8000, box at x4 0x33 / 0x38)
- *         n < 6 : mouth  frame n, 14x32 bytes, at arena:98C0 + n*1344
- *         n >= 6: eyes   frame n-6, 11x16,     at arena:B840 + (n-6)*528
- *   0x9n  left speaker  (yuup.grp @ arena:4000, box at x4 0x13 / 0x12)
- *         n < 6 : mouth  9x32,  at arena:58C0 + n*864
- *         n >= 6: eyes   11x16, at arena:6D00 + (n-6)*528
+ * inside the *p.grp portrait file that is already in the arena, drawn with
+ * GD_DRAW3_FAST.  BH/BL below are the literal `mov bx,...` operands:
+ *   0x8n  right speaker (oup.grp @ arena:8000)
+ *         n < 6 : mouth  frame n,   14x32, arena:98C0 + n*1344, BX = 0x3350
+ *         n >= 6: eyes   frame n-6, 11x16, arena:B840 + (n-6)*528,
+ *                 BX = **0x3338** (6C69) — x4 0x33 = x 204, y 0x38 = 56
+ *   0x9n  left speaker  (yuup.grp @ arena:4000)
+ *         n < 6 : mouth  9x32,  arena:58C0 + n*864,       BX = 0x1350
+ *         n >= 6: eyes   11x16, arena:6D00 + (n-6)*528,   BX = 0x1238
+ * None of the four costs a tick (see play_narration).
  */
 
 /* =======================================================================
@@ -573,10 +650,22 @@ static void unpack_rle(const u8 *s, u8 *d)                          /* 6DE1 */
 /* =======================================================================
  * Plane arithmetic — the demo builds pictures gdmcga cannot draw directly.
  *   6E0F  assemble the act-1 demon face: a 34x112 3-plane image at
- *         (CS+0x2000):0 from three single planes of dmaou.grp — the eyes
- *         (34x48) into planes 0+1, the nose (6x32) into planes 0+1 at
- *         (col 15, row 48) and the mouth (18x32) into plane 0 only at
- *         (col 8, row 80), so the three parts come out in different colours.
+ *         (CS+0x2000):0 out of three *two-plane* pieces of dmaou.grp.  Each
+ *         piece is copied by a two-call helper that does **not** rewind SI, so
+ *         the second call continues from where the first stopped — i.e. the
+ *         two source planes land in two destination planes:
+ *           6E4F  writes destination plane **1 first, then plane 0** — the
+ *                 source planes come out *swapped*;  used for the eyes
+ *                 (arena:AB40, 34x48, at col 0 row 0, BX = 0x0000) and the
+ *                 nose (arena:A9C0, 6x32, BX = 0x0F30 = col 15, row 48);
+ *           6E5E  writes plane 0 then plane 1 — in order; used for the mouth
+ *                 (**arena:9C40** = GD_FACE_MOUTH frame **1**, not frame 0,
+ *                 18x32, BX = 0x0850 = col 8, row 80).
+ *         So the mouth is in planes 0 **and** 1, not plane 0 alone, and no
+ *         part of the face ever touches plane 2 — which is what gives the
+ *         three pieces their different colours.  (6E6D is the inner blitter:
+ *         offset = BL*34 + BH, CH bytes a row, CL rows, dest plane stride
+ *         0xEE0.)
  *   6E8F  turn eye frame AL (2 planes at arena:AB40 + AL*0xCC0) into a
  *         3-plane 34x48 picture at (CS+0x2000):0 (6EB0 derives plane 2).
  *   6ED8  AND/OR the scratch picture into the arena picture through a mask

@@ -59,7 +59,7 @@ established the meaning. *uncertain* = inferred from a single use.
 | FF4B | 1 | menu_result | 8 = warp to town after the item menu | menu overlay | fight `729C` |
 | FF50 | 2 | tick_total | +1 per tick | kernel `027F` | ? |
 | FF6C | 8 | player_name | save-file name (`NAME.USR`, kenjpro A862); name entry town.bin | town/kenjpro | (was mis-named music_drv_name) |
-| FF75 | 1 | sfx_request | sound-effect id: 3 swing, 4 thrust, 6 enemy hit, 7 enemy dies, 8 shield block (dmg), 9 hero hurt, 0xA shield block (shot), 0xB menu, 0x10 coin, 0x11 item, 0x12 corpse, 0x13 potion tick, 0x14 pickup, 0x15 door unlock, 0x16 locked door, 0x17 cast start, 0x18 cast, 0x19 spell end | fight, kernel `07FC` | sound driver |
+| FF75 | 1 | sfx_request | sound-effect id: 3 swing, 4 thrust, 6 enemy hit, 7 enemy dies, 8 shield block (dmg), 9 hero hurt, 0xA shield block (shot), 0xB menu, 0x10 coin, 0x11 item, 0x12 corpse, 0x13 potion tick, 0x14 pickup, 0x15 door unlock, 0x16 locked door, 0x17 cast start, 0x18 cast, 0x19 spell end, **0x1A footstep, 0x1B flash, 0x1C flight sparkle** (rokademo `A06B`/`A158`/`A22D`, docs/CUTSCENES.md §5) | fight, kernel `07FC`, rokademo | sound driver |
 | FF79 | 4 | old_int9 | | loader | kernel |
 
 ## fight.bin locals (BASE:9EED-9F2D)
@@ -134,6 +134,7 @@ established the meaning. *uncertain* = inferred from a single use.
 | 9C | 1 | hero_crest | 0 | |
 | 9D | 1 | magic_sel | 0 | 1..7 |
 | 9E | 1 | worn_key_item | 0 | the **worn** key item, selected in select.bin's WEAR row (`[A1..A5]` is the bag): 1 Feruza shoes (jump 4) 2 Pirika (hazard immune) 3 Silkarn (no conveyor kick) 4 Ruzeria (no ice slide) 5 Asbestos cape (heat immune) |
+| A0 | 1 | tears | 0 | **Tears of Esmesanti collected, 0..9.**  `rokademo.bin` increments it (`A03B`, clamped at 9 with `cmp ..,9 / jc`, so the ninth is the last) and GAME.BIN's HUD painter at **`A3A5`** draws the row: while `[FF00] & 1`, for `i` in `0..[A0]-1` it calls `[0x203E]` with `bx = table[A3D3][i]` and `AL = (i == 8)`, i.e. the ninth slot uses the driver's second icon.  docs/CUTSCENES.md §5, docs/VIDEO_DRIVERS.md §1.2 |
 | A1 | ~10 | inventory | 0 | item ids, 0-terminated (`90B9`) |
 | AB | 7 | magic_count | 0C 06 08 04 03 04 03 | |
 | B2 | 2 | max_hp | 0x50 | |

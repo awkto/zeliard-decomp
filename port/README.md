@@ -1180,7 +1180,11 @@ Town drops into MP60 but eight rows up and locked.
 
 Everything below was checked against `ndisasm` of the extracted overlay before
 being written down; where a decompilation and the disassembly disagree, the
-address is quoted.  Nothing outside `port/` and `docs/screenshots/` was edited.
+address is quoted.  This list is the record of what the port found; **every
+item on it has since been folded back into `src/opdemo.c`, `src/enddemo.c`,
+`src/rokademo.c`, `docs/CUTSCENES.md`, `docs/STATE_PAGE.md`,
+`docs/VIDEO_DRIVERS.md` and `tools/grp2png.py`**, so the reference sources and
+the docs now say what is below, not what they said when it was written.
 
 **`docs/CUTSCENES.md`**
 
@@ -1191,8 +1195,8 @@ address is quoted.  Nothing outside `port/` and `docs/screenshots/` was edited.
   then uses `CH` as the byte width and `CL` as the row count.  Decoded that way
   the four large frames are a clean expanding ball of light, so they are
   radiating orbs, not "128 x 6-px lightning bolts".  (`tools/grp2png.py`'s
-  `GD_ART` has the same error; `port/gd.c`'s `GD_ART[]` has it right, which is
-  the one entry `tools/compare_gdart.py` does not diff.)
+  `GD_ART` had the same error; both tables now agree, and
+  `tools/compare_gdart.py` diffs all 31 entries.)
 * §2.1 — `gd_storm` patches **three** bytes (`4289`, `428A`, `428B` = the whole
   R,G,B of colour 0 of palette record 0), not just `[0x4289]`, and it calls
   `gd_set_palette(0)` **once per record, nine times a pass**, stepping the flash
@@ -1248,7 +1252,8 @@ address is quoted.  Nothing outside `port/` and `docs/screenshots/` was edited.
   `3BE3` the 51-byte inward spiral).  The tails of `himp.grp` and `seip.grp` are
   identified too: they are enddemo's own `0x8n` / `0xBn` lip-sync banks
   (7 x 24 frames of 504 bytes and 9 x 24 / 10 x 24 frames of 648 / 720 bytes at
-  `arena:98C0` and `arena:A7F0`).
+  `arena:98C0` and `arena:A7F0`).  Both `GD_ART` tables now carry them, so
+  `--gd-art himp.grp` / `seip.grp` render the lip-sync frames too.
 
 **`src/opdemo.c`** — the call order, resources, palette records and tick counts
 are all right; the arguments are not.  `BH`/`BL` are transposed in ten calls

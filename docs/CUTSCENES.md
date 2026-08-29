@@ -37,8 +37,8 @@ Source bitmaps are passed in **ES:DI**.
 | slot | @ | name | args | what it does |
 |---|---|---|---|---|
 | 3000 | 44F7 | `gd_nop` | – | `ret` |
-| 3002 | 3032 | `gd_draw_2plane` | AL, ES:DI, BH BL CH CL | 2 planes → colours 0,1,8,9 (bits 0 and 3 only, leaving bits 1-2 for the text overlay); dissolve |
-| 3004 | 3088 | `gd_draw_3plane` | same | 3 planes → colours 0..7; dissolve |
+| 3002 | 3032 | `gd_draw_2plane` | AL, ES:DI, BH BL CH CL | 2 planes → colours 0,1,8,9 (bits 0 and 3 only, leaving bits 1-2 for the text overlay); dissolve (AL, below) |
+| 3004 | 3088 | `gd_draw_3plane` | same | 3 planes → colours 0..7; dissolve (AL, below) |
 | 3006 | 30E4 | `gd_erase` | BH BL CH CL | 8-pass dissolve of a rect to black (`AND` writer 329D) |
 | 3008 | 4221 | `gd_set_palette` | AL = record 0..9 | reprograms all 256 DAC entries (§3) |
 | 300A | 44CC | `gd_clear_scratch` | – | zeroes the 64 KB at `(CS+0x2000)` |
@@ -49,12 +49,12 @@ Source bitmaps are passed in **ES:DI**.
 | 3014 | 364F | `gd_face_eyes` | AL | frame AL from `arena:AB40 + AL*0xCC0`, 34 × 48 bytes, 2 planes with weights **2 and 1** |
 | 3016 | 36AB | `gd_face_mouth` | AL | frame AL from `arena:97C0 + AL*0x480`, 18 × 32, weights 1 and 2 |
 | 3018 | 3707 | `gd_sky_dither` | – | fills A000 with the `00 10 00 10 …` / `10 00 10 00 …` checkerboard (the title-screen night sky) |
-| 301A | 30FC | `gd_draw_2plane_ao` | ES:DI, BH BL CH CL | 2 planes → 8 (both set) / 10 (plane 0) / 12 (plane 1) / 0; **colour 0 is transparent** (writer 3277), one OR pass then one transparent-copy pass |
+| 301A | 30FC | `gd_draw_2plane_ao` | ES:DI, BH BL CH CL | 2 planes → 8 (both set) / 10 (plane 0) / 12 (plane 1) / 0; **colour 0 is transparent** (writer 3277); `3159` forces `AL = 0`, so it always runs both dissolve passes |
 | 301C | 3732 | `gd_tile_map` | DS:SI = 25 × 34 bytes | assembles a 34-byte × 200-row 3-plane picture in the scratch out of 8-row tiles of the 40-column `ttl2.grp` array (`tile = (n/40, n%40)`) |
 | 301E | 37B4 | `gd_draw_ornament_row` | AL = row | copies row AL of scratch planes 0 and 1, **bit-reverses** them into a private buffer at `5191`, and draws both the normal and the mirrored version — the title screen's symmetrical corner scrollwork |
 | 3020 | 38E6 | `gd_fx_sand` | AX = 0/1/2 | a built-in scripted full-screen dither effect driven by tables at `3B1F`/`3BE3`/`3C16`; the demos use it for the "rain of sand" and as a scene transition |
-| 3022 | 3C1C | `gd_draw_masked` | AL = plane mask (1\|2\|4), ES:DI, BH BL CH CL | like 3004 but the source only contains the planes named in AL, packed consecutively (opdemo uses AL=5 for `sei.grp`, AL=7 for the assembled demon face) |
-| 3024 | 3D79 | `gd_picture_box` | BH BL CH CL | draws the white (`0xFF`) picture-box outline used for the talking-head boxes |
+| 3022 | 3C1C | `gd_draw_masked` | AL = plane mask (1\|2\|4), ES:DI, BH BL CH CL | packs like 3004 — the source only contains the planes named in AL, packed consecutively (opdemo uses AL=5 for `sei.grp`, AL=7 for the assembled demon face) — but the **blit is its own**: not the shared dissolve, a private 8-pass × 13-rows interlace over the *fixed* 288 × 104 window at screen (16,16), which also **clears every part of that window the picture does not cover** (`3D71`). BH/BL only position the picture inside that window (`3CA3` subtracts 0x0410 from BX). That is how the storm demo wipes `waku.grp`'s inset between pictures. |
+| 3024 | 3D79 | `gd_picture_box` | BH BL CH CL | draws the white (`0xFF`) picture-box outline used for the talking-head boxes; `3E1C` also writes eight `0x02` bytes at `di−7..di` on every row — a colour-0/colour-2 dithered shadow down the box's left side (the last byte is immediately overwritten by the frame itself, so seven show) |
 | 3026 | 3E35 | `gd_fx_recolour` | ES:DI | rewrites the three planes of a 0x1028-byte picture (a colour swap) and falls into 33B7 |
 | 3028 | 3E8B | `gd_wipe` | ES:DI | 0x44-step horizontal aperture wipe of a full-screen picture |
 | 302A | 4080 | `gd_end_open` | ES:DI | enddemo only: 57 × 2 rows of a 47 × 114 picture with the row width stepping 0x2F → 0x23 → 0x21 (an iris) |
@@ -69,6 +69,21 @@ for odd rows), so one pixel in eight per row per pass.  Between passes it zeroes
 `[FF1A]` and waits for it to reach **0x14 ticks** — ≈ 0.68 s for a full dissolve
 at the 236.7 Hz timer.
 
+**The `AL` argument of 3002 / 3004 / 301A** picks *which* dissolves run
+(`3189` / `3171`): with `AL == 0` the routine first runs a pass with
+`[4508] = 0`, whose writer (`325B`) **ORs** the source into the screen, and
+then the normal copy pass — sixteen passes and an additive fade-in.  With
+`AL != 0` only the copy pass runs (eight).  `301A` zeroes AX at `3159`, so it
+is always the 16-pass form.  Callers that pass `0xFF` get the plain dissolve;
+opdemo passes 0 at `623B` (`ttl1` fading up over the sky dither) and `6733`
+(`oui.grp`), enddemo at `62CB` (the fade-to-white dither).
+
+**Two staging buffers, not one.**  Every draw slot first packs its source into
+a *second* 64 KB segment at **`CS + 0x3000`** (`3040`, `3096`, `3109`, `3C2D`)
+and blits from there; the `CS + 0x2000` segment named by `gd_clear_scratch` is
+the demos' own scratch, used for text scrolling and the pictures they
+assemble themselves.
+
 ---
 
 ## 2. opdemo.bin — the attract sequence
@@ -82,11 +97,11 @@ act.  Acts 1 and 2 fall into the next one; act 3 hands back to GAME.BIN.
 | @ | what |
 |---|---|
 | `601E` | `ttl3.grp` (the ZELIARD logo) → `arena:4000`, palette **4**, the copyright line via `[0x202A]` at (0,150), logo drawn with `gd_draw_2plane_ao` at (28,15) |
-| `6060` | `nec.grp` (the pendant) → `arena:4000`, `hou.grp` (lightning) held at `CS:B800` |
+| `6060` | `nec.grp` (the pendant) → `arena:4000`, `hou.grp` (the storm sprites) held at `CS:B800` |
 | `609B` | palette **1**, pendant drawn with `gd_draw_2plane` at (72,32) — colours 0/1/8/9 only |
 | `60B8` | the **prologue scroller** (§2.4) over the pendant, text `6FF0` |
 | `60BB` | palette **2**, the same pendant redrawn 3-plane — it "lights up" |
-| `60E3` | `hou.grp` → `arena:9000`; `nec.grp`'s second picture (64 × 64) drawn at (128,72) |
+| `60E3` | `hou.grp` → `arena:9000` (from `CS:B800`, DS = CS); `nec.grp`'s second picture (64 × 64) drawn at (128,72) |
 | `60F9` | `[FF75] = 4` (thunder), then `gd_storm` |
 | `6109` | `dmaou.grp` → `arena:97C0`; `6E0F` assembles the demon's face; the pendant is dissolved away and the face drawn 3-plane at (92,32), palette **3** |
 | `6151` | eye animation from the byte script `911E` = `01 01 01 02 02 01 01 02 02 03 03 05 00` (frame = byte−1, 20 ticks each) |
@@ -100,10 +115,18 @@ act.  Acts 1 and 2 fall into the next one; act 3 hands back to GAME.BIN.
 table at `9060` — `{y, x4, dy, dx, frame, frame_max}`.  Each tick it advances a
 record by (dx,dy), advances its frame every other tick, saves the background,
 draws the sprite and restores.  The sprite table at `3617` is 8 entries of
-`{u16 ptr, u8 wbytes, u8 rows}` into `arena:9000` (= `hou.grp`): four
-128 × 6-px bolts and four 96 × 4-px ones.  A record retires when x4 ≥ 0x4B or
-y ≥ 0xA0.  Between passes it **patches `[0x4289]`** — colour 0 of palette
-record 0 — with an entry of the 8 × 3-byte table at `3637`
+**`{u16 ptr, u8 rows, u8 wbytes}`** into `arena:9000` (= `hou.grp`):
+`348E` reads it as `mov cx,[bx+0x3619]`, i.e. the *word at +2*, so `CL` (the
+row count everywhere else) is byte +2 and `CH` (the byte width) is byte +3.
+The eight records are (hex) `{9000,20,06} {9180,20,06} {9300,20,06} {9480,20,06}`
+then `{9600,18,04} {96C0,18,04} {9780,18,04} {9840,18,04}` — four **6 × 32**
+frames (24 × 32 px) 0x180 bytes apart and four **4 × 24** (16 × 24 px) 0xC0
+apart, not 128 × 6 / 96 × 4.  Decoded that way they are an expanding ball of
+light: **radiating orbs**, not lightning bolts.  A record retires when
+x4 ≥ 0x4B or y ≥ 0xA0.  Once **per record** — so nine times a pass, stepping
+the flash index `[4505]` each time — it patches **`[4289]`, `[428A]` and
+`[428B]`** (the whole R,G,B of colour 0 of palette record 0) from the 8 × 3-byte
+table at `3637`
 (`1F1F00, 0F0F00, 1F1F1F, 0F0F0F, 1F001F, 0F000F, 1F0000, 0F0000`) and calls
 `gd_set_palette(0)`: that is the **lightning flash**, done entirely in the DAC.
 It waits 0x1E ticks a pass and stops when every record has retired, restoring
@@ -141,8 +164,9 @@ wrap — at a space it measures the next word (`6CC4`) and starts a new line if
 | byte | meaning |
 |---|---|
 | `20`–`7E` | a character; unless it is `space . , " '` it also fires `[FF75] = ` the current click id |
-| `80`–`8F` | **right** speaker (`oup.grp` @ `arena:8000`): `n < 6` mouth frame *n* (`arena:98C0 + n*1344`, 56 × 32 px at (204,80)); `n ≥ 6` eye frame *n−6* (`arena:B840 + (n−6)*528`, 44 × 16 at (200,56)) |
-| `90`–`9F` | **left** speaker (`yuup.grp` @ `arena:4000`): mouth `arena:58C0 + n*864` (36 × 32 at (76,80)), eyes `arena:6D00 + (n−6)*528` (44 × 16 at (72,56)) |
+| `80`–`8F` | **right** speaker (`oup.grp` @ `arena:8000`): `n < 6` mouth frame *n* (`arena:98C0 + n*1344`, 56 × 32 px at (204,80), `BX = 0x3350`); `n ≥ 6` eye frame *n−6* (`arena:B840 + (n−6)*528`, 44 × 16 at **(204,56)** — `6C69` is `mov bx,0x3338`, so `BH = 0x33`) |
+| `90`–`9F` | **left** speaker (`yuup.grp` @ `arena:4000`): mouth `arena:58C0 + n*864` (36 × 32 at (76,80), `BX = 0x1350`), eyes `arena:6D00 + (n−6)*528` (44 × 16 at (72,56), `BX = 0x1238`) |
+| `A0`–`EA` | **not dispatched.**  `6B2B` only tests `0x80` and `0x90`, so any other high byte falls through the whole `FB…EB` chain, which saves the click id at `6B85`, walks it through `3D`…`41` and restores it at `6BD1` — an exact no-op that still pays one `0x10`-tick wait.  The script uses two: `A0` at `7C00` and `A2` at `7DE3`, dead lip-sync codes for a talking head this act never puts up.  (enddemo's copy of the engine really does dispatch `A0`, `B0` and `C0` — §4.) |
 | `EB`–`F0` | set the per-character click sfx: `EB`→0x41, `EC`→0x40, `ED`→0x3F, `EE`→0x3E, `EF`→0x3D, `F0`→0 (silent) — a different "voice" per character |
 | `F1 F2 F3 F7` | start line 3 / 2 / 1 / 0 and reset x |
 | `F5` | pause 0xF0 ticks; `F6` = three of those |
@@ -151,32 +175,47 @@ wrap — at a space it measures the next word (`6CC4`) and starts a new line if
 | `FE` | clear the text box (`[0x2000]` at (0,143), 320 × 57) and reset to line 0 |
 | `FF` | end of script |
 
+A lip-sync byte costs **no time**: the four handler exits (`6C53`, `6C74`,
+`6CA0`, `6CC1`) jump back to the fetch at `6A80`, skipping the
+`wait_ticks(0x10)` at `6A7B` that every other byte pays.  That is what lets the
+mouth track syllables instead of characters.
+
 The script is the full English intro text ("Once, long ago, a terrible storm
 came to the land of Zeliard…" through Jashiin's challenge).  Note the lip-sync
 codes are woven *into* the dialogue lines, e.g.
 `"{81}Duke {80}Garla{84}n{83}d! …"`.
 
-### 2.4 The scroller (6358 / 6497 / 6D04)
+### 2.4 The scrollers (6358 / 6497 / 6D04)
 
-All three text scrollers are the same loop with a different window:
+These are **three separate routines**, not one parameterised one — the same
+loop open-coded three times, each with its own window, its own act's
+`wait_ticks` and its own flush count:
 
 ```
-gd_clear_scratch()
+gd_clear_scratch(BH=0, BL=0x20, CH=0x50, CL=0x78)   ; the same in all three
 repeat
     gd_text_line(si)             ; one line, ends at 0x0D or 0xFF
     repeat 10 times              ; ten one-row scroll steps
         gd_text_scroll(row, BH, BL, CH, CL);  wait 0x1C ticks
 until the line ended with 0xFF
-repeat 0x78 times: gd_text_scroll(0, …)      ; scroll the last page off
+repeat <window height> times: gd_text_scroll(0, …)  ; scroll the last page off
 ```
 
-so a line of text is 10 screen rows tall, appears from the bottom of the
+| @ | act | scroll window (`BX` / `CX`) | flush |
+|---|---|---|---|
+| `6358` | 1, the prologue | `(0,32) 320 × 120` (`0x0020` / `0x5078`) | `0x78` |
+| `6497` | 2, the STAFF credits | the same | `0x78` |
+| `6D04` | 3, the epilogue | **`(0,20) 320 × 160`** (`0x0014` / `0x50A0`) | **`0xA0`** |
+
+The flush count is always the window height, so the last page always leaves
+the window completely; `6D04` is the one that differs, and only its *scroll*
+window differs — all three clear the scratch with the same `(0,32) 320 × 120`
+rect.  A line of text is 10 screen rows tall, appears from the bottom of the
 window and takes 10 × 0x1C ≈ 1.2 s to rise one line.  Because
 `gd_text_scroll` composites with `AND 0x9999 / OR (src & 0x6666)`, the picture
 underneath may only use colour bits 0 and 3 — which is exactly why the pendant
 is drawn with `gd_draw_2plane` (colours 0,1,8,9) while the text lands in
-colours 6,7,14,15.  Windows used: prologue `(0,32) 320 × 120`, credits the
-same, epilogue `(0,20) 320 × 160`.
+colours 6,7,14,15.
 
 ---
 
@@ -225,14 +264,44 @@ Which shift register each plane is loaded into is what makes `gd_draw_2plane`
 
 ## 4. enddemo.bin — the ending
 
-**Act 1 (`6002`)** — nine still tableaux, no text, ≈0.07 s per beat plus the
-dissolves: Garland's portrait with Felicia rising into frame beside him
-(`new1.grp` is a 96 × 265 strip; `6A1E` copies an 87-row window out of it and
-the window walks up 89 steps) → the `waku` frame wiped in (`gd_wipe`) → the
-King holding Felicia (`new2`) → the Guardian Spirit (`sei`) → Garland and the
-Spirit in two picture boxes (`yuup`, `seip`) → Felicia replacing the Spirit
-(`himp`) → the two of them larger (`ne80`, `ne81`) → a rotating `0x55` dither
-drawn over the left picture (the fade to white) → dissolve.
+**Act 1 (`6002`)** — the reunion, and it is **not** silent.  `6318` is a
+second copy of the storm-demo narration engine (§2.3) with **five** lip-sync
+speaker groups instead of two, its own metric tables at `807D` (bearing) and
+`80DD` (advance), and no abort keys.  `6007` points it at the script at
+**`6AA8`**, and the seven calls at `60FD 6142 6172 61FA 622F 62A6 62DB` — one
+after each picture — run it until the next `0xFD`.  The script is 2446 bytes
+of English dialogue and narration, "At long last, Jashiin was destroyed and
+the nine Tears of Esmesanti were returned to their rightful place…" through
+Felicia's "When his work in the world is done, he'll come back to me… Until
+then, I can only believe it, and wait for him."
+
+| # | picture | @ | the beat that follows |
+|---|---|---|---|
+| 1 | Garland's portrait (`yuup`) with Felicia rising into frame beside him — `new1.grp` is a 96 × 265 strip, `6A1E` copies an 87-row window out of it and the window walks up 89 steps — then the `waku` frame wiped in (`gd_wipe`) | `60FD` | the prologue, then Garland (`9n`) "You are as beautiful as a rose in bloom!" and Felicia (`An`) "Thank you, Duke Garland." |
+| 2 | the King holding Felicia (`new2`, 112 × 100 at (116,18), `bx = 0x1D12`) | `6142` | "Father!" / "My darling Felicia!" |
+| 3 | the Guardian Spirit (`sei`, `gd_draw_masked` AL=5, 144 × 104 at (88,16), `bx = 0x1610`) | `6172` | the Spirit appears |
+| 4 | Garland and the Spirit in two `gd_picture_box` frames (`yuup` @arena:4000, `seip` @arena:8000) | `61FA` | the Spirit (`8n`) "You fought bravely to accomplish this quest…" and Garland (`9n`) "My next mission?" |
+| 5 | Felicia (`himp`) replaces the Spirit in the right box | `622F` | Felicia (`Bn`) "Must you leave so soon, Duke Garland?" and Garland's farewell |
+| 6 | the two of them larger (`ne80`, `ne81`) | `62A6` | "Don't go, Duke Garland!" (`Cn`) |
+| 7 | a rotating `0x55` dither drawn over the left picture (the fade to white) | `62DB` | Felicia's closing lines; then a full-screen dissolve and act 2 |
+
+The five speaker groups (all drawn with `gd_draw_3plane_fast`; `BX`/`CX` are
+the literal `mov` operands, and every one of them jumps back to the fetch at
+`6323`, so like opdemo's they cost **no ticks**):
+
+| code | @ | bank | frames | position |
+|---|---|---|---|---|
+| `8n` | `6568` | the **Spirit**, `seip.grp` @`arena:8000`: `arena:98C0 + n*504` | one bank of 7 × 24, no mouth/eye split | `BX = 0x3850` → (224,80) |
+| `9n` | `64E3` | **Garland**, `yuup.grp` @`arena:4000` | `n < 6` mouth 9 × 32 at `58C0 + n*864`; `n ≥ 6` eyes 11 × 16 at `6D00 + (n−6)*528` | `0x1350` → (76,80) / `0x1238` → (72,56) |
+| `An` | `6530` | **Felicia in the `new1` tableau** — frames inside the overlay image (`ES = CS`) | `n < 3` 5 × 11 at `7437 + n*0xA5`; `n ≥ 3` 7 × 8 at `7626 + (n−3)*0xA8` | `0x3548` → (212,72) / `0x343E` → (208,62) |
+| `Bn` | `658C` | **Felicia's portrait**, `himp.grp` @`arena:8000` | `n < 6` mouth 9 × 24 at `98C0 + n*648`; `n ≥ 6` eyes 10 × 24 at `A7F0 + (n−6)*720` | `0x3450` → (208,80) / `0x3338` → (204,56) |
+| `Cn` | `65D5` | **Felicia on the balcony** (`ne81`), again inside the image | 2 × 8 at `781E + n*0x30` | `0x3840` → (224,64) |
+
+`arena:98C0` and `arena:A7F0` are the portrait base `0x8000` plus `0x18C0` and
+`0x27F0` — so the "unidentified tails" of `seip.grp` and `himp.grp` (§6.3,
+§8) are exactly these banks, laid out the way `yuup.grp`'s and `oup.grp`'s
+are.  Which portrait `8n` / `Bn` address depends on which was loaded last:
+beat 4 speaks over `seip`, beats 5-7 over `himp`.
 
 **Act 2 (`6638`)** — the credits.  All six ending pictures are loaded, still
 packed, into the 64 KB scratch (`end5` @0, `end4` @0x3400, `end6` @0x5E00,
@@ -247,14 +316,16 @@ of the ending is the single byte script at `787E`:
 | `F8 w` | set the pause length (16-bit) |
 | `F9` | wait until `[FF50] ≥` that length, then zero it |
 | `FA b` | set the per-character delay |
-| `FB c r` | set the cursor column/row |
+| `FB r c` | set the cursor **row then column** — `679E` is `lodsw / mov [6968],al / mov [6967],ah`, and `[6968]` is the row (×14 + 0x90 at `6724`) while `[6967]` is the column (×8 at `6730`) |
 | `FC` | clear the text window (0,140)–(320,200) and home the cursor |
 | `FD` | newline |
 | `FE` | run the next **scene** (`scene_table[696C]++`) |
 | `FF` | end |
 
-Scene table `6820` (7 entries): `end5` the castle (228 × 154 at (32,11)) ·
-`end4` riding away (188 × 114 at (80,33)) · `end6` the balcony, opened by
+Scene table `6820` (7 entries): `end5` the castle (228 × 154 at (44,8),
+`bx = 0x0B08`) · `end4` riding away (188 × 114 at (132,20), `bx = 0x2114`;
+the `gd_erase` before it uses the same `0x0B08` rect as `end5`) ·
+`end6` the balcony, opened by
 `gd_end_open` · `end6` closed by `gd_end_close` · full-screen dissolve ·
 `end7` + `en72` the landscape (320 × 134 at (0,0)) with **FIN** stamped into it
 · a plain redraw of the landscape.
@@ -283,23 +354,46 @@ bit 7 set, i.e. on the exit door of a boss room.
 1. loads `mfan.msd` (ZELRES3[94], the fanfare) → `arena:3000` and `dman.grp`
    (ZELRES3[53]) → `arena:6000`, converting 256 `cells32` (`[0x3028]`, mask to
    `arena:D000`);
-2. `[0xA0]`++ (tears collected, capped at 9) and the crystal appears in
+2. `[0xA0]`++ (tears collected).  `A03B` is `inc [0xA0] / mov al,0 /
+   cmp [0xA0],9 / jc` — the clamp is **`>= 9`**, so the ninth Tear is both the
+   last and the one drawn with `[0x203E]`'s alternate icon (`AL = 1`), exactly
+   as GAME.BIN's HUD painter does at `A3C1`.  The crystal then appears in
    Garland's hands (`[0x203E]` at (148,82));
 3. Garland walks 13 steps right (frames 0–3, `[FF75] = 0x1A` every other step,
    erasing the trailing column each step), stands (frame 4), then raises the
-   crystal (frames 5–8) and his sword (`[0x3024]`);
+   crystal (frames 5–9) and his sword (`[0x3024]`);
 4. the crystal **flies to its HUD slot**: `A4A3`/`A50A` are a byte-precision
    Bresenham interpolator from (148,80) to `(tear_x[tears-1], 2)`, with
    `[0x3026]` sparkle frames drawn over a saved/restored 24 × 16 background and
    `[FF75] = 0x1C` every third step.  `tear_x` (`A569`) and the `[0x203E]`
-   positions (`A572`) are the same eight slots GAME.BIN uses at `A3D3`, plus a
-   ninth;
-5. the fanfare plays, it waits for Return (`[FF26]`), then Garland lowers the
+   positions (`A572`) are the same **nine** slots GAME.BIN uses at `A3D3`;
+5. the fanfare plays, and `A371` (`test byte [0xff26],0xff / jz A371`) waits
+   for the **score to finish** — `[FF26]` is the music driver's "finished"
+   flag, the same one opdemo spins on at `62C7`, *not* the Return key.  There
+   is no keypress wait anywhere in this cutscene.  Then Garland lowers the
    crystal and walks 13 steps further right, and the routine returns.
 
-Hero frames are **nine 3 × 3 metasprite maps of 9 bytes at `A435`**, 0-based
+Hero frames are **ten 3 × 3 metasprite maps of 9 bytes at `A435`**, 0-based
 indices into the converted `dman.grp` bank; unlike `fman.grp`'s row-major maps
 they are **column-major** (the inner loop steps y by 8, the outer steps x by 8).
+There are ten, not nine: `A435 + 10*9 = A48F`, which is `wait_frame`'s first
+instruction (`mov cl,[0xff33]`).  Frame 9 —
+`2E 31 23 2F 32 34 30 33 35` — is the "sword fully raised" pose the loop at
+`A0AE` leaves `[E7]` on (it stops when `[E7]` reaches 9 and `A0CA` draws that
+frame), and the only one that uses cell `0x35`, the last in `dman.grp`.
+
+The two gfmcga slots it borrows:
+
+* **`[0x3022]`** (`4933`) takes `AL` = cell index and blits the 8 × 8, 32-byte
+  cell at `arena:6000 + AL*0x20`, expanding two bits to a byte through `4975`
+  and `stosb`-ing it — a **fully opaque** copy, there is no mask.
+* **`[0x3024]`** (`4990`) does **not** draw `itemp.grp`.  It draws one of three
+  96-byte 2-bpp pictures **embedded in `gfmcga.bin`** at `4A31` / `4A91` /
+  `4AF1`, chosen by the equipped sword `[0x92]` through the six-entry pointer
+  table at `4A25` (`4A31 4A31 4A31 4A91 4A91 4AF1`, so swords 1-3 share one
+  picture, 4-5 the next and 6 the last).  16 × 24 px at `di = 0x6C10` =
+  (144,86), drawn through `4092`: colour 0 transparent, 1/2 → `[4FF5] = 8`,
+  3 → `[4FF6] = 9`.
 
 ---
 
@@ -353,7 +447,7 @@ mapping of the entry point it calls.
 | resource | pack | palette | geometry (bytes × rows, planes) | what it is |
 |---|---|---|---|---|
 | `nec.grp` ZELRES1[22] | mask | 1 / 2 | 44 × 104 × 3, then 16 × 64 × 3 at +13728 | the pendant (drawn 2-plane under the prologue text, then 3-plane) |
-| `hou.grp` [17] | mask | 2 | 4 × (32 × 6 × 2) then 4 × (24 × 4 × 2) | lightning bolts for `gd_storm` (colours 0,2,5,7) |
+| `hou.grp` [17] | mask | 2 | **4 × (6 × 32 × 2)** then **4 × (4 × 24 × 2)** (strides 0x180 / 0xC0) | radiating orbs for `gd_storm` (colours 0,2,5,7) — the `3617` record is `{ptr, rows, wbytes}`, see §2.1 |
 | `dmaou.grp` [14] | mask | 3 | 4 × (18 × 32 × 2) mouths; 5 × (34 × 48 × 2) eyes at +0x1380 | the demon's face |
 | `ttl1.grp` [29] | RLE | 4 | 49 × 128 × 3 | the necklace on the title screen |
 | `ttl2.grp` [30] | RLE | 4 | 40 × 40 × 2 tile array | the corner scrollwork, addressed by the 25 × 34 map at opdemo `912B` |
@@ -371,8 +465,8 @@ mapping of the entry point it calls.
 | `maop.grp` [19] | mask | 8 | 47 × 88 × 3 | Jashiin |
 | `yuup.grp` [37] | mask | 6 | 24 × 88 × 3, +6 mouths 9 × 32 × 3 (stride 864) at 0x18C0, +6 eyes 11 × 16 × 3 (stride 528) at 0x2D00 | Garland, talking head |
 | `oup.grp` [26] | mask | 6 | 24 × 88 × 3, +6 mouths 14 × 32 × 3 (stride 1344) at 0x18C0, +3 eyes 11 × 16 × 3 at 0x3840 | the King, talking head |
-| `himp.grp` [16] | mask | 6 | 24 × 88 × 3 (+6 KB more) | Felicia, talking head |
-| `seip.grp` [28] | mask | 6 | 24 × 88 × 3 (+3 KB more) | the Spirit, talking head |
+| `himp.grp` [16] | mask | 6 | 24 × 88 × 3, +6 mouths 9 × 24 × 3 (stride 648) at 0x18C0, +3 eyes 10 × 24 × 3 (stride 720) at 0x27F0 | Felicia, talking head — the tail is enddemo's `0xBn` lip-sync bank (§4) |
+| `seip.grp` [28] | mask | 6 | 24 × 88 × 3, + one bank of 7 × 24 × 3 frames (stride 504) at 0x18C0 | the Spirit, talking head — the tail is enddemo's `0x8n` lip-sync bank (§4) |
 | `new1.grp` [23] | mask | 6 | 24 × **265** × 3 | Felicia full length; enddemo scrolls an 88-row window through it |
 | `new2.grp` [24] | mask | 7 | 28 × 100 × 3 | the King holding Felicia |
 | `ne80.grp` [20] | mask | 7 | 26 × 100 × 3 | Garland |
@@ -390,10 +484,20 @@ over both credit rolls, `mfan.msd` (ZELRES3[94]) over the Tear cutscene.
 ### 6.4 Pictures the demo builds rather than loads
 
 * **the act-1 demon face** (opdemo `6E0F`) — a 34 × 112 3-plane image at
-  `(CS+0x2000):0` assembled from single planes of `dmaou.grp`: the eyes into
-  planes 0+1, the nose (6 × 32, from +0x1200) into planes 0+1 at (col 15,
-  row 48), the mouth into plane 0 only at (col 8, row 80) — so the three parts
-  come out in different colours from one plane each.
+  `(CS+0x2000):0` assembled from three *two-plane* pieces of `dmaou.grp`.  The
+  inner blitter `6E6D` does **not** rewind SI, so the two-call helper that
+  wraps it copies two consecutive source planes into two destination planes:
+  `6E4F` writes destination plane **1 first, then plane 0** — the source planes
+  come out **swapped** — and `6E5E` writes plane 0 then plane 1, in order.
+  * eyes: `arena:AB40`, 34 × 48, `BX = 0x0000` (col 0, row 0), via `6E4F`
+  * nose: `arena:A9C0` (= mouth base + 0x1200), 6 × 32, `BX = 0x0F30`
+    (col 15, row 48), via `6E4F`
+  * mouth: **`arena:9C40`** — `gd_face_mouth` frame **1**, not frame 0 —
+    18 × 32, `BX = 0x0850` (col 8, row 80), via `6E5E`, so it lands in planes
+    0 **and** 1, not plane 0 alone.
+
+  Nothing writes plane 2, which is what gives the three pieces their different
+  colours.
 * **eye frame → 3 planes** (`6E8F`/`6EB0`) — plane 2 is derived as
   `~p0 & p1`, `p1 ^= that`.
 * **`yuu3.grp`** only *has* two planes (0x3000 bytes each); `6FAC` derives the
@@ -426,18 +530,26 @@ prologue text is on screen 8–55 s, the demon 56–80 s and the title screen fr
 ≈82 s.  With `KEYS="6:Return 9:Return"` the storm demo starts ≈17 s and runs
 for minutes — the balcony is up at 34 s, the throne-room dialogue at ≈430 s.
 
-## 8. Not decoded
+## 8. Decoded since (issue #30) — and what is still not
 
-* `ttl2.grp`'s **tile semantics**: the 40 × 40 two-plane array decodes cleanly
-  (the ornament fragments are visible in `tools/grp2png.py`'s output) but the
-  25 × 34 map at `912B` and `gd_tile_map`'s scattered 8-row column copy are only
-  understood mechanically, so the assembled ornament is not reproduced by
-  `grp2png` — only the raw tile bank.
-* The tails of `himp.grp` (≈6 KB) and `seip.grp` (≈3 KB) past the 96 × 88
-  portrait are real data, almost certainly lip-sync frames in the `yuup`/`oup`
-  layout, but nothing in enddemo draws them so their strides are unconfirmed.
-* `gd_fx_sand` (`3020`) and `gd_draw_ornament_row` (`301E`) are understood
-  well enough to name but their table-driven step scripts (`3B1F`, `3BE3`,
-  `3C16`) have not been enumerated.
+Three of the four items this section used to list came out while the cutscenes
+were ported into `port/` (`port/gd.c`, `port/cutscene.c`):
+
+* `ttl2.grp`'s **tile semantics**: `gd_tile_map` (`3732`/`3753`) divides each
+  map byte by 40, so **tile *n* is one byte × 8 rows at `(n/40, n%40)`** of the
+  40 × 40 bank (source stride 40 a row, 1600 a plane), assembled into a
+  34 × 200 three-plane picture in the `CS + 0x2000` scratch (destination stride
+  34 a row, `0x1A90` a plane) — the 25 × 34 map at `912B` walks it column by
+  column, `bh` = x, `bl` = y.
+* The **tails of `himp.grp` and `seip.grp`** are enddemo's own `0xBn` and `0x8n`
+  lip-sync banks: 7 × 24 frames of 504 bytes at `arena:98C0` for `seip`, and
+  9 × 24 / 10 × 24 frames of 648 / 720 bytes at `arena:98C0` and `arena:A7F0`
+  for `himp`.  See §4.
+* `gd_draw_ornament_row` (`301E`) and **`gd_fx_sand`'s three tables**: `3C16`
+  the mode pair, `3A5F` twenty-four 8-byte patterns, `3B1F` the 196-byte border
+  script and `3BE3` the 51-byte inward spiral.
+
+Still not decoded:
+
 * The gd renderer's four non-MCGA builds (`gdega/gdcga/gdhgc/gdtga`) were not
   read; only the 25-slot table is assumed common (as it is for `gm*`/`gf*`).
