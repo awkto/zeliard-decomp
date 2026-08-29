@@ -47,7 +47,7 @@ entry  : at offset[i]: uint32le payload_len, uint8 payload[payload_len]
 |---|---|---|
 | ZELRES1.SAR | 40 | [0] main engine overlay (13.8 KB, contains intro/story text + credits), [6] second code overlay, [1–5,7–11] more engine/script data, [12+] graphics & maps |
 | ZELRES2.SAR | 58 | ~12 code overlays ([1],[7],[10–17],[50],[54] — town/shop/menu logic; [10–17] share a common prologue), rest graphics/tile data |
-| ZELRES3.SAR | 96 | Almost all data: sprite/enemy records ([1–19]), music scores ([20–50], note-event streams), tile/map data, palettes; [0] small code stub |
+| ZELRES3.SAR | 96 | Almost all data: sprite/enemy records ([1–19]), cavern maps ([20–50] mp*.mdt), music scores ([85–95], three arrangements each — docs/MUSIC.md), tile/sprite banks, palettes; [0] small code stub |
 
 Extractor: `tools/sarex.py` → `extracted/ZELRES{1,2,3}/NNN_{code,data}.bin`.
 

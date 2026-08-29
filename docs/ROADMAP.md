@@ -26,7 +26,7 @@ Tracking epic for all remaining work. Written to be executable without prior ses
 1. ~~**Pin the palette (#7).**~~ DONE (#13): `tools/palette.py`, documented in ARCHITECTURE.md. The intro/ending renderer (gdmcga @425E) uses a separate 256-entry palette scheme — decode when the title/ending art is needed.
 2. **Metasprite assembly (#7).** sword.grp layout: header words + offset table + tile maps (0xFF = empty) referencing cell indices. Write \`tools/grp2png.py\` that: parses container, extracts cell bank + maps, composites full sprites. Verify against screenshots (title logo ttl1-3.grp, shop portraits king.grp etc.).
 3. ~~**Maps (#9).**~~ DONE (#15): `tools/mdt2png.py` renders all 31 cavern maps (column-major RLE, 64 rows, MPP1-B tile banks + DCHR fixtures, object table); format in ARCHITECTURE.md "Maps". Town maps decoded in Sprint 6 (docs/TOWN.md, `mdt2png.py --town`).
-4. **Music (#8).** .msd = score data consumed by MSC*.DRV at (BASE+FF0):0100. Diff MSCSTD vs MSCADLIB decompilations to separate score parsing from device code. Acceptance: .msd → MIDI converter that produces the opening theme recognizably.
+4. ~~**Music (#8).**~~ DONE (#22): `tools/msd2mid.py` (all 17 scores × AdLib/Tandy/MT-32 arrangements → MIDI, loop detection), `docs/MUSIC.md` (INT 60h API, score format, tick/tempo = 118.35 Hz·(256−T)/256), `src/music_std.c`, `src/music_adlib.c`.
 
 ## Phase 2 — decompile game logic (issue #6)
 
