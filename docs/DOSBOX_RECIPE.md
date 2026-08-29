@@ -120,7 +120,7 @@ instead of 19 s).
 extracted/ZELRES3/020_data.bin OUT.png` (mp10, MPP1 tileset).
 
 * Best alignment (exhaustive search over the whole 240×64-cell map with the 64-row ring
-  wrapped): view origin **column 49, row 63** — rows 63,0,1,…,13 — i.e. the Muralla entry
+  wrapped): view origin **column 49, row 63 (first *visible* column/row; the engine's scroll_col/scroll_row is 45/61 — see port/)** — rows 63,0,1,…,13 — i.e. the Muralla entry
   record `(col 61, row 7, side 0, MP10)` from mrmp.mdt (docs/TOWN.md §9: `scroll_row =
   (row−10)&63`, `scroll_col = col−16`, hero 16 columns in).  It is **not** the mdt's own
   `--info` start (col 26, row 16); that default is only used when no town record applies.

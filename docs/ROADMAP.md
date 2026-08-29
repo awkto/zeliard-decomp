@@ -41,9 +41,9 @@ Method per overlay: run ghidra_dump_c.py, then rename functions/globals against 
 
 ## Phase 3 — SDL port scaffold
 
-1. \`port/\` C project: SDL2 shell, 320x200 framebuffer, asset loading via the (by then complete) Python pipeline pre-converted to PNG/JSON, or direct SAR reading in C (port sarex/sardec — both are simple).
+1. ~~\`port/\` C project.~~ DONE (#23): C11 + SDL2 (headless fallback), reads ZELRES*.SAR directly (sar.c ports sarex/sardec), `make` / `make test` (103 physics checks) / `make verify` (100% playfield match vs docs/screenshots/cavern.png). See port/README.md.
 2. Implement in order: map render + scroll → player movement vs map collision (from fight.bin decomp) → sprites/animation → combat → shops/save → music (from .msd converter).
-3. Milestone gates: (a) walk around cavern 1 with correct collision; (b) kill one enemy with correct damage tables; (c) full cavern 1 + town loop; (d) all 9 caverns; (e) audio.
+3. Milestone gates: ~~(a) walk around cavern 1 with correct collision~~ DONE (#23); (b) kill one enemy with correct damage tables; (c) full cavern 1 + town loop; (d) all 9 caverns; (e) audio.
 
 ## Phase 4 — polish/stretch
 

@@ -1,0 +1,4 @@
+*.o
+zeliard
+test_physics
+local.mk
