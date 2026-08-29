@@ -17,6 +17,7 @@ Reverse engineering of **Zeliard** v1.208 (Game Arts / Sierra On-Line).
 - `src/town.c`, `src/shops.c`, `src/select.c`, `docs/TOWN.md` — town walk/dialogue engine, all 8 shops (prices, effects), the status/inventory screen and the potion effects, save-file format, town map format
 - `src/ai/`, `docs/ENEMIES.md` — all 8 cavern enemy AIs + 11 bosses: stats tables, movement/attack patterns, AI-overlay ABI
 - `docs/DOSBOX_RECIPE.md` — verified key timelines to skip the intro and enter cavern 1 in the harness
+- `port/` also has audio: a from-scratch OPL2 core with the MSC*/SND* drivers ported, cross-checked against the Python converter
 - `tools/msd2mid.py`, `docs/MUSIC.md`, `src/music_{std,adlib}.c` — music score format + drivers; converts every score to MIDI
 - `docs/SERVICES.md`, `docs/VIDEO_DRIVERS.md` — every kernel service vector (0x10C+) and video-driver vector (0x2000+, all 5 drivers) with args and callers
 - `docs/ARCHITECTURE.md` — boot chain, memory map, SAR format, kernel protocol, graphics formats

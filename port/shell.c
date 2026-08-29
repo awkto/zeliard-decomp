@@ -9,6 +9,7 @@
 #include "player.h"
 #include "shop.h"
 #include "boss.h"
+#include "audio.h"
 
 #define LOG(s, ...) do { if (!(s)->quiet) fprintf(stderr, __VA_ARGS__); } while (0)
 
@@ -47,6 +48,7 @@ int shell_enter_town(Game *g, int idx, int col, int died)
     if (town_load_map(&s->tmap, s->dir, idx)) { fprintf(stderr, "[town] cannot load town map %d\n", idx); return 0; }
     int np = town_apply_patches(&s->tmap, g->page);                     /* 6AED */
     if (town_load_banks(s)) return 0;
+    audio_music(s->tmap.music);                                         /* town level record +0 bits 1-4 */
     town_init(&s->town, &s->tmap, &s->ttiles, &s->tspr, &s->thero, g);
     s->town.user = s; s->town.present = s->town_present;
     s->town.font = &s->tfont; s->town.dir = s->dir; s->town.pics = &s->pics;
@@ -88,6 +90,7 @@ void shell_load_enemy_banks(Shell *s, const Map *m)
     int enp = m->enemies;
     if (enp == 0xFF || boss_overlay_p(m->ai)) enp = m->boss_bank;
     load_banks_by_index(s, g, m->ai, enp);
+    audio_music((m->lvl_flags >> 1) & 0x0F);                            /* fight.bin 7E93 -> the 9E53 table */
     g->boss_map  = (uint8_t)((m->lvl_flags & 0x80) ? 0xFF : 0);         /* -> FF34 */
     g->boss_room = (uint8_t)((m->lvl_flags & 0x40) ? 0xFF : 0);         /* -> [E6] */
     if (g->boss_map || g->boss_room) {
@@ -208,6 +211,7 @@ static void town_frame(Shell *s)
         if (town_load_map(&s->tmap, s->dir, dest)) break;
         town_apply_patches(&s->tmap, g->page);
         if (town_load_banks(s)) break;
+        audio_music(s->tmap.music);
         town_init(t, &s->tmap, &s->ttiles, &s->tspr, &s->thero, g);
         t->user = s; t->present = s->town_present;
         t->font = &s->tfont; t->dir = s->dir; t->pics = &s->pics;

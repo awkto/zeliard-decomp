@@ -43,7 +43,7 @@ Method per overlay: run ghidra_dump_c.py, then rename functions/globals against 
 
 1. ~~\`port/\` C project.~~ DONE (#23): C11 + SDL2 (headless fallback), reads ZELRES*.SAR directly (sar.c ports sarex/sardec), `make` / `make test` (103 physics checks) / `make verify` (100% playfield match vs docs/screenshots/cavern.png). See port/README.md.
 2. Implement in order: map render + scroll → player movement vs map collision (from fight.bin decomp) → sprites/animation → combat → shops/save → music (from .msd converter).
-3. Milestone gates: ~~(a) walk around cavern 1 with correct collision~~ DONE (#23); ~~(b) kill one enemy with correct damage tables~~ DONE (#24); (c) full cavern 1 + town loop; (d) all 9 caverns; (e) audio.
+3. Milestone gates: ~~(a) walk around cavern 1 with correct collision~~ DONE (#23); ~~(b) kill one enemy with correct damage tables~~ DONE (#24); (c) full cavern 1 + town loop; (d) all 9 caverns; ~~(e) audio~~ DONE (#27): own OPL2 core + MSC/SND driver ports in `port/`; all 51 score streams match tools/msd2mid.py.
 
 ## Phase 4 — polish/stretch
 

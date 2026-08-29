@@ -71,7 +71,8 @@ Fade-out is therefore not an INT 60h function: the game pokes `FF24` and waits o
 * Durations are in score ticks; every score uses **24 ticks per quarter note**
   (duration tables are made of 0x60 whole, 0x30, 0x18, 0x0C, 0x06, 0x03, dotted
   0x90/0x48/0x24/0x12, triplets 0x10/0x08/0x04). So µs per quarter =
-  24·10⁶·256 / (118.35·(256−T)) = **51,913,590 / (256 − T)**; T=0x7F → 402 ms →
+  24·10⁶·256 / (118.34775·(256−T)) = **51,914,802 / (256 − T)** (the driver tick is
+  1,193,181.67/0x13B1 = 236.6955 Hz, halved); T=0x7F → 402 ms →
   149 BPM, T=0x7D → 396 ms → 151 BPM.
 
 ## 2. Resource layout (kernel mode 5)
@@ -229,6 +230,42 @@ the driver's own 27-byte percussion table at `0B7E`, f-numbers `A6/B6 = 0x120 bl
 
 Drum levels go to `53h` (BD), `51h` (HH), `54h` (SD), `52h` (TT), `55h` (CY) plus
 `FF25 >> 2` (`0988`).
+
+### 3.x The AdLib volume bug (`C0-CF`, MSCADLIB `06B3`)
+
+`MSCADLIB.DRV`'s relative-volume handler tests `test bl,0xC0` (`disasm/MSCADLIB.asm:562`
+and again at `06BE`), so **any accumulated attenuation with bit 6 or 7 set snaps to 0 =
+fully loud**.  `set_level` uses `attenuation >> 1` as a 6-bit OPL level, so the intended
+range is `0..0x7F`; this is a bug in the shipped driver.
+
+It bites exactly one score: **zopn** opens with `E5 4F` and then fades in with `C0`, so on
+real AdLib hardware the first `C0` jumps straight to full volume instead of stepping up.
+`tools/msd2mid.py` models the *intended* 0..0x7F range (its MIDI output is the nicer one);
+`port/msd.c` reproduces the driver by default and has a `compat_msd2mid` flag so the two
+event streams can be diffed.  All 51 score × arrangement streams match with that flag set.
+
+## 4a. Sound-effect drivers (`SND{ADLIB,STD,JR}.DRV`)
+
+Same program as `MSC*` with fewer channels: SNDADLIB owns OPL channels 4/5, SNDSTD the
+speaker.  Loaded at `(BASE+FF0):1100`; the kernel's INT 8 ticks it on **every** tick
+(236.7 Hz) — there is no ÷2 prescaler, unlike the music driver.
+
+| item | SNDADLIB | SNDSTD |
+|---|---|---|
+| effect table | `1743`, 7-byte records `{u8 priority, u16 trackA, u16 trackB, u16 dur_tables}` | `1502`, 5-byte records |
+| effects | 65 | 65 |
+| empty-track stub | `201F` | — |
+| OPL patches | `2020`, 9 bytes `{20,23,40,43,60,63,80,83, ws/fb/conn}` | — |
+| f-numbers / vib scale / op offsets | `1576` / `158E` / `159A` | pitch table `1430` |
+
+Opcode subset: `E0-E5, E7, F0, FF` (`E9/EA/EB` take an argument only in the STD build).
+A request whose priority is ≥ the playing effect's preempts it; when both tracks end the
+driver releases its channels with `INT 60h AX=6, CL=0`, which is why the top two music
+voices drop out for the length of a sword swing.  `SNDADLIB 15A3` is a proximity/ambient
+routine driven by `FF08` (written by fight.bin `774E`).
+
+Pitch: the game's f-number table sits a uniform ≈14 cents flat of A=440 (so
+`0x156` = 259 Hz reads as C4).
 
 ## 4. Per-driver differences
 

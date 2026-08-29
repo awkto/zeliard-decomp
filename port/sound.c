@@ -7,6 +7,7 @@
  * original.  Names come from the call sites in src/fight.c, src/town.c and
  * src/shops.c (docs/FIGHT.md §6, docs/STATE_PAGE.md FF75). */
 #include "enemy.h"
+#include "audio.h"
 #include <stdio.h>
 
 static unsigned counts[256];
@@ -51,6 +52,7 @@ void sound_request(Game *g)
     if (!id) return;
     g->sfx_request = 0;
     counts[id]++;
+    audio_sfx_request(id);
     if (log_on) {
         const char *n = sound_name(id);
         fprintf(stderr, "[snd] frame %u: %02X %s\n", g->frame_no, id, n ? n : "(unnamed)");

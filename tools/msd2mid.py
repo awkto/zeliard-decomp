@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """msd2mid.py - convert Zeliard .msd music scores to standard MIDI.
 
+NOTE: the C0-CF relative-volume opcode is modelled with its INTENDED 0..0x7F range.
+MSCADLIB.DRV itself tests `test bl,0xC0` (06B3), so on real AdLib any attenuation
+with bit 6 or 7 set snaps to full volume - a driver bug that audibly affects zopn
+only (see docs/MUSIC.md section 3.x). port/msd.c reproduces the driver behaviour.
+
 usage: msd2mid.py FILE.dec OUT.mid [--mt] [--jr] [--loops N] [--dump]
        msd2mid.py --all OUTDIR [--loops N]
 

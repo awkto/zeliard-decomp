@@ -2,6 +2,7 @@
  * (8D1D), the part-list rebuild, the ENEMY HP bar, the rewards (71CC) and
  * post_boss_transition (72F1).  docs/ENEMIES.md §1/§3, src/fight.c. */
 #include "boss.h"
+#include "audio.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -165,6 +166,7 @@ uint8_t boss_death_tick(Game *g)
     Boss *b = &g->boss;
     uint8_t t = b->death_cnt;
     if (t >= 0x28) { g->boss_defeated = 0xFF; return t; }
+    if (!g->boss_dying) audio_music_fade(10);         /* fight.bin 1123: FF24 = 0x0A */
     g->boss_dying = 0xFF;
     b->death_cnt++;
     return t;

@@ -1,4 +1,4 @@
-# Zeliard SDL2 port (Phase 3, milestone d)
+# Zeliard SDL2 port (Phase 3, milestone e)
 
 A from-scratch C11 re-implementation of the Zeliard engines that reads the
 original game files directly.  Status: **the cavern-1 + town loop is playable
@@ -14,14 +14,18 @@ overlays' own text and price tables, so swords, shields, potions, healing,
 inn nights, banking, spells, levels and the NAME.USR save are all in.  **The
 status / inventory screen works** (select.bin: Enter in town or in the caverns —
 spell selection, the worn key item, the eight potion effects and the Kioku
-Feather warp), and so does the **town dialogue box**.  No sound output (the
-requests are logged).
+Feather warp), and so does the **town dialogue box**.  **The game has sound**:
+an OPL2 core written for this port plays the AdLib arrangement of the original
+`.msd` scores on the original tick model, the town and every cavern get the
+score their level record names, and the `FF75` sound effects run through
+`SNDADLIB.DRV`'s own tracks and patches; `--speaker` plays the PC-speaker
+arrangement instead.
 
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 6 test binaries
 make test            # physics (135) + combat/AI (149) + town (85) + boss (313) + shop (118)
-                     #   + status (87) + playthrough (14) = 901 assertions
+                     #   + status (87) + playthrough (14) + audio (305) = 1206 assertions
 make verify          # headless renders diffed against the DOSBox captures in docs/screenshots/
 make playthrough     # the same two routes as test_playthrough, with the step-by-step log
 ./zeliard            # play cavern 1 (needs ../zeliard/ZELRES1-3.SAR or zeliard/ in the cwd)
@@ -29,6 +33,8 @@ make playthrough     # the same two routes as test_playthrough, with the step-by
 ./zeliard --map 1 --sword 4 --level 40 --life 800   # the cavern-1 boss room (mp1d)
 ./zeliard --town 1 --gold 5000                     # Muralla: the shops are at 39/59/111/138/172
 ./zeliard --map 0 --potions 0,5,6,7 --spells 1,3,6 # then Enter: the status screen with something in it
+./zeliard --speaker                                # PC-speaker music instead of AdLib
+./zeliard --headless --frames 1600 --script ".1600" --music 4 --dump-audio mus1.wav
 ```
 
 SDL2 is optional at build time.  Without the dev package the same binary is built
@@ -49,6 +55,7 @@ config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`
 | X (or Ctrl) | **attack** — sword slash; with Up an upward slash; held with Down while airborne a down-thrust (×2 damage) |
 | C (or Alt) | **cast the selected spell** (`magic_sel`, picked on the status screen) |
 | Enter | **the status / inventory screen** (select.bin): pick a spell, wear a key item, drink a potion |
+| F1 / F2 | toggle the music / the sound effects (STICK's own hotkeys) |
 | F12 | dump the framebuffer to the `--screenshot` file |
 | Esc | quit |
 
@@ -60,6 +67,7 @@ config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`
 | Up | in front of a door: enter it (a shop is logged, a cavern gate hands over to fight.bin) |
 | Space (or X) | talk to an NPC 1-3 columns ahead: the **dialogue box** opens; Space turns the page, Alt cancels |
 | Enter | **the status / inventory screen** (select.bin); the potion row is disabled in town, as in the original |
+| F1 / F2 | toggle the music / the sound effects |
 | Esc | quit |
 
 ### The status screen (select.bin)
@@ -89,6 +97,11 @@ player record directly; the shops do it properly), `--name NAME` / `--load NAME`
 `--script "R6 U3 .6 XL2"` (headless input: hold Right 6 frames, Up 3, idle 6,
 sword+Left 2; letters U D L R, X = sword, M = magic combine, `.` = nothing),
 `--frames N`, `--sound` (log every FF75 request), `--verbose` (per-frame state line).
+Sound: `--no-music` (no audio at all), `--speaker` (the PC-speaker back end instead
+of AdLib), `--music N` (pin one score, 0-13 in the `9E53` order `mgt1 ugm1 mgt2 ugm2
+mus1..mus8 mbos mmao`; `-1` = effects only) and `--dump-audio FILE.wav` (render the
+sound to a 16-bit mono WAV instead of a sound card — deterministic, works headless).
+**F1** toggles the music and **F2** the sound effects, as STICK's own hotkeys do.
 `--script` only takes effect together with `--headless` (or `--screenshot`).
 `--town-col`, `--town-scr`, `--town-anim` and `--town-npc` place the town hero and an
 NPC exactly; `make verify` uses them.  `ZEL_SHOP_DEBUG=1` in the environment logs
@@ -273,9 +286,42 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   driver's built-in blank slot read out of `GMMCGA.BIN` @2658 — which is what
   finally puts the sword / magic / shield pictures on the HUD too
   (`itemp_hud`).  The eight potion effects are the A452 jump table.
-* `sound.c` — the FF75 requests fight.bin and town.bin produce are consumed, counted
-  and (with `--sound`) logged with their names.  No synthesis yet; docs/MUSIC.md and
-  `tools/msd2mid.py` are the source for a real driver.
+* `sound.c` — the FF75 requests fight.bin and town.bin produce are consumed, counted,
+  (with `--sound`) logged with their names, and handed to `audio.c`.
+* `opl2.c` / `opl2.h` — **a compact OPL2 (YM3812) synthesiser written for this port**
+  (no third-party dependency): 9 two-operator voices with the register set the drivers
+  use (`01` waveform-select enable, `20-35` AM/VIB/EG/KSR/MULT, `40-55` KSL/TL,
+  `60-75` AR/DR, `80-95` SL/RR, `A0-A8`/`B0-B8` f-number/block/key-on, `BD` rhythm
+  mode, `C0-C8` feedback/connection, `E0-F5` waveform), the four waveforms, the
+  exponential attack and linear decay/release of the real envelope generator
+  (rate `r` moves `(4+(r&3))/4 * 2^((r>>2)-13)` attenuation units per 49716 Hz
+  sample, so `r`=48 decays 96 dB in 20.6 ms as the datasheet says), key-scale level
+  and rate, feedback (π/16 … 4π), the two global LFOs and the five rhythm-mode
+  drums.  It runs in floating point at the caller's sample rate, scaling every
+  increment by 49716/rate.
+* `msd.c` / `msd.h` — **the score interpreter**: `MSCADLIB.DRV` and `MSCSTD.DRV`
+  ported line by line (hex tags in the file are addresses in those two drivers).
+  Blob-B header, the 6 melodic tracks + the OPL rhythm track for AdLib and the three
+  Tandy tracks for the speaker, note bytes (`dur<<4 | pitch`, rest, hold, legato,
+  gate/staccato), all of `80-FF`, the loop/call/counter flow control, the `FF21`
+  sync counters, the software vibrato, the OPL patch loader and level computation,
+  the rhythm track's `BD` register handling and drum levels, the PC-speaker envelope
+  and its two-voice output stage, `FF24` fade-out and the `INT 60h` calls the engines
+  make (start / stop / pause / enable / the sfx channel claim).  It can also emit an
+  event log identical to `tools/msd2mid.py --dump`, which is what `test_audio.c`
+  diffs against.
+* `audio.c` / `audio.h` — the back end: the 236.7 Hz `INT 8` clock derived from the
+  sample counter (so the tempo is right whatever the frame rate is), the music driver
+  on every second tick and the sound driver on every tick, exactly as STICK calls
+  `[FF10]` then `[FF0C]`; the `9E53` request table that turns a level record's music
+  index into a `ZELRES` resource; **the `SND*.DRV` effect driver** — a second small
+  interpreter that reads its tracks, its 9-byte OPL patches and its duration tables
+  straight out of `SNDADLIB.DRV` (or `SNDSTD.DRV`), arbitrates by the record's
+  priority byte and claims OPL channels 4/5 from the music through `INT 60h AX=6`;
+  a one-pole DC blocker (the half/abs-sine waveforms carry a large DC term the real
+  card's output stage removes); the SDL2 audio callback; and the `--dump-audio` WAV
+  writer.  Nothing here runs unless `main.c` opens it, so the test binaries and plain
+  `--headless` stay silent and byte-for-byte deterministic.
 * `render.c` — 320×200 VGA-index framebuffer, playfield 28×19 cells at (48,14), hero
   sprite in the three gfmcga passes, enemy/item sprites as 2×2 cells from `enpN.grp`,
   **projectiles and magic sprites as transparent tile-bank cells** (gfmcga 412F), the
@@ -381,6 +427,39 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     door 72F1 puts on the hero's column taken back out into MP10 / MP20 / MP31, with
     Satono's smith and Sage and Bosque's smith in between.  Asserts three bosses,
     no deaths, 820 EXP, the boss gold and three shops.
+* `test_audio.c` — 305 assertions over the sound back end:
+  * **the score parser against `tools/msd2mid.py`**: all 17 scores in all three
+    blob-B arrangements (AdLib, Tandy, PC speaker) are run through `msd.c`, and the
+    decoded event stream — note on/off with velocity and the legato flag, drum hits,
+    patch changes, CC7 volumes, the tick number of every one of them, and the tick at
+    which the machine state first repeats (the song loop) — is diffed line for line
+    against `python3 tools/msd2mid.py NAME --dump`.  All 51 match exactly; the test is
+    skipped with a note if python3 or the tool is missing.
+  * **the tick/tempo model**: `INT 8` = 236.7 Hz, the score rate
+    `118.35 * (256-T)/256` for the tempo bytes docs/MUSIC.md quotes, µs/quarter =
+    51,913,590/(256-T), and — driven through the real accumulator — exactly `256-T`
+    score ticks per 256 driver ticks for every tempo from 0x20 to 0xA0.  mus1's loop
+    is asserted at ticks 2305..5377 and mus5's body at 5664 ticks = 58.1 s, the
+    cross-check docs/MUSIC.md makes against the MT-32 arrangement.
+  * **the `9E53` music table**: the 14 `{archive, resource, name}` records the port
+    compiles in are compared byte for byte with the table read out of `fight.bin`
+    (`ZELRES2[0]` at `6000`), and every one of the 14 scores is loaded and run.
+  * **`FF75` → the `SND*.DRV` effect table**: `SNDADLIB.DRV` defines 65 effects
+    (7-byte records at `1743`: priority, two track pointers, the duration-table
+    base); the priorities of the 15 ids the engines use are checked against the file,
+    every track pointer is inside the track area or the empty stub at `201F`, every
+    id the engines write to `FF75` resolves, and `SNDSTD.DRV`'s 5-byte records give
+    the same 65 effects.  `INT 60h AX=6` is checked both ways: `CL` bits 0-1 mute the
+    music's OPL channels 4 and 5, `CL = 0` gives them back.
+  * **the OPL2 core**: a keyed-on voice at f-number 580 block 4 is rendered for a
+    second and measured at 440 Hz by zero crossings, and key-off with RR 15 drops it
+    a hundredfold inside 200 ms.
+  * **note pitch**: every note-on in mus1's first 2400 ticks is compared with the
+    f-number and block the driver programmes — all within 14 cents of the logged MIDI
+    note (the game's f-number table is a uniformly flat scale), with the `E1` detunes
+    accounted for separately.
+  * **silence and determinism**: the engine hooks are no-ops while audio is off, and
+    the same `--dump-audio` script rendered twice is bit-identical.
 * `tools/compare_shot.py` — playfield diff against a DOSBox capture.
 
 Verification: `make verify` renders six positions headlessly and compares them with
@@ -553,10 +632,72 @@ facing right.
   driven by gfmcga 3E45, which has not been decoded.
 * HUD: only the LIFE bar and the GOLD/ALMAS digits.  No frame, no PLACE/GOLD
   narrow-font labels, no item/magic icons, no sign text.
-* Sound and music: `sound.c` counts and names the requests but synthesises nothing.
+* Music: the MT-32 (`MSCMT.DRV`, blob A) and Tandy/PCjr (`MSCJR.DRV`, SN76496) back
+  ends are not implemented — `msd.c` parses both arrangements (the Tandy tracks feed
+  the speaker) but only OPL2 and the speaker are synthesised.  `SNDJR.DRV`'s effect
+  table is not read.  The `SNDADLIB` proximity/ambient routine at `15A3` (the `FF08`
+  entrance-distance sound) is not ported, and neither is the Esc pause box, so
+  `INT 60h AX=3` has no caller in the port.  The one game-driven fade is the boss
+  death (`FF24 = 0x0A`); a music change at a door restarts the score instead of
+  fading it.
 * Hit-flash palettes, the hero death animation, the Roka demo and the "doorway to
   the past".
 * EGA/CGA/Tandy render modes (only the MCGA pair-packing path).
+
+## Sound
+
+`--dir`'s `MSCADLIB.DRV` is **not** loaded: the driver is ported, not run.  What is
+read from the game directory is the data — the `.msd` scores out of `ZELRES1-3.SAR`
+and, for the effects, `SNDADLIB.DRV` / `SNDSTD.DRV` themselves, because the effect
+tracks, their OPL patches and their duration tables live inside those files.
+
+**What plays.**  A cavern's score is the one its level record names: byte +0 bits 1-4
+index fight.bin's `9E53` request table (`mgt1 ugm1 mgt2 ugm2 mus1..mus8 mbos mmao`),
+and the ten town maps use the same field, so Muralla plays `mgt1`, the caverns play
+`mus1..mus8`, the boss rooms `mbos`.  The score is (re)started only when the index
+changes, as `7E93` does.  On top of it the `FF75` effects play on OPL channels 4 and
+5, which the effect driver claims from the music through `INT 60h AX=6` when it loads
+a patch and gives back when both of its tracks end — so the music's two top voices
+drop out for the length of a sword swing exactly as on a real AdLib card.  Killing a
+boss starts the `FF24 = 0x0A` fade-out.
+
+**Timing.**  The audio clock is the original's: the sample counter drives a 236.7 Hz
+`INT 8`, the sound driver runs on every tick and the music driver on every second one
+(118.35 Hz), and inside the music driver a score step happens on the ticks where
+`acc += T` does not carry.  Nothing is tied to the frame rate.
+
+**Verified.**  `--dump-audio` renders to a WAV without a sound card, which is how the
+output was checked:
+
+* `--music 4` (mus1, cavern 1) rendered for 135 s and auto-correlated on its
+  amplitude envelope peaks at **47.13 s** — `msd2mid.py` reports a 47.1 s loop body.
+  `--music 8` (mus5) gives **58.07 s** against 58.1 s, and `--music 12` (mbos) peaks
+  at 23.17 s, exactly half of its 46.3 s body, because that body repeats internally.
+  That is the whole chain — header, byte-code, tempo accumulator, OPL2, resampling —
+  agreeing with the reference parser to about 0.05 %.
+* Sound effects land where the requests do: with `--music -1` (effects only) and
+  `--script "X4 .20 X4 .20 X4 .20 X4 .40"`, `--sound` logs FF75 = 03 at frames 2, 26,
+  50 and 74 and the WAV has four bursts 2.03 s apart (the frame is 84.5 ms, so 24
+  frames = 2.028 s), each about 550 ms long, with digital silence in between.
+* Pitch: of the 2908 analysis frames of the mus1 render, 93.5 % of the dominant
+  partial falls inside the `E2..D6` range `msd2mid.py` reports for that score and
+  84.5 % lands on a MIDI note the score actually plays (the rest are FM sidebands).
+  Separately `test_audio.c` measures a single OPL2 voice at 440 Hz and checks every
+  note-on's f-number against its MIDI note.
+* With the music off and no input the dump is **all zeroes** (peak 0), and rendering
+  the same script twice is byte-identical.
+
+**A finding about `tools/msd2mid.py`** (reported, not changed — it lives outside
+`port/`).  `MSCADLIB.DRV`'s relative-volume opcode (`C0-CF`, at `06B3`) tests the
+result with `test bl,0xC0`, so any attenuation above `0x3F` snaps to 0 — fully loud.
+That is a bug in the shipped driver: `set_level` uses `attenuation >> 1` as a 6-bit
+level, so the intended range is `0..0x7F`, and the STD/JR/MT builds all test `0x80`
+instead.  It matters exactly once: zopn (the title music) opens with `E5 4F` and then
+fades in with `C0`, and on AdLib the first `C0` jumps it straight to full volume.
+`msd.c` reproduces the driver by default; `tools/msd2mid.py` models the intended
+`0..0x7F` range, so `msd.c` has a `compat_msd2mid` flag that reproduces the tool and
+`test_audio.c` uses it for the diff, with the real behaviour asserted separately.
+The other 16 scores are unaffected.
 
 ## Playing it without a keyboard
 
@@ -614,7 +755,7 @@ Muralla's `"30yc"` is *Buy shield → the first shield → Yes → leave*.
 * **Cell-granular everything.**  No sub-cell positions exist anywhere (8 px steps,
   ≈11.8 fps at speed 5); smoothing would be a deliberate deviation for later.
 
-## What is left of milestone (d), and (e)
+## What is left of milestone (e), and after
 
 1. **The autopilot cannot yet cross MP10's lower level unaided.**  It plays the
    opening, the entrance shelf, the return trip and every boss room end to end, but
@@ -638,13 +779,11 @@ Muralla's `"30yc"` is *Buy shield → the first shield → Yes → leave*.
    ndisasm listings because the Ghidra output for them is unusable.
 3. **The remaining town machinery**: the parallax strips and the ympd/ckpd backdrops,
    the shopkeeper idle hooks, ENCNT.GRP, the HUD frame / labels / icons.
-4. **Milestone (e), sound**: `sound.c` counts and names every FF75 request the two
-   engines produce, and `docs/MUSIC.md` + `tools/msd2mid.py` describe the score
-   format; what is missing is a driver — the AdLib/PC-speaker synthesis
-   (`src/music_adlib.c`, `src/music_std.c`) behind an SDL2 audio callback, plus the
-   sound-effect table.  Nothing in the engine has to change: the requests are already
-   produced at the right frames, and `make playthrough` now generates a long,
-   reproducible stream of them to test a driver against.
+4. **The rest of the sound**: the MT-32 driver (`MSCMT.DRV` over blob A, which
+   `tools/msd2mid.py --mt` already decodes) and the Tandy SN76496 pair
+   (`MSCJR.DRV` + `SNDJR.DRV`); `SNDADLIB`'s `15A3` ambient/proximity routine, which
+   needs `FF08` (fight.bin `774E`) to be computed first; and the Esc pause box, which
+   is the only caller of `INT 60h AX=3`.
 5. **More ground truth**: DOSBox captures of caverns 2-9, of a boss encounter and of
    a town dialogue box, so `make verify` can cover the remaining tilesets, the boss
    HP bar and the dialogue renderer.  The port writes `NAME.USR` in kenjpro A862's own

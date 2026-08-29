@@ -17,6 +17,7 @@
 #include "shop.h"
 #include "status.h"
 #include "shell.h"
+#include "audio.h"
 #ifdef HAVE_SDL
 #include <SDL.h>
 #endif
@@ -37,10 +38,15 @@ typedef struct {
     int      scale;
     int      quit;
     int      verbose;
+    int      dump_audio;
 #ifdef HAVE_SDL
     SDL_Window *win; SDL_Renderer *ren; SDL_Texture *tex;
 #endif
 } App;
+
+#ifdef HAVE_SDL
+static int f1_was, f2_was, music_on = 1, sfx_on = 1;   /* the F1 / F2 hotkeys */
+#endif
 
 /* the engines carry the Shell in ->user; the front end hangs off shell->user */
 static App *app_of(const void *shell_user) { return ((const Shell *)shell_user)->user; }
@@ -51,6 +57,7 @@ static void usage(void)
         "usage: zeliard [--dir GAMEDIR] [--map N] [--pos COL ROW] [--town N] [--headless]\n"
         "               [--screenshot N out.png] [--script SCRIPT] [--scale N] [--speed N]\n"
         "               [--frames N] [--sound] [--verbose]\n"
+        "               [--no-music] [--speaker] [--music N] [--dump-audio FILE.wav]\n"
         "  --dir       directory holding ZELRES1-3.SAR (default: zeliard/, ../zeliard/)\n"
         "  --map N     system map index (0 = MP10 .. 0x1E = MPA0; default 0)\n"
         "  --pos C R   hero top-left map cell (default: the MURALLA door in MP10, 61 7)\n"
@@ -130,6 +137,7 @@ static void set_buttons(Game *g, uint8_t b)
 static void present(Game *g)
 {
     App *a = app_of(g->user);
+    audio_advance_ms(a->frame_ms);
     if (a->verbose)
         fprintf(stderr, "frame %4u  hero map (%3d,%2d) scr (%2d,%2d) scroll (%3d,%2d) v=%02x anim=%02x flags=%02x "
                 "crouch=%02x ladder=%02x dirs=%x hp=%u atk=%02x/%u%s%s\n",
@@ -187,6 +195,11 @@ static void present(Game *g)
         SDL_Delay(rem > 2 ? 1 : 0);
     }
     const Uint8 *k = SDL_GetKeyboardState(NULL);
+    /* STICK's F1 / F2 hotkeys: music and sound-effect toggles */
+    int f1 = k[SDL_SCANCODE_F1], f2 = k[SDL_SCANCODE_F2];
+    if (f1 && !f1_was) { music_on = !music_on; audio_music_enable(music_on); }
+    if (f2 && !f2_was) { sfx_on = !sfx_on; audio_sfx_enable(sfx_on); }
+    f1_was = f1; f2_was = f2;
     uint8_t d = 0;
     if (k[SDL_SCANCODE_UP] || k[SDL_SCANCODE_W] || k[SDL_SCANCODE_Z] || k[SDL_SCANCODE_SPACE]) d |= DIR_UP;
     if (k[SDL_SCANCODE_DOWN] || k[SDL_SCANCODE_S]) d |= DIR_DOWN;
@@ -205,6 +218,7 @@ static void present(Game *g)
 static void town_present(Town *t)
 {
     App *a = app_of(t->user);
+    audio_advance_ms(a->frame_ms);
     if (a->verbose)
         fprintf(stderr, "town frame %4u  hero map col %3d scr %3d scroll %3d anim %u flags %02x%s%s\n",
                 t->frame_no, town_hero_col(t), t->hero_scr_col, t->scroll_col, t->hero_anim, t->hero_flags,
@@ -270,6 +284,11 @@ static void town_present(Town *t)
         SDL_Delay(rem > 2 ? 1 : 0);
     }
     const Uint8 *k = SDL_GetKeyboardState(NULL);
+    /* STICK's F1 / F2 hotkeys: music and sound-effect toggles */
+    int f1 = k[SDL_SCANCODE_F1], f2 = k[SDL_SCANCODE_F2];
+    if (f1 && !f1_was) { music_on = !music_on; audio_music_enable(music_on); }
+    if (f2 && !f2_was) { sfx_on = !sfx_on; audio_sfx_enable(sfx_on); }
+    f1_was = f1; f2_was = f2;
     uint8_t d = 0;
     if (k[SDL_SCANCODE_UP] || k[SDL_SCANCODE_W] || k[SDL_SCANCODE_Z]) d |= DIR_UP;
     if (k[SDL_SCANCODE_DOWN] || k[SDL_SCANCODE_S]) d |= DIR_DOWN;
@@ -297,6 +316,8 @@ int main(int argc, char **argv)
     long dbg_gold = -1;
     const char *dbg_potions = NULL, *dbg_spells = NULL;
     const char *save_name = "ZELIARD", *load_name = NULL;
+    const char *wav_path = NULL;
+    int want_audio = 1, audio_backend = AUDIO_ADLIB, music_force = -2;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--dir") && i + 1 < argc) dir = argv[++i];
         else if (!strcmp(argv[i], "--map") && i + 1 < argc) map_idx = (int)strtol(argv[++i], NULL, 0);
@@ -313,6 +334,10 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--town-npc") && i + 2 < argc) { npc_i = atoi(argv[++i]); npc_f = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--town-anim") && i + 2 < argc) { town_anim = atoi(argv[++i]); town_face = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--sound")) sound_set_log(1);
+        else if (!strcmp(argv[i], "--no-music")) want_audio = 0;
+        else if (!strcmp(argv[i], "--speaker")) audio_backend = AUDIO_SPEAKER;
+        else if (!strcmp(argv[i], "--dump-audio") && i + 1 < argc) wav_path = argv[++i];
+        else if (!strcmp(argv[i], "--music") && i + 1 < argc) music_force = (int)strtol(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--sword") && i + 1 < argc) dbg_sword = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--shield") && i + 1 < argc) dbg_shield = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--level") && i + 1 < argc) dbg_level = atoi(argv[++i]);
@@ -326,6 +351,18 @@ int main(int argc, char **argv)
         else { usage(); return 2; }
     }
     sh->user = &a; sh->present = present; sh->town_present = town_present;
+    /* audio before shell_init: loading a map starts its score (shell.c).  A
+     * headless run without --dump-audio never opens it, so `make verify` and
+     * the scripted runs stay silent and do no extra work. */
+    if (want_audio && (!a.headless || wav_path)) {
+        const char *gdir = shell_find_dir(dir);
+        audio_init(gdir, audio_backend, wav_path == NULL && !a.headless);
+        if (wav_path) {
+            if (audio_dump_open(wav_path)) { fprintf(stderr, "cannot write %s\n", wav_path); return 1; }
+            a.dump_audio = 1;
+            fprintf(stderr, "[audio] %s -> %s (%.1f ms per frame)\n", audio_backend_name(), wav_path, a.frame_ms);
+        }
+    }
     if (shell_init(sh, dir, map_idx)) return 1;
     Game *g = &sh->g;
 
@@ -385,6 +422,7 @@ int main(int argc, char **argv)
     if (!a.headless) { fprintf(stderr, "built without SDL2: running headless (use --screenshot / --script)\n"); a.headless = 1; }
 #endif
     if (a.headless && a.shot_path && a.shot_frame == 0) a.shot_frame = 1;
+    if (music_force >= -1) audio_music_force(music_force);     /* --music N: pin one score (-1 = effects only) */
 
     if (start_in_town >= 0) {
         if (!shell_enter_town(g, start_in_town, town_col, 0)) return 1;
@@ -407,6 +445,7 @@ int main(int argc, char **argv)
     fprintf(stderr, "stopped after %u frames: hero map (%d,%d), LIFE %u/%u, EXP %u, GOLD %u, %u hazard frames, %u deaths\n",
             g->frame_no, game_hero_map_col(g), game_hero_map_row(g), g->hp, g->max_hp, g->exp, (unsigned)g->gold,
             g->hazard_frames, g->deaths);
+    audio_shutdown();
 #ifdef HAVE_SDL
     if (a.tex) SDL_DestroyTexture(a.tex);
     if (a.ren) SDL_DestroyRenderer(a.ren);
