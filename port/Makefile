@@ -11,13 +11,15 @@ SDL_LIBS   ?= $(shell pkg-config --libs sdl2 2>/dev/null || sdl2-config --libs 2
 -include local.mk
 
 CORE = sar.o gfx.o map.o physics.o render.o png.o enemy.o ai.o combat.o shots.o sound.o \
-       ai_eai1.o ai_eai2.o ai_eai3.o ai_eai4.o ai_eai5.o ai_eai6.o ai_eai7.o ai_eai8.o town.o
+       ai_eai1.o ai_eai2.o ai_eai3.o ai_eai4.o ai_eai5.o ai_eai6.o ai_eai7.o ai_eai8.o town.o \
+       boss.o boss_crab.o boss_tako.o boss_tori.o boss_zela.o boss_meda.o boss_lega.o boss_generic.o \
+       text.o player.o shop.o
 ifneq ($(strip $(SDL_LIBS)),)
   CFLAGS += -DHAVE_SDL $(SDL_CFLAGS)
   LIBS   += $(SDL_LIBS)
 endif
 
-all: zeliard test_physics test_combat test_town
+all: zeliard test_physics test_combat test_town test_boss test_shop
 
 zeliard: main.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
@@ -31,17 +33,25 @@ test_combat: test_combat.o $(CORE)
 test_town: test_town.o $(CORE)
 	$(CC) -o $@ $^
 
-%.o: %.c sar.h gfx.h map.h physics.h render.h png.h enemy.h town.h
+test_boss: test_boss.o $(CORE)
+	$(CC) -o $@ $^
+
+test_shop: test_shop.o $(CORE)
+	$(CC) -o $@ $^
+
+%.o: %.c sar.h gfx.h map.h physics.h render.h png.h enemy.h town.h boss.h text.h player.h shop.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: test_physics test_combat test_town
+test: test_physics test_combat test_town test_boss test_shop
 	./test_physics
 	./test_combat
 	./test_town
+	./test_boss
+	./test_shop
 
 # start position vs docs/screenshots/cavern.png, and the cavern-1 frog sprite
 # vs docs/screenshots/cavern_enemy.png (needs python3 + Pillow)
-verify: zeliard test_combat test_town
+verify: zeliard test_combat test_town test_shop
 	./zeliard --dir ../zeliard --screenshot 1 /tmp/zel_start.png
 	python3 tools/compare_shot.py /tmp/zel_start.png ../docs/screenshots/cavern.png
 	python3 tools/compare_shot.py /tmp/zel_start.png ../docs/screenshots/cavern.png \
@@ -69,8 +79,18 @@ verify: zeliard test_combat test_town
 		--box 144 102 112 40 --label "town tiles, screen cols 12-25"
 	python3 tools/compare_shot.py /tmp/zel_town.png ../docs/screenshots/town.png \
 		--box 256 118 16 24 --label "town hero sprite (tman, frame 3)"
+	# the Muralla weapon shop (door at column 39) with its greeting and main
+	# menu up, vs docs/screenshots/shop_armour.png
+	./zeliard --dir ../zeliard --town 1 --town-col 40 --headless --frames 400 \
+		--script "U2 .200" --screenshot 40 /tmp/zel_shop.png
+	python3 tools/compare_shot.py /tmp/zel_shop.png ../docs/screenshots/shop_armour.png \
+		--box 56 23 96 52 --label "armour shop portrait"
+	python3 tools/compare_shot.py /tmp/zel_shop.png ../docs/screenshots/shop_armour.png \
+		--box 52 96 216 55 --label "shop text box (proportional font)"
+	python3 tools/compare_shot.py /tmp/zel_shop.png ../docs/screenshots/shop_armour.png \
+		--box 164 29 96 55 --label "shop menu widget + cursor"
 
 clean:
-	rm -f *.o zeliard test_physics test_combat test_town
+	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop
 
 .PHONY: all test verify clean

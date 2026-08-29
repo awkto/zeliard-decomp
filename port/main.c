@@ -10,7 +10,11 @@
 #include "render.h"
 #include "png.h"
 #include "enemy.h"
+#include "boss.h"
 #include "town.h"
+#include "text.h"
+#include "player.h"
+#include "shop.h"
 #ifdef HAVE_SDL
 #include <SDL.h>
 #endif
@@ -32,6 +36,7 @@ typedef struct {
     TownSprites tspr;
     TownHero    thero;
     Town        town;
+    TextFont    tfont;
     int      in_town;                   /* 0 = fight.bin, 1 = town.bin */
     int      town_tiles_idx, town_spr_idx;
     int      ai_index, enp_index;
@@ -70,7 +75,11 @@ static void usage(void)
         "  --speed N   FF33 speed (frame = 4*N ticks; default 5 = 84.5 ms)\n"
         "  --scale N   window scale (default 3)\n"
         "  --frames N  quit after N rendered frames (SDL and headless)\n"
-        "  --sound     log every FF75 sound request the engine produces\n");
+        "  --sound     log every FF75 sound request the engine produces\n"
+        "  --sword N --shield N --level N --life N --gold N\n"
+        "              set the player record directly (the shops do it properly)\n"
+        "  --name NAME the NAME.USR the sage's \"Record Experience\" writes\n"
+        "  --load NAME restore NAME.USR (town.bin 7592) before starting\n");
 }
 
 static int script_next(App *a)
@@ -196,7 +205,8 @@ static void town_present(Town *t)
     if (a->headless) {
         if (a->shot_path && t->frame_no == a->shot_frame) {
             static uint8_t rgb[FB_W * FB_H * 3];
-            town_render(a->fb, t);
+            if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
+            else town_render(a->fb, t);
             render_hud(a->fb, t->g, &a->font);
             render_to_rgb(a->fb, rgb);
             if (png_write_rgb(a->shot_path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", a->shot_path);
@@ -205,13 +215,15 @@ static void town_present(Town *t)
         if (!script_next(a)) { if (!a->shot_path || t->frame_no >= a->shot_frame) a->quit = 1; t->dirs = 0; t->buttons = 0; }
         else {
             if ((a->script_btns & 1) && !(t->buttons & 1)) t->btn1_edge = 0xFF;
+            if ((a->script_btns & 2) && !(t->buttons & 2)) t->btn2_edge = 0xFF;
             t->dirs = a->script_dirs; t->buttons = a->script_btns;
         }
         return;
     }
 #ifdef HAVE_SDL
     static uint8_t rgb[FB_W * FB_H * 3];
-    town_render(a->fb, t);
+    if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
+    else town_render(a->fb, t);
     render_hud(a->fb, t->g, &a->font);
     render_to_rgb(a->fb, rgb);
     SDL_UpdateTexture(a->tex, NULL, rgb, FB_W * 3);
@@ -245,8 +257,10 @@ static void town_present(Town *t)
     if (k[SDL_SCANCODE_RIGHT] || k[SDL_SCANCODE_D]) d |= DIR_RIGHT;
     t->dirs = d;
     uint8_t b = 0;
-    if (k[SDL_SCANCODE_SPACE] || k[SDL_SCANCODE_X]) b |= 1;
+    if (k[SDL_SCANCODE_SPACE] || k[SDL_SCANCODE_X] || k[SDL_SCANCODE_RETURN]) b |= 1;
+    if (k[SDL_SCANCODE_C] || k[SDL_SCANCODE_LALT] || k[SDL_SCANCODE_RALT] || k[SDL_SCANCODE_BACKSPACE]) b |= 2;
     if ((b & 1) && !(t->buttons & 1)) t->btn1_edge = 0xFF;
+    if ((b & 2) && !(t->buttons & 2)) t->btn2_edge = 0xFF;
     t->buttons = b;
 #endif
 }
@@ -275,6 +289,7 @@ static int enter_town(Game *g, int idx, int col, int died)
     if (town_load_banks(a)) return 0;
     town_init(&a->town, &a->tmap, &a->ttiles, &a->tspr, &a->thero, g);
     a->town.user = a; a->town.present = town_present;
+    a->town.font = &a->tfont; a->town.dir = a->dir;
     town_place(&a->town, col < 0 ? a->tmap.start_col : col, 0);
     g->cur_map = (uint8_t)(0x80 | idx);
     g->town_map = g->cur_map;
@@ -289,19 +304,47 @@ static int enter_town(Game *g, int idx, int col, int died)
 
 /* fight.bin 7EBB: (re)load the AI overlay and the enemy sprite bank named by
  * the map's level record (+3 AI request index, +4 ENPn). */
-static void load_enemy_banks(App *a, Game *g, const Map *m)
+static void load_banks_by_index(App *a, Game *g, int ai_index, int enp_index)
 {
-    if (!a->ai.loaded || a->ai_index != m->ai) {
+    if (!a->ai.loaded || a->ai_index != ai_index) {
         ai_unload(&a->ai);
-        if (ai_load(&a->ai, a->dir, m->ai)) fprintf(stderr, "cannot load AI overlay %d\n", m->ai);
-        a->ai_index = m->ai;
+        if (ai_load(&a->ai, a->dir, ai_index)) fprintf(stderr, "cannot load AI overlay %d\n", ai_index);
+        a->ai_index = ai_index;
     }
-    if (a->egfx.ncells == 0 || a->enp_index != m->enemies) {
-        if (gfx_load_enemy_cells(&a->egfx, a->dir, m->enemies)) fprintf(stderr, "cannot load enp%d.grp\n", m->enemies + 1);
-        a->enp_index = m->enemies;
+    if (a->egfx.ncells == 0 || a->enp_index != enp_index) {
+        if (gfx_load_enemy_cells(&a->egfx, a->dir, enp_index)) fprintf(stderr, "cannot load enemy bank %d\n", enp_index);
+        a->enp_index = enp_index;
     }
     g->ai = a->ai.loaded ? &a->ai : NULL;
     g->egfx = a->egfx.ncells ? &a->egfx : NULL;
+}
+
+static void load_enemy_banks(App *a, Game *g, const Map *m)
+{
+    /* 6117: in a boss room the level record's +5 bank replaces +4 (0xFF =
+     * "keep"), and the AI overlay named by +3 is the boss overlay. */
+    int enp = m->enemies;
+    if (enp == 0xFF || boss_overlay_p(m->ai)) enp = m->boss_bank;
+    load_banks_by_index(a, g, m->ai, enp);
+    g->boss_map  = (uint8_t)((m->lvl_flags & 0x80) ? 0xFF : 0);         /* -> FF34 */
+    g->boss_room = (uint8_t)((m->lvl_flags & 0x40) ? 0xFF : 0);         /* -> [E6] */
+    if (g->boss_map || g->boss_room) {
+        if (boss_init(g) == 0)
+            fprintf(stderr, "[boss] %s \"%s\": HP %u, EXP %u, gold %u, camera column %u%s\n",
+                    boss_overlay_name(m->ai), g->boss.name, g->boss.hp0, g->boss.exp,
+                    g->boss.gold, g->boss.cam_col, g->boss.knock_left ? ", knocks left" : "");
+        else fprintf(stderr, "[boss] overlay %d has no [A002] block\n", m->ai);
+    } else {
+        g->boss.active = 0; g->boss_knock_left = 0; g->encounter_frames = 0;
+    }
+}
+
+/* 7305/731F: post_boss_transition swaps in the level record's +6/+7 banks. */
+static int post_boss_banks(Game *g, int post_ai, int post_enemies)
+{
+    App *a = g->user;
+    load_banks_by_index(a, g, post_ai, post_enemies);
+    return 1;
 }
 
 static int enter_cavern(App *a, Game *g, int sys_map, int col, int row, int face_left);
@@ -387,6 +430,7 @@ static void town_frame(App *a, Game *g)
         if (town_load_banks(a)) break;
         town_init(t, &a->tmap, &a->ttiles, &a->tspr, &a->thero, g);
         t->user = a; t->present = town_present;
+        t->font = &a->tfont; t->dir = a->dir;
         /* 6CE4 / 6D22: reappear at the far end of the new map */
         t->scroll_col = left ? a->tmap.width - 0x24 : 0;
         t->hero_scr_col = left ? 0x1A : 0;
@@ -396,11 +440,17 @@ static void town_frame(App *a, Game *g)
         g->town_map = g->cur_map;
         fprintf(stderr, "[town] -> %s (%d columns)\n", a->tmap.label, a->tmap.width);
         break; }
-    case TOWN_SHOP:
-        fprintf(stderr, "[town] shop %d (%s) is not implemented\n", t->action_arg,
-                (const char *[]){"king", "omoya", "sage", "armour", "drug", "church", "bank", "inn"}[t->action_arg & 7]);
-        snprintf(t->message, sizeof t->message, "(shop not implemented)");
-        break;
+    case TOWN_SHOP: {                                                   /* 6E7E run_shop */
+        int dest = t->action_arg & 7;
+        fprintf(stderr, "[shop] entering %s (town id %u)\n",
+                (const char *[]){"king", "omoya", "sage", "armour", "drug", "church", "bank", "inn"}[dest],
+                a->tmap.town_id);
+        if (shop_run(t, dest)) fprintf(stderr, "[shop] cannot load the overlay\n");
+        town_apply_patches(&a->tmap, g->page);                          /* 6EAF */
+        town_npc_markers_reset(t);
+        fprintf(stderr, "[shop] left: GOLD %u, sword %u, shield %u/%u, LIFE %u/%u, EXP %u, level %u\n",
+                (unsigned)g->gold, g->sword, g->shield, g->shield_hp, g->hp, g->max_hp, g->exp, g->level);
+        break; }
     case TOWN_PAST_DOOR:
         fprintf(stderr, "[town] the doorway to the past is not implemented\n");
         break;
@@ -414,6 +464,9 @@ int main(int argc, char **argv)
     a.frame_ms = FRAME_MS_DEFAULT; a.scale = 3;
     const char *dir = NULL;
     int map_idx = 0, pos_col = -1, pos_row = -1, start_in_town = -1, town_col = -1, town_scr = -1, town_anim = -1, town_face = 0, npc_i = -1, npc_f = 0;
+    int dbg_sword = -1, dbg_shield = -1, dbg_level = -1, dbg_life = -1;
+    long dbg_gold = -1;
+    const char *save_name = "ZELIARD", *load_name = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--dir") && i + 1 < argc) dir = argv[++i];
         else if (!strcmp(argv[i], "--map") && i + 1 < argc) map_idx = (int)strtol(argv[++i], NULL, 0);
@@ -430,6 +483,13 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--town-npc") && i + 2 < argc) { npc_i = atoi(argv[++i]); npc_f = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--town-anim") && i + 2 < argc) { town_anim = atoi(argv[++i]); town_face = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--sound")) sound_set_log(1);
+        else if (!strcmp(argv[i], "--sword") && i + 1 < argc) dbg_sword = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--shield") && i + 1 < argc) dbg_shield = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--level") && i + 1 < argc) dbg_level = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--life") && i + 1 < argc) dbg_life = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--gold") && i + 1 < argc) dbg_gold = atol(argv[++i]);
+        else if (!strcmp(argv[i], "--name") && i + 1 < argc) save_name = argv[++i];
+        else if (!strcmp(argv[i], "--load") && i + 1 < argc) load_name = argv[++i];
         else if (!strcmp(argv[i], "--verbose") || !strcmp(argv[i], "-v")) a.verbose = 1;
         else { usage(); return 2; }
     }
@@ -441,11 +501,28 @@ int main(int argc, char **argv)
     if (gfx_load_hero(&a.hero, a.dir)) { fprintf(stderr, "cannot load fman.grp\n"); return 1; }
 
     if (gfx_load_digits(&a.font, a.dir)) fprintf(stderr, "note: no HUD digit font (font.grp)\n");
+    if (text_load_font(&a.tfont, a.dir)) fprintf(stderr, "note: no proportional font (font.grp)\n");
 
     Game g;
     game_init(&g, &a.maps[0], &a.tiles[0]);
     g.user = &a; g.present = present; g.on_door = on_door;
+    /* STDPLY.BIN is the fresh player record: HP, the training sword and the
+     * per-town shop stock masks (docs/TOWN.md §7).  Without it the shops have
+     * nothing to sell. */
+    if (player_load_stdply(&g, a.dir)) fprintf(stderr, "note: STDPLY.BIN not found: the shops will have no stock\n");
+    snprintf(g.player_name, sizeof g.player_name, "%s", save_name);      /* FF6C..FF73 */
+    if (load_name && player_load_usr(&g, a.dir, load_name) == 0)         /* town.bin 7592 restore_game */
+        fprintf(stderr, "[save] %s.usr restored: LIFE %u/%u, level %u, EXP %u, GOLD %u\n",
+                load_name, g.hp, g.max_hp, g.level, g.exp, (unsigned)g.gold);
+    else if (load_name) fprintf(stderr, "[save] cannot read %s.usr\n", load_name);
+    if (dbg_sword >= 0)  g.sword = (uint8_t)dbg_sword;                   /* [92] */
+    if (dbg_shield >= 0) { g.shield = (uint8_t)dbg_shield; g.shield_hp = 0x100; }  /* [93]/[94] */
+    if (dbg_level >= 0)  g.level = (uint8_t)dbg_level;                   /* [8D] */
+    if (dbg_life >= 0)   { g.max_hp = (uint16_t)dbg_life; g.hp = g.max_hp; }       /* [B2]/[90] */
+    if (dbg_gold >= 0)   g.gold = (uint32_t)dbg_gold;                    /* [85..87] */
+    player_page_push(&g);
     a.ai_index = a.enp_index = -1;
+    g.post_boss = post_boss_banks;
     load_enemy_banks(&a, &g, &a.maps[0]);
     if (pos_col < 0) {
         if (map_idx == 0) { pos_col = 61; pos_row = 7; }                 /* mrmp.mdt cavern entry (61,7): the MURALLA door */

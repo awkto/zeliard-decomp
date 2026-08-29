@@ -38,6 +38,8 @@ int map_parse(Map *m, const uint8_t *d, size_t len)
     size_t lv = u16(d, 0) - BASE;
     if (lv + 5 <= len) {
         m->lvl_flags = d[lv]; m->tileset = d[lv + 2]; m->ai = d[lv + 3]; m->enemies = d[lv + 4];
+        m->lvl_off = lv;
+        if (lv + 8 <= len) { m->boss_bank = d[lv + 5]; m->post_ai = d[lv + 6]; m->post_enemies = d[lv + 7]; }
     }
     m->cavern = d[0x12]; m->start_col = u16(d, 0x13); m->start_row = d[0x15]; m->row_bias = d[0x16];
 
@@ -75,6 +77,7 @@ int map_parse(Map *m, const uint8_t *d, size_t len)
         }
     }
     m->patches = u16(d, 0xC);
+    m->vidinit = u16(d, 0xE);
     /* doors */
     size_t o = u16(d, 0xA) - BASE;
     while (o + 12 <= len && u16(d, o) != 0xFFFF && m->ndoors < 64) {

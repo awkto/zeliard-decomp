@@ -21,7 +21,7 @@
 #include "ai_common.h"
 
 static struct shot bolt_l = { 0, 0, 0x15, 0, 50, 4, 80 };          /* A552: left, 50 cells, damage 80 */
-static struct shot bolt_r = { 0, 0, 0x12, 0, 50, 0, 80 };          /* A55F: right */
+static struct shot bolt_r = { 0, 0, 0x14, 0, 50, 0, 80 };          /* A55F: right (cell 0x14) */
 static const u8 pose_of_anim[8] = { 1, 2, 3, 0, 3, 2, 1, 0 };     /* A4EA */
 
 /* 0xA1B6  Frame entry. */

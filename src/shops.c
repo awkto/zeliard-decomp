@@ -135,7 +135,9 @@ void king_act0_speak(void)
     }
 }
 
-/* king_draw_portrait @A114: 8 rows x 12 cols at (x4 0x0E = 56 px, y 0x17 = 23); when the
+/* king_draw_portrait @A114: 8 rows x 12 cols at (BH 0x0E = cell column 14 = 112 px? no:
+   gtmcga GT_DRAW_CELL takes BH as an 8-px CELL column, so 0x0E -> x = 56 px, y 0x17 = 23,
+   i.e. a 12x8-cell frame at (56,23) — confirmed pixel-exact by docs/screenshots/shop_armour.png); when the
  * game is won ([0x49] != 0) also draws face frame 6 (A138..A140). */
 static const u8 king_portrait_map[8][12] = /* A16E */ {
     {0x00,0x01,0x02,0x03,0x3e,0x3f,0x40,0x41,0x18,0x19,0x1a,0x1b},

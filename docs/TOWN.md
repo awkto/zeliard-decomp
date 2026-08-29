@@ -263,7 +263,9 @@ Common prologue (A006..A04E in king/armr/bank/chur/drug/inna): portrait `.grp` �
 `GT_DRAW_CELL` (12×8 cells at x4 7 or 0x0E, y 0x17), text box `VID_WINDOW(FF, 0D, 60, 36, 37)`,
 then the `shop_print_text` loop with a per-shop action jump table; `FF FF` → `VID_DISSOLVE`,
 `ret` to town.bin 6EAF.  `[A002]` = idle hook (blink / lip-sync; `[FF50]` is the timer).  Prices
-and stock are indexed by the map's town id `[C006]` (1 castle/Muralla … 9 Esco).
+and stock are indexed by the map's town id `[C006]` − 1.  Note `cmap` (the castle) and
+`mrmp` (Muralla) **share id 1**, so the row labels in the tables below are one town out
+from Muralla on: Muralla's Training sword is 400 and the last row is Esco.
 
 ### kingpro (King of Felishika, cmap col 52)
 Script by flags: first visit (`[05]|[06] == 0`) → gift; `[06]==0` → "did you forget something";

@@ -2,6 +2,7 @@
  * enemy pass (8D19), the death animation (90E6), respawning (94FF) and the
  * item/drop state machine (8E14).  docs/FIGHT.md §7-§8, src/fight.c. */
 #include "enemy.h"
+#include "boss.h"
 #include "sar.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -268,7 +269,7 @@ static void enemy_step(Game *g, MapObj *o)
 /* 0x8D19  The per-frame enemy pass. */
 void enemies_update(Game *g)
 {
-    if (g->boss_map || g->boss_room) return;                            /* 8D1D: the boss AI does it all */
+    if (g->boss_map || g->boss_room) { boss_update(g); return; }        /* 8D1D: the boss AI does it all */
     for (int i = 0; i < g->nobj; i++) {
         MapObj *o = &g->obj[i];
         g->obj_index = (uint8_t)i;

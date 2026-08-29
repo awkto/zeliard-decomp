@@ -69,6 +69,8 @@ const char *town_dialogue(const TownMap *m, int script);
 
 typedef struct Town Town;
 typedef void (*TownPresentFn)(Town *t);
+struct Shop;
+struct TextFont;
 
 /* what a frame asked the shell to do (the original jumps out of the loop) */
 enum { TOWN_NONE = 0, TOWN_TO_CAVERN, TOWN_TO_TOWN, TOWN_SHOP, TOWN_PAST_DOOR };
@@ -92,6 +94,11 @@ struct Town {
     int      action, action_arg;    /* TOWN_* */
     TownPresentFn present;
     void    *user;
+    /* the shop overlay currently swapped into A000 (town.bin 6E7E) — while it
+     * is set the shop owns the screen and the frame loop */
+    struct Shop *shop;
+    const struct TextFont *font;    /* font.grp, shared with the shops */
+    const char  *dir;               /* the game directory, for the overlays */
 };
 
 void town_init(Town *t, TownMap *m, TownTiles *ti, TownSprites *s, TownHero *h, Game *g);

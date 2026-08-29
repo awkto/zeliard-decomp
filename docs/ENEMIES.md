@@ -212,7 +212,7 @@ ink cloud (4 parts, class 0x10, immune, contact 10) drifting left one cell/frame
 frames from (col+4, row+4), sound 0x27.  Death: 40 frames, sound 0x28.
 
 ### Pollo (bird, `boss_tori.c`)
-9×8 parts from up to four layers (`A64D` bitmaps / `A6CB` lists): body (0/1 flinch),
+9×8 parts from up to four layers (`A6CB` = the 9-byte bitmaps, `A64D` = the byte lists — the two are the other way round from an earlier note; popcounts match the run lengths): body (0/1 flinch),
 wings (4), legs (3), head (4).  Hovers over the hero every 2nd frame (columns ≥ 0x0D..0x30);
 1/32 per frame or when hit: 4 flaps then a 15-frame dive left (rising to row 0x0E, sound
 0x2B) then back to row 0x12; 1/16 per frame lays an egg (fight.bin shot: cell 0xA7, 50
@@ -223,7 +223,7 @@ cells left, damage 40) from (col+4, row+4).  Damage ×2, ×8 on the head (class 
 4×3 parts, `type` = pose (0..4) and `phase` = part index (roles swapped).  Hops (1/16 per
 frame) toward the hero, columns 0x11..0x32; while a shot is pending walks toward him at half
 animation speed.  50 % per frame when facing him: shot from (col+1, row+3) left or (col+7,
-row+3) right — Agar: cells 0x15/0x12, 50 cells, **damage 80**, hit sound 0x25, damage ×½
+row+3) right — Agar: cells 0x15 (left) / 0x14 (right), 50 cells, **damage 80**, hit sound 0x25, damage ×½
 except magic 3 (source 4) ×2 with sound 0x24.  **Paguro** is the same code (13 bytes shorter:
 no magic-3 branch, always ×½ and sound 0x24), palette 0, bolts cell 0x05/0x04 **damage 120**,
 HP 600 / EXP 3000 / gold 1600.  Death: 40 frames, sound 0x28 every 4th frame for 21.
@@ -232,7 +232,8 @@ HP 600 / EXP 3000 / gold 1600.  Death: 40 frames, sound 0x28 every 4th frame for
 14×12 word image from layered bitmaps (`A5DC` body, `A613` right side, tentacles by hero
 position `A62E`, attack `A687`).  Cruises at row 7 between columns 0x0A..0x31 one cell/frame;
 when the hero is right below (col+5..col+6) dives 4 rows and back.  5-frame attack cycle
-with a 3-frame pause: two drips (fight.bin shots straight down, cell 0x32, 50 cells, damage
+with a 3-frame pause: two drips (fight.bin shots straight down, cell 0x30 — 0x32 is the
+50-cell life byte, not the cell — 50 cells, damage
 80) from (col+6, row+12) and (col+7, row+10).  Damage ×1/8, but a sword ≥ 4 hit ×4 (sound
 0x2D, else 0x2E).  Death: 40 frames, sound 0x23.
 

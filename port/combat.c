@@ -251,6 +251,7 @@ void hero_knockback(Game *g)
     int left;
     if (l && r) left = (g->hero_flags & FACE_LEFT) != 0;                /* 642F */
     else left = !l;                                                     /* hit on the left -> pushed right */
+    if (g->boss_knock_left) left = 1;                                   /* 9F01: [[A002]+8] boss rooms */
     if (g->on_ladder) {                                                 /* 6440 / 6463 */
         g->hero_flags = (uint8_t)((g->hero_flags & ~3) | (left ? FACE_LEFT : 0));
         g->vstate = V_FALL; g->btn1_edge = 0;

@@ -45,7 +45,7 @@ Player record fields read **directly** by the driver (BASE:0000 = STDPLY.BIN =
 "standard player" defaults; CS-relative because everything shares BASE):
 `0x85..0x87` GOLD (byte 0x85 = bits 16–23, word 0x86 = bits 0–15), `0x8B` ALMAS
 (u16), `0x90` LIFE current (u16), `0x92` equipped sword picture #, `0x93` selected
-magic (0 = none), `0x94` magic count/points (u16, uncertain), `0x9D` selected item
+magic (0 = none), `0x93` shield, `0x94`/`0x96` shield HP/max, `0x9D` selected magic, `0xAB..0xB1`/`0xB4..0xBA` magic charges/maxima, `0x9D` selected item
 slot (1-based), `0xAB+i` item counts (bytes), `0xB2` LIFE max (u16). Which of
 `0x90`/`0xB2` is "max" is inferred from call frequency (`[0x2008]` has 12 callers,
 `[0x2006]` 3) — uncertain.

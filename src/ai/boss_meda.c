@@ -22,7 +22,7 @@
  */
 #include "ai_common.h"
 
-static struct shot drip = { 0, 0, 0x32, 0, 50, 6, 80 };            /* A6E0: straight DOWN, 50 cells, damage 80 */
+static struct shot drip = { 0, 0, 0x30, 0, 50, 6, 80 };            /* A6E0: straight DOWN, cell 0x30, 50 cells, damage 80 */
 
 /* 0xA1EA  Frame entry. */
 void boss_entry(void)

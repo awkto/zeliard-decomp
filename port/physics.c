@@ -2,6 +2,7 @@
  * the hex tags match fight.c; the ring is addressed with linear indices and the
  * same single wrap the original applies to pointers (6D82/6D8E). */
 #include "physics.h"
+#include "boss.h"
 #include "enemy.h"
 #include <stdio.h>
 #include <string.h>
@@ -739,7 +740,9 @@ static void frame(Game *g)
             else                                    { scroll_up(g);   g->hero_scr_row++; }
         }
     }
-    if (g->hero_scr_col != 0x0C) { try_move_left(g); g->hero_scr_col++; }  /* 6FF9 */
+    if (g->boss_map || g->boss_room) {                                  /* 6FD3: the boss AI owns the camera column */
+        if (g->hero_scr_col != g->boss.cam_col) { try_move_right(g); g->hero_scr_col--; }
+    } else if (g->hero_scr_col != 0x0C) { try_move_left(g); g->hero_scr_col++; }  /* 6FF9 */
     g->hero_map_row = (uint8_t)((g->hero_scr_row + g->scroll_row) & 0x3F);
     fixtures_draw(g);
     signs_draw(g);
@@ -773,6 +776,8 @@ static void frame(Game *g)
         g->hp_regen_pending--; g->hp += 8;
         if (g->hp > g->max_hp) { g->hp = g->max_hp; g->hp_regen_pending = 0; }
     }
+    if (g->post_boss_pending) { post_boss_transition(g); return; }       /* 71C2 -> 72F1 */
+    boss_rewards(g);                                                     /* 71CC */
 }
 
 /* 62DB: main-loop variant while on a ladder */
@@ -791,8 +796,20 @@ static void ladder_step(Game *g)
     g->ice_slide = g->ice_steps = 0; g->hero_anim = 0x7F;
 }
 
+/* 60E6: the six flashes of the ENCNT.GRP encounter card, 0x41 ticks apart.
+ * No simulation runs while it is up; the renderer draws the card on the odd
+ * halves (VID_TEXTBOX_FILL(BX=0x0C28, CX=0x3828) clears it on the even ones). */
+static void encounter_step(Game *g)
+{
+    g->encounter_frames--;
+    g->frame_no++;
+    g->rng += 20;
+    if (g->present) g->present(g);
+}
+
 void game_step(Game *g)
 {
+    if (g->encounter_frames) { encounter_step(g); return; }             /* 60E6 */
     if (g->walk_in) { walk_in_step(g); return; }                        /* 7C6E */
     if (g->on_ladder) { ladder_step(g); return; }
     sword_input(g);                                                     /* 6E3B */

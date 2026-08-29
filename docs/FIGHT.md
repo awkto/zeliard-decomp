@@ -314,7 +314,7 @@ column (`6776`/`6915`).
 | Address | Content |
 |---|---|
 | `[A000]` | entry. Called per live enemy with **SI = record, DI = ring cell of its old position, `FF4A` = index**, DS=CS=BASE (`8DF7`). In boss maps called once per frame instead of the whole pass (`8D1D`), and once after loading (`7C27`) |
-| `[A002]` | boss info block: +3 u16 boss HP (initial bar value, updated by the overlay via video `[200C]`), +5 u16 EXP, +7 u8 camera/hero screen column, +8 u8 knockback-left flag, +9 u16 name-record ptr `{x, u16 y, len, chars}`, +B u16 gold — see docs/ENEMIES.md (boss overlays rebuild the whole C010 list per frame from a part buffer) |
+| `[A002]` | boss info block: +3 u16 boss HP (initial bar value, updated by the overlay via video `[200C]`), +5 u16 EXP, +7 u8 camera/hero screen column, +8 u8 knockback-left flag, +9 u16 name-record ptr — a video `[2010]` positioned label `{x4, y, xoff_px, len, chars}` (xoff 2 for MEDA/LEGA/AKMA/MAO1/MAO2), +B u16 gold — see docs/ENEMIES.md (boss overlays rebuild the whole C010 list per frame from a part buffer) |
 | `[A006]` | pointer to 8 pointers (per class) to 4-byte drop-id lists |
 | `A008` | u8[8] EXP per class |
 | `A010` | u8[16] contact damage per `type & 0xF` |

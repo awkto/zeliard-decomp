@@ -60,6 +60,36 @@ typedef struct {
 /* EB60: one of the four orbiting spheres (86FC), 7 bytes */
 typedef struct { uint8_t phase, speed, hits; } Orb;
 
+/* The boss protocol (docs/ENEMIES.md §1/§3).  A boss overlay is called once
+ * per frame instead of the per-enemy pass (8D1D) and rebuilds the whole C010
+ * list from its own part buffer; the `[A002]` info block below is read by
+ * fight.bin at 6150/6162/6FE1/71E1. */
+typedef struct Boss {
+    int      active;                /* the map's AI overlay is a boss overlay */
+    int      index;                 /* 9CBC request index (1 CRAB, 3 TAKO, ...) */
+    uint16_t info;                  /* [A002] */
+    /* the info block */
+    uint16_t start_col; uint8_t start_row;
+    uint16_t hp0;                   /* +3  initial HP = the bar's full value */
+    uint16_t exp;                   /* +5 */
+    uint8_t  cam_col;               /* +7  hero screen column (6FE8) */
+    uint8_t  knock_left;            /* +8  -> 9F01 */
+    uint16_t name_ptr;              /* +9  -> {u8 x4, u16 y, u8 len, chars} */
+    uint16_t gold;                  /* +B */
+    char     name[24];
+    /* live state */
+    uint16_t col; uint8_t row;      /* the boss's top-left map cell */
+    uint16_t hp;
+    uint8_t  death_cnt;
+    uint8_t  parts;                 /* parts placed this frame */
+    uint8_t  ported;                /* 0 = the generic placeholder overlay */
+    /* per-overlay private state (only one boss is ever live) */
+    uint8_t  pose, walk_dir, parity, u1, u2, u3, u4, u5, u6, u7, u8_, u9;
+    uint8_t  st[24];                /* the overlay's own byte variables */
+    uint16_t sw[4];                 /* ... and word variables */
+    unsigned hits_taken;            /* port counter, for the tests */
+} Boss;
+
 struct AiOverlay;
 
 typedef struct Game Game;
@@ -73,6 +103,9 @@ typedef int (*DoorFn)(Game *g, const Door *d);
  * own start column"; `died` is the sage path.  Return 1 when the shell took
  * over, 0 to fall back to restarting in the cavern. */
 typedef int (*TownFn)(Game *g, int town_index, int col, int died);
+/* 72F1 post_boss_transition: reload the level record's +6/+7 AI and enemy
+ * banks (the shell owns the resource cache).  Return 1 on success. */
+typedef int (*PostBossFn)(Game *g, int post_ai, int post_enemies);
 
 struct Game {
     const Map     *map;
@@ -165,12 +198,24 @@ struct Game {
     uint8_t  btn2_edge;             /* FF1E */
     unsigned magic_casts, shots_fired;  /* port counters for the tests */
     uint8_t  heat_timer;            /* 9F25 */
-    uint8_t  boss_map, boss_room, boss_cutscene, boss_defeated;
+    uint8_t  boss_map;              /* FF34  level record flags bit7 */
+    uint8_t  boss_room;             /* 00E6  level record flags bit6 */
+    uint8_t  boss_cutscene;         /* FF2E */
+    uint8_t  boss_dying;            /* FF2F */
+    uint8_t  boss_defeated;         /* FF30 */
+    uint8_t  boss_state;            /* EDA0  0xFF until the rewards are paid (71DA) */
+    uint8_t  boss_knock_left;       /* 9F01 */
+    uint8_t  post_boss_pending;     /* 9F1E */
+    uint8_t  boss_intro;            /* 9F26 */
+    unsigned encounter_frames;      /* 60E6: the 6 flashes of the encounter card */
+    Boss     boss;
+    PostBossFn post_boss;
     uint16_t rng;                   /* kernel [11A] KRN_RANDOM source (FF1B) */
     unsigned deaths;                /* hero deaths (the port restarts at the entry) */
     uint8_t  death_anim;            /* 9F28 */
     int      entry_col, entry_row;  /* where hero_die() puts him back */
     uint8_t  entry_face;
+    char     player_name[9];        /* FF6C..FF73: the NAME.USR base name */
     uint8_t  town_map;              /* [C5] the town to return to, default 0x81 = Muralla */
     uint8_t  cur_map;               /* [C4] */
     uint8_t  jashiin_defeated;      /* [49] */

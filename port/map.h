@@ -44,9 +44,16 @@ typedef struct {
     int      width;
     uint8_t  grid[MAP_MAX_WIDTH][MAP_ROWS];   /* [col][row], values as in the tile stream */
     uint8_t  cavern, row_bias, tileset, ai, enemies, lvl_flags;
+    /* boss rooms (mpNd) continue the level record (docs/ARCHITECTURE.md):
+     * +5 boss sprite bank (copied over +4 when the boss appears, 6117),
+     * +6/+7 the post-boss AI/enemy banks, +8.. {u16 ptr, u16 val} pokes
+     * applied by 72F1.  `lvl_off` is the record's offset inside raw[]. */
+    uint8_t  boss_bank, post_ai, post_enemies;
+    size_t   lvl_off;
     uint16_t start_col; uint8_t start_row;
     Door     doors[64];   int ndoors;
     uint16_t patches;                         /* [C00C] offset of the conditional poke list */
+    uint16_t vidinit;                         /* [C00E] the place-name record for video [2010] */
     Fixture  fix[256];    int nfix;
     MapObj   objs[256];   int nobj;
     char     name[16];

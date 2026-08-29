@@ -4,3 +4,5 @@ test_physics
 local.mk
 test_combat
 test_town
+test_boss
+test_shop

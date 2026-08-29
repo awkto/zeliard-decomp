@@ -15,6 +15,7 @@
 
 void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h);     /* fb: FB_W*FB_H VGA indices */
 void render_hud(uint8_t *fb, const Game *g, const DigitFont *font);   /* LIFE bar, GOLD, ALMAS */
+void render_window(uint8_t *fb, int x, int y, int w, int h, int framed);   /* [2000] */
 void render_to_rgb(const uint8_t *fb, uint8_t *rgb);                  /* FB_W*FB_H*3 */
 
 #endif

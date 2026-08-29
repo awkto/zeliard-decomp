@@ -249,7 +249,7 @@ static const u8 hero_frames_left[5][6]  = /* 6A3B */ {{0,2,4,1,3,5},{6,8,10,7,9,
 static const u8 hero_frames_right[5][6] = /* 6A59 */ {{26,28,30,27,29,31},{32,34,36,33,35,37},{26,38,40,27,39,41},{32,42,44,33,43,45},{20,22,24,21,23,25}};
 /* proportional 8x8 font metrics for chars 0x20..0x7F (dialogue + shop text) */
 extern const u8 font_xoff[96];     /* 7B82  px subtracted from the cursor before drawing the glyph */
-extern const u8 font_advance[96];  /* 7BE2  px the cursor advances: space 5, 'I' 3, 'W'/'M' 8 ... */
+extern const u8 font_advance[96];  /* 7BE2  px the cursor advances: space 5, 'I' 5, '\\' 3, 'W'/'M' 8 ... */
 
 /* ======================================================================== */
 /* Entry vectors 6000..601F                                                  */

@@ -1495,6 +1495,8 @@ void hero_die(void);
 /* 0x78D7  Quit key: town overlay entry 601C. */
 /* 0x72F1  Post-boss: reload AI/enemies from level record +6/+7, apply the
  * {ptr,val} pokes from +8, put the exit door at scroll_col+hero_col (+9 when
- * the poke list's last byte != 0), restart fight_main. */
+ * `test byte [si-5]` — the ring cell 5 columns left of the hero — is non-zero;
+ * NOT the poke list's last byte).  mp1d's poke list also writes 0xFFFF to the
+ * player page [00]/[01].  Restart fight_main. */
 /* 0x79DC  vec 1: entry from the town (re-init locals, load hero bank FMAN.GRP
  * 9BE6 -> arena:6000, GF_CONVERT_2BPP SI=6333 BP=D000 CX=0xE6, tileset, walk-in). */

@@ -1,4 +1,5 @@
 #include "render.h"
+#include "text.h"
 #include "enemy.h"
 #include <string.h>
 
@@ -199,9 +200,20 @@ static void draw_magic(uint8_t *fb, const Game *g)
     }
 }
 
+/* video slot [0x2000] vid_window — text.c owns the implementation; this
+ * wrapper keeps the pixel arguments the encounter card is written with. */
+void render_window(uint8_t *fb, int x, int y, int w, int h, int framed)
+{
+    vid_window(fb, framed, x / 4, y, w / 4, h);
+}
+
 void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
 {
     memset(fb, 0, FB_W * FB_H);
+    if (g->encounter_frames) {                          /* 60E6: the encounter card */
+        if (g->encounter_frames & 1) render_window(fb, 48, 40, 224, 40, 1);
+        return;
+    }
     if (g->walk_in) {                                   /* 7C6E: the walk-in cutscene */
         if (!h) return;
         int fr = (g->hero_flags & FACE_LEFT) ? 13 : 0;
@@ -269,6 +281,23 @@ void render_hud(uint8_t *fb, const Game *g, const DigitFont *font)
     for (unsigned x = 0; x < wmax; x++) {
         for (int r = 0; r < 6; r++) fb[(163 + r) * FB_W + 84 + x] = 0x12;   /* red */
         if (x < wcur) for (int r = 0; r < 5; r++) fb[(163 + r) * FB_W + 84 + x] = 0x1B;  /* green */
+    }
+    /* docs/VIDEO_DRIVERS.md [2012]/[200A]/[200C]: in a boss room the ENEMY
+     * line carries the boss HP — a blue trough at (50,174) 136 px wide with
+     * the same red/white pair at (84,175), [A002]+3 full scale. */
+    if ((g->boss_map || g->boss_room) && g->boss.active && g->boss.hp0) {
+        for (int x = 0; x < 136; x++) {
+            fb[174 * FB_W + 50 + x] = 0x00;
+            for (int r = 1; r <= 8; r++) fb[(174 + r) * FB_W + 50 + x] = 0x05;
+            fb[183 * FB_W + 50 + x] = 0x2D;
+        }
+        unsigned bmax = g->boss.hp0 / 8, bcur = g->boss.hp / 8;
+        if (bmax > 100) bmax = 100;
+        if (bcur > bmax) bcur = bmax;
+        for (unsigned x = 0; x < bmax; x++) {
+            for (int r = 0; r < 6; r++) fb[(175 + r) * FB_W + 84 + x] = 0x12;
+            if (x < bcur) for (int r = 0; r < 5; r++) fb[(175 + r) * FB_W + 84 + x] = 0x1B;
+        }
     }
     hud_digits(fb, font, (unsigned)g->gold, 76, 187, 6);
     hud_digits(fb, font, g->almas, 152, 187, 5);

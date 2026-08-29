@@ -8,7 +8,7 @@
  *
  * Image: 9 rows x 8 columns of 2x2 parts; the pose buffer A79C (72 bytes,
  * FF = empty) is composed from up to four layers (A552: layer n = bitmap
- * A64D[n] (9 bytes, one bit per column) + byte list A6CB[n]; each set bit
+ * A6CB[n] (9 bytes, one bit per column) + byte list A64D[n]; each set bit
  * takes a byte {type<<4 | frame}).  Layers drawn each frame (A467..A4B9):
  *   normal: body A78B (0, or 1 = flinch), wings 6+A78A (4 frames), legs
  *           0xA+A78F (3), head 2+A790 (4);
