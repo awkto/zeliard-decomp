@@ -281,13 +281,16 @@ static int menu_select(Shop *s, int *cursor)
     if (row >= s->mvis) row = s->mvis ? s->mvis - 1 : 0;
     menu_cursor(s, row, 1);
     int held = 0;
+    s->in_menu = 1; s->menu_n = s->mvis;
     for (int guard = 0; guard < 8000 && !s->leave; guard++) {
+        s->menu_row = row + s->mscroll;
         shop_frame(s);
-        if (s->t && s->t->btn2_edge) { s->t->btn2_edge = 0; menu_cursor(s, row, 0); return 1; }
+        if (s->t && s->t->btn2_edge) { s->t->btn2_edge = 0; menu_cursor(s, row, 0); s->in_menu = 0; return 1; }
         if (s->t && s->t->btn1_edge) {
             s->t->btn1_edge = 0; s->g->sfx_request = 0x1F;
             menu_cursor(s, row, 0);
             *cursor = row;
+            s->in_menu = 0;
             return 0;
         }
         uint8_t d = s->t ? (uint8_t)(s->t->dirs & 3) : 0;
@@ -303,6 +306,7 @@ static int menu_select(Shop *s, int *cursor)
         }
     }
     *cursor = row;
+    s->in_menu = 0;
     return 1;
 }
 

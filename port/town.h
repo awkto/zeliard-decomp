@@ -102,6 +102,11 @@ struct Town {
     struct {
         int  active, x8, y, w4, h, marker, nvis;
         char line[8][80];
+        /* the yes/no widget dialogue opcodes 0x81 / 0x89 open (6655 / 66AD):
+         * town.bin's own 74D3 yes_no_prompt, which the shops call through
+         * vector [6008].  Only the geometry differs between the two. */
+        int  menu_n, menu_row, menu_x4, menu_y, menu_w4, menu_h;
+        const char *menu_item[2];
     } dlg;
     int      dlg_forced;            /* 7C54: an auto-talk script cannot be cancelled */
     int      quit;                  /* port: the shell wants out of a blocking box */

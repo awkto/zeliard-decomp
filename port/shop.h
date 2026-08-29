@@ -52,6 +52,11 @@ typedef struct Shop {
     int      headless_guard;        /* abort after this many frames (tests) */
     char     last_text[512];        /* everything printed since the last clear */
     int      last_len;
+    /* port-side instrumentation, for the playthrough driver (nav/playthrough.c):
+     * menu_select publishes the widget it is sitting in so a front end can
+     * drive it without guessing at key timings. */
+    int      in_menu;               /* 1 while 7344 menu_select owns the loop */
+    int      menu_row, menu_n;      /* the cursor row and the visible row count */
 } Shop;
 
 /* town.bin 6E7E run_shop: load the overlay + portrait, run it, return when it

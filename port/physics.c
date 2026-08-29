@@ -307,9 +307,10 @@ static int door_check(Game *g)
         }
         return 1;
     }
-    fprintf(stderr, "[door] (%d,%d) letter %02x -> %s map %02x at (%d,%d) flags %02x%s\n",
+    if (g->on_door) fprintf(stderr, "[door] (%d,%d) letter %02x -> %s map %02x at (%d,%d) flags %02x%s\n",
             d->col, d->row, d->letter, d->dest_row == 0xFF ? "TOWN" : "cavern", d->dest_map,
             d->dest_col, d->dest_row, d->dflags, d->flag_ptr != 0xFFFF ? " (sets a story flag)" : "");
+    if (d->flag_ptr != 0xFFFF) g->page[d->flag_ptr & 0xFF] |= d->flag_mask;   /* 7B25 */
     if (g->on_door) g->on_door(g, d);
     return 1;
 }

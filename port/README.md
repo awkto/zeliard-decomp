@@ -20,8 +20,10 @@ requests are logged).
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 6 test binaries
-make test            # physics (135) + combat/AI (149) + town (73) + boss (313) + shop (118) + status (87)
+make test            # physics (135) + combat/AI (149) + town (85) + boss (313) + shop (118)
+                     #   + status (87) + playthrough (14) = 901 assertions
 make verify          # headless renders diffed against the DOSBox captures in docs/screenshots/
+make playthrough     # the same two routes as test_playthrough, with the step-by-step log
 ./zeliard            # play cavern 1 (needs ../zeliard/ZELRES1-3.SAR or zeliard/ in the cwd)
 ./zeliard --town 1   # start in Muralla Town instead
 ./zeliard --map 1 --sword 4 --level 40 --life 800   # the cavern-1 boss room (mp1d)
@@ -279,9 +281,32 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   **projectiles and magic sprites as transparent tile-bank cells** (gfmcga 412F), the
   **walk-in cutscene**, and the HUD (LIFE bar, GOLD/ALMAS digits).  `town_render`
   draws the town: 28 × 8 cells at y 78, NPCs and the hero as 2×3 tman/mman sprites.
+* `shell.c` / `shell.h` — **the two-engine shell**, lifted out of `main.c` so every
+  front end takes the same code path.  It owns the map/tileset/AI-overlay/enemy-bank
+  cache, `shell_enter_town` (7B79 / 99E0), `shell_enter_cavern` (town.bin 6FF8),
+  `on_door` (7A83 → 7B32), the level record's bank loads (7EBB / 6117), the post-boss
+  bank swap (7305) and the town frame with its cavern / town / shop / doorway
+  actions (61FC).  `main.c` and `playthrough.c` are two front ends over it.
 * `main.c` — SDL2 window (×3 nearest), 4×speed-tick frame pacing, keyboard, headless
-  PNG dump, and the **two-mode shell**: `game_step()` in the caverns, `town_step()` in
-  the towns, with the door/edge/death hand-offs between them.
+  PNG dump and the `--script` feeder; the two-mode loop itself is `shell_frame()`.
+* `nav.c` / `nav.h` — **the autopilot** (not part of the original).  "Can Garland get
+  from here to there" is a question about fight.bin's own rules, so rather than model
+  them a second time the navigator *asks the engine*: every cell he can stand on is a
+  node, and from each node a dozen short button macros are run on a throw-away clone
+  of the real `Game` with the enemies switched off; wherever he settles becomes an
+  edge tagged with the macro and its length.  The graph is executable by construction
+  (MP10: 1439 nodes, 16603 edges, 185 k simulated frames, ~0.1 s).  Dijkstra from the
+  goal over the reversed graph gives the field; playing is "run the macro on the
+  cheapest outgoing edge, re-plan when he ends up somewhere else", plus the things a
+  player does that the survey cannot see — back out of contact range, face what is
+  hitting him, down-thrust whatever he is standing on, stand still and let the 719E
+  regeneration run, and bump the cost of a patch of ground he cannot get out of.
+* `playthrough.c` / `playthrough.h` — **the route driver**.  A route is a list of
+  objectives ("walk to Muralla's weapon shop and buy a shield", "reach the door at
+  map (128,32)", "kill the boss", "work this shelf until 500 EXP"); the *movement* is
+  not scripted at all.  Shops are answered frame by frame: the driver pages the text
+  with the select button and walks the cursor to the row the route names, using the
+  `in_menu` / `menu_row` that `menu_select` now publishes.
 * `test_physics.c` — 135 assertions (idle, walk, walls, jumps, ceilings, gaps, edge
   fall, ladders, conveyor, hazard, MP10 door/platform, **elevators and the fixture-C
   patrol, locked doors + keys + the message-box lifetime, the C00C patch list, the
@@ -321,7 +346,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   (level 0 + 120 EXP -> level 1, 120/120 LIFE, 70 EXP left) and the one-level
   clamp; and the first-visit spell + `[E5]` bit (Yasmin teaches spell 1, Marid
   teaches none).
-* `test_town.c` — 73 assertions: the mrmp header, doors, cave record, exits, NPCs,
+* `test_town.c` — 85 assertions: the mrmp header, doors, cave record, exits, NPCs,
   walker range and dialogue; the mpat block list; the walk/scroll model and the block
   list; the door ±1 window; the edge exit; NPC markers, the type-1 walker's 2-frame
   cadence and the type-3 facing rule; Space dialogue in and out of range; the
@@ -342,6 +367,20 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   `menu_result = 8`; selecting a spell into `[9D]` and wearing an item into
   `[9E]` through the real cursor; the row change; the Enter debounce; and the
   window frames and header colours in the rendered framebuffer.
+* `test_playthrough.c` — 14 assertions over two autopilot runs (`make playthrough`
+  prints them step by step):
+  * **route 1, the opening**, played end to end with nobody at the keyboard: the
+    castle, the King's 1000 gold, the road east into Muralla Town, the weapon shop
+    (the Clay shield through the real menu widget), the cavern gate at column 205,
+    ~160 000 frames of work on MP10's entrance shelf for 500 EXP, back out through
+    the MURALLA door, two visits to the Sage (level 1, 120 LIFE), the church and back
+    into the cavern.  Asserts the gold, the shield, the level, the LIFE and that both
+    hand-offs happened.
+  * **route 2, caverns 1-3 and their bosses**: MP1D/Cangrejo, MP2D/Pulpo and
+    MP3D/Pollo, each fought to the 40-frame death, the reward collected, and the exit
+    door 72F1 puts on the hero's column taken back out into MP10 / MP20 / MP31, with
+    Satono's smith and Sage and Bosque's smith in between.  Asserts three bosses,
+    no deaths, 820 EXP, the boss gold and three shops.
 * `tools/compare_shot.py` — playfield diff against a DOSBox capture.
 
 Verification: `make verify` renders six positions headlessly and compares them with
@@ -429,7 +468,34 @@ facing right.
    50 cells"; in the template at A6E0 the **cell is 0x30** and 0x32 *is* the 50-cell
    life byte.  The port now reads all four boss projectile templates straight out of
    the images (`boss_shot_template`) so this class of slip cannot recur.
-14. `src/town.c`'s gloss on `font_advance` ("space 5, `I` 3, `W`/`M` 8") is one entry
+15. **`src/fight.c`'s item-state table is indexed by `type & 0x1F` directly**, not by
+   `(type & 0x1F) - 0x10`: 8E14's own list is 0x10 corpse, 0x11 touch trigger, 0x12
+   flash, 0x13 treasure box, 0x14/0x15 coins, **0x16 Key**, **0x17 lion's-head Key**,
+   0x18 +80 HP, 0x19 full recovery, 0x1A shoes-by-cavern, 0x1B Feruza shoes, 0x1D boss
+   chest, 0x1E Hero's Crest.  The port had the whole tail shifted by one from 0x16 on,
+   which made every Key in the game a 100-gold coin — including the boss reward
+   (`type 0x76`) that unlocks the door out of cavern 1.  Fixed in `enemy.c`.
+16. `item_state_0x13`'s treasure box selects its prize with **`phase & 0xF`**, not
+   `phase >> 4`; the shipped boxes carry 0..3 in the low nibble (MP10 (26,23) is a
+   100-gold box, (99,31) a 50-gold one), so with the old reading every box in the game
+   paid 50 gold.
+17. **7B25 was missing from the port's `door_check`**: passing through an *unlocked*
+   door ORs `d->flag_mask` into `*d->flag_ptr` (`src/fight.c` 1457).  That is how the
+   post-boss exit door records that cavern 1 has been cleared (`[03] |= 0x20`), and
+   the C00C patch lists key off exactly those bytes.
+18. **914C's event-object flag was stubbed out**: an object with `+7 bit5` keeps a
+   `{flag byte, mask}` pair in `+B`/`+D` instead of a respawn column, and removing it
+   ORs the mask into the player page.  MP10's four event objects set `[02] bits
+   80/40/20/10`, MP20's seven set `[0A]`/`[0B]`, and the boss-room reward chests set
+   `[02] |= 08` / `[0B] |= 10` / `[13] |= 04` — which is what stops them coming back.
+19. MP10's boss corridor (rows 32-35, columns 122-152, with the doors to MP1D at
+   column 141 and to Satono at 128) is sealed on the left by the block at 119-122 and
+   on the right by a **conveyor staircase pushing right** (columns 153-156): `walk_left`
+   refuses to move while `conveyor == 1` (663E), and `gravity` skips `conveyor_check`
+   while `vstate & 0x80`, so the only way *in* is fight.bin's own door at (26,15) — a
+   locked door — or the exit door 72F1 creates.  Worth a line in `docs/FIGHT.md` §5:
+   it is not obvious from the map that the corridor is one-way.
+20. `src/town.c`'s gloss on `font_advance` ("space 5, `I` 3, `W`/`M` 8") is one entry
    out: the 3 belongs to `\` (which prints as an apostrophe); `I` advances 5.  The
    table itself is verbatim and drives a text box that is pixel-identical to the
    DOSBox capture.
@@ -457,11 +523,13 @@ facing right.
   priest, the innkeeper's blink, the drug shop's pot, the sage's ritual aura) do not
   run — the portraits are static.  omoypro (the Princess' chamber, the ending
   hand-off) is loaded but only draws its picture.
-* **Two dialogue opcodes.**  The town dialogue box runs `2F`, `FF`, `83` (the Elf
-  Crest), `85`, `87` and `8B`, but the two that need the yes/no menu widget —
-  `81` (the bsmp sentry's question) and `89` (the Asbestos cape for 2500 almas) —
-  take the "no" branch (scripts 13 and 6) instead of prompting.  The widget
-  exists in `shop.c`; it has to be lifted out of `Shop` first.
+* **The dialogue box's yes/no widget** (`74D3`) now runs for both opcodes: `81`
+  (the bsmp sentry: Yes → script 12, No → 13) and `89` (llmp's Asbestos cape:
+  declined → 6, under 2500 almas → 7, otherwise `[8B] -= 2500`, `[34] |= 0x40`,
+  item 5 into `[A1..]`, patches re-applied, script 8).  Only the *geometry* of the
+  two boxes is inferred — `6655`/`66AD` build `BX` out of the dialogue box's own
+  position with an addend the listing does not disambiguate, so the port places the
+  menu beside the box; everything the widget does is the original's.
 * **The status screen's hidden LEVEL/EXP panel** is bound to the exact key chord
   `[FF18] == 0x0286` in the original (docs/TOWN.md §12.3).  The port has no
   key-mask model, so it is reachable only through the `K` script token / a third
@@ -486,9 +554,42 @@ facing right.
 * HUD: only the LIFE bar and the GOLD/ALMAS digits.  No frame, no PLACE/GOLD
   narrow-font labels, no item/magic icons, no sign text.
 * Sound and music: `sound.c` counts and names the requests but synthesises nothing.
-* Hit-flash palettes, the hero death animation, the Roka demo, the "doorway to the
-  past", the save file (NAME.USR).
+* Hit-flash palettes, the hero death animation, the Roka demo and the "doorway to
+  the past".
 * EGA/CGA/Tandy render modes (only the MCGA pair-packing path).
+
+## Playing it without a keyboard
+
+`make playthrough` runs the two routes in `playthrough.c` and prints every objective
+as it is reached:
+
+```
+[play] step 0: cmap: the King of Felishika (1000 gold)
+[play] step 0 done in 128 frames (LIFE 80/80, EXP 0, GOLD 1000, keys 0)
+...
+[boss] defeated: 4 pokes applied, exit door at column 39, post-boss AI 0 / bank 0
+route 2 (caverns 1-3 and their bosses): 1166 frames, 5044 probe frames, 3 bosses, 3 doors, 3 shops
+```
+
+`./test_playthrough ../zeliard [--route 1|2] [-v] [--quiet] [--budget N]` runs them
+directly; `-v` adds a position/LIFE/distance line every 50 frames, which is how the
+navigator is debugged.  A route entry is
+`{kind, a, b, menu, what, c}`:
+
+| kind | meaning |
+|---|---|
+| `P_TOWN_SHOP` | walk to town column `a`, go in, answer the menus with `menu` |
+| `P_TOWN_CAVE` | walk to town column `a` and take the cave door there |
+| `P_TOWN_EDGE` | walk off the left (`a`=0) or right (`a`=1) edge |
+| `P_CAV_DOOR` | reach the C00A door whose own cell is `(a,b)` and go through it (`a` < 0 = "the door this map has", for the exit door 72F1 creates) |
+| `P_CAV_CELL` | reach map cell `(a,b)` — a chest, a Key, a boss reward |
+| `P_BOSS` | fight until the boss is defeated and 72F1 has run |
+| `P_FARM` | patrol between columns `a` and `b` until EXP reaches `c` |
+| `P_GOTO` / `P_TOWN_GOTO` | the shell call a door or a town gate makes, for the legs the navigator cannot reach yet |
+
+`menu` is one character per widget the shop opens, in order: `0`..`9` picks that row,
+`y`/`n` answers a Yes/No, `c` cancels (which every shop reads as "Go outside").  So
+Muralla's `"30yc"` is *Buy shield → the first shield → Yes → leave*.
 
 ## Design notes
 
@@ -515,27 +616,45 @@ facing right.
 
 ## What is left of milestone (d), and (e)
 
-1. **The four remaining boss overlays** (DRGN, AKMA, MAO1, MAO2).  The
-   protocol, the part machinery and the rewards are done and shared, so each one is
-   "read the layer/pose tables out of the image and port the state machine" — the
-   same shape as `boss_tako.c` / `boss_tori.c` / `boss_meda.c`.  DRGN, AKMA and MAO1
-   need the ndisasm listings because the Ghidra output for them is unusable.
-2. **The remaining town machinery**: the two menu dialogue opcodes (`81` / `89`),
-   the parallax strips and the ympd/ckpd backdrops, the shopkeeper idle hooks,
-   ENCNT.GRP.
-3. **Milestone (e), sound**: `sound.c` counts and names every FF75 request the two
+1. **The autopilot cannot yet cross MP10's lower level unaided.**  It plays the
+   opening, the entrance shelf, the return trip and every boss room end to end, but
+   the survey graph makes the descent from the row-7 corridor to the Key at (99,41)
+   and on to the locked door at (26,15) a 694-node island that does not reach the
+   249-node island the door sits on.  Some move the twelve macros do not express is
+   missing — the likely candidates are riding the fixture-A elevator at (48,24) (its
+   nodes only exist at the row the record starts on) and the fixture-C platforms at
+   columns 7/42/43, none of which the survey can place at more than one row.
+   `nav.c` would need edges generated per fixture position.  Until then
+   `PLAY_ROUTE_BOSSES` enters each boss room with `shell_enter_cavern` at the door's
+   own destination cell — the same call the door and the town gate make — and starts
+   from the character the shops would have built by then (level 12, the Knight's
+   sword, the Honor shield, 20 000 gold), because the autopilot also cannot farm the
+   6800 gold the Spirit sword costs.  Both deviations are in one place
+   (`playthrough.c` / `test_playthrough.c`) and are the only ones.
+2. **The four remaining boss overlays** (DRGN, AKMA, MAO1, MAO2).  The protocol, the
+   part machinery and the rewards are done and shared, so each one is "read the
+   layer/pose tables out of the image and port the state machine" — the same shape as
+   `boss_tako.c` / `boss_tori.c` / `boss_meda.c`.  DRGN, AKMA and MAO1 need the
+   ndisasm listings because the Ghidra output for them is unusable.
+3. **The remaining town machinery**: the parallax strips and the ympd/ckpd backdrops,
+   the shopkeeper idle hooks, ENCNT.GRP, the HUD frame / labels / icons.
+4. **Milestone (e), sound**: `sound.c` counts and names every FF75 request the two
    engines produce, and `docs/MUSIC.md` + `tools/msd2mid.py` describe the score
    format; what is missing is a driver — the AdLib/PC-speaker synthesis
    (`src/music_adlib.c`, `src/music_std.c`) behind an SDL2 audio callback, plus the
-   sound-effect table.  Nothing in the engine has to change: the requests are
-   already produced at the right frames.
-4. **More ground truth**: DOSBox captures of caverns 2-9, of a boss encounter (the
-   cavern-1 boss needs a full run through mp10, so it is a long timeline), of the
-   other shops and of a town dialogue box, so `make verify` can cover the remaining
-   tilesets, the boss HP bar and the dialogue renderer.  `docs/screenshots/menu.png`
-   turned out to be a capture of the **select.bin status screen** (Enter in
-   Felishika's Castle on a fresh game), not a shorter town menu, and `make verify`
-   now diffs the port's own status screen against it.
+   sound-effect table.  Nothing in the engine has to change: the requests are already
+   produced at the right frames, and `make playthrough` now generates a long,
+   reproducible stream of them to test a driver against.
+5. **More ground truth**: DOSBox captures of caverns 2-9, of a boss encounter and of
+   a town dialogue box, so `make verify` can cover the remaining tilesets, the boss
+   HP bar and the dialogue renderer.  The port writes `NAME.USR` in kenjpro A862's own
+   format (a raw 256-byte image of BASE:0000, no header), so the fastest route
+   to a deep capture is to play the port to the spot, "Record Experience" at a Sage,
+   drop the `.usr` next to the real ZELIARD.EXE and load it in DOSBox — which also
+   round-trip-validates the save format.
+   `docs/screenshots/menu.png` turned out to be a capture of the **select.bin status
+   screen** (Enter in Felishika's Castle on a fresh game), not a shorter town menu, and
+   `make verify` diffs the port's own status screen against it.
    `docs/screenshots/shop_armour.png` was captured for this milestone with
    `KEYS="6:Return 9:Return 16:Return 20:+Right 27.5:-Right"` followed by 26
    `+Right`/`-Right` + `+Up`/`-Up` tap pairs at 0.45 s intervals from 28 s

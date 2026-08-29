@@ -18,6 +18,22 @@ static Town      T;
 static Game      G;
 static void present(Town *t) { (void)t; }
 
+/* the yes/no widget answers: 0 = pick row 0 (Yes / Take), 1 = row 1, 2 = Alt */
+static int menu_answer, menu_seen;
+static void present_menu(Town *t)
+{
+    t->dirs = 0; t->btn1_edge = t->btn2_edge = 0;
+    if (t->dlg.menu_n) {
+        menu_seen++;
+        if (menu_answer == 2) { t->btn2_edge = 0xFF; return; }
+        if (t->dlg.menu_row < menu_answer) { t->dirs = DIR_DOWN; return; }
+        if (t->dlg.menu_row > menu_answer) { t->dirs = DIR_UP; return; }
+        t->btn1_edge = 0xFF;
+        return;
+    }
+    t->btn1_edge = 0xFF;                        /* page the text */
+}
+
 static int load(const char *dir, int idx)
 {
     if (town_load_map(&M, dir, idx)) return -1;
@@ -238,6 +254,46 @@ static void t_handoff(const char *dir)
     CHECK(G.cur_map == 0x81, "cur_map = town_map (%02x)", G.cur_map);
 }
 
+/* the two dialogue opcodes that open the 74D3 widget (docs/TOWN.md Â§6) */
+static void t_dialogue_menu(const char *dir)
+{
+    /* 0x81: bsmp's sentry.  Yes -> script 12, No -> script 13 (6655/6676). */
+    if (load(dir, 3)) { fprintf(stderr, "  (no bsmp)\n"); return; }
+    T.present = present_menu;
+    memset(&G, 0, sizeof G); G.max_hp = G.hp = 0x50;
+    menu_answer = 1; menu_seen = 0;
+    town_dialogue_run(&T, 11, 0);
+    CHECK(menu_seen > 0, "opcode 0x81 opened the yes/no widget");
+    CHECK(!T.dlg.menu_n, "the widget came down again");
+    char no_text[512]; snprintf(no_text, sizeof no_text, "%s", T.message);
+    menu_answer = 0; menu_seen = 0;
+    town_dialogue_run(&T, 11, 0);
+    CHECK(menu_seen > 0, "opcode 0x81 asked again");
+    CHECK(strcmp(no_text, T.message) != 0, "Yes and No run different scripts (12 / 13)");
+
+    /* 0x89: llmp's Asbestos cape, 2500 almas (66AD..6706). */
+    if (load(dir, 7)) { fprintf(stderr, "  (no llmp)\n"); return; }
+    T.present = present_menu;
+    memset(&G, 0, sizeof G); G.max_hp = G.hp = 0x50;
+    G.almas = 100;
+    menu_answer = 0; menu_seen = 0;
+    town_dialogue_run(&T, 3, 0);
+    CHECK(menu_seen > 0, "opcode 0x89 opened the Take / No Take widget");
+    CHECK(G.almas == 100, "100 almas is not enough: nothing is spent");
+    CHECK(!(G.page[0x34] & 0x40), "and the cape flag stays clear");
+    G.almas = 3000;
+    menu_answer = 0;
+    town_dialogue_run(&T, 3, 0);
+    CHECK(G.almas == 500, "2500 almas paid, %u left", G.almas);
+    CHECK(G.page[0x34] & 0x40, "[34] bit6 = the Asbestos cape was bought");
+    CHECK(G.page[0xA1] == 5, "item 5 (the cape) went into [A1], got %u", G.page[0xA1]);
+    G.almas = 3000; G.page[0x34] = 0; G.page[0xA1] = 0;
+    menu_answer = 1;
+    town_dialogue_run(&T, 3, 0);
+    CHECK(G.almas == 3000, "declining costs nothing");
+    CHECK(!(G.page[0x34] & 0x40), "and gives no cape");
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -250,6 +306,7 @@ int main(int argc, char **argv)
     struct { const char *name; void (*fn)(const char *); } tests[] = {
         {"town map", t_map}, {"walk", t_walk}, {"doors", t_doors},
         {"edges", t_edges}, {"npcs", t_npcs}, {"hand-off", t_handoff},
+        {"dialogue menu", t_dialogue_menu},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = fails;

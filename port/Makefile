@@ -13,13 +13,13 @@ SDL_LIBS   ?= $(shell pkg-config --libs sdl2 2>/dev/null || sdl2-config --libs 2
 CORE = sar.o gfx.o map.o physics.o render.o png.o enemy.o ai.o combat.o shots.o sound.o \
        ai_eai1.o ai_eai2.o ai_eai3.o ai_eai4.o ai_eai5.o ai_eai6.o ai_eai7.o ai_eai8.o town.o \
        boss.o boss_crab.o boss_tako.o boss_tori.o boss_zela.o boss_meda.o boss_lega.o boss_generic.o \
-       text.o player.o shop.o status.o
+       text.o player.o shop.o status.o shell.o nav.o playthrough.o
 ifneq ($(strip $(SDL_LIBS)),)
   CFLAGS += -DHAVE_SDL $(SDL_CFLAGS)
   LIBS   += $(SDL_LIBS)
 endif
 
-all: zeliard test_physics test_combat test_town test_boss test_shop test_status
+all: zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough
 
 zeliard: main.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
@@ -42,16 +42,24 @@ test_shop: test_shop.o $(CORE)
 test_status: test_status.o $(CORE)
 	$(CC) -o $@ $^
 
-%.o: %.c sar.h gfx.h map.h physics.h render.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h
+test_playthrough: test_playthrough.o $(CORE)
+	$(CC) -o $@ $^
+
+%.o: %.c sar.h gfx.h map.h physics.h render.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h nav.h playthrough.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: test_physics test_combat test_town test_boss test_shop test_status
+test: test_physics test_combat test_town test_boss test_shop test_status test_playthrough
 	./test_physics
 	./test_combat
 	./test_town
 	./test_boss
 	./test_shop
 	./test_status
+	./test_playthrough ../zeliard --quiet
+
+# the same two routes with the step-by-step log (issue #26's acceptance run)
+playthrough: test_playthrough
+	./test_playthrough ../zeliard
 
 # start position vs docs/screenshots/cavern.png, and the cavern-1 frog sprite
 # vs docs/screenshots/cavern_enemy.png (needs python3 + Pillow)
@@ -103,6 +111,6 @@ verify: zeliard test_combat test_town test_shop test_status
 		--box 180 63 92 94 --label "status INVENTORY window (sword picture + name)"
 
 clean:
-	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop test_status
+	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough
 
-.PHONY: all test verify clean
+.PHONY: all test verify playthrough clean

@@ -154,6 +154,11 @@ The sprite is 3×3 cells but the **solid body is the middle column only**
 * **Crouch:** "down" on the ground (`6AF9`); cleared 2 frames after the key
   is released. Lowers the sword origin by one row (`6F2B`) and removes the
   head row from hazard/contact/wall tests.
+* **MP10's boss corridor** is sealed left by the block at columns 119-122 and
+  right by a conveyor staircase pushing right (`walk_left` refuses while
+  `conveyor == 1`, and `gravity` skips `conveyor_check` while `vstate & 0x80`),
+  so the only ways in are the locked door at (26,15) and the exit door that
+  `72F1` creates after the boss.
 * **Ladders:** "up" with a ladder at (row 0,col+1) mounts; each frame "up" is
   held the hero climbs 1 row per *rendered* frame — each climbed row calls
   `frame()` (`65F9..661F`); per `hero_input` call it is 1 row, then 2,2,2…
@@ -345,6 +350,13 @@ standing on a hazard tile are killed outright (`A26A`).
   `7B32..7D61` reloads the map with `KRN_LOAD` mode 1, positions the hero at
   `dest_col−16 / dest_row+1−row_bias` (`7DC1`) and walks him in 26 frames
   (`7C6E`). The message text table for locked doors / items is at `9A1E..`.
+  Passing through an **unlocked** door also ORs the door record's mask into its
+  flag byte (`7B25`: `mov bx,[si+9] / cmp bx,-1 / mov al,[si+0xB] / or [bx],al`) —
+  that is how the post-boss exit door records "cavern cleared" (`[03] |= 0x20` in
+  MP10), and the `C00C` patch lists key off exactly those bytes.  Likewise
+  removing an **event object** (`+7` bit 5) ORs `+D` into the byte at `+B`
+  (`914C`) — MP10/MP20/MP30/MP31 have 30 of them, so without it treasure and
+  boss chests respawn and no map patch ever fires.
 * The in-game menu overlay lives at arena:C000 and is swapped into A000 to
   run (`72D9`), result `FF4B == 8` warps to town.
 

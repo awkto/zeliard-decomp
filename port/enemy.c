@@ -87,9 +87,14 @@ static inline int obj_ring(const Game *g, const MapObj *o) { return game_ring_in
 /* 0x914C */
 void enemy_remove(Game *g, MapObj *o)
 {
-    (void)g;
     o->col = 0xFF00;
-    if ((o->flags & 0x20) && o->home_col != 0xFFFF) o->home_col = 0xFFFF;   /* the story flag is not modelled */
+    /* 914C: an event object (+7 bit5) carries a {flag byte, mask} pair in
+     * +B/+D instead of a respawn column; removing it ORs the mask into the
+     * player page, which is what the C00C patch lists key off. */
+    if ((o->flags & 0x20) && o->home_col != 0xFFFF) {
+        g->page[o->home_col & 0xFF] |= o->home_row;
+        o->home_col = 0xFFFF;
+    }
 }
 
 /* 0x90E6  Dying: the phase advances every other frame; at 3 the object becomes
@@ -126,58 +131,58 @@ static int hero_overlaps_item(const Game *g, const MapObj *o)
     return dc >= 0 && dc <= 3;
 }
 
-/* Item states, table 8E14: index = (type & 0x1F) - 0x10.  The port implements
- * the pickups that cavern 1 can produce plus the simple ones; the shop/story
- * items (0x1A-0x1E) only log. */
+/* Item states, table 8E14: the index is `type & 0x1F` (0x10..0x1F), src/fight.c
+ * 8E14's own list.  0x11 (touch trigger) and 0x1D (boss chest text) still only
+ * log; everything else caverns 1-9 place is implemented. */
 void item_update(Game *g, MapObj *o)
 {
-    int st = (o->type & 0x1F) - 0x10;
+    int st = o->type & 0x1F;                                            /* 8E14 index */
     /* animation: every other frame (the original uses each state's own rate) */
     if (g->frame_no & 1) o->phase = (uint8_t)((o->phase + 1) & 3);
 
-    if (st == 0) {                                                      /* 8E32 corpse fade */
+    if (st == 0x10) {                                                   /* 8E32 corpse fade */
         if (++o->timer >= 8) enemy_remove(g, o);
         return;
     }
-    if (st == 2) {                                                      /* 8EF6 3-frame flash */
+    if (st == 0x12) {                                                   /* 8EE9 3-frame flash */
         if (++o->timer >= 3) enemy_remove(g, o);
         return;
     }
     if (!hero_overlaps_item(g, o)) { o->flags &= (uint8_t)~0x80; return; }
     o->flags |= 0x80;       /* 9190's "already overlapping" latch; the original's
                              * 8-frame repeat rule only matters for repeatable
-                             * pickups, which cavern 1 has none of */
+                             * pickups, which caverns 1-3 have none of */
     switch (st) {
-    case 3: {                                                           /* 8EF6 treasure box */
-        static const unsigned box[5] = {50, 100, 0, 500, 1000};
-        unsigned n = box[(o->phase >> 4) & 3];
+    case 0x13: {                                                        /* 8EF6 treasure box */
+        static const unsigned box[5] = {50, 100, 0, 500, 1000};         /* 8F33 */
         static const int msg[5] = {MSG_GOLD50, MSG_GOLD100, MSG_BOX_EMPTY, MSG_GOLD500, MSG_GOLD1000};
-        if (n) gold_add(g, n);
-        game_message(g, fight_message(msg[(o->phase >> 4) & 3]));       /* 9A1E table */
+        int i = o->phase & 0xF; if (i > 4) i = 2;
+        if (box[i]) gold_add(g, box[i]);
+        game_message(g, fight_message(msg[i]));                         /* 9A1E table */
         g->sfx_request = 0x11;
         enemy_remove(g, o);
         return; }
-    case 4: case 5: case 6: {                                           /* 8FAB coins */
-        unsigned n = st == 4 ? 1 : (st == 5 ? 10 : 100);
+    case 0x14: case 0x15: {                                             /* 8FAB coins */
+        unsigned n = st == 0x14 ? 1 : 10;
         gold_add(g, n); g->sfx_request = 0x10;
         snprintf(g->message, sizeof g->message, "%u G", n);
         enemy_remove(g, o);
         return; }
-    case 7: g->keys++;      g->sfx_request = 0x14; game_message(g, fight_message(MSG_KEY)); enemy_remove(g, o); return;
-    case 8: g->lion_keys++; g->sfx_request = 0x14; game_message(g, fight_message(MSG_LION_KEY)); enemy_remove(g, o); return;
-    case 9: g->hp_regen_pending += 10;                          /* 9008: +80 HP */
+    case 0x16: g->keys++;      g->sfx_request = 0x14; game_message(g, fight_message(MSG_KEY)); enemy_remove(g, o); return;
+    case 0x17: g->lion_keys++; g->sfx_request = 0x14; game_message(g, fight_message(MSG_LION_KEY)); enemy_remove(g, o); return;
+    case 0x18: g->hp_regen_pending += 10;                       /* 9008: +80 HP */
         game_message(g, fight_message(MSG_RECOVERED)); g->sfx_request = 0x13; enemy_remove(g, o); return;
-    case 0xA: g->hp_regen_pending = (uint16_t)(g->hp_regen_pending + g->max_hp / 8 + 1);   /* 901C */
+    case 0x19: g->hp_regen_pending = (uint16_t)(g->hp_regen_pending + g->max_hp / 8 + 1);   /* 901C */
         game_message(g, fight_message(MSG_RECOVERED_FULL)); g->sfx_request = 0x13; enemy_remove(g, o); return;
-    case 0xB: case 0xC: {                                       /* 909D/9090: shoes by cavern (table 90CA) */
+    case 0x1A: case 0x1B: {                                     /* 909D/9090: shoes by cavern (table 90CA) */
         static const uint8_t by_cavern[10] = {0, 0, 0, 0, 4, 2, 3, 0, 0, 0};
         static const int msg[6] = {0, 0, MSG_PIRIKA, MSG_SILKARN, MSG_RUZERIA, 0};
-        int sh = st == 0xC ? 1 : by_cavern[g->map->cavern < 10 ? g->map->cavern : 0];
+        int sh = st == 0x1B ? 1 : by_cavern[g->map->cavern < 10 ? g->map->cavern : 0];
         if (sh) { g->shoes = (uint8_t)sh; game_message(g, fight_message(sh == 1 ? MSG_FERUZA : msg[sh])); }
         g->sfx_request = 0x13; enemy_remove(g, o); return; }
-    case 0xE: g->hero_crest = 0xFF; game_message(g, fight_message(MSG_HERO_CREST)); enemy_remove(g, o); return;
+    case 0x1E: g->hero_crest = 0xFF; game_message(g, fight_message(MSG_HERO_CREST)); enemy_remove(g, o); return;
     default:
-        fprintf(stderr, "[item] state %X at (%u,%u) picked up (not implemented)\n", st, o->col, o->row);
+        fprintf(stderr, "[item] state %02X at (%u,%u) picked up (not implemented)\n", st, o->col, o->row);
         enemy_remove(g, o);
         return;
     }

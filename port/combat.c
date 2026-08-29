@@ -46,7 +46,7 @@ void hero_die(Game *g)
     g->hp = g->max_hp;                                                  /* 99D8 */
     g->hero_dead = 0; g->hero_hidden = 0; g->death_anim = 0;
     g->cur_map = g->town_map ? g->town_map : 0x81;
-    fprintf(stderr, "[death] hero died at frame %u (death %u); gold lost, almas halved\n", g->frame_no, g->deaths);
+    if (g->on_town) fprintf(stderr, "[death] hero died at frame %u (death %u); gold lost, almas halved\n", g->frame_no, g->deaths);
     if (g->on_town && g->on_town(g, g->cur_map & 0x7F, -1, 1)) return;  /* 99E0 */
     game_message(g, "Garland died.");
     game_place(g, g->entry_col, g->entry_row, g->entry_face);

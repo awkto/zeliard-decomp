@@ -141,6 +141,33 @@ static void dlg_frame(Town *t)
     t->frame_no++;
     if (t->present) t->present(t);
 }
+/* 0x74D3  yes_no_prompt, the widget the shops reach through vector [6008].
+ * The dialogue box (6655 / 66AD) puts it beside itself; the row list is drawn
+ * by dlg_render, so the box and the menu come back every frame.  Returns the
+ * chosen row, or 1 (the "no" row) when Alt cancels. */
+static int dlg_menu(Town *t, const char *a, const char *b, int x4, int y, int w4)
+{
+    t->dlg.menu_item[0] = a; t->dlg.menu_item[1] = b;
+    t->dlg.menu_n = 2; t->dlg.menu_row = 0;
+    t->dlg.menu_x4 = x4; t->dlg.menu_y = y; t->dlg.menu_w4 = w4; t->dlg.menu_h = 0x19;
+    t->btn1_edge = t->btn2_edge = 0;
+    int held = 0, row = 0;
+    for (int i = 0; i < 6000 && !t->quit; i++) {
+        dlg_frame(t);
+        if (t->btn2_edge) { t->btn2_edge = 0; row = 1; break; }      /* Alt = No */
+        if (t->btn1_edge) { t->btn1_edge = 0; t->sfx_request = 0x1F; break; }
+        uint8_t d = (uint8_t)(t->dirs & 3);
+        if (!d) { held = 0; continue; }
+        if (held) continue;
+        held = 1;
+        if (d == DIR_UP && row) row--;
+        else if (d == DIR_DOWN && row < 1) row++;
+        t->dlg.menu_row = row;
+    }
+    t->dlg.menu_n = 0;
+    return row;
+}
+
 /* 65A1 dialogue_end: wait for the button to be released, then for Space/Alt */
 static void dlg_wait_key(Town *t)
 {
@@ -218,10 +245,27 @@ void town_dialogue_run(Town *t, int script, int face_left)
                          town_dialogue_run(t, 4, face_left); return; }
         if (c == 0x87) { dlg_wait_key(t); t->dlg.active = 0;         /* 66A2: then script 5 */
                          town_dialogue_run(t, 5, face_left); return; }
-        /* 0x81 (yes/no) and 0x89 (Take / No Take) need the menu widget; the
-         * port takes the "no" branch (scripts 13 and 6) for now. */
-        if (c == 0x81) { t->dlg.active = 0; town_dialogue_run(t, 13, face_left); return; }
-        if (c == 0x89) { t->dlg.active = 0; town_dialogue_run(t, 6, face_left); return; }
+        if (c == 0x81) {                                             /* 6655: yes/no */
+            int no = dlg_menu(t, "Yes", "No", t->dlg.x8 * 2 + 0x19, t->dlg.y, 0x0C);
+            t->dlg.active = 0;
+            town_dialogue_run(t, no ? 13 : 12, face_left);            /* 6676 */
+            return;
+        }
+        if (c == 0x89) {                                             /* 66AD: the Asbestos cape */
+            int no = dlg_menu(t, "Take", "No Take", t->dlg.x8 * 2 + 0x19, t->dlg.y, 0x12);
+            t->dlg.active = 0;
+            if (no) { town_dialogue_run(t, 6, face_left); return; }   /* 66D1 */
+            if (t->g->almas < 2500) { town_dialogue_run(t, 7, face_left); return; }   /* 66D8 */
+            t->g->almas = (uint16_t)(t->g->almas - 2500);             /* 66E7 */
+            t->g->page[0x8B] = (uint8_t)t->g->almas;
+            t->g->page[0x8C] = (uint8_t)(t->g->almas >> 8);
+            t->g->page[0x34] |= 0x40;                                 /* 66F0 */
+            for (int i = 0; i < 5; i++)                               /* 66F5: item 5 into [A1..A5] */
+                if (!t->g->page[0xA1 + i]) { t->g->page[0xA1 + i] = 5; break; }
+            town_apply_patches(t->map, t->g->page);                   /* 6703 */
+            town_dialogue_run(t, 8, face_left);                       /* 6706 */
+            return;
+        }
         if (c >= 0x80 || c < 0x20) continue;
         if (col < (int)sizeof t->dlg.line[0] - 1) {                  /* 6478: printable */
             t->dlg.line[t->dlg.nvis - 1][col++] = (char)c;
@@ -256,6 +300,13 @@ static void dlg_render(uint8_t *fb, const Town *t)
     }
     if (t->dlg.marker)                                               /* 6533 */
         vid_putchar(fb, t->font, 0x7C, 2, t->dlg.x8 * 8 + 0x54, t->dlg.y + 0x4A);
+    if (t->dlg.menu_n) {                                             /* 6655 / 66AD */
+        vid_window(fb, 0xFF, t->dlg.menu_x4, t->dlg.menu_y, t->dlg.menu_w4, t->dlg.menu_h);
+        for (int i = 0; i < t->dlg.menu_n; i++)
+            vid_label_asciiz(fb, t->font, t->dlg.menu_item[i], t->dlg.menu_x4 + 4,
+                             t->dlg.menu_y + 4 + i * 10, 0);
+        gt_cursor(fb, t->dlg.menu_x4 + 2, t->dlg.menu_y + 3 + t->dlg.menu_row * 10, 1);
+    }
 }
 
 const char *town_dialogue(const TownMap *m, int script)
