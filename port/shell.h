@@ -60,7 +60,11 @@ const char *shell_find_dir(const char *hint);
 int  shell_init(Shell *s, const char *dir_hint, int map_idx);
 /* the two hand-offs; both are what the engines call through g.on_town / on_door */
 int  shell_enter_town(Game *g, int town_index, int col, int died);
-int  shell_enter_cavern(Shell *s, int sys_map, int col, int row, int face_left);
+/* `from_cave_record` = 1 for town.bin 6FF8's own MAP_CAVES arithmetic (the
+ * record's row is relative to a hard-coded screen row of 10, not to the map's
+ * [C016] row_bias); 0 when `row` is already the hero's map row. */
+int  shell_enter_cavern(Shell *s, int sys_map, int col, int row, int face_left,
+                        int from_cave_record);
 /* fight.bin 7EBB / 6117: (re)load the level record's AI overlay and enemy bank */
 void shell_load_enemy_banks(Shell *s, const Map *m);
 /* one iteration of whichever engine is live (town.bin 61FC or fight.bin 629C) */

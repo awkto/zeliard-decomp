@@ -136,7 +136,7 @@ static void step_enter(Play *p)
      * makes (7B32 / 6FF8); they exist because the autopilot cannot yet cross
      * MP10's lower level unaided.  Everything after them is played. */
     if (st->kind == P_GOTO) {
-        if (!shell_enter_cavern(&p->sh, st->a, st->b, st->c + 1, 0)) { p->failed = 1; return; }
+        if (!shell_enter_cavern(&p->sh, st->a, st->b, st->c + 1, 0, 0)) { p->failed = 1; return; }
         p->step_map = g->map;
         return;
     }
@@ -321,8 +321,10 @@ const PStep PLAY_ROUTE_BOSSES[] = {
   {P_CAV_DOOR, 128,32,  NULL,      "MP10: the Key opens (128,32) -> Satono Town", 0},
   {P_TOWN_SHOP,185, 0,  "22yc",    "Satono weapon shop: the best sword it stocks", 0},
   {P_TOWN_SHOP, 92, 0,  "1yc",     "Satono: the Sage levels him up", 0},
-  {P_GOTO,       2,190, NULL,      "across MP20 to its boss shelf at (190,47)", 46},
-  {P_CAV_DOOR, 190,47,  NULL,      "MP20: the door at (190,47) -> MP2D (41,18)", 0},
+  {P_TOWN_EDGE,  1, 0,  NULL,      "off Satono's right edge -> MP20 (6,62)", 0},
+  {P_CAV_CELL, 149,44,  NULL,      "MP20: the Key lying at (149,44)", 0},
+  {P_GOTO,       2,171, NULL,      "MP20: down the shafts to the locked boss door", 54},
+  {P_CAV_DOOR, 171,54,  NULL,      "MP20: the Key opens (171,54) -> MP2D (24,18)", 0},
   {P_BOSS,       0, 0,  NULL,      "MP2D: Pulpo", 0},
   {P_CAV_DOOR,  -1, 0,  NULL,      "MP2D: the exit door -> MP20 (190,47)", 0},
   {P_CAV_DOOR, 190,47,  NULL,      "MP20: back into MP2D, an ordinary room now", 0},
@@ -331,6 +333,11 @@ const PStep PLAY_ROUTE_BOSSES[] = {
   {P_CAV_DOOR, 205,47,  NULL,      "MP20: the Key opens (205,47) -> MP30 (21,6)", 0},
   {P_CAV_DOOR, 185,18,  NULL,      "MP30: the BOSQUE door at (185,18)", 0},
   {P_TOWN_SHOP, 81, 0,  "30yc",    "Bosque weapon shop: a shield", 0},
+  /* MP31's boss door is the locked (188,20), and the way to it is Bosque's
+   * column-7 door -- which the sentry NPC standing at column 8 blocks until
+   * the story flag [12] bit 3 is set (bsmp's own patch list).  The route
+   * cannot set that flag yet, so this one leg is still the shell call, and it
+   * still lands on the shelf the *exit* door leads to.  See port/README.md. */
   {P_GOTO,       6,174, NULL,      "across MP31 to its boss shelf at (174,4)", 3},
   {P_CAV_DOOR, 174, 4,  NULL,      "MP31: the door at (174,4) -> MP3D (52,21)", 0},
   {P_BOSS,       0, 0,  NULL,      "MP3D: Pollo", 0},

@@ -258,7 +258,9 @@ static void t_buy_shield(void)
 static void t_drug(void)
 {
     static const Step script[] = {
-        {0, 0, 20},
+        /* the keeper walks in first now (drugpro op 0), so the greeting starts
+         * about a dozen frames later than it used to */
+        {0, 0, 40},
         {DIR_DOWN, 0, 1}, {0, 0, 2},                 /* "Buy item" */
         {0, 1, 1}, {0, 0, 60},
         {0, 1, 1}, {0, 0, 120},                      /* the first item in stock */
@@ -315,8 +317,10 @@ static void t_inn(void)
 static void t_bank(void)
 {
     /* A8FA: Muralla exchanges 1 alma for 6 gold */
+    /* bankpro runs the teller's idle for five 0x3F-tick passes (A063..A08F)
+     * before the greeting, so every bank script starts later than it used to */
     static const Step exchange[] = {
-        {0, 0, 20}, {DIR_DOWN, 0, 1}, {0, 0, 2}, {0, 1, 1}, {0, 0, 120},
+        {0, 0, 60}, {DIR_DOWN, 0, 1}, {0, 0, 2}, {0, 1, 1}, {0, 0, 120},
         {0, 1, 1}, {0, 0, 200},                       /* Yes */
         {0, 2, 1}, {0, 0, 20}, {0, 2, 1}, {0, 0, 400},
     };
@@ -326,7 +330,7 @@ static void t_bank(void)
     CHECK(G.almas == 0 && G.gold == 150, "25 almas at 1:6 = %u gold (almas left %u)", (unsigned)G.gold, G.almas);
     /* deposit everything, then withdraw it */
     static const Step deposit[] = {
-        {0, 0, 20}, {DIR_DOWN, 0, 1}, {0, 0, 2}, {DIR_DOWN, 0, 1}, {0, 0, 2},
+        {0, 0, 60}, {DIR_DOWN, 0, 1}, {0, 0, 2}, {DIR_DOWN, 0, 1}, {0, 0, 2},
         {0, 1, 1}, {0, 0, 200},
         {0, 2, 1}, {0, 0, 20}, {0, 2, 1}, {0, 0, 400},
     };
@@ -390,6 +394,172 @@ static void t_sage_tables(void)
     town_free_map(&TMAP);
 }
 
+/* ------------------------------------------- the [A002] idle hooks (#28) */
+/* the overlay image is addressed from A000, exactly as shop.c reads it */
+#define IMG(sh, a)   ((sh).img[(a) - 0xA000])
+#define IMG16(sh, a) ((unsigned)(IMG(sh, a) | IMG(sh, (a) + 1) << 8))
+
+/* open one shop with an input script that never presses anything, run it for
+ * `frames` rendered frames and hand the caller the Shop back */
+static int hook_run(Shop *s, int town, int dest, int frames)
+{
+    static const Step idle[] = {{0, 0, 20000}};
+    if (town_load_map(&TMAP, G_DIR, town)) return -1;
+    memset(&TOWN, 0, sizeof TOWN);
+    TOWN.map = &TMAP; TOWN.g = &G; TOWN.present = present; TOWN.font = &FONT; TOWN.dir = G_DIR;
+    SCRIPT = idle; SCRIPT_N = 1; SCRIPT_I = SCRIPT_LEFT = 0;
+    if (shop_open(s, &TOWN, dest)) { town_free_map(&TMAP); return -1; }
+    s->headless_guard = frames;
+    shop_loop(s);
+    return 0;
+}
+static void hook_done(Shop *s) { shop_close(s); town_free_map(&TMAP); }
+
+static void t_hooks(void)
+{
+    Shop s;
+    /* --- the eight vectors, read out of the overlays themselves ---------- */
+    static const struct { int dest; unsigned entry, hook; const char *name; } V[] = {
+        {SHOP_KING,   0xA004, 0xA302, "kingpro"},
+        {SHOP_OMOYA,  0xA005, 0xA004, "omoypro"},
+        {SHOP_SAGE,   0xA027, 0xAB47, "kenjpro"},
+        {SHOP_ARMOUR, 0xA004, 0xA90F, "armrpro"},
+        {SHOP_DRUG,   0xA004, 0xA644, "drugpro"},
+        {SHOP_CHURCH, 0xA004, 0xA1D7, "churpro"},
+        {SHOP_BANK,   0xA004, 0xA728, "bankpro"},
+        {SHOP_INN,    0xA004, 0xA22F, "innapro"},
+    };
+    for (size_t i = 0; i < sizeof V / sizeof V[0]; i++) {
+        fresh_player();
+        if (hook_run(&s, 1, V[i].dest, 1)) { CHECK(0, "%s loads", V[i].name); continue; }
+        CHECK(IMG16(s, 0xA000) == V[i].entry, "%s [A000] = %04X (want %04X)",
+              V[i].name, IMG16(s, 0xA000), V[i].entry);
+        CHECK(IMG16(s, 0xA002) == V[i].hook, "%s [A002] = %04X (want %04X)",
+              V[i].name, IMG16(s, 0xA002), V[i].hook);
+        if (V[i].dest == SHOP_OMOYA)
+            CHECK(IMG(s, 0xA004) == 0xC3, "omoypro's [A002] points at a bare `ret` (%02X)",
+                  IMG(s, 0xA004));
+        hook_done(&s);
+    }
+
+    /* --- armrpro A90F: the smith --------------------------------------- */
+    fresh_player();
+    if (hook_run(&s, 1, SHOP_ARMOUR, 30) == 0) {
+        CHECK(s.hk.armr_on == 0xFF, "armrpro turns its idle on at A06B (%02X)", s.hk.armr_on);
+        /* AAD0: three open pairs and one shut, so he blinks a quarter of the cycle */
+        CHECK(IMG(s, 0xAAD0) == 0x50 && IMG(s, 0xAAD1) == 0x51 &&
+              IMG(s, 0xAAD2) == 0x50 && IMG(s, 0xAAD4) == 0x50 &&
+              IMG(s, 0xAAD6) == 0x53 && IMG(s, 0xAAD7) == 0x54,
+              "AAD0 = {50 51} x3 then {53 54}");
+        /* the open pair is what the portrait map itself has at (0x10,0x4F):
+         * frame 0's second block is 6 rows of 12 from AA88, row 5 cols 9/10 */
+        CHECK(IMG(s, 0xAA88 + 5 * 12 + 9) == 0x50 && IMG(s, 0xAA88 + 5 * 12 + 10) == 0x51,
+              "and the portrait draws the same two cells there");
+        CHECK(IMG(s, 0xAB68) == 0x5D && IMG(s, 0xAB6E) == 0x8D,
+              "AB68 (the mouth) is built the same way");
+        /* AA10: {u8 rows, u16 map} x2 per frame; frame 5's second block is empty */
+        CHECK(IMG(s, 0xAA10) == 2 && IMG16(s, 0xAA11) == 0xAA40 &&
+              IMG(s, 0xAA13) == 6 && IMG16(s, 0xAA14) == 0xAA88, "AA10 frame 0");
+        CHECK(IMG(s, 0xAA10 + 6 * 5 + 3) == 0, "AA10 frame 5 has only one block");
+        /* 20 ticks a frame / 2 ticks a step / 0x1E steps a phase = 3 frames */
+        CHECK(s.hk.armr_phase == 10, "A90F steps a phase every 3 frames (phase %u after 30)",
+              s.hk.armr_phase);
+        CHECK(s.hk.armr_t0 == 0, "and lands on a phase boundary ([BC24] = %u)", s.hk.armr_t0);
+        CHECK(s.hk.armr_state == 0, "he is still in the eyes branch after 30 frames");
+        hook_done(&s);
+    } else CHECK(0, "armrpro runs");
+
+    /* --- churpro A1D7: no enable flag, three phases every 0x20 ticks ---- */
+    fresh_player();
+    if (hook_run(&s, 1, SHOP_CHURCH, 30) == 0) {
+        CHECK(IMG(s, 0xA234) == 0xFF && IMG(s, 0xA235) == 0x30 && IMG(s, 0xA23A) == 0xFF,
+              "A234's 2x3 maps carry 0xFF holes");
+        CHECK(IMG(s, 0xA27F) == 0xFF && IMG(s, 0xA27C) == 0x34,
+              "and so do A27C's 2x2 maps");
+        /* 600 ticks / 0x20 = 18 steps, 18 % 3 = 0 */
+        CHECK(s.hk.chur_phase == 0, "18 steps in 30 frames wraps to phase 0 (%u)", s.hk.chur_phase);
+        hook_done(&s);
+    } else CHECK(0, "churpro runs");
+
+    /* --- drugpro A644: the pot ----------------------------------------- */
+    fresh_player();
+    if (hook_run(&s, 1, SHOP_DRUG, 30) == 0) {
+        /* phase 0 of the pot is what the portrait map has at those cells */
+        int same = 1;
+        for (int c = 0; c < 6; c++)
+            if (IMG(s, 0xA69C + c) != IMG(s, 0xA5E4 + 6 + c)) same = 0;
+        CHECK(same, "A69C phase 0 row 0 == the portrait map A5E4 at (col 6, row 0)");
+        /* 10 hook steps a frame, 0x14 to a phase = one phase every 2 frames */
+        CHECK(s.hk.drug_phase == 0, "15 phase steps in 30 frames wraps to 0 (%u)", s.hk.drug_phase);
+        hook_done(&s);
+    } else CHECK(0, "drugpro runs");
+
+    /* --- kenjpro AB47: the sage's blink and the ritual sequence --------- */
+    fresh_player();
+    if (hook_run(&s, 1, SHOP_SAGE, 30) == 0) {
+        CHECK(IMG(s, 0xABFB) == 0x29 && IMG(s, 0xABFC) == 0x2A, "ABFB: the open eye");
+        CHECK(IMG(s, 0xABFD) == 0x67 && IMG(s, 0xABFE) == 0x68, "ABFD: the shut eye");
+        static const uint8_t seq[8] = {5, 6, 7, 6, 5, 4, 3, 4};
+        int bad = 0;
+        for (int i = 0; i < 8; i++) if (IMG(s, 0xABFF + i) != seq[i]) bad++;
+        CHECK(bad == 0, "ABFF: the eight-step aura sequence {5,6,7,6,5,4,3,4}");
+        CHECK(s.hk.kj_ritual_on == 0, "the aura is off until the level-up ritual");
+        /* 15 toggles of 0x14 steps in 30 frames leaves the flip-flop set */
+        CHECK(s.hk.kj_blink_state == 0xFF, "AB47 toggled the blink 15 times (%02X)",
+              s.hk.kj_blink_state);
+        hook_done(&s);
+    } else CHECK(0, "kenjpro runs");
+
+    /* --- innapro A22F: the one KRN_RANDOM in the town ------------------- */
+    fresh_player();
+    if (hook_run(&s, 2, SHOP_INN, 20) == 0) {
+        CHECK(s.hk.inn_on == 0xFF, "innapro turns its blink on at A06F");
+        CHECK(IMG(s, 0xA279) == 0x19 && IMG(s, 0xA27D) == 0x5E,
+              "A279's two 2x2 eye maps");
+        hook_done(&s);
+    } else CHECK(0, "innapro runs");
+
+    /* --- bankpro A728: on for the entry only --------------------------- */
+    fresh_player();
+    if (hook_run(&s, 1, SHOP_BANK, 8) == 0) {
+        CHECK(s.hk.bank_map == 0xA773, "the entry idle uses the A773 map pair (%04X)",
+              s.hk.bank_map);
+        CHECK(s.hk.bank_phase == 5, "160 ticks / 0x1E = 5 swaps of it (%u)", s.hk.bank_phase);
+        hook_done(&s);
+    } else CHECK(0, "bankpro runs (entry)");
+    fresh_player();
+    if (hook_run(&s, 1, SHOP_BANK, 40) == 0) {
+        CHECK(s.hk.bank_on == 0, "and stops at A08F when the greeting starts");
+        /* A82F / A839: the stand-up and sit-down lists, FFFF-terminated */
+        CHECK(IMG16(s, 0xA82F) == 0xA843 && IMG16(s, 0xA837) == 0xFFFF,
+              "A82F is four maps then FFFF");
+        CHECK(IMG16(s, 0xA839) == 0xA8BB && IMG16(s, 0xA841) == 0xFFFF,
+              "A839 is the same four in reverse");
+        hook_done(&s);
+    } else CHECK(0, "bankpro runs (greeting)");
+
+    /* --- kingpro A302: the blink and the lip-sync ----------------------- */
+    fresh_player();
+    if (hook_run(&s, 0, SHOP_KING, 60) == 0) {
+        static const uint8_t bs[26] = {0,0,0,0,0,0,1,1,1,1,1,2,2,2,2,2,1,1,1,1,1,0,0,0,0,0};
+        int bad = 0;
+        for (int i = 0; i < 26; i++) if (IMG(s, 0xA360 + i) != bs[i]) bad++;
+        CHECK(bad == 0, "A360: the 26-step blink sequence");
+        CHECK(IMG(s, 0xA37A) == 0x96 && IMG(s, 0xA37B) == 0x97 &&
+              IMG(s, 0xA37E) == 0x96 && IMG(s, 0xA382) == 0x96,
+              "A37A: three 4-cell eye maps, all starting 0x96");
+        CHECK(IMG(s, 0xA3D4) == 0xA2 && IMG(s, 0xA3DE) == 0xAF,
+              "A3D4: the mouth shut and open");
+        CHECK(IMG(s, 0xA0F8 + 7) == 3 && IMG(s, 0xA0F8 + 11) == 6,
+              "A0F8: the twelve-step face list");
+        /* the greeting script is 0C FF00 FF03 FF04 ... : op 3 arms the blink
+         * and op 4 the lip-sync, so both are on before a word is printed */
+        CHECK(s.hk.king_blink_on == 0xFF, "op 3 (A092) armed the blink");
+        CHECK(s.hk.king_mouth_on == 0xFF, "op 4 (A084) armed the lip-sync");
+        hook_done(&s);
+    } else CHECK(0, "kingpro runs");
+}
+
 /* the first visit to a sage teaches a spell and sets the [E5] bit */
 static void t_sage_visit(void)
 {
@@ -420,6 +590,7 @@ int main(int argc, char **argv)
         {"price tables", t_prices}, {"buy sword", t_buy_sword}, {"buy shield", t_buy_shield},
         {"drug shop", t_drug}, {"church", t_church}, {"inn", t_inn}, {"bank", t_bank},
         {"sage tables", t_sage_tables}, {"sage visit", t_sage_visit},
+        {"[A002] hooks", t_hooks},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = fails;

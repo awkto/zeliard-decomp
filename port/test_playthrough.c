@@ -164,6 +164,11 @@ static int reach_from(int col, int row)
             if (!seen[cnav.eto[e]]) { seen[cnav.eto[e]] = 1; q[n++] = cnav.eto[e]; }
     return n;
 }
+static int cell_reachable(int col, int row)
+{
+    int i = (col >= 0 && col < csh.g.map->width) ? cnav.node_of[col][row & 63] : -1;
+    return i >= 0 && seen[i];
+}
 static int door_reachable(int col, int row)
 {
     for (int d = -1; d <= 1; d++) {
@@ -228,6 +233,74 @@ static void cavern_routes(const char *dir, int verbose)
     if (verbose) printf("  MP10 boss shelf from Satono's left edge: %d nodes\n", n3);
     ck(door_reachable(141, 32), "MP10: the MP1D door is reachable from the Satono edge exit");
     ck(door_reachable(128, 32), "MP10: so is the SATONO door back out");
+
+    /* --- cavern 2 and cavern 3 are built to the same plan (issue #28) ----
+     * The boss room is entered through a LOCKED door and left through an
+     * unlocked one onto a shelf, and the Key for the locked door is lying in
+     * the cavern.  Route 2 walks cavern 2's half of that now. */
+    int n20 = survey(dir, 2, 6, 62);
+    ck(n20 > 1400, "MP20: the survey found the cavern (%d nodes)", n20);
+    reach_from(6, 62);
+    ck(door_reachable(171, 54), "MP20: the LOCKED boss door (171,54) is reachable from Satono's right edge");
+    ck(!door_reachable(190, 47), "MP20: the boss room's exit shelf (190,47) is not");
+    ck(!door_reachable(205, 47), "MP20: nor is the locked (205,47) door on it");
+    int k20a = -1, k20b = -1;
+    for (int i = 0; i < csh.g.map->nobj; i++)
+        if ((csh.g.map->objs[i].type & 0x1F) == 0x16) { if (k20a < 0) k20a = i; else k20b = i; }
+    ck(k20a >= 0 && k20b >= 0, "MP20 carries two Key items");
+    if (k20b >= 0)
+        ck(csh.g.map->objs[k20b].col == 149 && csh.g.map->objs[k20b].row == 44,
+           "MP20: the second Key is at (%d,%d)", csh.g.map->objs[k20b].col,
+           csh.g.map->objs[k20b].row);
+    /* MP31 (system map 6) is the same shape, and its way in is Bosque's
+     * column-7 door -- the one the sentry at column 8 stands in front of. */
+    int n31 = survey(dir, 6, 149, 14);
+    ck(n31 > 1000, "MP31: the survey found the cavern (%d nodes)", n31);
+    reach_from(149, 14);
+    ck(door_reachable(188, 20), "MP31: the LOCKED boss door (188,20) is reachable from Bosque's column-7 door");
+    ck(!door_reachable(174, 4), "MP31: the boss room's exit shelf (174,4) is not");
+    /* and cavern 3's Key is in MP30 (map 5), on the far side of MP31's own
+     * (153,43) door -- not on the half MP20's (205,47) lands on */
+    survey(dir, 5, 21, 6);
+    reach_from(21, 6);
+    int k30 = -1;
+    for (int i = 0; i < csh.g.map->nobj; i++)
+        if ((csh.g.map->objs[i].type & 0x1F) == 0x16) k30 = i;
+    ck(k30 >= 0 && csh.g.map->objs[k30].col == 133,
+       "MP30 carries a Key, at column %d", k30 >= 0 ? csh.g.map->objs[k30].col : -1);
+    ck(!cell_reachable(133, 54), "MP30: it is out of reach of the (21,6) door MP20 lands on");
+    survey(dir, 5, 153, 44);
+    reach_from(153, 44);
+    ck(cell_reachable(133, 54), "MP30: and in reach of the (153,43) door from MP31");
+
+    /* --- a cave record's row is not the hero's map row (issue #28) -------
+     * town.bin 7005 subtracts a hard-coded 10 from the record's row to make
+     * [82], and fight.bin 7D2D pins the hero's *screen* row at the map's own
+     * [C016] row_bias, so his map row is `row - 10 + row_bias`.  Every cavern
+     * proper has row_bias 10 and the two agree; every boss room has 12, and
+     * the one cave record in the game that names a boss room is Llama Town's
+     * (27,13) for MP73 -- 13 - 10 + 12 = 15, the room's floor. */
+    memset(&csh, 0, sizeof csh);
+    csh.quiet = 1;
+    if (shell_init(&csh, dir, 0) == 0) {
+        csh.g.present = NULL;
+        ck(csh.maps[csh.cur].row_bias == 10, "MP10's row_bias is 10");
+        if (shell_enter_town(&csh.g, 7, 222, 0)) {
+            const TownCave *c = NULL;
+            for (int i = 0; i < csh.tmap.ncaves; i++)
+                if (csh.tmap.caves[i].map == 0x15) c = &csh.tmap.caves[i];
+            ck(c != NULL, "Llama Town has a cave record for MP73");
+            if (c) {
+                ck(c->col == 27 && c->row == 13, "and it reads (%d,%d)", c->col, c->row);
+                shell_enter_cavern(&csh, c->map, c->col, c->row, c->side & 1, 1);
+                ck(csh.g.map->row_bias == 12, "MP73's row_bias is %d", csh.g.map->row_bias);
+                ck(game_hero_map_col(&csh.g) == 27 && game_hero_map_row(&csh.g) == 15,
+                   "the record puts Garland on MP73's floor at (27,15), not in the air at "
+                   "(27,13): he is at (%d,%d)",
+                   game_hero_map_col(&csh.g), game_hero_map_row(&csh.g));
+            }
+        } else ck(0, "Llama Town loads");
+    } else ck(0, "cave records: MP10 loads");
 }
 
 int main(int argc, char **argv)
@@ -282,6 +355,10 @@ int main(int argc, char **argv)
         ck(g->keys == 1, "route 2: Pollo's Key is in the bag (%u keys)", g->keys);
         ck(g->page[0] == 0xFF && g->page[8] == 0xFF && g->page[0x10] == 0xFF,
            "route 2: 72F1's boss-defeated flags are set for all three rooms");
+        /* cavern 2 is now played the way the game means it: off Satono's right
+         * edge into MP20, the Key that lies at (149,44), and MP2D through its
+         * own LOCKED door at (171,54) -- 72F1's flag for that door is [0B] */
+        ck(p.sh.g.page[0x0B] != 0, "route 2: MP20's locked boss door was opened with a Key");
         ck((g->page[3] & 0x40) && (g->page[0x0B] & 0x20),
            "route 2: both locked doors a boss Key opened stay unlocked (page[03]=%02X page[0B]=%02X)",
            g->page[3], g->page[0x0B]);

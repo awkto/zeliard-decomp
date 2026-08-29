@@ -278,9 +278,20 @@ static int edge_ready(const Nav *n, const Game *g, int e)
          * the live one moves every other frame, and the phases drift apart over
          * a ride.  What the tolerance cannot cover is a jump, so build_graph
          * simply never records one that lands on a platform. */
-        if (((f->state & 0x80) != 0) != ((n->efixpos[e] & NAV_FIXDIR) != 0)) return 0;
         int d = (int)f->col - (int)(n->efixpos[e] & ~NAV_FIXDIR);
-        return d >= -1 && d <= 1;
+        if (d < -1 || d > 1) return 0;
+        if (((f->state & 0x80) != 0) == ((n->efixpos[e] & NAV_FIXDIR) != 0)) return 1;
+        /* The direction matters for a *ride*: the probe ran the macro with the
+         * mover going one way.  It does not matter for the step **off** the
+         * platform -- if the cell the edge lands on is held up by the map, the
+         * platform only has to be under him for the first frame.  Without this
+         * the hero rode MP20's fix[5] to the far end of its patrol, found every
+         * outgoing edge refused the moment it turned round, and was dragged
+         * back across the gap again, for ever. */
+        int to = n->eto[e], w = g->map->width;
+        int bc = (int)n->ncol[to] + 1, feet = (n->nrow[to] + 3) & 0x3F;
+        while (bc >= w) bc -= w;
+        return !game_passable_body(g, g->map->grid[bc][feet]);
     }
     return (f->row & 0x3F) == (n->efixpos[e] & 0x3F);
 }
@@ -816,9 +827,41 @@ void nav_step(Nav *n, Game *g)
         const Fixture *f = &g->fix[rf];
         int left = (f->state & 0x80) != 0, bc = hc + 1;
         /* he is carried while f->col <= bc <= f->col+2; one more step of the
-         * platform in the direction it is going and he is off its end */
-        if (!left && (int)f->col >= bc - 1) { n->cur_macro = 0; n->cur_frame = 1; n->cur_edge = -1; emit(g, DIR_RIGHT, 0); return; }
-        if ( left && (int)f->col + 2 <= bc + 1) { n->cur_macro = 1; n->cur_frame = 1; n->cur_edge = -1; emit(g, DIR_LEFT, 0); return; }
+         * platform in the direction it is going and he is off its trailing
+         * end.  The test is `== bc`, not `== bc-1`: firing a column early
+         * walks him off the *leading* end instead, which is how MP20's
+         * 11-column gap at columns 62-72 (fix[5], half speed) dropped him
+         * through the ring wrap every single time. */
+        int feet = (hr + 3) & 0x3F, w = g->map->width;
+        int rc = bc + 1, lc = bc - 1;                   /* beside him */
+        int re = (int)f->col + 3, le = (int)f->col - 1; /* beyond the platform's ends */
+        while (rc >= w) rc -= w;
+        while (lc < 0) lc += w;
+        while (re >= w) re -= w;
+        while (le < 0) le += w;
+        int beside = !game_passable_body(g, g->map->grid[rc][feet]) ||
+                     !game_passable_body(g, g->map->grid[lc][feet]);
+        /* Ground of his own within a step: this is the far side, so hand him
+         * back to the planner -- edge_ok's walks-off test guards the hop.
+         * Holding the ride here is what kept him going round with the platform
+         * for ever: the moment it turns, the trailing guard drags him back. */
+        if (!beside) {
+            if (!left && (int)f->col >= bc) { n->cur_macro = 0; n->cur_frame = 1; n->cur_edge = -1; emit(g, DIR_RIGHT, 0); return; }
+            if ( left && (int)f->col + 2 <= bc) { n->cur_macro = 1; n->cur_frame = 1; n->cur_edge = -1; emit(g, DIR_LEFT, 0); return; }
+            /* Mid-platform over a gap: stand still and be carried.  The survey
+             * makes every column the platform can reach a node, so the field is
+             * happy to walk straight across the gap -- and a hero walking a
+             * column a frame outruns a half-speed platform and steps off its
+             * front.  A player waits, and so does this: until the platform has
+             * carried him to within a step of ground at one end or the other. */
+            if (game_passable_body(g, g->map->grid[re][feet]) &&
+                game_passable_body(g, g->map->grid[le][feet])) {
+                n->cur_macro = MACRO_WAIT; n->cur_frame = 1; n->cur_edge = -1;
+                n->fixwait++;
+                emit(g, 0, 0);
+                return;
+            }
+        }
     }
 
     int here = (hc >= 0 && hc < g->map->width && hr >= 0 && hr < MAP_ROWS) ? n->node_of[hc][hr] : -1;

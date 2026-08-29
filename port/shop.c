@@ -9,6 +9,7 @@
  * the text, the names, the descriptions and the price tables are read out of
  * ZELRES2[10..17] at the documented addresses instead of being retyped. */
 #include "shop.h"
+#include "enemy.h"
 #include "render.h"
 #include "sar.h"
 #include <stdio.h>
@@ -73,10 +74,18 @@ uint32_t shop_price(const Shop *s, int item)
 /* ------------------------------------------------------------- the frame */
 const uint8_t *shop_framebuffer(const Shop *s) { return s->fb; }
 
+static void shop_hook_tick(Shop *s);            /* the [A002] hook, one tick */
+
+/* one rendered frame is 4*speed = 20 ticks of the 236.7 Hz clock, and town.bin
+ * calls idle_poll (and so the hook) far faster than that, so step the hook a
+ * tick at a time before presenting. */
+#define SHOP_TICKS_PER_FRAME 20
+
 static void shop_frame(Shop *s)
 {
     s->frames++;
     if (s->headless_guard && (int)s->frames > s->headless_guard) { s->leave = 1; return; }
+    for (int t = 0; t < SHOP_TICKS_PER_FRAME; t++) shop_hook_tick(s);
     if (s->t && s->t->present) { s->t->frame_no++; s->t->present(s->t); }
 }
 
@@ -369,6 +378,226 @@ static void draw_portrait(Shop *s)
                       s->dest == SHOP_OMOYA ? 0x0C : 0x17);
 }
 
+/* like draw_portrait_map, but a cell of 0xFF leaves the screen alone
+ * (churpro's two little maps are the only ones that use the hole) */
+static void draw_cells_holes(Shop *s, unsigned map, int rows, int cols, int x8, int y)
+{
+    for (int r = 0; r < rows; r++)
+        for (int c = 0; c < cols; c++) {
+            uint8_t v = img8(s, map + (unsigned)(r * cols + c));
+            if (v == 0xFF) continue;                            /* A21B / A263 */
+            gt_draw_cell(s->fb, s->cell, s->present, v, x8 + c, y + r * 8);
+        }
+}
+
+/* ===================================================== the [A002] hooks ===
+ * town.bin idle_poll 7042 does `call [cs:0xA002]` on every pass while [7C42]
+ * says a shop overlay is loaded.  Every overlay but omoypro has one; omoypro's
+ * A002 word is A004, the `ret` byte in front of its entry point.
+ *
+ * The addresses in the comments are the overlay's own; the tables are read out
+ * of the loaded image at those addresses rather than retyped, exactly like the
+ * rest of shop.c.  See shop.h for the tick model. */
+
+/* --- kingpro A302 ------------------------------------------------------- */
+/* A142 (its lower half): the king's face, 7 rows x 6 cells at (x8 0x11, y 0x17),
+ * the map taken from the seven-entry pointer table at A1CE */
+static void king_draw_face(Shop *s, int frame)
+{
+    draw_portrait_map(s, img16(s, 0xA1CE + 2u * (unsigned)frame), 7, 6, 0x11, 0x17);
+}
+/* A3A6: the 2x5-cell mouth at (x8 0x11, y 0x3F); table A3D4, ten bytes a frame */
+static void king_draw_mouth(Shop *s, int open)
+{
+    draw_portrait_map(s, 0xA3D4 + 10u * (unsigned)(open & 1), 2, 5, 0x11, 0x3F);
+}
+static void king_hook(Shop *s)
+{
+    ShopHook *h = &s->hk;
+    if (h->ff50 < 4) return;                                    /* A302 */
+    h->ff50 = 0;                                                /* A30A */
+    /* A315 the blink: a 26-entry frame sequence at A360, then a random pause */
+    if (h->king_blink_on) {                                     /* A315 [A7A0] */
+        if (++h->king_blink_i >= 0x1A) {                        /* A31D..A326 */
+            /* A328: `call [11A] / or al,al / jz` — one chance in 256 per step
+             * to run the sequence again; 0xFF++ wraps back to entry 0 */
+            if ((krn_random(s->g) & 0xFF) == 0) h->king_blink_i = 0xFF;
+        } else {
+            unsigned seq = img8(s, 0xA360 + h->king_blink_i);   /* A338 xlatb */
+            draw_portrait_map(s, 0xA37A + 4u * seq, 1, 4, 0x11, 0x2F);  /* the eyes */
+        }
+    }
+    /* A386 the mouth: toggles every 6 steps while the lip-sync is on */
+    if (!h->king_mouth_on) return;                              /* A386 [A79D] */
+    if (++h->king_mouth_t < 6) return;                          /* A38E..A397 */
+    h->king_mouth_t = 0;
+    h->king_mouth_p++;                                          /* A39F */
+    king_draw_mouth(s, h->king_mouth_p & 1);
+}
+
+/* --- armrpro A90F ------------------------------------------------------- */
+static void armr_hook(Shop *s)
+{
+    ShopHook *h = &s->hk;
+    if (!h->armr_on) return;                                    /* A90F [BC23] */
+    if (h->ff50 < 2) return;                                    /* A917 */
+    h->ff50 = 0;
+    if (++h->armr_t0 < 0x1E) return;                            /* A925..A931 */
+    h->armr_t0 = 0;
+    h->armr_phase++;                                            /* A936 */
+    if (h->armr_state) {                                        /* A93A [BC26] */
+        if (h->armr_state == 0x7F) { h->armr_state = 0xFF; armr_draw_frame(s, 2); return; }
+        if (h->armr_state == 0x80) { h->armr_state = 0;    armr_draw_frame(s, 0); return; }
+        /* A961: two cells DOWN one column — the smith's mouth */
+        for (int i = 0; i < 2; i++)
+            gt_draw_cell(s->fb, s->cell, s->present,
+                         img8(s, 0xAB68 + (unsigned)((h->armr_phase & 3) * 2 + i)),
+                         0x0B, 0x37 + i * 8);
+    } else {
+        /* A985: two cells ACROSS — the eyes.  AAD0 holds {50,51} three times
+         * and {53,54} once, so he blinks a quarter of every cycle. */
+        for (int i = 0; i < 2; i++)
+            gt_draw_cell(s->fb, s->cell, s->present,
+                         img8(s, 0xAAD0 + (unsigned)((h->armr_phase & 3) * 2 + i)),
+                         0x10 + i, 0x4F);
+    }
+    if (krn_random(s->g) & 1) return;                           /* A9A6..A9AD */
+    if (++h->armr_t1 < 0x1E) return;                            /* A9B0..A9BC */
+    h->armr_t1 = 0;
+    h->armr_state = (uint8_t)(~h->armr_state ^ 0x80);           /* A9C1: 0 -> 7F -> FF -> 80 -> 0 */
+    armr_draw_frame(s, 1);
+}
+
+/* --- bankpro A728 ------------------------------------------------------- */
+static void bank_hook(Shop *s)
+{
+    ShopHook *h = &s->hk;
+    if (!h->bank_on) return;                                    /* A728 [AD21] */
+    if (h->ff50 < 0x1E) return;                                 /* A730 */
+    h->ff50 = 0;
+    h->bank_phase++;                                            /* A73E */
+    /* A742: the pair of 5x8 cell maps [AD1F] points at, 0x28 bytes apart */
+    draw_portrait_map(s, h->bank_map + (unsigned)((h->bank_phase & 1) * 0x28),
+                      5, 8, 0x09, 0x1F);
+}
+
+/* A813: the teller's own cell-map list, one 5x8 map every 0x28 ticks — he
+ * stands up (A82F) when you come in and sits back down (A839) when you go.
+ * A751 (the map loop the hook itself uses) does the drawing. */
+static void bank_play_anim(Shop *s, unsigned list)
+{
+    for (int i = 0; i < 16 && !s->leave; i++) {
+        unsigned map = img16(s, list + 2u * (unsigned)i);
+        if (map == 0xFFFF) return;
+        draw_portrait_map(s, map, 5, 8, 0x09, 0x1F);
+        shop_wait(s, 0x28);
+    }
+}
+
+/* --- churpro A1D7 ------------------------------------------------------- */
+static void chur_hook(Shop *s)
+{
+    ShopHook *h = &s->hk;
+    if (h->ff50 < 0x20) return;                                 /* A1D7 */
+    h->ff50 = 0;
+    if (++h->chur_phase == 3) h->chur_phase = 0;                /* A1E5..A1F0 */
+    draw_cells_holes(s, 0xA234 + 6u * h->chur_phase, 2, 3, 0x10, 0x37);   /* A1FA */
+    draw_cells_holes(s, 0xA27C + 4u * h->chur_phase, 2, 2, 0x15, 0x37);   /* A246 */
+}
+
+/* --- drugpro A644 ------------------------------------------------------- */
+static void drug_hook(Shop *s)
+{
+    ShopHook *h = &s->hk;
+    if (h->ff50 < 2) return;                                    /* A644 */
+    h->ff50 = 0;
+    if (++h->drug_t < 0x14) return;                             /* A652..A65E */
+    h->drug_t = 0;
+    h->drug_phase = (uint8_t)(h->drug_phase + 1 < 3 ? h->drug_phase + 1 : 0);   /* A663 */
+    draw_portrait_map(s, 0xA69C + 0x24u * h->drug_phase, 6, 6, 0x0D, 0x17);
+}
+/* A708: a 0xFFFF-terminated list of 7x4 cell maps, one every 0x28 ticks —
+ * the keeper walking in (A745) / out (A74F) and his bow (A759) / rise (A761).
+ * Not the hook, but it is the hook's timebase and the ops that play it are the
+ * ones the shop's own scripts fire. */
+static void drug_play_anim(Shop *s, unsigned list)
+{
+    for (int i = 0; i < 16 && !s->leave; i++) {
+        unsigned map = img16(s, list + 2u * (unsigned)i);
+        if (map == 0xFFFF) return;
+        draw_portrait_map(s, map, 7, 4, 0x09, 0x1F);
+        shop_wait(s, 0x28);
+    }
+}
+
+/* --- innapro A22F ------------------------------------------------------- */
+static void inn_hook(Shop *s)
+{
+    ShopHook *h = &s->hk;
+    if (!h->inn_on) return;                                     /* A22F [A505] */
+    if (h->ff50 < 0x28) return;                                 /* A237 */
+    h->ff50 = 0;
+    /* A245: the only use of KRN_RANDOM in the town — the innkeeper's blink
+     * frame is picked fresh every 0x28 ticks, open or shut, 50/50 */
+    draw_portrait_map(s, 0xA279 + 4u * (unsigned)(krn_random(s->g) & 1), 2, 2, 0x08, 0x27);
+}
+/* A17F: the four 4x5 "going to sleep" frames at A281, played by op 2 */
+static void inn_draw_night(Shop *s, int frame)
+{
+    draw_portrait_map(s, 0xA281 + 0x14u * (unsigned)frame, 4, 5, 0x08, 0x27);
+}
+
+/* --- kenjpro AB47 ------------------------------------------------------- */
+/* AA16: the ritual aura, 4 rows x 8 cells at [BB12]+0x210 = (x8 9, y 0x27) */
+static void kenj_draw_ritual(Shop *s, int frame)
+{
+    draw_portrait_map(s, 0xAA47 + 0x20u * (unsigned)frame, 4, 8, 0x09, 0x27);
+}
+static void kenj_hook(Shop *s)
+{
+    ShopHook *h = &s->hk;
+    if (h->ff50 < 2) return;                                    /* AB47 */
+    h->ff50 = 0;
+    if (h->kj_ritual_on) {                                      /* AB55 [BB18] */
+        if (h->kj_fade) {                                       /* AB5C [BB1A] */
+            h->kj_ctr = (uint8_t)((h->kj_ctr + 1) & 15);        /* AB63 */
+            if (h->kj_ctr == 1)                                 /* AB6C: on the wrap, stop */
+                h->kj_ritual_on = h->kj_fade = h->kj_ctr = h->kj_frame = 0;
+        } else {
+            if (++h->kj_t_ritual < 0x14) return;                /* AB89..AB94 */
+            h->kj_t_ritual = 0;
+            h->kj_frame++;                                      /* AB9A */
+            /* ABA2: the eight-step aura sequence at ABFF, indexed frame-1 */
+            kenj_draw_ritual(s, img8(s, 0xABFF + (unsigned)((h->kj_frame - 1) & 7)));
+            h->kj_ctr = (uint8_t)((h->kj_ctr + 1) & 15);        /* ABB0 */
+        }
+    }
+    if (h->kj_blink_off) return;                                /* ABB9 [BB19] */
+    if (++h->kj_t_blink < 0x14) return;                         /* ABC1..ABCD */
+    h->kj_t_blink = 0;
+    uint8_t bl = (uint8_t)(h->kj_blink_state & 1);              /* ABD2 */
+    h->kj_blink_state = (uint8_t)~h->kj_blink_state;
+    /* ABDF: one cell at [BB12]+0x718 = (x8 0x0E, y 0x2F); ABFB open, ABFD shut */
+    gt_draw_cell(s->fb, s->cell, s->present,
+                 img8(s, (h->kj_eyes_closed ? 0xABFD : 0xABFB) + bl), 0x0E, 0x2F);
+}
+
+/* one 236.7 Hz tick of whichever hook is loaded */
+static void shop_hook_tick(Shop *s)
+{
+    s->hk.ff50++;
+    switch (s->dest) {
+    case SHOP_KING:   king_hook(s); break;
+    case SHOP_ARMOUR: armr_hook(s); break;
+    case SHOP_BANK:   bank_hook(s); break;
+    case SHOP_CHURCH: chur_hook(s); break;
+    case SHOP_DRUG:   drug_hook(s); break;
+    case SHOP_INN:    inn_hook(s);  break;
+    case SHOP_SAGE:   kenj_hook(s); break;
+    default: break;                     /* omoypro: [A002] = A004, a bare `ret` */
+    }
+}
+
 /* ---------------------------------------------------------- the prologue */
 static void shop_prologue(Shop *s)
 {
@@ -515,7 +744,26 @@ static void armr_action(Shop *s, uint8_t op)
         } }
     case 1: armr_buy(s, 0); return;
     case 2: armr_buy(s, 1); return;
-    case 4: shop_wait(s, 150); return;
+    case 3: {                                                   /* A6CB: back to the anvil */
+        s->hk.armr_on = 0;                                      /* A6CB */
+        if (s->hk.armr_state) { armr_draw_frame(s, 1); shop_wait(s, 50); }   /* A6D7 */
+        for (int i = 0; i < 12 && !s->leave; i++) {             /* A6DF: sequence A6FD */
+            uint8_t f = img8(s, 0xA6FD + (unsigned)i);
+            if (f == 0xFF) break;
+            if (f & 0x80) s->g->sfx_request = 0x20;             /* A6ED: the hammer */
+            armr_draw_frame(s, f & 7);
+            shop_wait(s, 50);                                   /* A870 */
+        }
+        return; }
+    case 4: shop_wait(s, 150); return;                          /* A706 */
+    case 5:                                                     /* A716: the repair (done in C
+                                                                 * by armr_repair; this is the
+                                                                 * wait and the animation reset) */
+        shop_wait(s, 400);
+        s->hk.armr_t0 = s->hk.armr_phase = s->hk.armr_state = s->hk.armr_t1 = 0;   /* A734 */
+        armr_draw_frame(s, 0);
+        s->hk.armr_on = 0xFF;                                   /* A74D */
+        return;
     case 6: armr_explain(s); return;
     case 7: shop_wait(s, 50); return;
     case 8:                                                     /* A880 the Crest of Glory trade */
@@ -527,7 +775,8 @@ static void armr_action(Shop *s, uint8_t op)
         s->g->page[P_SWORD_STOCK + 4] &= (uint8_t)~0x10;
         s->g->page[P_CREST_FLAGS] |= 2;
         return;
-    default: return;                                            /* 3/5/9 are animations */
+    case 9: armr_draw_frame(s, 3); return;                      /* A8FD: the smith looks up */
+    default: return;
     }
 }
 
@@ -641,7 +890,11 @@ static void drug_action(Shop *s, uint8_t op)
     case 4: drug_buy(s); return;
     case 5: drug_sell(s); return;
     case 6: drug_describe(s); return;
-    default: return;                                            /* 0/1/7/8 are animations */
+    case 0: shop_wait(s, 0x50); drug_play_anim(s, 0xA745); return;  /* A0D5 walks in */
+    case 1: shop_wait(s, 0x50); drug_play_anim(s, 0xA74F); return;  /* A0EB walks out */
+    case 7: drug_play_anim(s, 0xA759); return;                      /* A100 bows */
+    case 8: drug_play_anim(s, 0xA761); return;                      /* A106 straightens up */
+    default: return;
     }
 }
 
@@ -676,7 +929,10 @@ static void inn_action(Shop *s, uint8_t op)
         gold_pay(s, price);
         say(s, 0xA483);
         return; }
-    case 2: shop_wait(s, 200); return;
+    case 2:                                                     /* A114: the keeper turns in */
+        s->hk.inn_on = 0;
+        for (int i = 0; i < 4 && !s->leave; i++) { inn_draw_night(s, i); shop_wait(s, 50); }
+        return;
     case 3:                                                     /* A12A: the night */
         shop_wait(s, 150);
         s->g->hp = s->g->max_hp;
@@ -690,7 +946,17 @@ static void inn_action(Shop *s, uint8_t op)
 /* ================================================================== BANK == */
 static void bank_action(Shop *s, uint8_t op)
 {
-    if (op != 1) { if (op == 3) s->bought = 1; return; }         /* 0/2/3 are animations */
+    if (op != 1) {                                              /* 0/2/3 are animations */
+        if (op == 0) { shop_wait(s, 60); bank_play_anim(s, 0xA82F); }    /* A0C0 he stands up */
+        if (op == 2) {                                          /* A5F3 he sits back down */
+            s->hk.bank_on = 0;
+            bank_play_anim(s, 0xA839);
+            s->hk.bank_on = 0xFF; s->hk.bank_map = 0xA773;
+            shop_wait(s, 100);
+        }
+        if (op == 3) s->bought = 1;                             /* A619 [AD24] */
+        return;
+    }
     /* A0D2 main menu */
     vid_window(s->fb, 0, 0x17, 0x27, 0x41, 0x1C);
     menu_box(s, 0x27, 0x1D, 0x1C, 0x37, 0x27, 0x20);
@@ -700,6 +966,10 @@ static void bank_action(Shop *s, uint8_t op)
     if (menu_select(s, &row)) row = 0;
     s->cursor_main = row;
     vid_window(s->fb, 0, 0x17, 0x27, 0x41, 0x1C);
+    /* A14B / A23B / A3D0: every branch off the menu stops the idle and puts the
+     * teller back in his A8BB pose before it talks */
+    s->hk.bank_on = 0;
+    if (row >= 1 && row <= 3) draw_portrait_map(s, 0xA8BB, 5, 8, 0x09, 0x1F);
     uint32_t bank = page_gold24(s->g->page, P_BANK_HI);
     switch (row) {
     case 0: say(s, 0xAC5A); return;                             /* A125 "busy man" */
@@ -724,7 +994,9 @@ static void bank_action(Shop *s, uint8_t op)
         uint32_t amt = s->g->gold;                              /* the port deposits everything */
         gold_pay(s, amt);
         page_set_gold24(s->g->page, P_BANK_HI, bank + amt);
-        if (amt >= 1000) s->bought = 1;
+        /* A331: a deposit of 1000 or more sets him counting — the second cell-map
+         * pair at A7C3 — for the rest of the visit */
+        if (amt >= 1000) { s->bought = 1; s->hk.bank_on = 0xFF; s->hk.bank_map = 0xA7C3; }
         say(s, 0xAAF4); print_text(s); print_number(s, bank + amt); print_text(s);
         return; }
     case 3: {                                                   /* A3D0 withdraw */
@@ -815,10 +1087,27 @@ static void sage_action(Shop *s, uint8_t op)
         } }
     case 1: {                                                   /* A18E See Power */
         s->bought = 1;
-        shop_wait(s, 140);
+        /* A1D1: the sage raises his arms — three frames at 0x19 ticks, eyes shut
+         * and the blink held off while they play */
+        s->hk.kj_blink_off = s->hk.kj_eyes_closed = 0xFF;
+        for (int i = 0; i < 3 && !s->leave; i++) {
+            kenj_draw_ritual(s, img8(s, 0xA1FD + (unsigned)i));
+            shop_wait(s, 0x19);
+        }
+        s->hk.kj_blink_off = 0;
+        shop_wait(s, 140);                                      /* A410 */
+        s->hk.kj_ritual_on = s->hk.kj_blink_off = 0xFF;         /* A199: the aura runs */
         say(s, 0xAFDE);
         uint8_t r;
         do { shop_wait(s, 140); r = print_text(s); } while (r == 4 && !s->leave);
+        s->hk.kj_fade = 0xFF;                                   /* A1B5 */
+        /* A200: and lowers them again, frames A1FE then A1FD */
+        s->hk.kj_blink_off = 0xFF;
+        for (int i = 1; i >= 0 && !s->leave; i--) {
+            kenj_draw_ritual(s, img8(s, 0xA1FD + (unsigned)i));
+            shop_wait(s, 0x19);
+        }
+        s->hk.kj_blink_off = s->hk.kj_eyes_closed = 0;
         say(s, img16(s, 0xB029 + 2u * (unsigned)sage_assess(s)));
         return; }
     case 2:                                                     /* A914 "continue your quest?" */
@@ -836,12 +1125,27 @@ static void sage_action(Shop *s, uint8_t op)
 /* ================================================================== KING == */
 static void king_action(Shop *s, uint8_t op)
 {
-    if (op == 1) {                                              /* A09A: the 1000-gold gift */
+    switch (op) {
+    case 0:                                                     /* A0E4: the twelve-step face */
+        /* the 0x00 byte the scripts use as "he speaks": twelve frames from the
+         * list at A0F8, 0x19 ticks each, with the hook running underneath */
+        for (int i = 0; i < 12 && !s->leave; i++) {
+            king_draw_face(s, img8(s, 0xA0F8 + (unsigned)i));
+            shop_wait(s, 0x19);                                 /* A104 */
+        }
+        return;
+    case 1:                                                     /* A09A: the 1000-gold gift */
         for (int i = 0; i < 10 && !s->leave; i++) { shop_gold_add(s, 100); shop_wait(s, 20); }
         s->g->page[P_KING_GIFT] = 0xFF;
         return;
+    case 2: shop_wait(s, 150); return;                          /* A0D4 */
+    case 3:                                                     /* A092 */
+        s->hk.king_blink_on = 0xFF; king_draw_mouth(s, 1); return;
+    case 4: s->hk.king_mouth_on = 0xFF; return;                 /* A084: lip-sync on */
+    case 5:                                                     /* A08A: lip-sync off */
+        s->hk.king_mouth_on = 0; king_draw_mouth(s, 0); return;
+    default: return;
     }
-    if (op == 2) shop_wait(s, 150);
 }
 
 /* ------------------------------------------------------------ the driver */
@@ -923,14 +1227,35 @@ int shop_open(Shop *s, Town *t, int dest)
     }
     shop_prologue(s);
     s->tp = shop_first_script(s);
+    /* the enables the overlays' own entry code sets (everything else is zero
+     * in the overlay image, which is where these variables live) */
+    switch (dest) {
+    case SHOP_ARMOUR:                                           /* A06B, cleared at A09E */
+        s->hk.armr_on = (s->tp == 0xB2A2) ? 0 : 0xFF; break;
+    case SHOP_INN:    s->hk.inn_on = 0xFF; break;               /* A06F */
+    case SHOP_BANK:   s->hk.bank_on = 0xFF; s->hk.bank_map = 0xA773; break;  /* A058 */
+    default: break;
+    }
     return 0;
 }
 
 void shop_close(Shop *s) { free(s->img); s->img = NULL; }
 
+/* bankpro A063..A08F: the box is cleared, then the teller's idle runs for five
+ * 0x3F-tick passes before the greeting.  (The two "scripts" A989 and A98B the
+ * original prints there are `0C FF 2E` and `FF 2E`: a clear and a no-op whose
+ * return value it throws away.)  The idle is off for the rest of the visit
+ * unless a big deposit or the goodbye turns it back on. */
+static void bank_entry(Shop *s)
+{
+    for (int i = 0; i < 5 && !s->leave; i++) shop_wait(s, 0x3F);
+    s->hk.bank_on = 0;                                          /* A08F */
+}
+
 void shop_loop(Shop *s)
 {
     if (!s->tp) return;
+    if (s->dest == SHOP_BANK) bank_entry(s);
     for (int guard = 0; guard < 200 && !s->leave; guard++) {
         uint8_t op = print_text(s);
         if (getenv("ZEL_SHOP_DEBUG")) fprintf(stderr, "[shop] op %02X at %04X frames %u leave %d text \"%s\"\n", op, s->tp, s->frames, s->leave, s->last_text);

@@ -126,8 +126,26 @@ static int post_boss_banks(Game *g, int post_ai, int post_enemies)
     return 1;
 }
 
-/* town.bin 6FF8 goto_cavern: the MAP_CAVES record hands the hero to fight.bin. */
-int shell_enter_cavern(Shell *s, int sys_map, int col, int row, int face_left)
+/* town.bin 6FF8 goto_cavern: the MAP_CAVES record hands the hero to fight.bin.
+ *
+ * `from_cave_record` is the difference between the two ways in.  A **door**
+ * (fight.bin 7DC1) computes `[82] = dest_row + 1 - [C016]`, and 7D2D then pins
+ * the hero's screen row at that same `[C016]`, so his map row is exactly
+ * `dest_row + 1`.  A **cave record** (town.bin 7005) computes `[82] = row - 10`
+ * with the 10 hard-coded, and 7D2D still pins the screen row at `[C016]` -- so
+ * the hero's map row is `row - 10 + row_bias`, and the record's row is only
+ * where he lands on a map whose row_bias *is* 10.
+ *
+ * Every cavern proper has row_bias 10; the boss rooms have 12 (MPA0 13).  The
+ * one cave record in the game that names a boss room is Llama Town's (27,13)
+ * for MP73, and 13 - 10 + 12 = 15 puts the hero on that room's floor -- which
+ * is why the DOSBox capture has him standing at (27,15) and not falling from
+ * (27,13).  The port used to read the record's row as the map row, drop him
+ * the two rows, and give him 69CB's extra step in his facing on the way, so he
+ * ended a column to the right of the capture (port/README.md, "The MP73 entry
+ * column"). */
+int shell_enter_cavern(Shell *s, int sys_map, int col, int row, int face_left,
+                       int from_cave_record)
 {
     Game *g = &s->g;
     int slot = s->cur ^ 1;
@@ -140,6 +158,7 @@ int shell_enter_cavern(Shell *s, int sys_map, int col, int row, int face_left)
     s->cur = slot;
     shell_load_enemy_banks(s, &s->maps[slot]);
     g->map = &s->maps[slot]; g->tiles = &s->tiles[slot];
+    if (from_cave_record) row = row - 10 + s->maps[slot].row_bias;       /* 7005 / 7D2D */
     game_place(g, col, row, face_left);
     if (g->boss_room) game_boss_room_intro(g);                          /* 61A8 */
     else game_start_walk_in(g, face_left);                              /* 7C6E */
@@ -238,7 +257,7 @@ static void town_frame(Shell *s)
         if (i < 0 || i >= s->tmap.ncaves) { fprintf(stderr, "[town] no cave record %d\n", i); break; }
         const TownCave *c = &s->tmap.caves[i];
         g->page[6] = 0xFF;                                              /* 702E: [06] entered a cavern */
-        shell_enter_cavern(s, c->map, c->col, c->row, c->side & 1);
+        shell_enter_cavern(s, c->map, c->col, c->row, c->side & 1, 1);
         break; }
     case TOWN_TO_TOWN: {                                                /* 6CE1 */
         int left = (t->action_arg & 0x100) != 0, dest = t->action_arg & 0xFF;
@@ -288,6 +307,6 @@ void shell_frame(Shell *s)
     if (was_intro && !s->g.boss_room && !s->g.hero_dead) {
         s->g.boss_intro = 0;
         LOG(s, "[boss] the [E6] walk-in is over: loading MPA0 at (0x18,0x0D)\n");
-        shell_enter_cavern(s, 0x1E, 0x18, 0x0D + 1, 0);   /* 7DC1 puts him a row below the entry cell */
+        shell_enter_cavern(s, 0x1E, 0x18, 0x0D + 1, 0, 0);   /* 7DC1 puts him a row below the entry cell */
     }
 }

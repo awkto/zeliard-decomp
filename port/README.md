@@ -50,9 +50,9 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 9 test binaries
-make test            # physics (141) + combat/AI (171) + town (138) + boss (627) + shop (118)
-                     #   + status (87) + playthrough (42) + audio (305) + cutscene (46) = 1675 assertions
-make verify          # 113 headless renders diffed against the DOSBox captures in docs/screenshots/,
+make test            # physics (141) + combat/AI (171) + town (138) + boss (627) + shop (183)
+                     #   + status (87) + playthrough (60) + audio (305) + cutscene (46) = 1758 assertions
+make verify          # 143 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
 make playthrough     # the same two routes as test_playthrough, with the step-by-step log
 ./zeliard            # the real boot: the opening demo, then Felishika's Castle
@@ -665,12 +665,18 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     the shelf, straight back in through the door standing beside him there, pick
     the boss's Key up off the floor of what is now an ordinary room, out again, and
     open the locked door the Key was for — MP10's (128,32) into Satono, MP20's
-    (205,47) into MP30, MP31's (188,20).  15 doors, three Keys and three shops, all
-    walked; the only shell calls left are two `P_GOTO`s that carry the hero across
-    MP20 and MP31, the two 200-column crossings the autopilot still cannot hold.
-    Asserts three bosses, no deaths, the boss EXP and gold, three shops, fourteen
-    doors, the Key left in the bag, the three boss-defeated story flags and both
-    doors a boss Key unlocked for good.
+    (205,47) into MP30, MP31's (188,20).  **Cavern 2 is walked from its own
+    entrance now**: off Satono's *right* edge into MP20 at (6,62), a hundred and
+    fifty columns and one fixture ride to the Key lying at (149,44), and into MP2D
+    through the room's own **locked** door at (171,54) — which is what the room's
+    header start record `(171,55)` says the way in is.  15 doors, four Keys and
+    three shops, all walked.  Two `P_GOTO`s are left: MP20's descent from the Key
+    ledge at row 43 to the row-55 floor in front of the boss door (the graph route
+    goes back west to column 106 and down three elevators), and the whole of MP31
+    (see "What is left" below).  Asserts three bosses, no deaths, the boss EXP and
+    gold, three shops, fourteen doors, the Key left in the bag, the three
+    boss-defeated story flags, that MP20's locked boss door was opened with a Key,
+    and both doors a boss Key unlocked for good.
   * **cavern 1's topology**, surveyed three ways, because it is what the walking
     route depends on: from the Muralla gate at (61,7) the graph reaches 1073 of
     MP10's 1542 nodes and, of its six doors, only the MURALLA door back out and
@@ -685,8 +691,9 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     that the whole of fix[2]'s patrol (columns 1..15 at row 43) is standable while
     the map under it is not, that a mid-platform node really has ride edges and that
     they remember the fixture they need — and then two live crossings of MP10's
-    floorless gaps with the planner driving, westward over fix[2] (69 frames) and
-    over fix[3] at row 53 (107 frames).
+    floorless gaps with the planner driving, westward over fix[2] (67 frames) and
+    over fix[3] at row 53 (638 frames — the platform has to come back for him
+    now that the executor waits for it instead of walking off its front).
 * `test_audio.c` — 305 assertions over the sound back end:
   * **the score parser against `tools/msd2mid.py`**: all 17 scores in all three
     blob-B arrangements (AdLib, Tandy, PC speaker) are run through `msd.c`, and the
@@ -931,16 +938,17 @@ simply fails and leaves whatever 7EBB already loaded in place.  The rule is now
 * **The encounter card is in** — `encnt.grp` decoded through gfmcga's own 28x5
   cell map, "ENCOUNTER!" in the two reds on black, flashing twelve half-frames
   starting with the card up (60BC draws it before the loop).  The `[E6]` boss-room
-  walk-in (61A8, only mp90 uses it) runs now, including 61DB's hand-off to MPA0;
-  the per-boss idle animations the shop `[A002]` hooks would drive still do not.
+  walk-in (61A8, only mp90 uses it) runs now, including 61DB's hand-off to MPA0.
+  (The *shop* `[A002]` hooks are a different thing and are all in; the per-boss
+  idle animations still are not.)
 * **Shop details.**  The bank's amount entry is simplified to "deposit/withdraw
-  everything" (the original's 24-bit Up/Down/Left/Right entry is not ported), the
-  sage's name-entry dialog and `*.usr` file browser are replaced by `--name`, and the
-  shopkeepers' idle animations (the `[A002]` hooks: the smith's eyes and mouth, the
-  priest, the innkeeper's blink, the drug shop's pot, the sage's ritual aura) do not
-  run — the portraits are static.  The eight hook entry points are listed under
-  "What is left of milestone (e)".  omoypro (the Princess' chamber, the ending
-  hand-off) is loaded but only draws its picture.
+  everything" (the original's 24-bit Up/Down/Left/Right entry is not ported) and the
+  sage's name-entry dialog and `*.usr` file browser are replaced by `--name`.  The
+  **shopkeepers' idle animations are in** — all seven `[A002]` hooks, checked
+  against DOSBox frame by frame (see "The shopkeepers' [A002] idle hooks").
+  omoypro (the Princess' chamber, the ending hand-off) is loaded but only draws
+  its picture, which is what the original does too: its `[A002]` word is `A004`,
+  the bare `ret` byte in front of its entry point.
 * **The dialogue box's yes/no widget** (`74D3`) now runs for both opcodes: `81`
   (the bsmp sentry: Yes → script 12, No → 13) and `89` (llmp's Asbestos cape:
   declined → 6, under 2500 almas → 7, otherwise `[8B] -= 2500`, `[34] |= 0x40`,
@@ -1077,7 +1085,7 @@ navigator is debugged.  A route entry is
 | `P_CAV_CELL` | reach map cell `(a,b)` — a chest, a Key, a boss reward |
 | `P_BOSS` | fight until the boss is defeated and 72F1 has run |
 | `P_FARM` | patrol between columns `a` and `b` until EXP reaches `c` |
-| `P_GOTO` / `P_TOWN_GOTO` | the shell call a door or a town gate makes, for the legs the navigator cannot reach yet (route 2 has two left, both "cross a whole 200-column cavern") |
+| `P_GOTO` / `P_TOWN_GOTO` | the shell call a door or a town gate makes, for the legs the navigator cannot reach yet (route 2 has two left: MP20's descent to its boss door and the whole of MP31) |
 
 `menu` is one character per widget the shop opens, in order: `0`..`9` picks that row,
 `y`/`n` answers a Yes/No, `c` cancels (which every shop reads as "Go outside").  So
@@ -1194,7 +1202,9 @@ save; the restore recipe above is unchanged.
 | **Pureza (8)** | left edge → **MP80** (111,21) |
 | Esco (9) | column 205 → MP81 (123,6) |
 
-Eleven captures have been taken that way and all eleven are in `make verify`:
+Eleven captures have been taken that way and all eleven are in `make verify`
+(and the same trick reaches every *shop* — see "The shopkeepers' `[A002]` idle
+hooks", which added seventeen more):
 
 | capture | save | in DOSBox |
 |---|---|---|
@@ -1211,17 +1221,19 @@ Eleven captures have been taken that way and all eleven are in `make verify`:
 | `cavern8b.png` — **MP81 "Cavern of Milagro"** | Esco, column 205 | tap Up: the column-205 door → MP81 (123,6) |
 
 So a boss capture no longer needs a long cavern walk at all: Llama's column-222
-door is a boss room's front door.  The port reproduces `boss_paguro.png` at
-`--map 0x15 --pos 27 15`, frame 20, at **100 %** over the whole playfield except
-the boss sprite's own animation band — the left-wall band that used to differ is
-explained and covered now (see "The MP73 left wall").
+door is a boss room's front door.  The port reproduces `boss_paguro.png` **from
+Llama Town itself** now — `--town 7 --town-col 222`, tap Up, frame 40 — at 99.7 %
+of the whole playfield and **100 %** in all six boxes; the residue is the boss
+sprite's own animation phase.  The left-wall band that used to differ was a port
+bug in how a cave record's row is read, and it is fixed (see "The MP73 entry
+column").
 
 The last two maps a town door reaches are captured too, and both reproduce: MP70
 at `--map 0x12 --pos 152 7` and MP81 at `--map 0x18 --pos 123 6`, each 100 % over
 everything but the sprites at a different animation phase (MP70's sky sparkles,
 MP81's three hanging enemies).  Cavern 7 is the heat cavern, so half the frames
 of the MP70 run carry `704F`'s "It's too hot !!" box; the capture is one of the
-frames in between.  `make verify` is 113 comparisons now.
+frames in between.  `make verify` is 143 comparisons now.
 
 The only boss door still out of reach this way is MP6D's at (309,41), six
 columns from where Dorado Town drops into MP60 but eight rows up and locked.
@@ -1272,7 +1284,7 @@ columns from where Dorado Town drops into MP60 but eight rows up and locked.
 
    **The whole lap is walked now.**  `test_playthrough`'s "fixture rides" case
    runs the navigator from the Muralla gate to door 5 at (159,50) — about three
-   hundred macros, a full lap of the 240-column ring — and it arrives in ~1400
+   hundred macros, a full lap of the 240-column ring — and it arrives in ~1050
    frames.  What was in the way was not the planner and not, in the end, a
    platform's *phase*: it was **82B4**, the engine's own "is the hero riding this
    platform" test, which the port had a column out ("Corrections found while
@@ -1284,29 +1296,31 @@ columns from where Dorado Town drops into MP60 but eight rows up and locked.
    column 117 and the fix[5] platform bridges 118-129; every lap the hero walked
    into the gap and fell through the ring wrap.
 
-2. **The remaining town machinery: the shopkeeper idle hooks.**  Everything else —
-   the ympd/ckpd backdrops, all three parallax strips (now with the right *phase*,
-   see below), ENCNT.GRP, the HUD's grey panel + stone frame + item-slot frames and
-   the row of Tear slots — is done.  The hook is town.bin's `idle_poll` 7042, which
-   calls `[cs:0xA002]` whenever `[7C42]` says a shop overlay is loaded; the word at
-   each overlay's `A002` is its entry:
-
-   | overlay | `[A000]` | `[A002]` idle hook |
-   |---|---|---|
-   | kingpro | A004 | **A3A2** |
-   | omoypro | A005 | A004 |
-   | armrpro | A004 | **A90F** |
-   | bankpro | A004 | **A728** |
-   | churpro | A004 | **A1D7** |
-   | drugpro | A004 | **A644** |
-   | innapro | A004 | **A22F** |
-   | kenjpro | A027 | **AB47** |
-
-   armrpro's (A90F) is a plain blink/lip-sync state machine: it does nothing unless
-   `[BC23]`, waits for `[FF50] >= 2`, counts `[BC24]` up to 0x1E, then steps
-   `[BC25]`/`[BC26]` through a small script and redraws one cell.  Porting it is a
-   day's work per overlay plus a DOSBox capture of a keeper mid-blink to check it
-   against; `shop_armour.png` is phase 0 and cannot tell the difference.
+2. ~~**The remaining town machinery: the shopkeeper idle hooks.**~~  **DONE** —
+   see "The shopkeepers' `[A002]` idle hooks" below.
+2a. **Route 2's last two `P_GOTO`s, and what is under them.**  Both caverns are
+   mapped now; what is missing is executor reach, not knowledge.
+   * **MP20.**  The intended way in is Satono's *right* edge -> (6,62), one of the
+     two Keys lying in the map, and the **locked** door at (171,54); (190,47) and
+     (205,47) are the boss room's exit shelf and are unreachable from the entrance,
+     exactly as in MP10, and MP20's header start record is `(171,55)` — its own
+     locked door, the same signature MP10 and MP31 carry.  The route walks
+     (6,62) -> the Key at (149,44) unaided (about 1200 frames, including a ride
+     over fix[5]).  What it cannot hold is the descent from the row-43 Key ledge to
+     the row-55 floor in front of the door: the survey's own route runs back west
+     to column 106 and down through three of the map's elevators and two more
+     patrolling platforms, twenty-five macros with a fixture in nearly every one.
+   * **MP31** (system map 6).  Same shape: the locked boss door is **(188,20)**,
+     the shelf door is (174,4), and the header start record is `(188,21)`.  The way
+     to (188,20) is **Bosque's column-7 door**, which lands at (149,14) — 41 frames
+     from the door.  The Key for it is in MP30 (system map 5) at (133,55), reachable
+     only through MP31's own (153,43) door, and the way back from there to a door
+     that reaches (188,20) is a five-map-transition loop whose last leg (MP30's
+     column-4 shaft, rows 47 -> 20, then eight columns left across the ring wrap)
+     the executor loses on a single edge.  And Bosque's column-7 door is behind the
+     **sentry NPC** standing at column 8 — the `[12] & 8` patch in bsmp's own list —
+     who physically blocks the way until that story flag is set; the route has no
+     way to set it yet, so even the walkable half is not reachable in sequence.
 3. **The rest of the sound**: the MT-32 driver (`MSCMT.DRV` over blob A, which
    `tools/msd2mid.py --mt` already decodes) and the Tandy SN76496 pair
    (`MSCJR.DRV` + `SNDJR.DRV`); `SNDADLIB`'s `15A3` ambient/proximity routine, which
@@ -1391,29 +1405,127 @@ the parked row empty air), and after the pickup (the record retired).
 **docs/FIGHT.md's "Unresolved" caveat on this can go** — see "Doc corrections"
 at the end of this file.
 
-## The MP73 left wall
+## The shopkeepers' `[A002]` idle hooks
 
-`boss_paguro.png`'s one unexplained band, screen x 48-63, is the boss room's left
+town.bin's `idle_poll` (7042) ends with
+
+```
+0000705A  F606427CFF        test byte [0x7c42],0xff     ; a shop overlay is loaded
+0000705F  7501 / C3
+00007064  2EFF1602A0        call [cs:0xa002]
+```
+
+so every pass of every wait loop in a shop — printing a character, sitting in a
+menu, waiting for a key — runs the overlay's own `[A002]` routine.  All seven
+that exist are ported now (omoypro has none).  The word at `A002` is the first
+thing in each overlay image, so `test_shop` reads it back out of the file:
+
+| overlay | ZELRES2 | `[A000]` | `[A002]` | what it drives |
+|---|---|---|---|---|
+| kingpro | 10 | A004 | **A302** | the blink (A360's 26-step sequence into A37A's three eye maps) and the lip-sync mouth (A3D4) |
+| omoypro | 11 | A005 | A004 | nothing: `A004` is a `ret` byte (`C3`) |
+| armrpro | 12 | A004 | **A90F** | the smith's eyes (AAD0) / mouth (AB68) and the A9CF frame table |
+| bankpro | 13 | A004 | **A728** | the teller's two 5x8 cell maps at `[AD1F]` |
+| churpro | 14 | A004 | **A1D7** | the altar candles (A234) and the priest (A27C), three phases each |
+| drugpro | 15 | A004 | **A644** | the bubbling pot, 6x6 cells at (104,23), three phases |
+| innapro | 16 | A004 | **A22F** | the innkeeper's blink — the town's only use of `KRN_RANDOM` |
+| kenjpro | 17 | A027 | **AB47** | the sage's blink (ABFB/ABFD) and the level-up aura (AA47, sequence ABFF) |
+
+(This table used to read `A3A2` for kingpro.  The overlay's first four bytes are
+`04 a0 02 a3`, so it is `A302`; `src/shops.c` had it right.)
+
+**The tick model.**  Each hook is a state machine clocked by `[FF50]`, the second
+free-running 236.7 Hz counter: it returns until `[FF50]` reaches its own threshold
+(4 for kingpro, 2 for armrpro/drugpro/kenjpro, 0x1E for bankpro, 0x20 for churpro,
+0x28 for innapro), then zeroes it and takes one step.  Because `idle_poll` runs far
+faster than the tick, the thresholds are wall-clock periods, not frame counts.  One
+rendered frame is 4*speed = 20 ticks, so `shop_frame` steps the hook **twenty times,
+one tick at a time**, before presenting; the animations then run at the original's
+rate rather than the port's frame rate.  `port/shop.h` keeps the overlays' own
+variables under their original names.
+
+The hooks are gated by flags the shops' own script opcodes set, so those are in
+too: kingpro's op 3 (`A092`, arm the blink) / 4 (`A084`, lip-sync on) / 5 (`A08A`,
+off) / 0 (`A0E4`, the twelve-frame face), armrpro's op 3 (`A6CB`, back to the
+anvil), 5 (`A716`, the repair) and 9 (`A8FD`), bankpro's entry idle (`A063..A08F`:
+five 0x3F-tick passes before the greeting, then off) and its A82F/A839 stand-up
+and sit-down lists, drugpro's keeper walking in and out (`A708`), innapro's op 2
+(`A114`, the keeper turns in) and kenjpro's raise/lower (`A1D1`/`A200`).
+
+**Ground truth.**  Six of the eight shops had never been captured.  Each was
+reached under DOSBox by restoring a `.usr` the port wrote with the hero standing
+on the shop door's own column and tapping Up (docs/DOSBOX_RECIPE.md §9), then
+captured as a burst of forty screenshots about 0.1 s apart.  Every distinct frame
+of every cycle in those bursts is now a `make verify` box, thirty in all, and all
+of them are pixel-exact:
+
+* **armrpro.**  `shop_armour.png`, captured for milestone (d), turns out to have
+  caught the smith **mid-blink**: the two cells at (128,79) are `AAD0`'s fourth
+  pair (0x53,0x54), not the (0x50,0x51) the portrait map has there.  Nobody had
+  noticed because the old "armour shop portrait" box stops at y 74.
+  `shop_armour2.png` is the same screen 0.3 s later with his eyes open.  Measured
+  blink period over five blinks: **1.00-1.01 s**; `A90F` predicts 4 phases x 0x1E
+  steps x 2 ticks = 240 ticks = 1.014 s, one quarter of it shut.  The whole
+  playfield matches in both phases.
+* **churpro** (`shop_church*.png`, Muralla column 59): three phases, measured
+  0.40-0.41 s a cycle against `A1D7`'s 3 x 0x20 = 96 ticks = 0.406 s.
+* **drugpro** (`shop_drug*.png`, column 111): three phases, whole playfield 100%
+  in each.  Phase 0 is the portrait's own cells, which is why `A5E4`'s map has
+  `A69C`'s first row in it.
+* **bankpro** (`shop_bank*.png`, column 138): both frames of the entry idle *and*
+  the third and fourth frames of the `A82F` stand-up, which is what pins the
+  entry loop's length (five 0x3F-tick passes) and the list's 0x28-tick step.
+* **innapro** (`shop_inn*.png`, Satono column 128) and **kenjpro**
+  (`shop_sage*.png`, Muralla column 172): both blink cells.
+* **kingpro** (`shop_king*.png`, Felishika column 52): both mouth cells and all
+  three eye maps.  Mouth toggle measured 0.10 s against 6 steps x 4 ticks =
+  0.101 s.  The blink and the mouth are independent counters, so the port's frame
+  27 carries the capture's mouth-shut with the *next* eye map and frame 28 the
+  other way round; the two pairs of boxes are crossed on purpose.
+
+innapro's blink and kingpro's blink-restart use `KRN_RANDOM`, whose original is
+`[FF1B]`-fed (`svc_random` 0x0918) and the port's is an LCG, so the *sequence*
+cannot match — both cells do, and that is all the hook decides.
+
+## The MP73 entry column: a cave record's row is not the hero's map row
+
+`boss_paguro.png`'s one unexplained band, screen x 48-63, was the boss room's left
 wall and the corner where it meets the floor; everything above row 38 there is a
-uniform wall texture, which is why the mismatch showed nowhere else.  It is not a
-camera clamp: the port's ring, its scrolling and the room's tiles are all right,
-and the port reproduces the capture **100%** — the whole playfield except the boss
-sprite's own animation band — from `--pos 27 15`.  What differs is one map column
-of *hero*.
+uniform wall texture, which is why the mismatch showed nowhere else.  It was never
+a camera clamp and never `69CB` either: it was one map column of *hero*, and the
+column was wrong because **the port read a cave record's row as the hero's map
+row**.  It is not.
 
-Llama Town's `[C00B]` record for MP73 is `(27,13)`, and MP73's only floor is at
-rows 18-20, so the hero is placed two rows in the air: the one cave record in the
-game that does that (cavern 6's and cavern 8's both land him standing).  He falls
-those two rows, and on the first frame of the fall `69CB` gives a hero who *left
-the ground* one extra step in the direction he is facing — so the port's Garland
-ends at (28,15) with `scroll_col` 12, while the capture has him at (27,15) with
-`scroll_col` 11.  The port's `gravity()` is faithful to 69CB (`mov al,[0xff3d]` /
+Two different routines put the hero on a map, and they scale the row differently:
+
+| way in | `[82]` scroll_row | `[84]` hero screen row | hero's map row |
+|---|---|---|---|
+| a **door** (fight.bin `7DC1`: `mov al,[0x9f1c] / inc al / sub al,[0xc016]`) | `dest_row + 1 - [C016]` | `[C016]` (`7D2D`) | `dest_row + 1` |
+| a **cave record** (town.bin `7005`: `lodsb / sub al,0xa`) | `row - 10` | `[C016]` (`7D2D`) | `row - 10 + row_bias` |
+
+`goto_cavern` hard-codes the 10; `7D2D` (`mov al,[0xc016] / mov [0x84],al /
+mov [0x9f00],al`) does not.  So a cave record's row is the hero's map row only on
+a map whose `[C016]` row_bias *is* 10 — which every cavern proper is.  **Every
+boss room is 12** (MPA0 is 13), and the one cave record in the game that names a
+boss room is Llama Town's `(27,13)` for MP73: `13 - 10 + 12 = 15`, which is the
+room's floor.  The real game never drops him at all.
+
+The port used to place him at row 13, two rows above the floor, let gravity take
+him, and hand him `69CB`'s extra step in his facing on the first frame of the
+fall — so he ended at (28,15) with `scroll_col` 12 where the capture has (27,15)
+and `scroll_col` 11.  `shell_enter_cavern` now takes a `from_cave_record` flag and
+does `row - 10 + row_bias` for the town's own `[C00B]` table; the door path (which
+was already right) is untouched.  `make verify` enters MP73 the way the capture
+was made — restore into Llama Town at column 222, tap Up — and the six boxes
+(the wall, the corner, the floor wall to wall, left of Paguro, right of him and
+the HUD name box) are all 100% from that path, with the whole playfield at 99.7%
+(the remaining 104 px is the boss's own animation phase).  `test_playthrough`
+asserts the record, the row_bias and the cell it lands on.
+
+The port's `gravity()` is faithful to 69CB as it stands (`mov al,[0xff3d]` /
 `mov byte [0xff3d],0x7f` / `test al,0xff` / `jnz 69E6`, else `jmp 67C6`), and the
-entry does set `[FF3D]` to 0 (7E5B), so on the disassembly alone the step should
-happen.  It evidently does not.  `make verify` now names the cell the capture
-shows him standing on and covers the wall, the corner and the floor wall-to-wall
-(four boxes, all 100%); the one-column drift on the way in is the last thing on
-this map that is not explained.
+entry really does set `[FF3D]` to 0 at `7E5B` — the extra step was right, it was
+the hero who should not have been falling.
 
 ## Corrections found while walking cavern 1 (issue #28)
 
@@ -1544,6 +1656,44 @@ ladder on the side he faces), he must not be inside 6B41's two-frame post-fall
 crouch (a crouch swallows the step), the walks-off guard must not veto a move the
 probe *measured* as a drop, and an edge the live run fails to reproduce three
 times is dropped.  What is still missing is a patrolling platform's phase.
+
+## Corrections found while walking cavern 2 (issue #28)
+
+Two more navigator bugs, both of them the same shape as the cavern-1 ones: an
+executable-by-construction graph that the *executor* could not reproduce.  They
+are `port/nav.c` only — the engine is right in both cases.
+
+**Walking across a moving platform outruns it.**  `nav_step`'s "riding a
+patrolling platform" clause stepped the hero in the platform's own direction as
+soon as its trailing cell reached `bc - 1` — one column early.  He then kept
+stepping, a column a frame, while the half-speed platform moved a column every
+*other* frame, so he walked off its **leading** end.  The survey cannot catch this
+on its own: it probes every column the platform can reach with the platform under
+that column, so all eleven columns of MP20's row-57 gap (62..72, fix[5]) are
+perfectly good nodes with ordinary walk edges between them, and the field is happy
+to walk straight across.  Two changes: the trailing guard now fires at `f->col ==
+bc`, and while he is carried with nothing but gap on either side the hook stands
+still and lets the platform do the work — which is what a player does.  Both are
+suspended the moment there *is* ground of his own within a step, so stepping off
+at the far end is still the planner's decision.
+
+**`edge_ready` refused the step off a platform because the platform had turned
+round.**  A fixture edge remembers the direction the probe had the mover going,
+and rightly so for a ride: the macro was run with it moving that way.  But it also
+gated the step **off** the platform onto solid ground, and a patrolling platform
+reverses exactly at the far end of its patrol — which is where that step is.  The
+hero rode MP20's fix[5] to column 70, the platform turned, every outgoing edge
+went not-ready in the same frame, and the trailing guard dragged him back across
+the gap; he did that for ever.  `edge_ready` now ignores the direction bit when
+the node the edge lands on is held up by the map itself (`grid[ncol+1][nrow+3]`
+not passable): the platform only has to be under him for the first frame.
+
+With both in, MP20's gap crosses in **29 frames** and the whole Satono -> Key at
+(149,44) leg walks in about 1200.
+
+**`shell_enter_cavern` read a cave record's row as the hero's map row.**  See "The
+MP73 entry column" above: town.bin `7005` hard-codes the 10 that fight.bin `7D2D`
+does not.
 
 ## Corrections found while porting the cutscenes (issue #30)
 
@@ -1703,6 +1853,28 @@ fixture" test that `8271`/`828C` call).  It is worth adding, because it is writt
 in a way that is easy to get wrong — see the correction above — and the port had it
 a column out for four sprints.
 
+**`src/shops.c` `kenj_ritual_lower` @`A200`** — the comment says the frames are
+`{2,1}`.  The routine is `mov si,0xa1fe / mov al,[si] / dec si`, and `A1FD..A1FF`
+hold `00 01 02`, so it plays **`{1,0}`** — frame 1 then frame 0, the reverse of
+`A1D1`'s `{0,1,2}` minus the top of the arc.
+
+**`docs/TOWN.md` §3, the per-map table** — bsmp's cave entries read
+`(185,19,0,MP31) (149,14,1,MP3D)`.  The second record's map byte is the same
+system map as the first pair's partner, i.e. **MP31** (system map 6), not MP3D
+(system map 7): map 6's door at (149,13) is the one whose destination is Bosque
+column 7, and MP3D is only reachable from map 6's (174,4) and (188,20).  Either
+that cell or `docs/RESOURCES.md`'s "6 MP3D" naming is wrong; the door lists in the
+`.mdt`s are the authority.
+
+**`docs/TOWN.md` §3 and `docs/ARCHITECTURE.md`** — nothing anywhere records that a
+`[C00B]` cave record's row is **not** the hero's map row.  town.bin `7005` is
+`lodsb / sub al,0xa`, a hard-coded 10, while fight.bin `7D2D` sets the hero's
+screen row from the map's own `[C016]` row_bias; the hero's map row is therefore
+`row - 10 + row_bias`.  It only ever matters for Llama Town's `(27,13)` record for
+MP73, the one cave record that names a boss room (row_bias 12, so he lands at row
+15), but it is worth a line in the `[C00B]` description — see "The MP73 entry
+column" above.
+
 **`docs/DOSBOX_RECIPE.md` §8 and §9.1** — the screenshot table and the "that is
 how ... were captured" list should gain `cavern7.png` (MP70 "Cavern of Caliente",
 from a Llama Town save at column 8, tap Up) and `cavern8b.png` (MP81 "Cavern of
@@ -1712,3 +1884,17 @@ the §9 restore timeline plus `44:+Up 44.3:-Up 47:+Up 47.3:-Up` and captured at
 puts "It's too hot !!" over the top of the playfield every 64 frames for 32 of
 them — take the capture in one of the gaps, or the message box covers the
 tileset.
+
+**`docs/DOSBOX_RECIPE.md` needs a §9.3, "reaching a shop"** — the same `.usr`
+restore that reaches a cavern reaches any shop: write the save with the hero on
+the shop door's own column (`port/zeliard --town N --town-col C --save NAME`),
+restore it with F7, and tap **Up**.  The doors are in docs/TOWN.md §3's table;
+Felishika 52 is the king, Muralla 59 the church, 111 the drug shop, 138 the bank,
+172 the sage, Satono 128 the inn.  `shop_church*.png`, `shop_drug*.png`,
+`shop_bank*.png`, `shop_inn*.png`, `shop_sage*.png` and `shop_king*.png` were all
+taken that way with
+`KEYS="6:Return 9:Return 16:Return 20:F7 21.5:y 23:+Down 23.2:-Down 24:+space 24.2:-space 25:+Return 25.2:-Return 30:+Up 30.3:-Up"`
+and forty captures 0.05 s apart from 33 s (the harness stretches those to about
+0.1 s of real time each, which is fine — read the real spacing off the file
+mtimes).  `shop_armour2.png` used the milestone-(d) walking recipe instead,
+because Muralla's armour shop is the first door a held Right reaches.

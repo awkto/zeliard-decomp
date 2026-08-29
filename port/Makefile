@@ -345,17 +345,18 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 		--box 48 142 224 16 --label "Llama: the near ground strips (phase 0)"
 	python3 tools/compare_shot.py /tmp/zel_llama.png ../docs/screenshots/town_llama.png \
 		--box 51 174 136 10 --label "Llama HUD PLACE box + \"Llama Town\""
-	# Llama's cave record for MP73 is (27,13), which is two rows above the room's
-	# only floor; the hero the capture shows has already fallen those two rows and
-	# is standing at (27,15), so that is the cell the recipe names.  (Entering at
-	# (27,13) and letting the port drop him leaves him at (28,15) instead -- 69CB
-	# gives a hero who leaves the ground a step in the way he is facing, and the
-	# port applies it to a hero the *map* put in the air.  MP73 is the only cave
-	# record in the game that lands one there, which is why no other capture ever
-	# saw it; see port/README.md "The MP73 left wall".)
-	./zeliard --dir ../zeliard --map 0x15 --pos 27 15 --level 34 --life 1800 --sword 6 \
-		--shield 6 --gold 60000 --headless --frames 22 --script ".200" \
-		--screenshot 20 /tmp/zel_paguro.png
+	# MP73 is now entered the way the capture was made: standing in front of
+	# Llama Town's column-222 door and pressing Up.  Llama's cave record for the
+	# room is (27,13), but a cave record's row is relative to the screen row of
+	# 10 that town.bin 7005 hard-codes, while fight.bin 7D2D pins the hero's
+	# screen row at the map's own [C016] row_bias -- 12 in every boss room -- so
+	# the hero lands at 13 - 10 + 12 = 15, standing on the floor.  Reading the
+	# record's row as the map row (what the port used to do) dropped him two rows
+	# and 69CB gave him an extra step in his facing on the way down, which is the
+	# one-column drift issue #28 could not explain; see port/README.md.
+	./zeliard --dir ../zeliard --town 7 --town-col 222 --level 34 --life 1800 --sword 6 \
+		--shield 6 --gold 60000 --headless --frames 60 --script "U2 .50" \
+		--screenshot 40 /tmp/zel_paguro.png
 	python3 tools/compare_shot.py /tmp/zel_paguro.png ../docs/screenshots/boss_paguro.png \
 		--box 48 14 108 120 --label "MP73 boss room, left of Paguro (from the wall)"
 	python3 tools/compare_shot.py /tmp/zel_paguro.png ../docs/screenshots/boss_paguro.png \
@@ -398,6 +399,156 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 		--box 48 118 224 40 --label "MP81 floor and the ESCO door"
 	python3 tools/compare_shot.py /tmp/zel_cav8b.png ../docs/screenshots/cavern8b.png \
 		--box 51 174 136 10 --label "MP81 HUD PLACE box + \"Cavern of Milagro\""
+	# --- the shopkeepers' [A002] idle hooks (issue #28) -----------------
+	# Every overlay but omoypro hangs a portrait animation off town.bin's
+	# idle_poll, clocked by [FF50].  Each shop below was captured under DOSBox
+	# through an F7 restore that puts Garland on the door's own column
+	# (docs/DOSBOX_RECIPE.md 9.3), as a burst of ~40 shots 0.1 s apart, and
+	# every distinct frame of every cycle is diffed against the port here.
+	# The armour shop: shop_armour.png caught the smith mid-blink (the eye
+	# cells at 128,79 are AAD0's fourth pair, NOT the ones the portrait map
+	# has there) and shop_armour2.png is the same screen 0.3 s later with his
+	# eyes open.  Measured period 1.00-1.01 s over five blinks; A90F predicts
+	# 4 phases x 0x1E steps x 2 ticks = 240 ticks = 1.014 s.
+	./zeliard --dir ../zeliard --town 1 --town-col 40 --headless --frames 400 \
+		--script "U2 .200" --screenshot 34 /tmp/zel_shop_blink.png
+	python3 tools/compare_shot.py /tmp/zel_shop_blink.png ../docs/screenshots/shop_armour.png \
+		--box 128 79 16 8 --label "armrpro A90F: the smith mid-blink (AAD0 pair 3)"
+	python3 tools/compare_shot.py /tmp/zel_shop_blink.png ../docs/screenshots/shop_armour.png \
+		--box 48 14 224 144 --label "armour shop: the WHOLE playfield, mid-blink"
+	python3 tools/compare_shot.py /tmp/zel_shop.png ../docs/screenshots/shop_armour2.png \
+		--box 128 79 16 8 --label "armrpro A90F: the smith's eyes open (AAD0 pairs 0-2)"
+	python3 tools/compare_shot.py /tmp/zel_shop.png ../docs/screenshots/shop_armour2.png \
+		--box 48 14 224 144 --label "armour shop: the WHOLE playfield, eyes open"
+	# churpro A1D7: the only hook with no enable flag — two little maps
+	# (A234 at 128,55 and A27C at 168,55) step 0 -> 1 -> 2 every 0x20 ticks,
+	# a 96-tick = 0.406 s cycle; measured 0.40-0.41 s.  Muralla's church door
+	# is column 59.
+	./zeliard --dir ../zeliard --town 1 --town-col 59 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 30 /tmp/zel_church0.png
+	./zeliard --dir ../zeliard --town 1 --town-col 59 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 32 /tmp/zel_church1.png
+	./zeliard --dir ../zeliard --town 1 --town-col 59 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 33 /tmp/zel_church2.png
+	python3 tools/compare_shot.py /tmp/zel_church0.png ../docs/screenshots/shop_church.png \
+		--box 128 55 24 16 --label "churpro A1FA phase 0 (the altar candles)"
+	python3 tools/compare_shot.py /tmp/zel_church0.png ../docs/screenshots/shop_church.png \
+		--box 168 55 16 16 --label "churpro A246 phase 0 (the priest)"
+	python3 tools/compare_shot.py /tmp/zel_church1.png ../docs/screenshots/shop_church2.png \
+		--box 128 55 24 16 --label "churpro A1FA phase 1"
+	python3 tools/compare_shot.py /tmp/zel_church1.png ../docs/screenshots/shop_church2.png \
+		--box 168 55 16 16 --label "churpro A246 phase 1"
+	python3 tools/compare_shot.py /tmp/zel_church2.png ../docs/screenshots/shop_church3.png \
+		--box 128 55 24 16 --label "churpro A1FA phase 2"
+	python3 tools/compare_shot.py /tmp/zel_church2.png ../docs/screenshots/shop_church3.png \
+		--box 168 55 16 16 --label "churpro A246 phase 2"
+	# drugpro A644: the bubbling pot, 6x6 cells at (104,23), three phases at
+	# 0x14 hook steps of 2 ticks = 40 ticks each (0.507 s a cycle; measured
+	# 0.50 s).  Phase 0 is the portrait's own cells, which is why the map at
+	# A5E4 has A69C's first row in it.  Muralla's drug door is column 111.
+	./zeliard --dir ../zeliard --town 1 --town-col 111 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 24 /tmp/zel_drug0.png
+	./zeliard --dir ../zeliard --town 1 --town-col 111 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 25 /tmp/zel_drug1.png
+	./zeliard --dir ../zeliard --town 1 --town-col 111 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 27 /tmp/zel_drug2.png
+	python3 tools/compare_shot.py /tmp/zel_drug0.png ../docs/screenshots/shop_drug.png \
+		--box 48 14 224 144 --label "drug shop phase 0: the WHOLE playfield"
+	python3 tools/compare_shot.py /tmp/zel_drug1.png ../docs/screenshots/shop_drug2.png \
+		--box 48 14 224 144 --label "drug shop phase 1: the WHOLE playfield"
+	python3 tools/compare_shot.py /tmp/zel_drug2.png ../docs/screenshots/shop_drug3.png \
+		--box 48 14 224 144 --label "drug shop phase 2: the WHOLE playfield"
+	python3 tools/compare_shot.py /tmp/zel_drug0.png ../docs/screenshots/shop_drug.png \
+		--box 104 23 48 48 --label "drugpro A644 phase 0 (the pot)"
+	python3 tools/compare_shot.py /tmp/zel_drug1.png ../docs/screenshots/shop_drug2.png \
+		--box 104 23 48 48 --label "drugpro A644 phase 1"
+	python3 tools/compare_shot.py /tmp/zel_drug2.png ../docs/screenshots/shop_drug3.png \
+		--box 104 23 48 48 --label "drugpro A644 phase 2"
+	# bankpro A728: the teller's idle runs only for the five 0x3F-tick passes
+	# of the entry (A063..A08F) and after a 1000-gold deposit; his two cell
+	# maps are 0x28 bytes apart at [AD1F] and swap every 0x1E ticks.  Then op 0
+	# (A0C0) plays the four-map A82F "stands up" list at 0x28 ticks a frame.
+	# Muralla's bank door is column 138.
+	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 20 /tmp/zel_bank0.png
+	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 21 /tmp/zel_bank1.png
+	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 32 /tmp/zel_bank2.png
+	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 36 /tmp/zel_bank3.png
+	python3 tools/compare_shot.py /tmp/zel_bank0.png ../docs/screenshots/shop_bank.png \
+		--box 72 31 64 40 --label "bankpro A728 idle, map A773 phase 0"
+	python3 tools/compare_shot.py /tmp/zel_bank1.png ../docs/screenshots/shop_bank2.png \
+		--box 72 31 64 40 --label "bankpro A728 idle, map A773 phase 1"
+	python3 tools/compare_shot.py /tmp/zel_bank2.png ../docs/screenshots/shop_bank3.png \
+		--box 72 31 64 40 --label "bankpro A813: the third frame of the A82F stand-up"
+	python3 tools/compare_shot.py /tmp/zel_bank3.png ../docs/screenshots/shop_bank4.png \
+		--box 72 31 64 40 --label "bankpro A813: the teller settled, idle off"
+	# innapro A22F: the one place the town uses KRN_RANDOM — a fresh coin flip
+	# every 0x28 ticks picks the innkeeper's eyes from A279's two 2x2 maps.
+	# The port's RNG is not the original's, so the *sequence* cannot match;
+	# both frames do, pixel for pixel.  Satono's inn door is column 128.
+	./zeliard --dir ../zeliard --town 2 --town-col 128 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 23 /tmp/zel_inn0.png
+	./zeliard --dir ../zeliard --town 2 --town-col 128 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 25 /tmp/zel_inn1.png
+	python3 tools/compare_shot.py /tmp/zel_inn0.png ../docs/screenshots/shop_inn.png \
+		--box 64 39 16 16 --label "innapro A22F: the innkeeper's eyes open"
+	python3 tools/compare_shot.py /tmp/zel_inn0.png ../docs/screenshots/shop_inn.png \
+		--box 48 14 224 144 --label "inn: the WHOLE playfield"
+	python3 tools/compare_shot.py /tmp/zel_inn1.png ../docs/screenshots/shop_inn2.png \
+		--box 64 39 16 16 --label "innapro A22F: the innkeeper's eyes shut"
+	# kenjpro AB47: the sage's blink, one cell at [BB12]+0x718 = (112,47),
+	# toggled every 0x14 steps of 2 ticks.  Muralla's sage door is column 172.
+	./zeliard --dir ../zeliard --town 1 --town-col 172 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 23 /tmp/zel_sage0.png
+	./zeliard --dir ../zeliard --town 1 --town-col 172 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 25 /tmp/zel_sage1.png
+	python3 tools/compare_shot.py /tmp/zel_sage0.png ../docs/screenshots/shop_sage.png \
+		--box 112 47 8 8 --label "kenjpro AB47: the sage's eye, ABFB[0]"
+	python3 tools/compare_shot.py /tmp/zel_sage1.png ../docs/screenshots/shop_sage2.png \
+		--box 112 47 8 8 --label "kenjpro AB47: the sage's eye, ABFB[1]"
+	# kingpro A302: the blink (A360's 26-step sequence into A37A's three eye
+	# maps at 136,47) and the lip-sync mouth (A3D4's two 2x5 maps at 136,63,
+	# toggled every 6 steps of 4 ticks = 0.101 s; measured 0.10 s).  The king's
+	# door is column 52 of Felishika's Castle.
+	./zeliard --dir ../zeliard --town 0 --town-col 52 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 27 /tmp/zel_king0.png
+	./zeliard --dir ../zeliard --town 0 --town-col 52 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 28 /tmp/zel_king1.png
+	./zeliard --dir ../zeliard --town 0 --town-col 52 --level 12 --life 600 --sword 3 \
+		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
+		--screenshot 31 /tmp/zel_king2.png
+	python3 tools/compare_shot.py /tmp/zel_king0.png ../docs/screenshots/shop_king.png \
+		--box 136 63 40 16 --label "kingpro A3A6: the mouth shut"
+	python3 tools/compare_shot.py /tmp/zel_king1.png ../docs/screenshots/shop_king2.png \
+		--box 136 63 40 16 --label "kingpro A3A6: the mouth open"
+	# (the blink and the mouth are independent counters, so the port's frame 27
+	# carries the capture's mouth-shut with the *next* eye map and frame 28 the
+	# other way round — the two boxes are crossed on purpose)
+	python3 tools/compare_shot.py /tmp/zel_king1.png ../docs/screenshots/shop_king.png \
+		--box 136 47 32 8 --label "kingpro A338: the eyes, A37A map 0"
+	python3 tools/compare_shot.py /tmp/zel_king0.png ../docs/screenshots/shop_king2.png \
+		--box 136 47 32 8 --label "kingpro A338: the eyes, A37A map 1"
+	python3 tools/compare_shot.py /tmp/zel_king2.png ../docs/screenshots/shop_king3.png \
+		--box 136 47 32 8 --label "kingpro A338: the eyes, A37A map 2"
 	python3 tools/compare_shot.py /tmp/zel_cav8b.png ../docs/screenshots/cavern8b.png \
 		--box 51 186 66 10 --label "MP81 HUD GOLD box (70000)"
 	python3 tools/compare_shot.py /tmp/zel_cav8b.png ../docs/screenshots/cavern8b.png \

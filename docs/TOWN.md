@@ -94,6 +94,12 @@ C009 u16 ->doors      {u16 col, u8 dest} .. FFFF; the hero (2 columns) must stan
                        dest 0..7 shop overlay (0 king 1 omoya 2 sage 3 armour 4 drug 5 church 6 bank 7 inn)
                        dest 8.. cavern entry (dest-8);  dest FF = "doorway to the past" (prmp only)
 C00B u16 ->caves      5-byte records {u16 col, u8 row, u8 side, u8 map}, indexed (no terminator;
+                      **the row is not the hero's map row**: town.bin 7005 does `sub al,0xa`
+                      (a hard-coded 10) into the scroll row, while fight.bin 7D2D pins his
+                      screen row at the map's own [C016] row_bias, so he lands at
+                      `row - 10 + row_bias`.  Cavern proper = bias 10 (no change); boss rooms
+                      = 12.  Llama's (27,13) for MP73 is the one cave record naming a boss
+                      room: 13-10+12 = 15, the floor — he is not dropped in mid-air;
                       size it from the largest cave index used by the door and edge-exit records)
 C00D u16 ->dialogue   u16 ptr[] to 0xFF-terminated scripts (§6)
 C00F u16 ->npcs       8-byte records .. FFFF (below)
@@ -132,7 +138,7 @@ Per-map summary (`tools/mdt2png.py --town OUT` prints the full tables):
 | cmap | 80 | Felishika's Castle | 114 | cpat / mman / mgt1 | 52 king, 95 omoya | — (right exit → mrmp) | 4 | patches on [49], [04] |
 | mrmp | 81 | Muralla Town | 215 | mpat / mman / mgt1 | 39 armour 59 church 111 drug 138 bank 172 sage 205 cave0 | (61,7,0,MP10) | 9 | left exit → cmap |
 | stmp | 82 | Satono Town | 215 | dpat / cman / ugm1 | 44 drug 92 sage 128 inn 148 bank 185 armour | (128,33,1,MP10) (6,62,0,MP20) | 7 | underground; edges → caves 0/1 |
-| bsmp | 83 | Bosque village | 152 | mpat / mman / mgt2 | 7 cave1 36 bank 61 sage 81 drug 96 armour 114 inn 142 cave0 | (185,19,0,MP31) (149,14,1,MP3D) | 12 | no edge exits; [12]&8 sentry |
+| bsmp | 83 | Bosque village | 152 | mpat / mman / mgt2 | 7 cave1 36 bank 61 sage 81 drug 96 armour 114 inn 142 cave0 | (185,19,0,MP31) (149,14,1,**MP31?**) | 12 | no edge exits; [12]&8 sentry |
 | hlmp | 84 | Helada Town | 227 | dpat / cman / ugm1 | 44 sage 92 inn 111 armour 128 drug 148 bank | (86,22,1,MP40) (16,22,0,MP41) | 8 | underground; [1A]&10 |
 | tmmp | 85 | Tumba Town | 270 | dpat / cman / ugm2 | 44 armour 93 inn 128 sage 181 bank 231 drug | (94,11,1,MP50) (131,10,0,MP50) | 8 | underground; [22]&2, [24]&80/2 |
 | drmp | 86 | Dorado Town | 215 | dpat / mman / ugm2 | 47 armour 70 inn 92 sage 128 bank 184 drug | (31,6,1,MP62) (315,49,0,MP61) | 12 | underground; [2A]&4 |
@@ -142,6 +148,11 @@ Per-map summary (`tools/mdt2png.py --town OUT` prints the full tables):
 
 (cavern map = record `map` of the kernel table: 0 MP10, 2 MP20, 5 MP31, 6 MP3D, 8 MP40, 9 MP41,
 0xB MP50, 0xE MP61, 0xF MP62, 0x12 MP71, 0x15 MP73, 0x17 MP82, 0x18 MP90 — docs/RESOURCES.md.)
+
+**Open discrepancy:** bsmp's second cave record (the one Bosque's column-7 door leads to)
+is listed here as `MP3D`, but the door lists make it **system map 6 = the map whose (149,13)
+door returns to Bosque column 7**, with MP3D only reachable from that map's (174,4)/(188,20).
+Either this cell or `docs/RESOURCES.md`'s naming of system map 6 is wrong — unresolved.
 
 ## 4. Graphics
 

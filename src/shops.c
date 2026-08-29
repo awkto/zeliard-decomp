@@ -1598,7 +1598,7 @@ void kenj_see_power(void)
     shop_text_ptr = 0xAFDE;                                    /* "\x13\xFF\x04Oh, Holy Spirits, purify my thoughts and grant me strength. \xFF\x04\xFF\x04\r\x15\xFF\x00..." */
     do { kenj_wait_140(); al = shop_print_text(); } while (al == 4);   /* A1A9..A1B3 */
     kj_ritual_fade = 0xFF;                                     /* A1B5 */
-    kenj_ritual_lower();                                       /* A200: frames 2,1 back down */
+    kenj_ritual_lower();                                       /* A200: frames 1,0 back down */
     shop_print_text();                                         /* A1BD (prints nothing: pointer already past "\xFF\x00") */
     shop_text_ptr = POWER_VERDICT[kenj_assess()];              /* A1C2..A1CD */
     /* B033 "Your experience is lacking. Persevere in your quest.\xFF\x00"
@@ -1644,7 +1644,9 @@ void kenj_teach_magic(u8 n)
 }
 
 /* ==== kenj_wait_140 @ A410 ==== 0x8C ticks, running the hook */
-/* ==== kenj_ritual_raise @ A1D1 / kenj_ritual_lower @ A200 ==== frames {0,1,2} / {2,1} at 25 ticks, kj_blink_off/kj_eyes_closed */
+/* ==== kenj_ritual_raise @ A1D1 / kenj_ritual_lower @ A200 ==== frames {0,1,2} / {1,0} at 25 ticks
+ * (A200 is `mov si,0xa1fe / mov al,[si] / dec si` over A1FD..A1FF = 00 01 02, so it plays 1 then 0),
+ * kj_blink_off/kj_eyes_closed */
 
 /* ==== kenj_hook @ AB47  (vector [A002], from town.bin idle_poll while [7C42]) ==== */
 void kenj_hook(void)

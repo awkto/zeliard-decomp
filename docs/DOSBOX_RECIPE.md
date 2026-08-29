@@ -207,3 +207,18 @@ set — that is every map a town door reaches.
 
 Gotcha: **cavern 7 is the heat cavern**, so `704F` covers the playfield with "It's too
 hot !!" for 32 frames in every 64.  Take the shot in a gap.
+
+### 9.3 Reaching a shop
+
+The same restore route reaches any shop: write a `.usr` whose town position is the shop
+door's own column, F7-restore, tap **Up**, then take a burst of ~40 shots about 0.1 s apart
+(the keepers' idle animations are short — see §9.4).  Six of the eight shops had never been
+captured before this; the door columns are listed per town in `docs/TOWN.md` §3.
+
+### 9.4 Keeper idle animations
+
+Each shop overlay's `[A002]` hook is an `[FF50]` state machine polled far faster than the
+236.7 Hz tick, so the animations run on wall-clock time, not the frame rate.  Measured
+against the captures: armrpro's blink period 1.00-1.01 s (predicted 1.014 s), churpro
+0.40-0.41 s (0.406 s), kingpro's mouth 0.10 s (0.101 s).  Note `shop_armour.png` (taken for
+milestone (d)) happens to catch the smith **mid-blink**.

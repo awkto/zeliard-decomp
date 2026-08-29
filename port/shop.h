@@ -24,6 +24,38 @@
 enum { SHOP_KING = 0, SHOP_OMOYA, SHOP_SAGE, SHOP_ARMOUR, SHOP_DRUG,
        SHOP_CHURCH, SHOP_BANK, SHOP_INN, SHOP_COUNT };
 
+/* --- the [A002] idle hooks (src/shops.c, docs/TOWN.md 7) ------------------
+ * town.bin's idle_poll (7042) calls `[cs:A002]` on every pass while a shop
+ * overlay is loaded; every overlay but omoypro (whose A002 word points at the
+ * `ret` byte at A004) puts a portrait animation there.  The poll runs far
+ * faster than the 236.7 Hz clock, so each hook is really a state machine
+ * clocked by [FF50]: it returns until [FF50] has reached its own threshold,
+ * then zeroes it and takes one step.  The port keeps the overlay's own
+ * variables under their original addresses and steps the hook one tick at a
+ * time inside shop_frame(), 20 ticks (4*speed) to a rendered frame, so the
+ * animations run at the original's wall-clock rate. */
+typedef struct ShopHook {
+    unsigned ff50;                          /* [FF50], the hook's own timer */
+    /* kingpro A302: A7A0 blink on, A7A1 blink index, A79D mouth idle,
+     * A79E mouth tick, A79F mouth phase */
+    uint8_t king_blink_on, king_blink_i, king_mouth_on, king_mouth_t, king_mouth_p;
+    /* armrpro A90F: BC23 on, BC24 step timer, BC25 phase, BC26 state, BC27 flip timer */
+    uint8_t armr_on, armr_t0, armr_phase, armr_state, armr_t1;
+    /* bankpro A728: AD21 on, AD22 phase, AD1F cell-map pair */
+    uint8_t bank_on, bank_phase;  unsigned bank_map;
+    /* churpro A1D7: A3E5 phase (no enable flag — the priest always moves) */
+    uint8_t chur_phase;
+    /* drugpro A644: B219 step timer, B21A phase (no enable flag) */
+    uint8_t drug_t, drug_phase;
+    /* innapro A22F: A505 on */
+    uint8_t inn_on;
+    /* kenjpro AB47: BB18 ritual on, BB19 blink off, BB1A ritual fading,
+     * BB1B eyes closed, BB1C wrap counter, BB1D ritual frame, BB1E blink
+     * state, BB1F blink timer, BB20 ritual timer */
+    uint8_t kj_ritual_on, kj_blink_off, kj_fade, kj_eyes_closed;
+    uint8_t kj_ctr, kj_frame, kj_blink_state, kj_t_blink, kj_t_ritual;
+} ShopHook;
+
 typedef struct Shop {
     Game    *g;
     Town    *t;
@@ -57,6 +89,7 @@ typedef struct Shop {
      * drive it without guessing at key timings. */
     int      in_menu;               /* 1 while 7344 menu_select owns the loop */
     int      menu_row, menu_n;      /* the cursor row and the visible row count */
+    ShopHook hk;                    /* the [A002] idle hook's state */
 } Shop;
 
 /* town.bin 6E7E run_shop: load the overlay + portrait, run it, return when it
