@@ -185,6 +185,7 @@ struct Game {
     uint8_t  hit_side[4];           /* 9F0E..9F11 */
     uint16_t contact_damage;        /* 9F12 */
     uint8_t  sfx_request;           /* FF75, consumed by sound_request() */
+    struct Tear *tear;              /* rokademo: the Tear cutscene owns the screen */
 
     /* projectiles / magic / orbs (docs/FIGHT.md §6, shots.c) */
     Shot     shots[MAX_SHOTS + 1];

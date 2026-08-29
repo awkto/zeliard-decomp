@@ -4,7 +4,14 @@ A from-scratch C11 re-implementation of the Zeliard engines that reads the
 original game files directly.  Status: **the cavern-1 + town loop is playable
 end to end** — Garland walks out of Muralla Town through the cavern gate at
 column 205, fights his way through MP10, walks back through the MURALLA door,
-and dying in the caverns sends him back to the Sage.  All nine caverns render
+and dying in the caverns sends him back to the Sage.  **The game boots the way the
+real one does**: with no command-line argument it plays the whole opening demo —
+the scrolling prologue over the pendant, the storm, the demon's warning, the
+ZELIARD title screen, the STAFF credits and the fifteen-picture storm demo with
+its typed narration and lip-sync — and then starts a new game in Felishika's
+Castle; Space or Return skips an act.  The **ending** (`--ending`) and the
+**"a Tear of Esmesanti"** cutscene (which now plays out of every boss room's
+exit door) are in as well.  All nine caverns render
 and run their own enemy AI; projectiles, magic and the orbiting spheres work;
 elevators, moving platforms, locked doors and message boxes work.  **The
 cavern-1 boss can be reached and killed**: the Cangrejo fight, its EXP/gold
@@ -35,12 +42,15 @@ through the real game**: a file written by `port/` loads under DOS with F7
 
 ```
 cd port
-make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 8 test binaries
+make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 9 test binaries
 make test            # physics (135) + combat/AI (171) + town (138) + boss (584) + shop (118)
-                     #   + status (87) + playthrough (23) + audio (305) = 1561 assertions
-make verify          # 53 headless renders diffed against the DOSBox captures in docs/screenshots/
+                     #   + status (87) + playthrough (23) + audio (305) + cutscene (46) = 1607 assertions
+make verify          # 58 headless renders diffed against the DOSBox captures in docs/screenshots/,
+                     #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
 make playthrough     # the same two routes as test_playthrough, with the step-by-step log
-./zeliard            # play cavern 1 (needs ../zeliard/ZELRES1-3.SAR or zeliard/ in the cwd)
+./zeliard            # the real boot: the opening demo, then Felishika's Castle
+./zeliard --no-intro # straight to the castle (needs ../zeliard/ZELRES1-3.SAR or zeliard/ in the cwd)
+./zeliard --intro-act 3   # just the storm demo; --ending plays enddemo
 ./zeliard --town 1   # start in Muralla Town instead
 ./zeliard --map 1 --sword 4 --level 40 --life 800   # the cavern-1 boss room (mp1d)
 ./zeliard --town 1 --gold 5000                     # Muralla: the shops are at 39/59/111/138/172
@@ -59,6 +69,13 @@ in `port/local.mk` (auto-included, gitignored).  `compat/SDL_config.h` is a gene
 config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`).
 
 ## Controls
+
+### Cutscenes (opdemo / enddemo)
+
+| key | action |
+|---|---|
+| Space / Return | abort the current act (`[FF1D]` / `[FF29]`); the next one starts |
+| Esc | quit |
 
 ### Caverns (fight.bin)
 
@@ -121,6 +138,15 @@ mus1..mus8 mbos mmao`; `-1` = effects only) and `--dump-audio FILE.wav` (render 
 sound to a 16-bit mono WAV instead of a sound card — deterministic, works headless).
 **F1** toggles the music and **F2** the sound effects, as STICK's own hotkeys do.
 `--script` only takes effect together with `--headless` (or `--screenshot`).
+Cutscenes: `--intro` / `--no-intro` force or suppress the opening demo (the
+default is to run it only on a plain interactive launch, which is what GAME.BIN
+does when it was given no command-line argument — anything that names a start
+state or a scripted/headless run suppresses it), `--intro-act N` plays one act
+of opdemo on its own (1 = prologue + demon + title, 2 = the STAFF credits, 3 =
+the storm demo), `--ending` plays enddemo, `--cutscene-frames N` stops one after
+N rendered frames and `--gd-art NAME OUT.png` renders one intro/ending resource
+the way `tools/grp2png.py` does.  During a cutscene **Space** or **Return**
+aborts the act, exactly as `[FF1D]` / `[FF29]` do.
 `--town-col`, `--town-scr`, `--town-anim` and `--town-npc` place the town hero and an
 NPC exactly; `make verify` uses them.  `ZEL_SHOP_DEBUG=1` in the environment logs
 every shop text opcode with the text printed so far.
@@ -365,6 +391,61 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   driver's built-in blank slot read out of `GMMCGA.BIN` @2658 — which is what
   finally puts the sword / magic / shield pictures on the HUD too
   (`itemp_hud`).  The eight potion effects are the A452 jump table.
+* `gd.c` / `gd.h` — **gdmcga** (ZELRES1[5]), the second renderer: the intro/ending
+  art format and the 16x16 blend palette (docs/CUTSCENES.md §1/§3/§6).  Both
+  unpackers (the `u16 nmask` + mask-bit + lag-2 2-bit XOR delta one, and the
+  6/14-bit RLE that only `ttl1-3.grp` use), the 4469 pixel packer (every PC-88
+  pixel becomes a 4-bit value and every pair of neighbours one MCGA byte
+  `left<<4 | right`, which is directly a DAC index), the ten 16-entry palette
+  records read straight out of gdmcga.bin at `4289` with
+  `DAC[l*16+r] = C[l] + C[r]`, and the twenty-five vector slots the demos call:
+  the 2-plane / 3-plane / plane-masked / transparent-`ao` draws with the 8-pass
+  dissolve (31B4 and its two mask tables at 32B9/32C1), `gd_erase`,
+  `gd_text_line` + `gd_text_scroll` (the `screen &= 0x99 | src & 0x66`
+  composite that is why the pendant is drawn in colours 0,1,8,9),
+  `gd_picture_box` with its 7-byte dithered left shadow, `gd_sky_dither`,
+  `gd_face_eyes` / `gd_face_mouth`, `gd_tile_map` + `gd_draw_ornament_row` (the
+  title screen's corner scrollwork, assembled out of `ttl2.grp`'s 40-column tile
+  bank through the 25 x 34 map at opdemo `912B` and drawn as a row and its
+  bit-reversed mirror), `gd_storm`, `gd_fx_sand` (all three of its tables),
+  `gd_fx_recolour`, `gd_wipe` and the ending's `gd_end_open` / `gd_end_close`.
+  A `GD_ART[]` table carries the geometry of all 31 resources, and
+  `--gd-art NAME OUT.png` renders one of them; `tools/compare_gdart.py` diffs
+  that against `tools/grp2png.py`'s reference decoder.
+* `cutscene.c` / `cutscene.h` — **opdemo.bin** (ZELRES1[0]) and **enddemo.bin**
+  (ZELRES2[50]).  Every script, text block, metric table and tile map is read out
+  of the overlay image at run time, so the text is the original's byte for byte.
+  opdemo's three acts: act 1 (the logo over the copyright line, the pendant with
+  the prologue scroller composited over it, the rain-and-lightning `gd_storm`,
+  the demon's face assembled out of three single planes of `dmaou.grp`, his
+  typed warning with inline mouth frames, and the title screen with `zopn.msd`
+  and the ornament growing in over 100 steps), act 2 (the STAFF credits over
+  `zend.msd`) and act 3 (the fifteen pictures inside `waku.grp`'s frame driven by
+  the 5786-byte byte script at `79C6` — a proportional-font typewriter with word
+  wrap, a drop shadow, per-speaker ink, per-character click effects and inline
+  `0x8n`/`0x9n` lip-sync codes that cost no ticks, which is what lets the mouth
+  track the syllables).  enddemo's nine tableaux — **with** the narration
+  engine `src/enddemo.c` missed (see "Corrections") — and the typewriter credits
+  roll synchronised to the score through `[FF21]`, with the seven-entry scene
+  table, `gd_end_open`/`close` and the two-pass `fin.grp` stencil.  Like a shop,
+  a `Cutscene` owns its 320x200 framebuffer and its own 256-entry DAC and drives
+  the front end's `present` itself, so SDL, `--screenshot` and `--script` all
+  work unchanged.  One rendered frame is four ticks of the 236.7 Hz `[FF1A]`
+  counter, which divides every wait the demos use.
+* `tear.c` / `tear.h` — **rokademo.bin** (ZELRES3[0]), "a Tear of Esmesanti", and
+  GAME.BIN's Tear-slot row.  Not a gd demo: it plays on the fight screen through
+  gfmcga, and `fight.bin 7C18` runs it from the door handler when the door
+  record's byte +8 has bit 7 set — the exit door `post_boss_transition` installs
+  in every boss room, so it now plays whenever a boss room is left.  Garland
+  walks thirteen steps in on `dman.grp`'s ten column-major 3x3 frame maps,
+  raises the crystal and his sword (a 16x24 2-bpp picture inside gfmcga.bin at
+  `4A31`/`4A91`/`4AF1`, picked by `[92]`), and the crystal flies to its HUD slot
+  along the byte-precision Bresenham interpolator at `A4A3`/`A50A` with the
+  sparkle frames from `4BDD`/`4CDD` over a saved-and-restored background; then
+  `mfan.msd` plays, and he walks off right.  `[A0]` counts the Tears, and
+  **GAME.BIN `A3A5`** finally draws the row of crystals along the top border —
+  the nine slot columns come out of GAME.BIN at `A3D3` and the two 16x13 icons
+  out of `GMMCGA.BIN` at `2A61`/`2B31`.
 * `sound.c` — the FF75 requests fight.bin and town.bin produce are consumed, counted,
   (with `--sound`) logged with their names, and handed to `audio.c`.
 * `opl2.c` / `opl2.h` — **a compact OPL2 (YM3812) synthesiser written for this port**
@@ -837,10 +918,11 @@ simply fails and leaves whatever 7EBB already loaded in place.  The rule is now
 * HUD: the gauge troughs, the LIFE/ENEMY bars, the GOLD/ALMAS digits, the
   narrow-font labels, the place name, the grey panel, the stone frame and the
   item-slot frames are all pixel-exact now — `make verify` diffs the whole
-  320x200 screen against three of the captures.  What is still missing there is
-  the row of **Tear slots** GAME.BIN's `A3A5` draws along the top border through
-  `[203E]` when `[A0]` is non-zero: a fresh player has none, so no capture shows
-  them and the port skips the call.  The sign text is not drawn either.
+  320x200 screen against three of the captures.  The row of **Tear slots**
+  GAME.BIN's `A3A5` draws along the top border through `[203E]` when `[A0]` is
+  non-zero is in now (`tear_draw_slots`); no capture shows it, because a fresh
+  player has no Tears, so it is covered by `test_cutscene` instead.  The sign
+  text is not drawn.
 * Music: the MT-32 (`MSCMT.DRV`, blob A) and Tandy/PCjr (`MSCJR.DRV`, SN76496) back
   ends are not implemented — `msd.c` parses both arrangements (the Tandy tracks feed
   the speaker) but only OPL2 and the speaker are synthesised.  `SNDJR.DRV`'s effect
@@ -849,8 +931,16 @@ simply fails and leaves whatever 7EBB already loaded in place.  The rule is now
   `INT 60h AX=3` has no caller in the port.  The one game-driven fade is the boss
   death (`FF24 = 0x0A`); a music change at a door restarts the score instead of
   fading it.
-* Hit-flash palettes, the hero death animation, the Roka demo and the "doorway to
-  the past".
+* Hit-flash palettes, the hero death animation and the "doorway to the past".
+  (The Roka demo — the Tear cutscene — is in; see `tear.c`.)
+* Three of gdmcga's slots are approximations rather than ports, because they are
+  only used as scene transitions and nothing in `docs/screenshots/` shows one
+  mid-flight: `gd_wipe` (3E8B) does not stamp the two picture-box borders into
+  the source bitmap first (3FEF), and `gd_end_open` / `gd_end_close`
+  (4080/4162) reproduce the width profile and the 57-step converging aperture
+  but not the exact `stosb` tail of the 23..27 row band.  `gd_fx_sand` (38E6)
+  *is* a full port, tables and all.  The five non-MCGA gd builds
+  (`gdega/gdcga/gdhgc/gdtga`) are not read, as for the video drivers.
 * EGA/CGA/Tandy render modes (only the MCGA pair-packing path).
 
 ## Sound
@@ -966,9 +1056,14 @@ Muralla's `"30yc"` is *Buy shield → the first shield → Yes → leave*.
 
 ## Ground truth
 
-`make verify` compares 53 boxes of headless renders against the DOSBox captures
-in `docs/screenshots/`; all of them are at 100 %, and three of them are the whole
-320×200 screen.  Five of the captures were
+`make verify` compares 58 boxes of headless renders against the DOSBox captures
+in `docs/screenshots/`; all of them are at 100 %, and **eight** of them are the
+whole 320×200 screen — including all five intro captures (`intro_prologue`,
+`intro_demon`, `title`, `demo_balcony` and `demo_dialogue`), which the port
+reproduces pixel for pixel, frame and all.  It then runs
+`tools/compare_gdart.py`, which diffs the port's own gd decoders against
+`tools/grp2png.py`'s over all 31 intro/ending resources and every one of their
+sub-images.  Five of the captures were
 taken for this milestone, and getting them is worth writing down because it also
 **validated the save format end to end**.
 
@@ -1061,10 +1156,9 @@ Town drops into MP60 but eight rows up and locked.
    (`playthrough.c` / `test_playthrough.c`) and are the only ones.  The same work
    *did* open MP20: its locked door to MP2D at (171,54) is now reachable from the
    Satono entry, where before the entry cell was not even a node.
-2. **The remaining town machinery**: the shopkeeper idle hooks and the row of Tear
-   slots along the top border.  The ympd/ckpd backdrops, all three parallax strips,
-   ENCNT.GRP and the HUD's grey panel + stone frame + item-slot frames are done and
-   verified against the captures.
+2. **The remaining town machinery**: the shopkeeper idle hooks.  The ympd/ckpd
+   backdrops, all three parallax strips, ENCNT.GRP, the HUD's grey panel + stone
+   frame + item-slot frames and the row of Tear slots are done.
 3. **The rest of the sound**: the MT-32 driver (`MSCMT.DRV` over blob A, which
    `tools/msd2mid.py --mt` already decodes) and the Tandy SN76496 pair
    (`MSCJR.DRV` + `SNDJR.DRV`); `SNDADLIB`'s `15A3` ambient/proximity routine, which
@@ -1081,3 +1175,113 @@ Town drops into MP60 but eight rows up and locked.
    `+Right`/`-Right` + `+Up`/`-Up` tap pairs at 0.45 s intervals from 28 s
    (docs/DOSBOX_RECIPE.md §5's edge-stop-and-scan pattern, scanning *right* from the
    Muralla entry to the first door at column 39), captured at 43 s.
+
+## Corrections found while porting the cutscenes (issue #30)
+
+Everything below was checked against `ndisasm` of the extracted overlay before
+being written down; where a decompilation and the disassembly disagree, the
+address is quoted.  Nothing outside `port/` and `docs/screenshots/` was edited.
+
+**`docs/CUTSCENES.md`**
+
+* §2.1 / §6.3 — `hou.grp`'s geometry is **`4 x (6 x 32)` then `4 x (4 x 24)`**,
+  not `4 x (32 x 6)` / `4 x (24 x 4)`.  The sprite table at gdmcga `3617` is
+  read as `mov cx,[bx+0x3619]`, i.e. the *word at +2*, so `CL` = byte +2 = rows
+  and `CH` = byte +3 = width in plane bytes; every copier (3596, 35B1, 35CC)
+  then uses `CH` as the byte width and `CL` as the row count.  Decoded that way
+  the four large frames are a clean expanding ball of light, so they are
+  radiating orbs, not "128 x 6-px lightning bolts".  (`tools/grp2png.py`'s
+  `GD_ART` has the same error; `port/gd.c`'s `GD_ART[]` has it right, which is
+  the one entry `tools/compare_gdart.py` does not diff.)
+* §2.1 — `gd_storm` patches **three** bytes (`4289`, `428A`, `428B` = the whole
+  R,G,B of colour 0 of palette record 0), not just `[0x4289]`, and it calls
+  `gd_set_palette(0)` **once per record, nine times a pass**, stepping the flash
+  index each time.
+* §1 — slot `3022` `gd_draw_masked` is **not** "like 3004": the packing is, but
+  the blit is a private 8-pass, 13-rows-per-pass interlace confined to the fixed
+  288 x 104 picture window at screen (16,16), and it *clears* every part of that
+  window the picture does not cover.  That is how the storm demo wipes
+  `waku.grp`'s inset between pictures.
+* §1 — the `AL` argument of `3002`/`3004` is undocumented: `AL == 0` runs an
+  additive OR dissolve **and then** the copy dissolve (16 passes), `AL != 0`
+  only the copy one (8).  `301A` forces `AL = 0`.
+* §1 — every draw slot packs into a second 64 KB staging segment at `CS+0x3000`
+  before blitting; only the `CS+0x2000` scratch is documented.
+* §1 — `3024` `gd_picture_box` also writes a 7-byte, colour-`0x02` dithered
+  shadow immediately left of the box on every row (`3E1C`).
+* §2.3 — the right speaker's **eye** frames are drawn at `BH = 0x33` (x = 204),
+  not (200,56); `6C69` is `mov bx,0x3338`.
+* §2.3 — the script at `79C6` also contains `0xA0` (at `7C00`) and `0xA2` (at
+  `7DE3`), which the documented opcode list does not mention.  Traced through
+  `6B2B` they are exact no-ops that still cost one 0x10-tick delay — dead
+  lip-sync codes for a talking head this scene never puts up.  (In *enddemo* the
+  same engine really does dispatch `0xA0`, `0xB0` and `0xC0`.)
+* §2.3 — a `0x8n`/`0x9n` lip-sync byte costs **no** ticks: `6C53`, `6C74`,
+  `6CA0` and `6CC1` jump back to the fetch at `6A80`, skipping the
+  `wait_ticks(0x10)` at `6A7B` that every other byte pays.
+* §2.4 — the three scrollers are three separate routines and the epilogue's
+  (`6D04`) is different: its window is `(0,20) 320 x 160` and it flushes
+  **0xA0** rows at the end, not 0x78.  The flush count is the window height.
+* §4 — enddemo's act 1 is **not** "nine still tableaux, no text".  `6318` is a
+  second, five-speaker copy of the narration engine, called seven times
+  (`60FD 6142 6172 61FA 622F 62A6 62DB`) — exactly where `src/enddemo.c` writes
+  `beat()` — and it plays the script at `6AA8` ("At long last, Jashiin was
+  destroyed …").  Its metric tables are at `807D` / `80DD`.
+* §4 — the credits opcode `FB` takes **row then column** (`679E` stores `AL`
+  into `[6968]` = row and `AH` into `[6967]` = column), not "c r".
+* §5 — `[FF26]` is the music driver's "score finished" flag, not the Return key:
+  `A371` waits for the *fanfare to end* and then stops the score.  There is no
+  keypress wait in the Tear cutscene.
+* §5 — there are **ten** hero frame maps at `A435`, not nine (`A435 + 10*9 =
+  A48F`, which is `wait_frame`'s first instruction; frame 9 is the "sword fully
+  raised" pose `[E7]` is left on at `A0C8`, and it uses cell 0x35, the last cell
+  in `dman.grp`).
+* §5 — `[3024] GF_DRAW_SWORD` does **not** draw `itemp.grp`: it draws one of
+  three 96-byte 2-bpp pictures embedded in `gfmcga.bin` at `4A31` / `4A91` /
+  `4AF1`, chosen through the six-entry pointer table at `4A25`.  `[3022]`'s
+  blit is fully opaque — there is no mask.
+* §8 — three of the four "not decoded" items are now decoded: `gd_tile_map`'s
+  tile arithmetic (`tile n` = one byte x 8 rows at `(n/40, n%40)` of the 40 x 40
+  bank, assembled into a 34 x 200 three-plane picture in the scratch),
+  `gd_draw_ornament_row`, and `gd_fx_sand`'s three tables (`3C16` the mode pair,
+  `3A5F` twenty-four 8-byte patterns, `3B1F` the 196-byte border script and
+  `3BE3` the 51-byte inward spiral).  The tails of `himp.grp` and `seip.grp` are
+  identified too: they are enddemo's own `0x8n` / `0xBn` lip-sync banks
+  (7 x 24 frames of 504 bytes and 9 x 24 / 10 x 24 frames of 648 / 720 bytes at
+  `arena:98C0` and `arena:A7F0`).
+
+**`src/opdemo.c`** — the call order, resources, palette records and tick counts
+are all right; the arguments are not.  `BH`/`BL` are transposed in ten calls
+(`6681 66A1 66C6 6776 680F 6822 682D 6840 688D 68C5 68D0 68E3`; e.g. `680F` is
+`mov bx,0x0A15`, so `BH = 0x0A`), the two `GD_FACE_EYES` calls at `618B`/`619F`
+load `AL` directly and so are frames **2 and 3**, not 1 and 2, `6255`/`6280`
+unpack from `CS:B000` / `CS:A000` (not the arena), `scroll_block` is flattened
+into one routine (see §2.4 above), the `0x8n`/`0x9n` wait is wrong (see §2.3),
+and `6E0F`'s demon-face assembly is wrong in three ways: the writer at `6E4F`
+**swaps** the two source planes into the destination, the mouth goes into planes
+0 **and** 1 (not plane 0 only), and it comes from `arena:9C40` — mouth frame
+**1**, not frame 0.
+
+**`src/enddemo.c`** — `beat()` is `play_narration()` (above), and `BH`/`BL` are
+transposed in four calls (`613D 616D 6855 688C`).
+
+**`src/rokademo.c`** — nine frame maps instead of ten, `[FF26]` described as the
+Return key, `if (++tears > 9)` where `A041` is `cmp ..,9 / jc`, i.e. `>= 9`, and
+the `[3022]` header comment claims a mask.
+
+**`docs/STATE_PAGE.md`** — `[A0]` (Tears of Esmesanti collected, 0..9) is not
+documented at all, and the `[FF75]` table stops at `0x19`: the Tear cutscene
+uses `0x1A` (footstep), `0x1B` (flash) and `0x1C` (flight sparkle).
+
+**`docs/VIDEO_DRIVERS.md`** — the `[203E]` Tear row is marked "uncertain" with
+eight x4 values; it is nine (`A3D3`: 0F 3D 15 37 1B 31 21 2B 26) and the ninth
+uses `AL = 1`, a different picture.
+
+**`docs/screenshots/intro_art.png`** — this contact sheet cannot be matched
+pixel for pixel by either decoder: an exhaustive search of every one of the 31
+resources and each of their sub-images, at scale 1 and 2, over every position in
+the 640 x 480 image finds no exact placement.  It appears to have been assembled
+by hand from renders that are not reproducible from the current `GD_ART`
+geometry, so `make verify` checks the C decoder against **its generator**
+(`tools/grp2png.py`) over all 31 resources instead, and against the five DOSBox
+intro captures over the whole screen.

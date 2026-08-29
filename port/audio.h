@@ -33,6 +33,12 @@ void audio_music(int music_idx);
  * tests and --dump-audio verification) */
 void audio_music_force(int music_idx);
 void audio_music_stop(void);          /* INT 60h AX=1 */
+/* the cutscenes play scores that are not in the 9E53 table (zopn/zend/mfan):
+ * load ZELRES{archive+1}[index] and start it, exactly as INT 60h AX=0 does. */
+void audio_music_play_res(int archive, int index);
+int  audio_music_stopped(void);       /* [FF26]: the score has ended */
+int  audio_music_sync0(void);         /* [FF21]: bumped by score opcode F1 */
+void audio_music_sync0_clear(void);
 void audio_music_pause(int on);       /* INT 60h AX=3 */
 void audio_music_fade(int rate);      /* the game poking FF24 */
 /* STICK's F1 / F2 hotkeys (docs/SERVICES.md 01E3): INT 60h AX=2 and FF27 */

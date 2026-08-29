@@ -582,6 +582,43 @@ void audio_music_force(int idx)
     A.music_locked = 1;
 }
 
+/* the cutscene overlays call INT 60h AX=0 with DS:SI = a score they loaded
+ * themselves (zopn.msd, zend.msd, mfan.msd), which the 9E53 table does not
+ * name; audio_music() only knows that table, so this is the raw form. */
+void audio_music_play_res(int archive, int index)
+{
+    if (!A.on) return;
+    size_t len;
+    uint8_t *res = sar_load(A.dir, archive, index, 1, &len);
+    if (!res) return;
+    const uint8_t *blob; size_t bl;
+    if (msd_split(res, len, &blob, &bl)) { free(res); return; }
+    audio_lock();
+    free(A.score);
+    A.score = res;
+    A.music.opl = opl_sink; A.music.opl_u = &A;
+    if (msd_start(&A.music, A.score + (blob - res), bl,
+                  A.backend == AUDIO_ADLIB ? MSD_ADLIB : MSD_STD) != 0)
+        A.music.stopped = 0xFF;
+    A.music_idx = -1;
+    audio_unlock();
+}
+
+int audio_music_stopped(void)
+{
+    return A.on ? (A.music.stopped != 0) : 1;
+}
+
+int audio_music_sync0(void)
+{
+    return A.on ? A.music.sync[0] : 0;
+}
+
+void audio_music_sync0_clear(void)
+{
+    if (A.on) { audio_lock(); A.music.sync[0] = 0; audio_unlock(); }
+}
+
 void audio_music_stop(void)
 {
     if (!A.on) return;

@@ -168,7 +168,14 @@ static int on_door(Game *g, const Door *d)
     s->cur = slot;
     shell_load_enemy_banks(s, &s->maps[slot]);
     game_enter(g, &s->maps[slot], &s->tiles[slot], d->dest_col, d->dest_row, (d->letter & 0x40) != 0);
-    game_start_walk_in(g, (d->letter & 0x40) != 0);             /* 7C6E */
+    /* 7C11: the door record's byte +8 bit 7 (cached at [9F1D]) is set on every
+     * boss room's exit door, the one post_boss_transition installs — load
+     * ROKADEMO.BIN and call it, then jump to 7CF4, skipping the walk-in. */
+    if (d->dflags & 0x80) {                                     /* 7C18 */
+        LOG(s, "[tear] a Tear of Esmesanti (%u of 9)\n", (unsigned)(g->page[0xA0] + 1));
+        tear_cutscene(s);
+    } else
+        game_start_walk_in(g, (d->letter & 0x40) != 0);         /* 7C6E */
     s->transitions++;
     LOG(s, "[door] entered %s (cavern %d, %d cols, tileset MPP%c) at hero (%d,%d)\n", s->maps[slot].name,
         s->maps[slot].cavern, s->maps[slot].width, "123456789AB"[s->maps[slot].tileset],
@@ -195,6 +202,9 @@ int shell_init(Shell *s, const char *dir_hint, int map_idx)
      * frame, the strip above the playfield and the grey HUD panel once. */
     if (gfx_load_screen_frame(&s->frame, s->dir)) fprintf(stderr, "note: no mole.bin (no screen frame)\n");
     if (gfx_load_encounter(&s->encnt, s->dir)) fprintf(stderr, "note: no encnt.grp (blank encounter card)\n");
+    /* rokademo's hero cells + gfmcga's sword/sparkle art + GMMCGA's Tear icon
+     * + GAME.BIN's nine slot positions (docs/CUTSCENES.md §5) */
+    tear_art_load(&s->tear_art, s->dir);
 
     Game *g = &s->g;
     game_init(g, &s->maps[0], &s->tiles[0]);

@@ -17,6 +17,7 @@
 #include "town.h"
 #include "text.h"
 #include "status.h"
+#include "tear.h"
 
 typedef struct Shell {
     const char *dir;
@@ -38,6 +39,7 @@ typedef struct Shell {
     Town        town;
     TextFont    tfont;
     ItemPics    pics;
+    TearArt     tear_art;               /* rokademo + GAME.BIN A3A5 art */
     int      in_town;                   /* 0 = fight.bin, 1 = town.bin */
     int      town_tiles_idx, town_spr_idx;
     int      ai_index, enp_index;

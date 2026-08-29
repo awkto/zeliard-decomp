@@ -18,6 +18,8 @@
 #include "status.h"
 #include "shell.h"
 #include "audio.h"
+#include "cutscene.h"
+#include "tear.h"
 #ifdef HAVE_SDL
 #include <SDL.h>
 #endif
@@ -39,6 +41,11 @@ typedef struct {
     int      quit;
     int      verbose;
     int      dump_audio;
+    /* the cutscenes (opdemo / enddemo).  `intro` = -1 auto (a plain interactive
+     * launch), 0 never, 1 always; `intro_act` runs one act on its own. */
+    int      intro, intro_act, ending, intro_only;
+    unsigned cs_frames;
+    Cutscene cs;
 #ifdef HAVE_SDL
     SDL_Window *win; SDL_Renderer *ren; SDL_Texture *tex;
 #endif
@@ -80,7 +87,16 @@ static void usage(void)
         "  --name NAME the NAME.USR the sage's \"Record Experience\" writes\n"
         "  --load NAME restore NAME.USR (town.bin 7592) before starting; the page's\n"
         "              [C4] picks the town and [80]/[83] the column\n"
-        "  --save NAME write NAME.usr for the state just set up and exit (kenjpro A862)\n");
+        "  --save NAME write NAME.usr for the state just set up and exit (kenjpro A862)\n"
+        "  --intro / --no-intro   run (or skip) the opening demo; the default is to run it\n"
+        "              only on a plain interactive launch, as GAME.BIN does when it was\n"
+        "              given no command-line argument\n"
+        "  --intro-act N          run only act N of opdemo (1 prologue+title, 2 credits,\n"
+        "              3 the storm demo) and exit\n"
+        "  --ending    run enddemo (the ending and the credits roll) and exit\n"
+        "  --cutscene-frames N    stop a cutscene after N rendered frames\n"
+        "  --gd-art NAME OUT.png  render one intro/ending resource (ame.grp, ttl3.grp, ...)\n"
+        "              exactly as tools/grp2png.py's render_gd does\n");
 }
 
 static int script_next(App *a)
@@ -117,9 +133,11 @@ static void dump_png(App *a, Game *g)
 {
     static uint8_t rgb[FB_W * FB_H * 3];
     if (g->status) memcpy(a->fb, status_framebuffer(g->status), FB_W * FB_H);
+    else if (g->tear) memcpy(a->fb, tear_framebuffer(g->tear), FB_W * FB_H);
     else render_frame(a->fb, g, &a->sh.hero);
     render_hud(a->fb, g, &a->sh.font, &a->sh.tfont, map_place_record(g->map));
     itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, g);
+    if (!g->tear) tear_draw_slots(a->fb, g, &a->sh.tear_art);   /* GAME.BIN A18E -> A3A5 */
     render_to_rgb(a->fb, rgb);
     if (png_write_rgb(a->shot_path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", a->shot_path);
     else fprintf(stderr, "wrote %s (frame %u, hero map (%d,%d) scr (%d,%d) scroll (%d,%d))\n", a->shot_path,
@@ -134,6 +152,83 @@ static void set_buttons(Game *g, uint8_t b)
     if ((b & 1) && !(g->buttons & 1)) g->btn1_edge = 0xFF;
     if ((b & 2) && !(g->buttons & 2)) g->btn2_edge = 0xFF;
     g->buttons = b;
+}
+
+/* ------------------------------------------------------------- cutscenes */
+/* opdemo / enddemo own the frame loop exactly as the shops do; this is their
+ * `present`.  They draw into their own 320x200 buffer with their own 256-entry
+ * DAC, so the conversion to RGB goes through gd_to_rgb, not render_to_rgb. */
+static void cutscene_present(Cutscene *c)
+{
+    App *a = c->user;
+    static uint8_t rgb[FB_W * FB_H * 3];
+    audio_advance_ms(CS_FRAME_MS);
+    if (a->shot_path && c->frames == a->shot_frame) {
+        cutscene_to_rgb(c, rgb);
+        if (png_write_rgb(a->shot_path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", a->shot_path);
+        else fprintf(stderr, "wrote %s (cutscene act %d, frame %u, beat %d)\n",
+                     a->shot_path, c->act, c->frames, c->beat);
+    }
+    if (a->headless) {
+        /* --script drives the two abort keys: any X / E / Space token aborts
+         * the act, exactly as [FF1D] / [FF29] do */
+        c->key = 0;
+        if (script_next(a)) c->key = (uint8_t)((a->script_btns & (1 | 4)) ? 1 : 0);
+        if (a->quit) c->quit = 1;
+        return;
+    }
+#ifdef HAVE_SDL
+    cutscene_to_rgb(c, rgb);
+    SDL_UpdateTexture(a->tex, NULL, rgb, FB_W * 3);
+    SDL_RenderClear(a->ren);
+    SDL_RenderCopy(a->ren, a->tex, NULL, NULL);
+    SDL_RenderPresent(a->ren);
+    static Uint64 next = 0;
+    Uint64 now = SDL_GetPerformanceCounter(), freq = SDL_GetPerformanceFrequency();
+    if (next == 0 || now > next + freq) next = now;
+    next += (Uint64)(CS_FRAME_MS / 1000.0 * (double)freq);
+    for (;;) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_QUIT) { a->quit = 1; c->quit = 1; }
+            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) { a->quit = 1; c->quit = 1; }
+        }
+        now = SDL_GetPerformanceCounter();
+        if (now >= next || a->quit) break;
+        Uint64 rem = (next - now) * 1000 / freq;
+        SDL_Delay(rem > 2 ? 1 : 0);
+    }
+    const Uint8 *k = SDL_GetKeyboardState(NULL);
+    c->key = (uint8_t)(k[SDL_SCANCODE_SPACE] || k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]);
+#endif
+}
+
+/* GAME.BIN at boot with no command-line argument: `jmp [0x6002]` into opdemo,
+ * which hands back with AX = 0xFFFF when the demo has run (opdemo 6A41). */
+static int run_cutscenes(App *a, const char *dir)
+{
+    if (cutscene_init(&a->cs, dir, &a->sh.tfont)) {
+        fprintf(stderr, "cannot load gdmcga (ZELRES1[5]): no intro\n");
+        return -1;
+    }
+    a->cs.user = a; a->cs.present = cutscene_present;
+    a->cs.max_frames = a->cs_frames;
+    if (a->ending) cutscene_ending(&a->cs);
+    else if (a->intro_act) {
+        size_t len = 0;
+        free(a->cs.img);
+        a->cs.img = sar_load(dir, 0, 0, 1, &len);       /* ZELRES1[0] opdemo */
+        a->cs.imglen = len;
+        if (a->cs.img) {
+            if (a->intro_act == 1) cutscene_act1(&a->cs);
+            else if (a->intro_act == 2) cutscene_act2(&a->cs);
+            else cutscene_act3(&a->cs);
+        }
+        audio_music_stop();
+    } else cutscene_intro(&a->cs);
+    fprintf(stderr, "[intro] %u frames\n", a->cs.frames);
+    cutscene_free(&a->cs);
+    return 0;
 }
 
 static void present(Game *g)
@@ -166,9 +261,11 @@ static void present(Game *g)
 #ifdef HAVE_SDL
     static uint8_t rgb[FB_W * FB_H * 3];
     if (g->status) memcpy(a->fb, status_framebuffer(g->status), FB_W * FB_H);
+    else if (g->tear) memcpy(a->fb, tear_framebuffer(g->tear), FB_W * FB_H);
     else render_frame(a->fb, g, &a->sh.hero);
     render_hud(a->fb, g, &a->sh.font, &a->sh.tfont, map_place_record(g->map));
     itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, g);
+    if (!g->tear) tear_draw_slots(a->fb, g, &a->sh.tear_art);   /* GAME.BIN A18E -> A3A5 */
     render_to_rgb(a->fb, rgb);
     SDL_UpdateTexture(a->tex, NULL, rgb, FB_W * 3);
     SDL_RenderClear(a->ren);
@@ -236,6 +333,7 @@ static void town_present(Town *t)
             else town_render(a->fb, t);
             render_hud(a->fb, t->g, &a->sh.font, &a->sh.tfont, town_place_record(t->map));
             itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, t->g);
+            tear_draw_slots(a->fb, t->g, &a->sh.tear_art);
             render_to_rgb(a->fb, rgb);
             if (png_write_rgb(a->shot_path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", a->shot_path);
             else fprintf(stderr, "wrote %s (town frame %u, hero col %d)\n", a->shot_path, t->frame_no, town_hero_col(t));
@@ -261,6 +359,7 @@ static void town_present(Town *t)
     else town_render(a->fb, t);
     render_hud(a->fb, t->g, &a->sh.font, &a->sh.tfont, town_place_record(t->map));
     itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, t->g);
+    tear_draw_slots(a->fb, t->g, &a->sh.tear_art);
     render_to_rgb(a->fb, rgb);
     SDL_UpdateTexture(a->tex, NULL, rgb, FB_W * 3);
     SDL_RenderClear(a->ren);
@@ -318,19 +417,25 @@ int main(int argc, char **argv)
     long dbg_gold = -1;
     const char *dbg_potions = NULL, *dbg_spells = NULL;
     const char *save_name = "ZELIARD", *load_name = NULL, *save_now = NULL;
+    /* the intro runs on a plain interactive launch, the way GAME.BIN runs
+     * opdemo when it was given no command-line argument; anything that names a
+     * start state or a scripted/headless run suppresses it. */
+    int explicit_start = 0;
+    a.intro = -1;
     const char *wav_path = NULL;
+    const char *gd_art_name = NULL, *gd_art_path = NULL;
     int want_audio = 1, audio_backend = AUDIO_ADLIB, music_force = -2;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--dir") && i + 1 < argc) dir = argv[++i];
-        else if (!strcmp(argv[i], "--map") && i + 1 < argc) map_idx = (int)strtol(argv[++i], NULL, 0);
-        else if (!strcmp(argv[i], "--pos") && i + 2 < argc) { pos_col = atoi(argv[++i]); pos_row = atoi(argv[++i]); }
-        else if (!strcmp(argv[i], "--headless")) a.headless = 1;
-        else if (!strcmp(argv[i], "--screenshot") && i + 2 < argc) { a.shot_frame = (unsigned)atoi(argv[++i]); a.shot_path = argv[++i]; a.headless = 1; }
-        else if (!strcmp(argv[i], "--script") && i + 1 < argc) a.script = argv[++i];
+        else if (!strcmp(argv[i], "--map") && i + 1 < argc) { map_idx = (int)strtol(argv[++i], NULL, 0); explicit_start = 1; }
+        else if (!strcmp(argv[i], "--pos") && i + 2 < argc) { pos_col = atoi(argv[++i]); pos_row = atoi(argv[++i]); explicit_start = 1; }
+        else if (!strcmp(argv[i], "--headless")) { a.headless = 1; explicit_start = 1; }
+        else if (!strcmp(argv[i], "--screenshot") && i + 2 < argc) { a.shot_frame = (unsigned)atoi(argv[++i]); a.shot_path = argv[++i]; a.headless = 1; explicit_start = 1; }
+        else if (!strcmp(argv[i], "--script") && i + 1 < argc) { a.script = argv[++i]; explicit_start = 1; }
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) a.scale = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--frames") && i + 1 < argc) a.max_frames = (unsigned)atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--frames") && i + 1 < argc) { a.max_frames = (unsigned)atoi(argv[++i]); explicit_start = 1; }
         else if (!strcmp(argv[i], "--speed") && i + 1 < argc) a.frame_ms = FRAME_MS_DEFAULT * atoi(argv[++i]) / 5.0;
-        else if (!strcmp(argv[i], "--town") && i + 1 < argc) start_in_town = (int)strtol(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--town") && i + 1 < argc) { start_in_town = (int)strtol(argv[++i], NULL, 0); explicit_start = 1; }
         else if (!strcmp(argv[i], "--town-col") && i + 1 < argc) town_col = (int)strtol(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--town-scr") && i + 1 < argc) town_scr = (int)strtol(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--town-npc") && i + 2 < argc) { npc_i = atoi(argv[++i]); npc_f = atoi(argv[++i]); }
@@ -348,10 +453,68 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--potions") && i + 1 < argc) dbg_potions = argv[++i];
         else if (!strcmp(argv[i], "--spells") && i + 1 < argc) dbg_spells = argv[++i];
         else if (!strcmp(argv[i], "--name") && i + 1 < argc) save_name = argv[++i];
-        else if (!strcmp(argv[i], "--load") && i + 1 < argc) load_name = argv[++i];
-        else if (!strcmp(argv[i], "--save") && i + 1 < argc) save_now = argv[++i];
+        else if (!strcmp(argv[i], "--load") && i + 1 < argc) { load_name = argv[++i]; explicit_start = 1; }
+        else if (!strcmp(argv[i], "--save") && i + 1 < argc) { save_now = argv[++i]; explicit_start = 1; }
+        else if (!strcmp(argv[i], "--gd-art") && i + 2 < argc) { gd_art_name = argv[++i]; gd_art_path = argv[++i]; }
+        else if (!strcmp(argv[i], "--intro")) a.intro = 1;
+        else if (!strcmp(argv[i], "--no-intro")) a.intro = 0;
+        else if (!strcmp(argv[i], "--intro-act") && i + 1 < argc) { a.intro_act = atoi(argv[++i]); a.intro = 1; a.intro_only = 1; }
+        else if (!strcmp(argv[i], "--ending")) { a.ending = 1; a.intro = 1; a.intro_only = 1; }
+        else if (!strcmp(argv[i], "--cutscene-frames") && i + 1 < argc) a.cs_frames = (unsigned)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--verbose") || !strcmp(argv[i], "-v")) a.verbose = 1;
         else { usage(); return 2; }
+    }
+    if (a.intro < 0) a.intro = !explicit_start;
+    /* GAME.BIN comes back from the demo and starts a new game in the castle */
+    if (a.intro && !a.intro_only && !explicit_start && start_in_town < 0) start_in_town = 0;
+    /* --gd-art NAME OUT.png: render one intro/ending resource the way
+     * tools/grp2png.py's render_gd does, so the two decoders can be diffed
+     * (port/tools/compare_gdart.py, `make verify`). */
+    if (gd_art_name) {
+        const GdArt *art = gd_art_find(gd_art_name);
+        if (!art) { fprintf(stderr, "unknown gd resource %s\n", gd_art_name); return 2; }
+        const char *gdir = shell_find_dir(dir);
+        size_t rlen = 0;
+        uint8_t *raw = sar_load(gdir, art->archive, art->res - 1, 1, &rlen);
+        if (!raw) { fprintf(stderr, "cannot load %s\n", art->name); return 1; }
+        static uint8_t buf[0x30000];
+        size_t n;
+        if (art->unp == 1)      n = gd_unpack_rle(raw, rlen, buf, sizeof buf);
+        else if (art->unp == 2) n = gd_unpack_mask(raw, rlen, buf, sizeof buf, 0);
+        else if (art->unp == 3) { n = rlen < sizeof buf ? rlen : sizeof buf; memcpy(buf, raw, n); }
+        else                    n = gd_unpack_mask(raw, rlen, buf, sizeof buf, 1);
+        free(raw);
+        static uint8_t fbb[GD_W * GD_H], scr[GD_SCRATCH];
+        Gd gd;
+        if (gd_init(&gd, gdir, fbb, scr, NULL)) { fprintf(stderr, "no gdmcga\n"); return 1; }
+        gd_set_palette(&gd, art->pal);
+        int w = 0, h = 0;
+        for (int i = 0; i < art->nparts; i++) {
+            if (art->part[i].wbytes * 4 > w) w = art->part[i].wbytes * 4;
+            h += (art->part[i].rows + 1) * art->part[i].count;
+        }
+        h -= 1;
+        /* the same background grp2png leaves between sub-images */
+        uint8_t *rgb = malloc((size_t)w * h * 3);
+        for (int i = 0; i < w * h; i++) { rgb[i*3] = 20; rgb[i*3+1] = 20; rgb[i*3+2] = 60; }
+        static uint8_t rowbuf[0x20000];
+        int y0 = 0;
+        for (int i = 0; i < art->nparts; i++)
+            for (int f = 0; f < art->part[i].count; f++) {
+                gd_art_rows(buf, art->part[i].off + (unsigned)f * art->part[i].stride,
+                            art->part[i].wbytes, art->part[i].rows, art->part[i].mode, rowbuf);
+                for (int r = 0; r < art->part[i].rows; r++)
+                    for (int x = 0; x < art->part[i].wbytes * 4; x++) {
+                        const uint8_t *cc = gd.dac[rowbuf[(size_t)r * art->part[i].wbytes * 4 + x]];
+                        uint8_t *p = rgb + (((size_t)(y0 + r) * w) + x) * 3;
+                        p[0] = cc[0]; p[1] = cc[1]; p[2] = cc[2];
+                    }
+                y0 += art->part[i].rows + 1;
+            }
+        int rc = png_write_rgb(gd_art_path, rgb, w, h);
+        fprintf(stderr, "%s: %zu bytes unpacked, %dx%d -> %s\n", art->name, n, w, h, gd_art_path);
+        free(rgb); gd_free(&gd);
+        return rc ? 1 : 0;
     }
     sh->user = &a; sh->present = present; sh->town_present = town_present;
     /* audio before shell_init: loading a map starts its score (shell.c).  A
@@ -431,6 +594,21 @@ int main(int argc, char **argv)
 #endif
     if (a.headless && a.shot_path && a.shot_frame == 0) a.shot_frame = 1;
     if (music_force >= -1) audio_music_force(music_force);     /* --music N: pin one score (-1 = effects only) */
+
+    /* GAME.BIN A080: no command-line argument -> [FF77] = 0xFF and jmp into
+     * opdemo, which reloads GAME.BIN when it is done (opdemo 6A41). */
+    if (a.intro && !save_now) {
+        run_cutscenes(&a, sh->dir);
+        if (a.intro_only) { audio_shutdown();
+#ifdef HAVE_SDL
+            if (a.tex) SDL_DestroyTexture(a.tex);
+            if (a.ren) SDL_DestroyRenderer(a.ren);
+            if (a.win) SDL_DestroyWindow(a.win);
+            if (!a.headless) SDL_Quit();
+#endif
+            return 0; }
+        a.quit = 0; a.shot_path = a.intro_act ? a.shot_path : NULL;
+    }
 
     if (start_in_town >= 0) {
         if (!shell_enter_town(g, start_in_town, town_col, 0)) return 1;

@@ -14,14 +14,15 @@ CORE = sar.o gfx.o map.o physics.o render.o png.o enemy.o ai.o combat.o shots.o 
        ai_eai1.o ai_eai2.o ai_eai3.o ai_eai4.o ai_eai5.o ai_eai6.o ai_eai7.o ai_eai8.o town.o \
        boss.o boss_crab.o boss_tako.o boss_tori.o boss_zela.o boss_meda.o boss_lega.o \
        boss_drgn.o boss_akma.o boss_mao1.o boss_mao2.o boss_generic.o \
-       text.o player.o shop.o status.o shell.o nav.o playthrough.o opl2.o msd.o audio.o
+       text.o player.o shop.o status.o shell.o nav.o playthrough.o opl2.o msd.o audio.o \
+       gd.o cutscene.o tear.o
 ifneq ($(strip $(SDL_LIBS)),)
   CFLAGS += -DHAVE_SDL $(SDL_CFLAGS)
   LIBS   += $(SDL_LIBS)
 endif
 LIBS += -lm
 
-all: zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio
+all: zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene
 
 zeliard: main.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
@@ -50,10 +51,13 @@ test_playthrough: test_playthrough.o $(CORE)
 test_audio: test_audio.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
 
-%.o: %.c sar.h gfx.h map.h physics.h render.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h nav.h playthrough.h opl2.h msd.h audio.h
+test_cutscene: test_cutscene.o $(CORE)
+	$(CC) -o $@ $^ $(LIBS)
+
+%.o: %.c sar.h gfx.h map.h physics.h render.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h nav.h playthrough.h opl2.h msd.h audio.h gd.h cutscene.h tear.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio
+test: test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene
 	./test_physics
 	./test_combat
 	./test_town
@@ -62,6 +66,7 @@ test: test_physics test_combat test_town test_boss test_shop test_status test_pl
 	./test_status
 	./test_playthrough ../zeliard --quiet
 	./test_audio ../zeliard
+	./test_cutscene ../zeliard
 
 # the same two routes with the step-by-step log (issue #26's acceptance run)
 playthrough: test_playthrough
@@ -69,7 +74,7 @@ playthrough: test_playthrough
 
 # start position vs docs/screenshots/cavern.png, and the cavern-1 frog sprite
 # vs docs/screenshots/cavern_enemy.png (needs python3 + Pillow)
-verify: zeliard test_combat test_town test_shop test_status
+verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	./zeliard --dir ../zeliard --screenshot 1 /tmp/zel_start.png
 	python3 tools/compare_shot.py /tmp/zel_start.png ../docs/screenshots/cavern.png
 	python3 tools/compare_shot.py /tmp/zel_start.png ../docs/screenshots/cavern.png \
@@ -216,8 +221,31 @@ verify: zeliard test_combat test_town test_shop test_status
 		--box 48 142 224 16 --label "Satono: the near ground strips (y142..157)"
 	python3 tools/compare_shot.py /tmp/zel_town.png ../docs/screenshots/town.png \
 		--box 48 142 224 16 --label "Muralla: the near strips at scroll_col 179 (8/16 px a step)"
+	# --- the cutscenes (issue #30) -------------------------------------
+	# opdemo's three acts through port/gd.c + port/cutscene.c, diffed over the
+	# WHOLE 320x200 screen against the four DOSBox intro captures.  The frame
+	# numbers are the port's own deterministic clock (4 ticks of the 236.7 Hz
+	# [FF1A] counter per rendered frame), found once by scanning the act.
+	./zeliard --dir ../zeliard --intro-act 1 --screenshot 1660 /tmp/zel_prologue.png
+	python3 tools/compare_shot.py /tmp/zel_prologue.png ../docs/screenshots/intro_prologue.png \
+		--box 0 0 320 200 --label "intro act 1: the prologue scroller over nec.grp, WHOLE screen"
+	./zeliard --dir ../zeliard --intro-act 1 --screenshot 3521 /tmp/zel_demon.png
+	python3 tools/compare_shot.py /tmp/zel_demon.png ../docs/screenshots/intro_demon.png \
+		--box 0 0 320 200 --label "intro act 1: the demon + \"Beware, for \", WHOLE screen"
+	./zeliard --dir ../zeliard --intro-act 1 --screenshot 5025 /tmp/zel_title.png
+	python3 tools/compare_shot.py /tmp/zel_title.png ../docs/screenshots/title.png \
+		--box 0 0 320 200 --label "intro act 1: the ZELIARD title screen, WHOLE screen"
+	./zeliard --dir ../zeliard --intro-act 3 --screenshot 1044 /tmp/zel_balcony.png
+	python3 tools/compare_shot.py /tmp/zel_balcony.png ../docs/screenshots/demo_balcony.png \
+		--box 0 0 320 200 --label "storm demo: waku + ame + the narration, WHOLE screen"
+	./zeliard --dir ../zeliard --intro-act 3 --screenshot 24272 /tmp/zel_dialogue.png
+	python3 tools/compare_shot.py /tmp/zel_dialogue.png ../docs/screenshots/demo_dialogue.png \
+		--box 0 0 320 200 --label "storm demo: the throne-room dialogue + lip-sync, WHOLE screen"
+	# and the gd decoders themselves against tools/grp2png.py's, the reference
+	# implementation that produced docs/screenshots/intro_art.png
+	python3 tools/compare_gdart.py ../zeliard
 
 clean:
-	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio
+	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene
 
 .PHONY: all test verify playthrough clean
