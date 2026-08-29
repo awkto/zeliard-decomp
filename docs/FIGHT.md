@@ -155,8 +155,9 @@ The sprite is 3×3 cells but the **solid body is the middle column only**
   is released. Lowers the sword origin by one row (`6F2B`) and removes the
   head row from hazard/contact/wall tests.
 * **Ladders:** "up" with a ladder at (row 0,col+1) mounts; each frame "up" is
-  held the hero climbs 1 row, and a 2nd row in the same frame when
-  `hero_anim` becomes even (`65F9..661F`) — i.e. 1,2,1,2,… rows per frame.
+  held the hero climbs 1 row per *rendered* frame — each climbed row calls
+  `frame()` (`65F9..661F`); per `hero_input` call it is 1 row, then 2,2,2…
+  until `hero_anim` is odd (verified by the port's ladder tests, port/test_physics.c).
   "down" with a ladder below the feet descends the same way (`6B04`). On a
   ladder the main loop runs `62DB` (no gravity, no sword), and the hero drops
   off when neither (row 0,col+1) nor (row+1,col+1) is a ladder, when "down"
