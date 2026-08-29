@@ -109,8 +109,10 @@ static void set_goal(Play *p)
                            p->step, st->what, g->map->name, st->a, st->b); p->failed = 1; return; }
         nav_goal_door(&p->nav, g, d);
         break; }
+    case P_CAV_BREAK:
     case P_CAV_CELL:
-        nav_goal_cell(&p->nav, g, st->a, st->b);
+        if (st->kind == P_CAV_BREAK) nav_goal_break(&p->nav, g, st->a, st->b);
+        else                         nav_goal_cell(&p->nav, g, st->a, st->b);
         p->item_obj = -1;
         for (int i = 0; i < g->nobj; i++)
             if (g->obj[i].col == (uint16_t)st->a && g->obj[i].row == (uint8_t)st->b) { p->item_obj = i; break; }
@@ -156,15 +158,20 @@ static int step_done(Play *p)
     case P_TOWN_CAVE: return !p->sh.in_town;
     case P_TOWN_EDGE: return !p->sh.in_town || p->sh.tmap.index != p->town_at_start;
     case P_CAV_DOOR:  return p->sh.in_town || g->map != p->step_map;
+    case P_CAV_BREAK:
     case P_CAV_CELL: {
         /* the point of walking here is the object standing on the cell: the
          * step is done when it has been collected (col high byte 0xFF, 914C) */
         if (p->item_obj >= 0 && p->item_obj < g->nobj)
             return (g->obj[p->item_obj].col >> 8) == 0xFF;
+        /* nothing there: this is a plain waypoint, and the point of one is to
+         * pin the hero to a *particular* cell before the next leg starts.  Two
+         * cells of slack was enough to end MP30's column-58 climb one row above
+         * the row-7 gallery, from which the next door is unreachable. */
         int dc = game_hero_map_col(g) - st->a, dr = game_hero_map_row(g) - st->b;
         if (dc < 0) dc = -dc;
         if (dr < 0) dr = -dr;
-        return dc <= 2 && dr <= 2; }
+        return dc <= 1 && dr <= 1; }
     case P_BOSS:      return p->boss_seen && !g->post_boss_pending && !g->boss_dying;
     case P_GOTO:      return !p->sh.in_town && g->map == p->step_map;
     case P_TOWN_GOTO: return p->sh.in_town;
@@ -322,24 +329,54 @@ const PStep PLAY_ROUTE_BOSSES[] = {
   {P_TOWN_SHOP,185, 0,  "22yc",    "Satono weapon shop: the best sword it stocks", 0},
   {P_TOWN_SHOP, 92, 0,  "1yc",     "Satono: the Sage levels him up", 0},
   {P_TOWN_EDGE,  1, 0,  NULL,      "off Satono's right edge -> MP20 (6,62)", 0},
-  {P_CAV_CELL, 149,44,  NULL,      "MP20: the Key lying at (149,44)", 0},
-  {P_GOTO,       2,171, NULL,      "MP20: down the shafts to the locked boss door", 54},
-  {P_CAV_DOOR, 171,54,  NULL,      "MP20: the Key opens (171,54) -> MP2D (24,18)", 0},
+  {P_CAV_CELL,  89,44,  NULL,      "MP20: the first of its two Keys, at (89,44)", 0},
+  /* The one leg of cavern 2 the survey cannot reach.  MP20's row-36 corridor
+   * -- and with it the column-157 elevator, the second Key and the whole
+   * descent to the boss door -- hangs off a single door, (146,35) <-> MP21
+   * (66,35), and in the survey MP21's own east half has no way in either (see
+   * port/README.md, "Where cavern 2 stops").  So this is the shell call that
+   * door makes, and nothing after it is assisted. */
+  {P_GOTO,       3, 65, NULL,      "MP21 (65,36), the far side of MP20's (146,35) door", 35},
+  {P_CAV_DOOR,  66,35,  NULL,      "MP21: the (66,35) door -> MP20 (145,36), the row-36 corridor", 0},
+  {P_CAV_CELL, 149,44,  NULL,      "MP20: down the column-157 elevator to the second Key at (149,44)", 0},
+  {P_CAV_DOOR, 171,54,  NULL,      "MP20: back up the elevator, west over fix[7], down the column-108 "
+                                   "ladder and along row 50 to the locked (171,54) -> MP2D (24,18)", 0},
   {P_BOSS,       0, 0,  NULL,      "MP2D: Pulpo", 0},
   {P_CAV_DOOR,  -1, 0,  NULL,      "MP2D: the exit door -> MP20 (190,47)", 0},
   {P_CAV_DOOR, 190,47,  NULL,      "MP20: back into MP2D, an ordinary room now", 0},
   {P_CAV_CELL,  33,20,  NULL,      "MP2D: Pulpo's Key", 0},
   {P_CAV_DOOR,  41,18,  NULL,      "MP2D: out again -> MP20 (190,47)", 0},
   {P_CAV_DOOR, 205,47,  NULL,      "MP20: the Key opens (205,47) -> MP30 (21,6)", 0},
+  /* Cavern 3's gate is a *story flag*, not a door: bsmp's sentry stands at
+   * Bosque's column 9 in front of the column-7 door into MP31 and will not
+   * move until `page[12] & 8` -- "Garland is carrying the Hero's Crest" -- is
+   * set (bsmp's own `[C015]` list pokes his record to flags 0x80, script 14,
+   * "You have the Hero's Crest, I see.  You may pass").  The crest is in the
+   * trunk of MP30's biggest tree, which is fight.bin's item state 0x10: it
+   * only opens when the blade marks it, and what falls out is a state-0x1D
+   * pickup that sets `[9C]` and, through its own `+B/+D` pair, that flag.
+   * Bosque's own villagers say exactly this (scripts 5, 8 and 11). */
+  /* MP30 and MP31 are one maze in two halves: nine of their doors are pairs at
+   * identical coordinates and the way from one side of either map to the other
+   * is through the other map.  The tree is at MP30 (166,54) and only MP30
+   * (113,7) reaches it, which is four doors away from where MP20 lets you in. */
+  {P_CAV_DOOR,  19,49,  NULL,      "MP30: the (19,49) door -> MP31 (18,50)", 0},
+  {P_CAV_DOOR,  47,14,  NULL,      "MP31: the (47,14) door -> MP30 (46,15)", 0},
+  {P_CAV_CELL,  57,10,  NULL,      "MP30: up the column-58 shaft", 0},
+  {P_CAV_CELL,  58, 8,  NULL,      "MP30: out onto the row-7 gallery", 0},
+  {P_CAV_CELL,  70, 7,  NULL,      "MP30: east along the gallery", 0},
+  {P_CAV_DOOR,  88, 6,  NULL,      "MP30: the (88,6) door -> MP31 (87,7)", 0},
+  {P_CAV_DOOR, 114, 6,  NULL,      "MP31: the (114,6) door -> MP30 (113,7)", 0},
+  {P_CAV_BREAK,166,54,  NULL,      "MP30: break the biggest tree and take the Hero's Crest", 0},
+  {P_CAV_DOOR, 153,43,  NULL,      "MP30: the (153,43) door -> MP31 (152,44)", 0},
+  {P_CAV_DOOR, 186,46,  NULL,      "MP31: the (186,46) door -> MP30 (185,47)", 0},
+  {P_CAV_CELL,   6,47,  NULL,      "MP30: east round the ring to the column-6 elevator", 0},
+  {P_CAV_CELL,   4,20,  NULL,      "MP30: up the elevator and the column-5 ladder", 0},
+  {P_CAV_CELL, 200,21,  NULL,      "MP30: west round the ring again", 0},
   {P_CAV_DOOR, 185,18,  NULL,      "MP30: the BOSQUE door at (185,18)", 0},
   {P_TOWN_SHOP, 81, 0,  "30yc",    "Bosque weapon shop: a shield", 0},
-  /* MP31's boss door is the locked (188,20), and the way to it is Bosque's
-   * column-7 door -- which the sentry NPC standing at column 8 blocks until
-   * the story flag [12] bit 3 is set (bsmp's own patch list).  The route
-   * cannot set that flag yet, so this one leg is still the shell call, and it
-   * still lands on the shelf the *exit* door leads to.  See port/README.md. */
-  {P_GOTO,       6,174, NULL,      "across MP31 to its boss shelf at (174,4)", 3},
-  {P_CAV_DOOR, 174, 4,  NULL,      "MP31: the door at (174,4) -> MP3D (52,21)", 0},
+  {P_TOWN_CAVE,  7, 0,  NULL,      "Bosque: west past the sentry, through his own door -> MP31 (149,14)", 0},
+  {P_CAV_DOOR, 188,20,  NULL,      "MP31: the Key opens the boss door (188,20) -> MP3D (17,21)", 0},
   {P_BOSS,       0, 0,  NULL,      "MP3D: Pollo", 0},
   {P_CAV_DOOR,  -1, 0,  NULL,      "MP3D: the exit door -> MP31 (174,4)", 0},
   {P_CAV_DOOR, 174, 4,  NULL,      "MP31: back into MP3D, an ordinary room now", 0},

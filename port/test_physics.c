@@ -330,6 +330,31 @@ static void t_fixtures(const char *dir)
     step(DIR_DOWN); step(DIR_DOWN); step(DIR_DOWN);
     CHECK(G.fix[0].row == 24, "the elevator stops on the floor at row %d", G.fix[0].row);
 
+    /* 8074's own head-room test, which is *not* 8024's.  Going down (8024) the
+     * platform wants the three cells one row below empty and the one cell down
+     * and to the left free of sprites (`add si,0x23 / test [si],0x80`, then
+     * `mov cx,3 / inc si / test [si],0xff`).  Going up (8074, which has its own
+     * copy at 80AF) it wants the three cells one row above empty *and the three
+     * cells two rows above free of sprites* (`sub si,0x24` twice, then
+     * `80BA: test [si],0x80 / 80C0: test [bx],0xff`, three times).  The port
+     * ran the down test in both directions, so a rising platform ignored a
+     * sprite over its head and refused to move for one beside its feet. */
+    for (int k = 0; k < 2; k++) {
+        game_place(&G, 48, 21, 0); G.nobj = 0;
+        game_first_frame(&G);
+        int row0 = G.fix[0].row, rc = 48 - G.scroll_col;
+        int p = k == 0 ? game_ring_index(&G, (uint8_t)((row0 - 2) & 0x3F), (uint8_t)rc)
+                       : game_ring_index(&G, (uint8_t)((row0 - 1) & 0x3F), (uint8_t)(rc - 1));
+        G.ring[p] = 0x80;                               /* a sprite marker */
+        step(DIR_UP);
+        if (k == 0)
+            CHECK(G.fix[0].row == row0, "8074: a sprite two rows above holds the elevator down (row %d)",
+                  G.fix[0].row);
+        else
+            CHECK(G.fix[0].row == row0 - 1, "8074: one beside the row above does not (row %d)",
+                  G.fix[0].row);
+    }
+
     /* 8244/8299: the fixture-C platform patrols at half speed and carries the
      * hero, reversing at lim_l with one paused frame. */
     game_place(&G, 8, 40, 0); G.nobj = 0;

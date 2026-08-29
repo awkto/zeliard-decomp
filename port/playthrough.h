@@ -18,6 +18,7 @@ typedef enum {
     P_TOWN_EDGE,    /* walk off the a-side edge (0 = left, 1 = right) */
     P_CAV_DOOR,     /* reach the C00A door at (a,b) and go through it */
     P_CAV_CELL,     /* reach map cell (a,b) — treasure, keys, the boss reward */
+    P_CAV_BREAK,    /* reach map cell (a,b) and swing until what stands on it is gone */
     P_BOSS,         /* fight the boss in this room until it is defeated */
     P_FARM,         /* patrol between map columns a and b until EXP reaches c */
     P_GOTO,         /* enter system map a at the door destination (b, c) */

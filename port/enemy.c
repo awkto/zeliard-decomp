@@ -131,19 +131,79 @@ static int hero_overlaps_item(const Game *g, const MapObj *o)
     return dc >= 0 && dc <= 3;
 }
 
-/* Item states, table 8E14: the index is `type & 0x1F` (0x10..0x1F), src/fight.c
- * 8E14's own list.  0x11 (touch trigger) and 0x1D (boss chest text) still only
- * log; everything else caverns 1-9 place is implemented. */
+/* 0x8E54  the break animation both 8E32 and 8E8D run once something has set
+ * the record's `link` bit 0: the phase advances every other frame, and on the
+ * fourth the object becomes whatever `next` (+9) names -- or, when `next` is 0,
+ * simply goes (914C), which is where the story flag its +B/+D pair carries gets
+ * ORed into the player page. */
+static void item_break_step(Game *g, MapObj *o)
+{
+    unsigned t = (unsigned)o->phase + 0x80;                             /* 8E54 */
+    o->phase = (uint8_t)t;
+    if (!(t & 0x100)) return;                                           /* 8E58 */
+    if (++o->phase < 4) return;                                         /* 8E5E */
+    o->phase = 0;                                                       /* 8E65 */
+    uint8_t nx = o->next;
+    if (!nx) { enemy_remove(g, o); return; }                            /* 8E70 */
+    if (nx & 0x10) { nx = (uint8_t)(nx | 0x60); o->flags |= 0x80; o->timer = 0; }   /* 8E73 */
+    o->type = nx;                                                       /* 8E81 */
+    o->hit &= 0x80;
+    o->next = 0;
+}
+
+/* Item states, table 8E14: the index is `type & 0x1F` (0x10..0x1F), read out of
+ * the overlay itself (`8E14: 32 8e 8d 8e e9 8e f6 8e ab 8f ab 8f e8 8f f8 8f
+ * 08 90 1c 90 9d 90 ab 8f 3c 90 7f 90 90 90`), so:
+ *
+ *   10 8E32  break when the sword marks it      18 9008  +80 LIFE
+ *   11 8E8D  break when the hero walks into it  19 901C  full heal
+ *   12 8EE9  three-frame flash                  1A 909D  the cavern's key item
+ *   13 8EF6  treasure box                       1B 8FAB  100 gold
+ *   14 8FAB  1 gold                             1C 903C  a chest with a message
+ *   15 8FAB  10 gold                            1D 907F  the Hero's Crest
+ *   16 8FE8  Key       17 8FF8  Lion Key         1E 9090  key item 1
+ *
+ * Three of those were wrong here, and all three mattered: 0x10 was modelled as
+ * an eight-frame "corpse fade", so every breakable object in the game removed
+ * itself the moment it came on screen and fired the `[C00C]` story flag its own
+ * record carries -- MP30's crest tree at (166,54) handed Garland the Hero's
+ * Crest for walking past it; the crest is 0x1D, not 0x1E; and 0x1B is a hundred
+ * gold, not a pair of shoes (8FAB decides the amount from `type & 0x0F`: 4 -> 1,
+ * 5 -> 10, anything else -> 100). */
 void item_update(Game *g, MapObj *o)
 {
     int st = o->type & 0x1F;                                            /* 8E14 index */
+
+    if (st == 0x10) {                                                   /* 8E32 */
+        if (!(o->link & 1)) {
+            if (!(o->hit & 0x20)) return;                               /* 8E38: not struck */
+            g->sfx_request = 0x12;                                      /* 8E3F */
+            o->hit &= 0x90;
+            o->type = (uint8_t)((o->type & 0x7F) | 0x60);               /* 8E48 */
+            o->link |= 1;
+        }
+        item_break_step(g, o);
+        return;
+    }
+    if (st == 0x11) {                                                   /* 8E8D */
+        if (!(o->link & 1)) {
+            if ((uint8_t)((o->row - 3) & 0x3F) != g->hero_map_row) return;   /* 8E93 */
+            /* 8EA3: the hero's ring column [83]+4 against the object's own,
+             * over three columns.  The original adds `([C2] & 1) * 2` to it --
+             * a BASE-segment byte this port does not model -- so the window is
+             * the same width but not offset by his half-step. */
+            int hc = g->hero_scr_col + 4, oc = (int)o->rcol;
+            if (hc < oc - 1 || hc > oc + 1) return;
+            g->sfx_request = 0x12;                                      /* 8EC0 */
+            o->type = (uint8_t)(o->type & 0x7F);                        /* 8ECA */
+            o->link |= 1;
+        }
+        item_break_step(g, o);
+        return;
+    }
     /* animation: every other frame (the original uses each state's own rate) */
     if (g->frame_no & 1) o->phase = (uint8_t)((o->phase + 1) & 3);
 
-    if (st == 0x10) {                                                   /* 8E32 corpse fade */
-        if (++o->timer >= 8) enemy_remove(g, o);
-        return;
-    }
     if (st == 0x12) {                                                   /* 8EE9 3-frame flash */
         if (++o->timer >= 3) enemy_remove(g, o);
         return;
@@ -162,8 +222,9 @@ void item_update(Game *g, MapObj *o)
         g->sfx_request = 0x11;
         enemy_remove(g, o);
         return; }
-    case 0x14: case 0x15: {                                             /* 8FAB coins */
-        unsigned n = st == 0x14 ? 1 : 10;
+    case 0x14: case 0x15: case 0x1B: {                                   /* 8FAB coins */
+        int lo = o->type & 0x0F;                                        /* 8FC0 */
+        unsigned n = lo == 4 ? 1u : lo == 5 ? 10u : 100u;
         gold_add(g, n); g->sfx_request = 0x10;
         snprintf(g->message, sizeof g->message, "%u G", n);
         enemy_remove(g, o);
@@ -174,13 +235,31 @@ void item_update(Game *g, MapObj *o)
         game_message(g, fight_message(MSG_RECOVERED)); g->sfx_request = 0x13; enemy_remove(g, o); return;
     case 0x19: g->hp_regen_pending = (uint16_t)(g->hp_regen_pending + g->max_hp / 8 + 1);   /* 901C */
         game_message(g, fight_message(MSG_RECOVERED_FULL)); g->sfx_request = 0x13; enemy_remove(g, o); return;
-    case 0x1A: case 0x1B: {                                     /* 909D/9090: shoes by cavern (table 90CA) */
+    case 0x1A: case 0x1E: {                                     /* 909D / 9090: a key item */
+        /* 90B8 drops the item's id into the first free `[A1..A5]` slot and the
+         * status screen decides what wearing it does; the port keeps the pair
+         * of boots it turns into instead.  909D reads the id out of the 90CA
+         * table by cavern ([C012] - 4, three bytes a row: cavern 4 -> 4,
+         * 5 -> 2, 6 -> 3); 9090 is always id 1. */
         static const uint8_t by_cavern[10] = {0, 0, 0, 0, 4, 2, 3, 0, 0, 0};
         static const int msg[6] = {0, 0, MSG_PIRIKA, MSG_SILKARN, MSG_RUZERIA, 0};
-        int sh = st == 0x1B ? 1 : by_cavern[g->map->cavern < 10 ? g->map->cavern : 0];
-        if (sh) { g->shoes = (uint8_t)sh; game_message(g, fight_message(sh == 1 ? MSG_FERUZA : msg[sh])); }
+        int sh = st == 0x1E ? 1 : by_cavern[g->map->cavern < 10 ? g->map->cavern : 0];
+        if (sh) {
+            g->shoes = (uint8_t)sh;
+            for (int i = 0; i < 5; i++) if (!g->page[0xA1 + i]) { g->page[0xA1 + i] = (uint8_t)sh; break; }
+            game_message(g, fight_message(sh == 1 ? MSG_FERUZA : msg[sh]));
+        }
         g->sfx_request = 0x13; enemy_remove(g, o); return; }
-    case 0x1E: g->hero_crest = 0xFF; game_message(g, fight_message(MSG_HERO_CREST)); enemy_remove(g, o); return;
+    case 0x1D: g->hero_crest = 0xFF;                            /* 907F */
+        game_message(g, fight_message(MSG_HERO_CREST)); g->sfx_request = 0x11;
+        enemy_remove(g, o); return;
+    case 0x1C:                                                  /* 903C: a chest with a message */
+        /* the message comes from the map's own [C017] table, which the port
+         * does not decode; the latch is the point -- the record stays. */
+        if (!(o->next & 1)) { g->sfx_request = 0x11; o->flags |= 0x80; o->next |= 1; o->link = 0xEB; }
+        else if (o->link) o->link++;
+        else o->next &= (uint8_t)~1;
+        return;
     default:
         fprintf(stderr, "[item] state %02X at (%u,%u) picked up (not implemented)\n", st, o->col, o->row);
         enemy_remove(g, o);

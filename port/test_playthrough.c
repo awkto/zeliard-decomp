@@ -238,27 +238,89 @@ static void cavern_routes(const char *dir, int verbose)
      * The boss room is entered through a LOCKED door and left through an
      * unlocked one onto a shelf, and the Key for the locked door is lying in
      * the cavern.  Route 2 walks cavern 2's half of that now. */
+    /* Where cavern 2 stops.  MP20's row-36 corridor -- and with it the
+     * column-157 elevator, the second Key and the whole descent to the boss
+     * door -- hangs off one door, (146,35) <-> MP21 (66,35).  From Satono's
+     * right edge the only doors in reach are the way back out and the *locked*
+     * (95,35), which lands in a pocket of MP21 that reaches nothing else.
+     * (This used to read the other way round: the survey believed an elevator
+     * could be anywhere in its shaft, and MP20's fix[4] appeared to bridge the
+     * row-42 pocket to the corridor -- but an elevator only moves while the
+     * hero rides it, so that edge could never be taken.  See port/README.md.) */
     int n20 = survey(dir, 2, 6, 62);
     ck(n20 > 1400, "MP20: the survey found the cavern (%d nodes)", n20);
     reach_from(6, 62);
-    ck(door_reachable(171, 54), "MP20: the LOCKED boss door (171,54) is reachable from Satono's right edge");
-    ck(!door_reachable(190, 47), "MP20: the boss room's exit shelf (190,47) is not");
-    ck(!door_reachable(205, 47), "MP20: nor is the locked (205,47) door on it");
+    ck(door_reachable(95, 35), "MP20: the locked (95,35) into MP21 is reachable from Satono's right edge");
+    ck(!door_reachable(171, 54), "MP20: the LOCKED boss door (171,54) is *not*");
+    ck(!door_reachable(190, 47), "MP20: nor is the boss room's exit shelf (190,47)");
+    ck(!door_reachable(205, 47), "MP20: nor the locked (205,47) door on it");
+    ck(!door_reachable(146, 35), "MP20: nor the (146,35) door into MP21's east half");
+    /* ... and from where that door lands, all of it is */
+    survey(dir, 2, 145, 36);
+    reach_from(145, 36);
+    ck(door_reachable(171, 54), "MP20: the boss door is reachable from (145,36), where (146,35) lands");
+    ck(cell_reachable(149, 43), "MP20: so is the second Key's ledge at (149,43)");
+    ck(cell_reachable(155, 36) && cell_reachable(110, 36),
+       "MP20: and the whole row-36 corridor, from the column-157 elevator to the column-108 ladder");
+    /* MP21's own east half has no way in either: nothing that any of its four
+     * doors lands on can reach (65,36), the cell MP20's (146,35) door arrives
+     * at.  That is the one leg route 2 still asks the shell for. */
+    survey(dir, 3, 14, 36);
+    reach_from(14, 36);
+    ck(!door_reachable(66, 35), "MP21: (66,35) is not reachable from (14,36), where MP20's (95,35) lands");
+    survey(dir, 3, 14, 51);
+    reach_from(14, 51);
+    ck(!door_reachable(66, 35), "MP21: nor from (14,51), where MP10's (95,50) lands");
+    survey(dir, 3, 78, 51);
+    reach_from(78, 51);
+    ck(!door_reachable(66, 35), "MP21: nor from (78,51), where MP10's door 5 lands");
+    /* MP20's two Keys: one on the entrance side at (89,44) for the locked
+     * (95,35), one in the corridor at (149,44) for the locked boss door. */
+    survey(dir, 2, 6, 62);
+    reach_from(6, 62);
     int k20a = -1, k20b = -1;
     for (int i = 0; i < csh.g.map->nobj; i++)
         if ((csh.g.map->objs[i].type & 0x1F) == 0x16) { if (k20a < 0) k20a = i; else k20b = i; }
     ck(k20a >= 0 && k20b >= 0, "MP20 carries two Key items");
-    if (k20b >= 0)
+    if (k20b >= 0) {
+        ck(csh.g.map->objs[k20a].col == 89 && csh.g.map->objs[k20a].row == 44,
+           "MP20: the first Key is at (%d,%d)", csh.g.map->objs[k20a].col,
+           csh.g.map->objs[k20a].row);
         ck(csh.g.map->objs[k20b].col == 149 && csh.g.map->objs[k20b].row == 44,
            "MP20: the second Key is at (%d,%d)", csh.g.map->objs[k20b].col,
            csh.g.map->objs[k20b].row);
+        ck(cell_reachable(88, 43), "MP20: the first Key is on the entrance side");
+    }
     /* MP31 (system map 6) is the same shape, and its way in is Bosque's
-     * column-7 door -- the one the sentry at column 8 stands in front of. */
+     * column-7 door -- the one the sentry at column 9 stands in front of. */
     int n31 = survey(dir, 6, 149, 14);
     ck(n31 > 1000, "MP31: the survey found the cavern (%d nodes)", n31);
     reach_from(149, 14);
     ck(door_reachable(188, 20), "MP31: the LOCKED boss door (188,20) is reachable from Bosque's column-7 door");
     ck(!door_reachable(174, 4), "MP31: the boss room's exit shelf (174,4) is not");
+    /* And the crest tree the sentry's flag comes from: MP30 (166,54), an item
+     * state 0x10 (8E32) that only opens to the blade, holding a state 0x1D
+     * (907F) Hero's Crest whose own +B/+D pair is `page[12] |= 8`.  Only MP30
+     * (113,7) -- four doors from where MP20's (205,47) lands -- reaches it. */
+    survey(dir, 5, 113, 7);
+    reach_from(113, 7);
+    ck(cell_reachable(164, 54), "MP30: the crest tree's ledge is reachable from (113,7)");
+    {
+        const MapObj *tree = NULL;
+        for (int i = 0; i < csh.g.map->nobj; i++)
+            if (csh.g.map->objs[i].col == 166 && csh.g.map->objs[i].row == 54) tree = &csh.g.map->objs[i];
+        ck(tree != NULL, "MP30 has an object at (166,54)");
+        if (tree) {
+            ck((tree->type & 0x1F) == 0x10, "and it is item state 0x10, the sword-breakable (type %02X)", tree->type);
+            ck((tree->next & 0x1F) == 0x1D, "whose `next` is the Hero's Crest, state 0x1D (next %02X)", tree->next);
+            ck((tree->flags & 0x20) && (tree->home_col & 0xFF) == 0x12 && tree->home_row == 0x08,
+               "and whose event pair is page[12] |= 08 (flags %02X, [%02X] |= %02X)",
+               tree->flags, tree->home_col & 0xFF, tree->home_row);
+        }
+    }
+    survey(dir, 5, 20, 7);
+    reach_from(20, 7);
+    ck(!cell_reachable(164, 54), "MP30: and *not* from (20,7), where MP20's (205,47) lands");
     /* and cavern 3's Key is in MP30 (map 5), on the far side of MP31's own
      * (153,43) door -- not on the half MP20's (205,47) lands on */
     survey(dir, 5, 21, 6);
@@ -330,11 +392,28 @@ int main(int argc, char **argv)
     }
 
     if (only != 1) {
-        /* Route 2 starts from the character the shops would have built by the
-         * time a player reaches cavern 1's boss (level 12, the Knight's sword,
-         * the Honor shield).  The autopilot cannot yet farm that much gold, so
-         * the record is set the way `--sword/--level/--life` sets it; the
-         * fights, the doors and the shops from there on are played. */
+        /* Route 2 starts from a made-up character, and it has to: the record
+         * it wants cannot exist this early in the game at all.
+         *
+         * A level is bought from a sage, and kenj's `A2AC` caps each sage by
+         * town -- {3, 6, 9, 11, 13, 15, 18, 0xFF} for Muralla, Satono, Bosque,
+         * Helada, Tumba, Dorado, Llama, Pureza/Esco.  The two sages this route
+         * can reach stop at **level 6** (Satono) and **level 9** (Bosque, and
+         * only once cavern 3 has been walked); level 16 needs *Llama Town's*
+         * sage, four caverns further on.  So no amount of grinding produces a
+         * level-16 Garland in caverns 1-3.
+         *
+         * The grind is out of reach too.  Route 1 measures the rate: its
+         * `P_FARM` on MP10's entrance shelf earns **500 EXP and 51 gold in
+         * 133,256 frames**, i.e. 267 frames an EXP point and 2,613 frames a
+         * gold piece, and a frame is 84.5 ms (20 ticks of 236.7 Hz), so that
+         * one step is already three hours of play.  `A28C`'s EXP_NEXT wants
+         * 3,370 EXP to walk level 1 up to level 6 (~21 hours) and 220,370 to
+         * reach 16 (~57 days); the 20,000 gold is another ~51 days.
+         *
+         * And level 6 is not enough anyway: with 320 LIFE (`A380`'s table) and
+         * the best sword and shield Satono sells, Garland reaches MP2D and dies
+         * to Pulpo.  So the record stays, and it stays documented. */
         memset(&p, 0, sizeof p);
         p.verbose = verbose;
         p.start_level = 16; p.start_sword = 4; p.start_shield = 4;

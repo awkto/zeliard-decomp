@@ -31,13 +31,14 @@
 #define NAV_MAX_NODE 24000
 #define NAV_MAX_EDGE (NAV_MAX_NODE * 12)
 #define NAV_FIXDIR   0x8000u    /* efixpos flag: the platform was moving left */
+#define NAV_FIXFREE  0x4000u    /* efixpos flag: the edge does not ride the fixture */
 /* what one step onto a hazard cell is worth in field cost.  Not a ban: MP10's
  * lava lake at columns 36-51 is crossable and sometimes the only way, but at
  * 48 a cell the planner will walk a long way round rather than paddle through
  * it, which is what a player does. */
 #define NAV_HAZCOST  48
 
-typedef enum { NAV_REACH, NAV_DOOR, NAV_FIGHT } NavMode;
+typedef enum { NAV_REACH, NAV_DOOR, NAV_FIGHT, NAV_BREAK } NavMode;
 
 typedef struct Nav {
     const Map *map;                 /* the map the graph was built for */
@@ -57,6 +58,7 @@ typedef struct Nav {
      * column (kind 2) or row (kinds 0/1) it was probed at. */
     uint8_t  efix[NAV_MAX_EDGE];
     uint8_t  efail[NAV_MAX_EDGE];   /* times the live run did not reproduce the edge */
+    uint8_t  eface[NAV_MAX_EDGE];   /* the facing the probe started in (1 = left) */
     uint16_t efixpos[NAV_MAX_EDGE];   /* | NAV_FIXDIR when it was probed moving left */
     int      efirst[NAV_MAX_NODE + 1];
     int      nedge;
@@ -82,12 +84,19 @@ typedef struct Nav {
 } Nav;
 
 void nav_goal_door(Nav *n, const Game *g, const Door *d);
+/* walk to (col,row) and then swing at it: fight.bin's item state 0x10 (8E32)
+ * is a breakable -- a tree trunk, a rock -- that only gives up what it holds
+ * when the blade marks it. */
+void nav_goal_break(Nav *n, const Game *g, int col, int row);
 void nav_goal_cell(Nav *n, const Game *g, int col, int row);
 void nav_goal_fight(Nav *n, const Game *g);
 /* set g->dirs / the button edges for this frame.  Call from g->present. */
 void nav_step(Nav *n, Game *g);
 /* the field distance at the hero's cell (NAV_INF when he is not on a node) */
 int  nav_distance(Nav *n, const Game *g);
+/* debug: run one macro from one cell, with the fixture the survey would have
+ * placed there, and print the trajectory.  `macro | 0x100` runs it with a
+ * patrolling platform placed moving left. */
 void nav_trace(Nav *n, const Game *g, int col, int row, int macro);
 
 #endif

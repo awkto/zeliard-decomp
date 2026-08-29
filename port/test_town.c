@@ -219,6 +219,52 @@ static void t_npcs(const char *dir)
     CHECK(T.message[0] == 0, "no dialogue 6 columns away");
 }
 
+/* ------------------------------------------------------- the sentry gate */
+/* bsmp's own `[C015]` list is one record: `if page[12] & 08: [CCFA]=80
+ * [CCFB]=0E`, the `flags` and `script` bytes of NPC 0 -- the sentry standing at
+ * Bosque's column 9, in front of the column-7 door into MP31.  Fresh he is
+ * flags 0xC0 (6890: bit 6 makes him solid, and 6288's `flags & 0xC0` refuses to
+ * talk) on script 11, "Hold on there!  Do you have the Hero's Crest?", whose
+ * `0x81` opcode runs script 12 for Yes ("Don't lie") and 13 for No ("You cannot
+ * pass here without the Hero's Crest").  Carry the crest and he becomes flags
+ * 0x80, script 14, "You have the Hero's Crest, I see.  You may pass" -- and,
+ * bit 6 gone, he stops blocking the way.  The flag is set by taking the item
+ * MP30's tree at (166,54) breaks open; see test_playthrough. */
+static void t_sentry(const char *dir)
+{
+    memset(G.page, 0, sizeof G.page);
+    if (load(dir, 3)) return;
+    CHECK(M.nnpcs > 0 && M.npcs[0].col == 9, "bsmp's NPC 0 stands at column %d",
+          M.nnpcs ? M.npcs[0].col : -1);
+    if (!M.nnpcs) return;
+    CHECK(M.npcs[0].flags == 0xC0 && M.npcs[0].script == 0x0B,
+          "and is solid, on script %d (flags %02X)", M.npcs[0].script, M.npcs[0].flags);
+    CHECK(M.ndoors > 0 && M.doors[0].col == 7 && M.doors[0].dest == 9,
+          "the door he guards is column 7, cave record %d", M.ndoors ? M.doors[0].dest - 8 : -1);
+    CHECK(M.ncaves > 1 && M.caves[1].map == 6 && M.caves[1].col == 149,
+          "which is MP31 at (%d,%d)", M.ncaves > 1 ? M.caves[1].col : -1,
+          M.ncaves > 1 ? M.caves[1].row : -1);
+    /* he blocks the way west: walking into column 9 stops at column 10 */
+    town_place(&T, 14, 0);
+    for (int i = 0; i < 40; i++) step(DIR_LEFT, 0);
+    CHECK(town_hero_col(&T) > (int)M.npcs[0].col,
+          "he blocks the way west (the hero stopped at column %d)", town_hero_col(&T));
+    /* now with the crest */
+    memset(G.page, 0, sizeof G.page);
+    G.page[0x12] = 0x08;
+    if (load(dir, 3)) return;
+    town_apply_patches(&M, G.page);
+    CHECK(M.npcs[0].flags == 0x80 && M.npcs[0].script == 0x0E,
+          "with page[12] & 8 he is flags %02X on script %d", M.npcs[0].flags, M.npcs[0].script);
+    CHECK(!strncmp(town_dialogue(&M, M.npcs[0].script), "Hold on there! You have the Hero", 31),
+          "which is \"%.40s\"", town_dialogue(&M, M.npcs[0].script));
+    town_place(&T, 14, 0);
+    for (int i = 0; i < 40; i++) step(DIR_LEFT, 0);
+    CHECK(town_hero_col(&T) < (int)M.npcs[0].col,
+          "and the hero walks straight past him to column %d", town_hero_col(&T));
+    memset(G.page, 0, sizeof G.page);
+}
+
 /* -------------------------------------------------- the cavern hand-off */
 /* docs/TOWN.md §9: goto_cavern 6FF8 puts the hero at scroll_col = col - 16,
  * scroll_row = (row - 10) & 63, which is exactly fight.bin's entry model. */
@@ -487,7 +533,7 @@ int main(int argc, char **argv)
     }
     struct { const char *name; void (*fn)(const char *); } tests[] = {
         {"town map", t_map}, {"walk", t_walk}, {"doors", t_doors},
-        {"edges", t_edges}, {"npcs", t_npcs}, {"hand-off", t_handoff},
+        {"edges", t_edges}, {"npcs", t_npcs}, {"sentry", t_sentry}, {"hand-off", t_handoff},
         {"dialogue menu", t_dialogue_menu},
         {"save file", t_save}, {"capture routes", t_capture_routes},
         {"screen art", t_art},

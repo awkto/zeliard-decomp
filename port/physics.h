@@ -279,6 +279,9 @@ void game_first_frame(Game *g);
 
 /* helpers shared with the renderer / tests */
 int  game_hero_cell(const Game *g);                /* ring index of the hero's top-left */
+/* 695A/6B76's own floor test (the ring cell under his body column, plus the
+ * one-cell-gap walk-over and the sprite he may be standing on) */
+int  game_hero_has_floor(const Game *g);
 int  game_hero_map_col(const Game *g);
 int  game_hero_map_row(const Game *g);
 int  game_win(const Game *g);                      /* ring index of screen (0,0) */

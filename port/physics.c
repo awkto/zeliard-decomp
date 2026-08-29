@@ -122,7 +122,7 @@ static void walk_left(Game *g);
 static void walk_right(Game *g);
 static int  try_move_left(Game *g);
 static int  try_move_right(Game *g);
-static int  floor_under_hero(Game *g);
+static int  floor_under_hero(const Game *g);
 static int  elevator_up(Game *g);
 static int  elevator_down(Game *g);
 static int  fixture_ride(Game *g);
@@ -367,7 +367,7 @@ static void unstick_from_wall(Game *g)
 }
 
 /* 6B76: 1 = standing */
-static int floor_under_hero(Game *g)
+static int floor_under_hero(const Game *g)
 {
     int c = wrap_down(game_hero_cell(g) + 0x6D);                         /* row+3, col+1 */
     int spr; uint8_t t;
@@ -378,6 +378,11 @@ static int floor_under_hero(Game *g)
     if (passable_body(g->ring[wrap_up(c - 1)])) return 0;
     return !passable_body(g->ring[wrap_down(c + 1)]);
 }
+
+/* 695A's own "is there anything under his feet" test, for the navigator: the
+ * frame a walk carries the hero off the end of something he is still V_GROUND,
+ * because game_step runs `gravity` before `hero_input`. */
+int game_hero_has_floor(const Game *g) { return floor_under_hero(g); }
 
 /* 6A1E / 6A4A */
 static void ledge_step_right(Game *g)
@@ -669,18 +674,33 @@ static Fixture *fixture_under_hero(Game *g, int kind, int idx)
     return NULL;
 }
 
-/* 0x8024  move a platform one row (dr = +1 down, -1 up) if the three cells it
- * would occupy are empty and free of sprites.  Returns 1 when it moved. */
+/* 0x8024 (down) / 0x80AF (up)  move a platform one row if the three cells it
+ * would occupy are empty and nothing is standing in the way.  Returns 1 when it
+ * moved.  The two directions do *not* test the same thing, and the port ran the
+ * down test both ways:
+ *   down (8024) `add si,0x23 / test [si],0x80` -- the single cell one row below
+ *     and one column left must be free of sprites -- then `mov cx,3 / inc si /
+ *     test [si],0xff` over the three cells one row below;
+ *   up (80A9..80C8) `sub si,0x24` twice, then three times `test [si],0x80` on
+ *     the row *two* above and `test [bx],0xff` on the row one above.
+ * So a rising platform ignored a sprite over its head and stalled on one beside
+ * its feet. */
 static int fixture_shift_row(Game *g, Fixture *f, int dr)
 {
     int rc = fixture_rcol(g, f->col);
     if (rc < 0) return 0;
     uint8_t nrow = (uint8_t)((f->row + dr) & 0x3F);
     int probe = game_ring_index(g, nrow, (uint8_t)rc);
-    for (int k = -1; k < 3; k++) {                                      /* 802B: also the cell left of it */
-        int p = game_ring_add(probe, k);
-        if (k < 0) { if (g->ring[p] & 0x80) return 0; continue; }
-        if (g->ring[p] != 0) return 0;                                  /* 803C: must be empty */
+    if (dr > 0) {                                                       /* 8024 */
+        if (g->ring[game_ring_add(probe, -1)] & 0x80) return 0;         /* 802B */
+        for (int k = 0; k < 3; k++)
+            if (g->ring[game_ring_add(probe, k)] != 0) return 0;        /* 803C */
+    } else {                                                            /* 80AF */
+        int above = game_ring_index(g, (uint8_t)((f->row - 2) & 0x3F), (uint8_t)rc);
+        for (int k = 0; k < 3; k++) {
+            if (g->ring[game_ring_add(above, k)] & 0x80) return 0;      /* 80BA */
+            if (g->ring[game_ring_add(probe, k)] != 0) return 0;        /* 80C0 */
+        }
     }
     fixture_erase(g, f);
     f->row = nrow;

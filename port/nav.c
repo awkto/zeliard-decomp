@@ -73,7 +73,19 @@ static void set_btn(Game *g, uint8_t b)
     if ((b & 2) && !(g->buttons & 2)) g->btn2_edge = 0xFF;
     g->buttons = b;
 }
-static int settled(const Game *g) { return (g->vstate == V_GROUND || g->on_ladder) && !g->walk_in; }
+/* Has the hero come to rest?  `vstate` alone is not enough: 6F9B runs
+ * `gravity` *before* `hero_input` (game_step), so the frame a walk carries him
+ * off the end of something he is still V_GROUND -- the fall does not start
+ * until the next frame.  A probe that stops there records an edge that lands in
+ * mid-air, and the executor's own walks-off guard then refuses the last step of
+ * it for ever: MP20's L4 from (125,36) "landed" on (122,36) with fix[7] four
+ * columns further west, and the hero paced the east lip of that gap for the
+ * whole frame budget.  So insist that something really is under his feet. */
+static int settled(const Game *g)
+{
+    if (g->on_ladder) return !g->walk_in;
+    return g->vstate == V_GROUND && game_hero_has_floor(g) && !g->walk_in;
+}
 
 /* --------------------------------------------------------------- the graph */
 
@@ -159,7 +171,19 @@ static int fixture_at(const Map *m, int bc, int r)
     }
     return -1;
 }
-static int fixture_moves(const Fixture *f) { return f->kind != 2 || f->var != 0; }
+/* a fixture that can move at all (the survey needs a node at every position
+ * such a one can reach); `fixture_self_moving` below is the stricter test. */
+/* ... but only some of them move *by themselves*.  A fixture-B gate sinks a row
+ * a frame under the hero's weight (818E) and a fixture-C platform patrols on
+ * its own (81AE), so where either of those is when the executor looks is not
+ * where the probe had it.  A fixture-A elevator (7FDC/8074) moves only while
+ * the hero stands on it holding up or down: between rides it is as fixed as
+ * rock, and an edge probed with one at a given row reproduces exactly, because
+ * `edge_ready` has already checked that row.  Telling the two apart is what
+ * lets the hero step *off* an elevator onto the ledge below it -- MP20's ride
+ * down the column-157 shaft to the Key ledge is a plain walk left off the
+ * platform into a one-row drop, and the walks-off guard refused it for ever. */
+static int fixture_self_moving(const Fixture *f) { return f->kind == 1 || (f->kind == 2 && f->var); }
 
 /* A cell nothing solid holds up, that the hero keeps only because he is
  * *hanging on a ladder* (62DB ladder_step: he stays while (bc,r) or (bc,r+1)
@@ -228,6 +252,24 @@ static int probe_fixture_for(const Map *m, int c, int r)
     }
     return -1;
 }
+/* Did the probe's hero pass over a cell fixture `fx` can occupy?  An edge only
+ * *depends* on where that fixture is if it did: `probe_fixture_for` also brings
+ * a patrolling platform alongside a ledge node so that the step onto it exists
+ * at all, and without this test every other edge of that ledge -- plain walks
+ * along solid rock included -- waited for the platform to come round to the
+ * column the probe happened to put it at.  MP20's east lip at (123,36) has ten
+ * such edges and `edge_ready` refused all of them for sixteen frames in every
+ * eighteen, so the hero paced the lip instead of boarding.  Testing the *ends*
+ * of the edge is not enough: MP10's (57,50) walks west off solid rock, over
+ * twenty-four columns of fix[3]'s gap, and lands on solid rock at (52,56). */
+static int probe_over_fixture(const Game *p, const Map *m, int fx)
+{
+    if (fx < 0) return 0;
+    int bc = game_hero_map_col(p) + 1, feet = (game_hero_map_row(p) + 3) & 0x3F;
+    while (bc >= m->width) bc -= m->width;
+    while (bc < 0) bc += m->width;
+    return fixture_at(m, bc, feet) == fx;
+}
 static int probe_place_fixture(Nav *n, Game *p, int c, int r, uint8_t dirstate, int *pos)
 {
     const Map *m = &n->navmap;
@@ -242,6 +284,25 @@ static int probe_place_fixture(Nav *n, Game *p, int c, int r, uint8_t dirstate, 
         int col = bc - 1;
         if (col < lo) col = lo;
         if (col > hi) col = hi;
+        /* A platform standing on one of its own limits is never going the way
+         * that would take it past: 8244 turns it round only when the column it
+         * has just *moved to* equals the limit for the direction it is going
+         * (82A6 `sub bx,ax / jz 82AB`, then 82AB `xor [si+2],0x80`), so one
+         * sitting on lim_l has just flipped to moving right and one on lim_r to
+         * moving left.  Probed in the other state the mover walks it straight
+         * past the limit and off down the ring -- 82AB never fires again --
+         * and the edges that come back promise rides the live platform will
+         * never give.  That is what pinned Garland to MP20's fix[7] at columns
+         * 114-121: the only two edges out of (114,36) that improved the
+         * distance were "ride west from lim_l", and the live platform, having
+         * just turned, carried him east every time.  So take the direction the
+         * live one really has.  (Skipping the probe instead loses far more: a
+         * *ledge* node beside a platform is only ever probed one way, and
+         * dropping that probe drops the node's ordinary walks with it.) */
+        if (f->var && lo != hi) {
+            if (col == lo) dirstate = 0;
+            else if (col == hi) dirstate = 0x80;
+        }
         f->col = (uint16_t)col;
         f->state = dirstate;
         /* the direction matters as much as the position: a platform going the
@@ -258,12 +319,21 @@ static int probe_place_fixture(Nav *n, Game *p, int c, int r, uint8_t dirstate, 
 static int step_walks_off(const Game *g, uint8_t dirs);
 static uint8_t macro_first_dir(const Nav *n, int e);
 static int hero_carried(const Game *g);
+static int on_foreign_door(const Nav *n, const Game *g);
+static int macro_has_up(int mi);
+/* does this edge depend on a fixture that moves on its own? */
+static int edge_self_moving(const Nav *n, const Game *g, int e)
+{
+    int fx = n->efix[e];
+    return fx && fx <= g->nfix && fixture_self_moving(&g->fix[fx - 1]);
+}
 /* a macro that leaves the ground: nothing can be corrected once it starts */
 static int macro_aerial(int mi) { return mi >= 6 && mi <= 14; }
 static int edge_ready(const Nav *n, const Game *g, int e)
 {
     int fx = n->efix[e];
     if (!fx || fx > g->nfix) return 1;
+    if (n->efixpos[e] & NAV_FIXFREE) return 1;      /* neither end rides it */
     const Fixture *f = &g->fix[fx - 1];
     if (f->kind == 2) {
         /* A patrolling platform's *phase*: the probe ran the whole macro with the
@@ -304,15 +374,43 @@ static int edge_ok(const Nav *n, const Game *g, int e, int from)
      * hides whole routes -- MP10 (164,26) steps left off its shelf onto the
      * col-163 ladder, and that is the only way down to door 5. */
     if (!edge_ready(n, g, e)) return 0;
+    if (macro_has_up(n->emacro[e]) && on_foreign_door(n, g)) return 0;
     /* The walks-off test is about the world having moved under the hero, so it
      * only applies to a move the survey saw stay on the same row: a step that
      * ends lower *is* a drop, the probe measured where it lands, and refusing
      * it hides whole routes (MP10 steps left off the (164,26) shelf onto the
      * col-163 ladder, and that is the only way down to door 5). */
-    if (from >= 0 && n->nrow[n->eto[e]] != n->nrow[from] && !n->efix[e] && !hero_carried(g))
+    if (from >= 0 && n->nrow[n->eto[e]] != n->nrow[from] && !edge_self_moving(n, g, e) &&
+        !hero_carried(g))
         return 1;
     return !step_walks_off(g, macro_first_dir(n, e));
 }
+/* Is the hero standing in front of a door that is *not* the one he is heading
+ * for?  7A83 takes a door the moment "up" is pressed on the cell below it (and
+ * on either side of that, 7AF6), so any macro with an up frame -- every jump,
+ * every climb -- opens it.  The survey never sees this: the probe runs on a
+ * private Map copy with `on_door` unhooked, so those edges look like ordinary
+ * moves.  Walking the crest tree's ledge in MP30, Garland jumped on the cell
+ * under the (186,46) door and spent the rest of the step in MP31. */
+static int on_foreign_door(const Nav *n, const Game *g)
+{
+    int hc = game_hero_map_col(g), hr = game_hero_map_row(g);
+    for (int i = 0; i < g->map->ndoors; i++) {
+        const Door *d = &g->map->doors[i];
+        if (d->row + 1 != hr) continue;
+        if (hc < (int)d->col - 1 || hc > (int)d->col + 1) continue;
+        if (n->mode == NAV_DOOR && (int)d->col == n->door_col && d->row == n->door_row) continue;
+        return 1;
+    }
+    return 0;
+}
+static int macro_has_up(int mi)
+{
+    const Macro *m = &MACRO[mi];
+    for (int f = 0; f < m->plen; f++) if (m->dirs[f] & DIR_UP) return 1;
+    return 0;
+}
+
 /* the moving fixture under the hero's feet, or -1 */
 static int carried_fixture(const Game *g)
 {
@@ -339,7 +437,7 @@ static int hero_carried(const Game *g)
     while (bc >= g->map->width) bc -= g->map->width;
     for (int i = 0; i < g->nfix; i++) {
         const Fixture *f = &g->fix[i];
-        if (!fixture_moves(f)) continue;
+        if (!fixture_self_moving(f)) continue;
         if ((f->row & 0x3F) != feet) continue;
         if (bc >= (int)f->col && bc <= (int)f->col + 2) return 1;
     }
@@ -356,21 +454,24 @@ static int hero_carried(const Game *g)
  * moves a half-speed platform while the live one moves on every other frame,
  * and the two phases drift apart over a multi-frame ride.  The placement plus
  * a one-column window is what actually reproduces.) */
-static int run_macro(Nav *n, Game *p, int mi)
+static int run_macro(Nav *n, Game *p, int mi, int fx, int *touched)
 {
     const Macro *m = &MACRO[mi];
     int f = 0;
+    if (touched) *touched = probe_over_fixture(p, &n->navmap, fx);
     for (; f < m->n; f++) {
         p->dirs = macro_dir(m, f);
         set_btn(p, m->btn);
         game_step(p);
         n->steps++;
+        if (touched && probe_over_fixture(p, &n->navmap, fx)) *touched = 1;
         if (p->hero_dead) return f + 1;
     }
     for (int k = 0; k < SETTLE && !settled(p); k++) {
         p->dirs = 0; set_btn(p, 0);
         game_step(p);
         n->steps++; f++;
+        if (touched && probe_over_fixture(p, &n->navmap, fx)) *touched = 1;
         if (p->hero_dead) break;
     }
     return f;
@@ -419,17 +520,34 @@ static void build_graph(Nav *n, const Game *g)
         int ndir = (onfix >= 0 && n->navmap.fix[onfix].kind == 2) ? 2 : 1;
         for (int d = 0; d < ndir; d++) {
             uint8_t st = (uint8_t)(d ? 0x80 : 0);
+            /* ...and every node is surveyed in *both facings*.  6824 spends the
+             * first frame of a move in the wrong facing turning the hero round
+             * instead of moving him, so a hero who already faces left steps a
+             * whole frame earlier than one who does not -- and on a full-speed
+             * patrolling platform a frame is a column.  MP20's fix[7] is the
+             * case that needs it: the platform's rightmost cell reaches the
+             * east lip at (123,36) for exactly the two frames 8244 leaves it on
+             * its own lim_r (the frame it arrives and the paused frame after
+             * 82AB sets bit 6), and only a hero already facing left can use
+             * them.  Probed facing right there is no edge onto that platform at
+             * all, and the hero paced the lip for the whole frame budget.
+             * Only the leftward macros are worth a second probe: a rightward
+             * one from a left-facing hero is just the same move with a wasted
+             * turn in front of it, which the executor can produce anyway. */
+            for (int fc = 0; fc < 2; fc++)
             for (int mi = 0; mi <= last; mi++) {
                 if (d && mi < MACRO_RIDE0) continue;         /* both ways only for the rides */
+                if (fc && !(MACRO[mi].dirs[0] & DIR_LEFT)) continue;
                 probe_reset(n, g);
                 Game *p = &n->probe;
-                game_place(p, nc, nr, 0);
+                game_place(p, nc, nr, fc);
                 probe_grab_ladder(p, nc, nr);
                 p->nobj = 0;                                /* no enemies while surveying */
                 p->hp = p->max_hp = 9999;
                 int fpos = 0;
                 int fx = probe_place_fixture(n, p, nc, nr, st, &fpos);
-                int cost = run_macro(n, p, mi);
+                int touched = 0;
+                int cost = run_macro(n, p, mi, fx, &touched);
                 if (p->hero_dead || !settled(p)) continue;
                 int c = game_hero_map_col(p), r = game_hero_map_row(p);
                 if (c < 0 || c >= W || r < 0 || r >= MAP_ROWS) continue;
@@ -457,8 +575,18 @@ static void build_graph(Nav *n, const Game *g)
                 n->eto[n->nedge] = j;
                 n->emacro[n->nedge] = (uint8_t)mi;
                 n->ecost[n->nedge] = (uint8_t)(cost < 1 ? 1 : cost > 60 ? 60 : cost);
+                /* Gate the edge on the fixture only when the fixture is what
+                 * holds one of its ends up.  `probe_fixture_for` also brings a
+                 * patrolling platform alongside a *ledge* node, so that the
+                 * step onto it exists at all -- but that made every other edge
+                 * of that ledge, plain walks along solid rock included, wait
+                 * for the platform to come round to the column the probe put it
+                 * at.  MP20's east lip at (123,36) has ten such edges and
+                 * `edge_ready` refused all of them for sixteen frames in every
+                 * eighteen, so the hero paced the lip instead of boarding. */
                 n->efix[n->nedge] = (uint8_t)(fx + 1);
-                n->efixpos[n->nedge] = (uint16_t)fpos;
+                n->eface[n->nedge] = (uint8_t)fc;
+                n->efixpos[n->nedge] = touched ? (uint16_t)fpos : (uint16_t)NAV_FIXFREE;
                 n->nedge++;
             }
         }
@@ -552,10 +680,13 @@ void nav_trace(Nav *n, const Game *g, int col, int row, int mi)
     game_place(p, col, row, 0);
     probe_grab_ladder(p, col, row);
     p->nobj = 0; p->hp = p->max_hp = 9999;
+    int fpos = 0, fx = probe_place_fixture(n, p, col, row, (uint8_t)(mi & 0x100 ? 0x80 : 0), &fpos);
+    mi &= 0xFF;
     const Macro *m = &MACRO[mi];
-    fprintf(stderr, "trace (%d,%d) macro %d '%s':", col, row, mi, m->name);
+    fprintf(stderr, "trace (%d,%d) macro %d '%s' fix %d pos %04x:", col, row, mi, m->name, fx, fpos);
     for (int f = 0; f < m->n; f++) {
         p->dirs = macro_dir(m, f); set_btn(p, m->btn); game_step(p);
+        if (fx >= 0) fprintf(stderr, " {fix %d/%02x}", p->fix[fx].col, p->fix[fx].state);
         {int tl = game_hero_cell(p);
          fprintf(stderr, " [%d,%d v%02x f%02x rr%u L:%02x/%02x/%02x]", game_hero_map_col(p), game_hero_map_row(p),
                  p->vstate, p->hero_flags, p->rise_rows,
@@ -590,6 +721,11 @@ void nav_goal_door(Nav *n, const Game *g, const Door *d)
     n->goal_col = (int)d->col - 1; n->goal_row = d->row + 1;    /* 7A83 */
     n->door_col = d->col; n->door_row = d->row;
     if (n->built) build_field(n, g);
+}
+void nav_goal_break(Nav *n, const Game *g, int col, int row)
+{
+    nav_goal_cell(n, g, col, row);
+    n->mode = NAV_BREAK;
 }
 void nav_goal_fight(Nav *n, const Game *g)
 {
@@ -626,6 +762,15 @@ static int enemy_near(const Game *g, int *side, int *below)
 }
 
 static void emit(Game *g, uint8_t dirs, uint8_t btn) { g->dirs = dirs; set_btn(g, btn); }
+/* ... and never press "up" while standing under a door that is not the one we
+ * are heading for: 7AF6 takes it on that single frame, wherever the press came
+ * from -- a planned jump, the off-graph recovery, the anti-stuck shake.  The
+ * survey cannot see this because the probe runs with `on_door` unhooked. */
+static void nemit(const Nav *n, Game *g, uint8_t dirs, uint8_t btn)
+{
+    if ((dirs & DIR_UP) && on_foreign_door(n, g)) dirs &= (uint8_t)~DIR_UP;
+    emit(g, dirs, btn);
+}
 static uint8_t macro_first_dir(const Nav *n, int e) { return MACRO[n->emacro[e]].dirs[0]; }
 
 /* A safety net, not a movement model: the survey ran with the platform where
@@ -668,12 +813,25 @@ static int step_walks_off(const Game *g, uint8_t dirs)
         }
         if (bc >= lo && bc <= hi + 2) return 0;                         /* still carried */
     }
+    /* 6B76's one-cell-gap walk-over: a hero *in mid-stride* keeps his footing
+     * over a single empty cell as long as the cells either side of it are
+     * solid (`if (hero_anim == 0x80) return 0; if (passable_body(ring[c-1]))
+     * return 0; return !passable_body(ring[c+1])`).  Without this the guard
+     * refused every step across such a hole -- MP31's row-7 corridor has one at
+     * column 101 and Garland stood in front of it for the whole frame budget. */
+    if (g->hero_anim != 0x80) {
+        int a = bc - 1, b = bc + 1;
+        while (a < 0) a += w;
+        while (b >= w) b -= w;
+        if (!game_passable_body(g, g->map->grid[a][feet]) &&
+            !game_passable_body(g, g->map->grid[b][feet])) return 0;
+    }
     return 1;
 }
 
 void nav_step(Nav *n, Game *g)
 {
-    if (g->walk_in || g->encounter_frames) { emit(g, 0, 0); return; }
+    if (g->walk_in || g->encounter_frames) { nemit(n, g, 0, 0); return; }
 
     if (n->mode == NAV_FIGHT) {                                 /* boss rooms */
         int hc = game_hero_map_col(g);
@@ -690,12 +848,12 @@ void nav_step(Nav *n, Game *g)
         if (n->stall) {
             if (hc < bc) d = DIR_LEFT;
             else if (hc > bc) d = DIR_RIGHT;
-            emit(g, d, 0);
+            nemit(n, g, d, 0);
             return;
         }
         if (hc < bc - 2)      d = DIR_RIGHT;
         else if (hc > bc + 3) d = DIR_LEFT;
-        emit(g, d, (uint8_t)((g->frame_no & 3) < 2 ? 1 : 0));
+        nemit(n, g, d, (uint8_t)((g->frame_no & 3) < 2 ? 1 : 0));
         return;
     }
 
@@ -708,6 +866,26 @@ void nav_step(Nav *n, Game *g)
 
     int hc = game_hero_map_col(g), hr = game_hero_map_row(g);
 
+    /* Within the blade's reach of a breakable (8E32): face it and swing.  The
+     * sword shape covers the two columns in front of the hero, and 6F8D only
+     * marks a sprite whose ring cell the shape lands on, so "close enough" is
+     * the hero's own column plus one or two on the side he faces. */
+    if (n->mode == NAV_BREAK && settled(g)) {
+        int dc = n->goal_col - hc, dr = n->goal_row - hr;
+        if (dr < 0) dr = -dr;
+        if (dr <= 1 && dc >= -2 && dc <= 2) {       /* 6F21's shape reaches two cells */
+            int want_left = dc < 0;
+            if (((g->hero_flags & FACE_LEFT) != 0) != want_left) {
+                n->cur_macro = want_left ? 1 : 0; n->cur_frame = 1; n->cur_edge = -1;
+                nemit(n, g, (uint8_t)(want_left ? DIR_LEFT : DIR_RIGHT), 0);
+                return;
+            }
+            n->cur_macro = MACRO_STRIKE; n->cur_frame = 1; n->cur_edge = -1;
+            nemit(n, g, 0, (uint8_t)((g->frame_no & 3) < 2 ? 1 : 0));
+            return;
+        }
+    }
+
     /* standing in front of the target door: "up" opens it (7A83) */
     if (n->mode == NAV_DOOR && settled(g) && hr == n->door_row + 1 &&
         hc >= n->door_col - 1 && hc <= n->door_col + 1) {
@@ -717,11 +895,11 @@ void nav_step(Nav *n, Game *g)
         if (hc != n->door_col) {
             int want_left = hc > n->door_col;
             if (((g->hero_flags & FACE_LEFT) != 0) != want_left) {
-                emit(g, (uint8_t)(want_left ? DIR_LEFT : DIR_RIGHT), 0);
+                nemit(n, g, (uint8_t)(want_left ? DIR_LEFT : DIR_RIGHT), 0);
                 return;
             }
         }
-        emit(g, DIR_UP, 0);
+        nemit(n, g, DIR_UP, 0);
         return;
     }
 
@@ -738,14 +916,14 @@ void nav_step(Nav *n, Game *g)
             /* same rule as edge_ok: only a move the survey saw stay level is
              * worth aborting when the ground under the next cell has gone */
             int guard = !(n->cur_edge >= 0 && n->cur_edge < n->nedge && n->expect_node >= 0 &&
-                          !n->efix[n->cur_edge] && !hero_carried(g) &&
+                          !edge_self_moving(n, g, n->cur_edge) && !hero_carried(g) &&
                           n->nrow[n->expect_node] != game_hero_map_row(g));
-            if (guard && step_walks_off(g, d)) { n->cur_macro = -1; n->cur_edge = -1; emit(g, 0, 0); return; }
+            if (guard && step_walks_off(g, d)) { n->cur_macro = -1; n->cur_edge = -1; nemit(n, g, 0, 0); return; }
             n->cur_frame++;
-            emit(g, d, m->btn);
+            nemit(n, g, d, m->btn);
             return;
         }
-        if (!settled(g) && n->cur_frame < m->n + SETTLE) { n->cur_frame++; emit(g, 0, 0); return; }
+        if (!settled(g) && n->cur_frame < m->n + SETTLE) { n->cur_frame++; nemit(n, g, 0, 0); return; }
         /* The survey's edges are executable by construction, but only from the
          * state the probe had: the live hero can arrive facing the other way,
          * mid-crouch, knocked back or with a platform somewhere else, and then
@@ -762,7 +940,7 @@ void nav_step(Nav *n, Game *g)
         n->cur_macro = -1;
     }
 
-    if (!settled(g)) { emit(g, 0, 0); return; }                 /* let gravity finish */
+    if (!settled(g)) { nemit(n, g, 0, 0); return; }                 /* let gravity finish */
 
     /* Deal with whatever is standing in the way: back off out of contact
      * range first and let the blade do the work from a cell away. */
@@ -781,14 +959,14 @@ void nav_step(Nav *n, Game *g)
             n->best_dist = NAV_INF;
             n->cur_macro = (int)((g->frame_no >> 3) % (unsigned)MACRO_MOVE_N);
             n->cur_frame = 1; n->cur_edge = -1;
-            emit(g, macro_dir(&MACRO[n->cur_macro], 0), MACRO[n->cur_macro].btn);
+            nemit(n, g, macro_dir(&MACRO[n->cur_macro], 0), MACRO[n->cur_macro].btn);
             return;
         }
     } else { n->same = 0; n->last_col = hc; n->last_row = hr; }
 
     if (ebelow) {                       /* standing on something: 6E3B's down-thrust */
         n->cur_macro = MACRO_THRUST; n->cur_frame = 1; n->cur_edge = -1;
-        emit(g, DIR_DOWN, 1);
+        nemit(n, g, DIR_DOWN, 1);
         return;
     }
     if (ea <= 4) {
@@ -803,18 +981,18 @@ void nav_step(Nav *n, Game *g)
             int away_left = eside > 0;                      /* it is on his right */
             n->cur_macro = away_left ? 3 : 2;               /* L4 / R4 */
             n->cur_frame = 1; n->cur_edge = -1;
-            emit(g, (uint8_t)(away_left ? DIR_LEFT : DIR_RIGHT), 0);
+            nemit(n, g, (uint8_t)(away_left ? DIR_LEFT : DIR_RIGHT), 0);
             return;
         }
         int left = (g->hero_flags & FACE_LEFT) != 0;
         int face_ok = (eside < 0) == (left != 0);
         if (!face_ok) {                                     /* turn to it first (6824) */
             n->cur_macro = eside < 0 ? 1 : 0; n->cur_frame = 1; n->cur_edge = -1;
-            emit(g, (uint8_t)(eside < 0 ? DIR_LEFT : DIR_RIGHT), 0);
+            nemit(n, g, (uint8_t)(eside < 0 ? DIR_LEFT : DIR_RIGHT), 0);
             return;
         }
         n->cur_macro = MACRO_STRIKE; n->cur_frame = 1; n->cur_edge = -1;
-        emit(g, 0, 1);
+        nemit(n, g, 0, 1);
         return;
     }
 
@@ -846,8 +1024,8 @@ void nav_step(Nav *n, Game *g)
          * Holding the ride here is what kept him going round with the platform
          * for ever: the moment it turns, the trailing guard drags him back. */
         if (!beside) {
-            if (!left && (int)f->col >= bc) { n->cur_macro = 0; n->cur_frame = 1; n->cur_edge = -1; emit(g, DIR_RIGHT, 0); return; }
-            if ( left && (int)f->col + 2 <= bc) { n->cur_macro = 1; n->cur_frame = 1; n->cur_edge = -1; emit(g, DIR_LEFT, 0); return; }
+            if (!left && (int)f->col >= bc) { n->cur_macro = 0; n->cur_frame = 1; n->cur_edge = -1; nemit(n, g, DIR_RIGHT, 0); return; }
+            if ( left && (int)f->col + 2 <= bc) { n->cur_macro = 1; n->cur_frame = 1; n->cur_edge = -1; nemit(n, g, DIR_LEFT, 0); return; }
             /* Mid-platform over a gap: stand still and be carried.  The survey
              * makes every column the platform can reach a node, so the field is
              * happy to walk straight across the gap -- and a hero walking a
@@ -858,7 +1036,7 @@ void nav_step(Nav *n, Game *g)
                 game_passable_body(g, g->map->grid[le][feet])) {
                 n->cur_macro = MACRO_WAIT; n->cur_frame = 1; n->cur_edge = -1;
                 n->fixwait++;
-                emit(g, 0, 0);
+                nemit(n, g, 0, 0);
                 return;
             }
         }
@@ -888,14 +1066,14 @@ void nav_step(Nav *n, Game *g)
         else if (br < hr)  n->cur_macro = bc < hc ? 7 : bc > hc ? 6 : 14;   /* jump up-ish */
         else               n->cur_macro = bc < hc ? 1 : bc > hc ? 0 : 14;
         n->cur_frame = 1; n->cur_edge = -1;
-        emit(g, MACRO[n->cur_macro].dirs[0], 0);
+        nemit(n, g, MACRO[n->cur_macro].dirs[0], 0);
         return;
     }
 
     /* Hurt and out of trouble: stand still and let the 719E regeneration run
      * (2 HP every 16 frames) rather than walking into the next fight. */
     if (g->hp * 3 < g->max_hp * 2 && ea > 8) {
-        if (g->hp * 4 < g->max_hp * 3) { n->cur_macro = MACRO_WAIT; n->cur_frame = 1; n->cur_edge = -1; emit(g, 0, 0); return; }
+        if (g->hp * 4 < g->max_hp * 3) { n->cur_macro = MACRO_WAIT; n->cur_frame = 1; n->cur_edge = -1; nemit(n, g, 0, 0); return; }
     }
 
     /* anti-stuck: when the distance stops falling, make this patch expensive.
@@ -957,6 +1135,37 @@ void nav_step(Nav *n, Game *g)
             }
         }
     }
+    if (best < 0 && gated) {
+        /* The improving edges exist; they are only waiting on a platform that
+         * has not come round yet.  Stand still one frame at a time and look
+         * again -- and do it *before* the undirected fallback below, because
+         * that fallback will happily take a one-way drop out of the field
+         * altogether.  MP10's (57,50) is the case: its two westward edges share
+         * a gate, and for the two frames in every eighty-four when fix[3] is
+         * one column short of its right limit the harmless-looking one -- a
+         * walk clean over the twenty-four-column gap into the pit at (52,56),
+         * which the field cannot leave -- reads as ready (its landing cell is
+         * solid rock, so `edge_ready` stops caring which way the platform is
+         * going) while the useful one, a ride, still does not.  If the platform
+         * never arrives the patch gets expensive like any other dead end and
+         * the fallback gets its turn. */
+#ifdef NAV_DEBUG
+        { fprintf(stderr, "   [gated] (%d,%d) fw%d fix7 %d/%02x |", hc, hr, n->fixwait, g->fix[7].col, g->fix[7].state);
+          for (int e = n->efirst[here]; e < n->efirst[here+1]; e++)
+            if (n->dist[n->eto[e]] < n->dist[here])
+              fprintf(stderr, " e%d m%d ->(%d,%d) pos%04x rdy%d ok%d f%d", e, n->emacro[e],
+                      n->ncol[n->eto[e]], n->nrow[n->eto[e]], n->efixpos[e], edge_ready(n,g,e), edge_ok(n,g,e,here), n->efail[e]);
+          fprintf(stderr, "\n"); }
+#endif
+        if (++n->fixwait > 240) {
+            n->fixwait = 0;
+            if (n->pen[hc][hr] < 60) n->pen[hc][hr] = (uint8_t)(n->pen[hc][hr] + 12);
+            build_field(n, g);
+        } else {
+            nemit(n, g, 0, 0);
+            return;
+        }
+    }
     if (best < 0) {
         /* no outgoing edge improves the distance.  Either the goal is not
          * reachable from here at all (a one-way drop) or this is a local
@@ -969,42 +1178,37 @@ void nav_step(Nav *n, Game *g)
             if (n->udist[j] >= n->udist[here]) continue;
             unsigned d = (unsigned)n->udist[j] + n->ecost[e];
             if (d >= bestd) continue;
-            if (!edge_ok(n, g, e, here)) { gated = 1; continue; }
+            if (!edge_ok(n, g, e, here)) continue;
             bestd = d; best = e;
         }
     }
-    if (best < 0 && gated) {
-        /* the only way on is a platform that has not come round yet: stand
-         * still one frame at a time and look again.  If it never arrives the
-         * patch gets expensive like any other dead end. */
-        if (++n->fixwait > 240) {
-            n->fixwait = 0;
-            if (n->pen[hc][hr] < 60) n->pen[hc][hr] = (uint8_t)(n->pen[hc][hr] + 12);
-            build_field(n, g);
-        }
-        emit(g, 0, 0);
-        return;
-    }
     n->fixwait = 0;
-    if (best < 0) { n->cur_macro = MACRO_WAIT; n->cur_frame = 1; n->cur_edge = -1; emit(g, 0, 0); return; }
-    /* Every edge was probed from `game_place(.., 0)`, i.e. facing right, and
-     * the facing is part of the move: 65C5 mounts the ladder beside the hero
+    if (best < 0) { n->cur_macro = MACRO_WAIT; n->cur_frame = 1; n->cur_edge = -1; nemit(n, g, 0, 0); return; }
+    /* The facing is part of the move: 65C5 mounts the ladder beside the hero
      * only on the side he faces, and 6634/67BC spend the first frame turning
      * (6824) instead of moving.  So put him the way the probe had him before
-     * the macro starts -- one frame of "right", which turn_around consumes
-     * without moving him. */
-    if (g->hero_flags & FACE_LEFT) { emit(g, DIR_RIGHT, 0); return; }
+     * the macro starts -- one frame of the direction he must end up facing,
+     * which turn_around consumes without moving him. */
+    if (((g->hero_flags & FACE_LEFT) != 0) != (n->eface[best] != 0)) {
+        nemit(n, g, (uint8_t)(n->eface[best] ? DIR_LEFT : DIR_RIGHT), 0);
+        return;
+    }
     /* ... and not crouching.  6B41 crouches him for two frames after a fall of
      * two rows or more, and a crouch swallows 663E/67BC's step (and with it
      * 65C5's "walk onto the ladder beside you"), so a macro started in that
      * window does something else entirely.  Two idle frames clear it (6B41's
      * [9F0A] counter). */
-    if (g->crouching) { emit(g, 0, 0); return; }
+    if (g->crouching) { nemit(n, g, 0, 0); return; }
+#ifdef NAV_DEBUG
+    fprintf(stderr, "   [pick] (%d,%d) e%d m%d -> (%d,%d) d%d->%d pos%04x fail%d\n", hc, hr, best,
+            n->emacro[best], n->ncol[n->eto[best]], n->nrow[n->eto[best]],
+            n->dist[here], n->dist[n->eto[best]], n->efixpos[best], n->efail[best]);
+#endif
     const Macro *m = &MACRO[n->emacro[best]];
     n->cur_macro = n->emacro[best];
     n->last_macro = n->cur_macro;
     n->cur_frame = 1;
     n->cur_edge = best;
     n->expect_node = n->eto[best];
-    emit(g, macro_dir(m, 0), m->btn);
+    nemit(n, g, macro_dir(m, 0), m->btn);
 }

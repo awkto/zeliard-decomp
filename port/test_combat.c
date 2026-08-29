@@ -208,6 +208,60 @@ static void t_drop(void)
     G.attack_type = 0;
 }
 
+/* ------------------------------------------------------- the item states */
+/* The 8E14 jump table read out of the overlay:
+ *   8E14: 32 8e 8d 8e e9 8e f6 8e ab 8f ab 8f e8 8f f8 8f
+ *         08 90 1c 90 9d 90 ab 8f 3c 90 7f 90 90 90
+ * so 0x10 is 8E32 (breaks to the sword), 0x11 is 8E8D (breaks to a touch),
+ * 0x1B is 8FAB (a coin, and 8FC0 makes it a hundred because `type & 0x0F` is
+ * neither 4 nor 5), 0x1D is 907F (the Hero's Crest, `mov byte [0x9c],0xff`) and
+ * 0x1E is 9090 (key item 1).  The port had 0x10 down as an eight-frame corpse
+ * fade, which removed every breakable in the game on sight -- and 914C ORs an
+ * event object's `+B/+D` pair into the player page as it goes, so MP30's crest
+ * tree handed Garland the Hero's Crest for walking past it. */
+static void t_items(void)
+{
+    flat_map(); start(30, 10, 0);
+    MapObj *o = put_enemy(32, 11, 0xD0, 0);         /* state 0x10 */
+    o->flags = 0x20; o->home_col = 0x0012; o->home_row = 0x08;   /* an event pair */
+    o->next = 0x7D;                                 /* ... that breaks into a crest */
+    G.page[0x12] = 0;
+    for (int i = 0; i < 30; i++) step(0, 0);
+    CHECK((o->col >> 8) != 0xFF, "0x10: a breakable does not remove itself (type %02X)", o->type);
+    CHECK(G.page[0x12] == 0, "and does not fire its story flag: page[12] = %02X", G.page[0x12]);
+    /* now hit it: 6F8D marks it, 8DB9 turns that into hit bit 5, 8E32 opens it */
+    G.sword = 1;
+    int broke = 0, took = 0;
+    for (int i = 0; i < 80 && !took; i++) {
+        step(0, (uint8_t)((i & 3) < 2 ? 1 : 0));
+        if ((o->type & 0x1F) == 0x1D) broke = 1;
+        if ((o->col >> 8) == 0xFF) took = 1;
+    }
+    CHECK(broke, "0x10: the blade opens it into its `next`, state 0x1D");
+    CHECK(took && G.hero_crest == 0xFF, "0x1D: and taking that sets [9C] = %02X", G.hero_crest);
+    CHECK(G.page[0x12] == 0x08, "and 914C's event pair sets page[12] = %02X", G.page[0x12]);
+
+    /* 0x1B is a hundred gold, not a pair of boots */
+    flat_map(); start(30, 10, 0);
+    o = put_enemy(31, 11, 0x7B, 0);
+    o->home_col = 0xFFFF;
+    unsigned gold0 = (unsigned)G.gold;
+    uint8_t shoes0 = G.shoes;
+    for (int i = 0; i < 8 && (o->col >> 8) != 0xFF; i++) step(0, 0);
+    CHECK((unsigned)G.gold == gold0 + 100, "0x1B: 100 gold (%u -> %u)", gold0, (unsigned)G.gold);
+    CHECK(G.shoes == shoes0, "0x1B: and no shoes");
+
+    /* 0x1E is key item 1 */
+    flat_map(); start(30, 10, 0);
+    o = put_enemy(31, 11, 0x7E, 0);
+    o->home_col = 0xFFFF;
+    memset(G.page + 0xA1, 0, 5);
+    G.shoes = 0;
+    for (int i = 0; i < 8 && (o->col >> 8) != 0xFF; i++) step(0, 0);
+    CHECK(G.page[0xA1] == 1, "0x1E: 90B8 puts item 1 in the first free [A1..] slot (%02X)", G.page[0xA1]);
+    G.hero_crest = 0; G.page[0x12] = 0; G.shoes = 0;
+}
+
 /* ------------------------------------------------ the bat's wake-up window */
 static void t_bat_wake(void)
 {
@@ -641,7 +695,7 @@ int main(int argc, char **argv)
     }
     struct { const char *name; void (*fn)(void); } tests[] = {
         {"eai1 tables", t_tables}, {"damage", t_damage}, {"contact", t_contact},
-        {"sword", t_sword}, {"drops", t_drop}, {"bat wake", t_bat_wake}, {"frog hop", t_frog_hop},
+        {"sword", t_sword}, {"drops", t_drop}, {"items", t_items}, {"bat wake", t_bat_wake}, {"frog hop", t_frog_hop},
         {"shots", t_shots}, {"magic", t_magic}, {"orbs", t_orbs}, {"sound", t_sound},
         {"eai tables", t_overlays}, {"eai run", t_overlay_run}, {"tall spawn", t_tall_spawn},
         {"hud", t_hud},

@@ -173,6 +173,13 @@ The sprite is 3×3 cells but the **solid body is the middle column only**
   MP20 (205,47)→MP30, MP31 (188,20)).  Two further `[C00C]` records retire the item once
   taken and stop the Tear cutscene replaying.  Identical in MP2D/MP3D/MP5D/MP6D/MP8D
   (reward rows 13/13/13/5/0); MP4D/MP73/MP7D/MPA0 carry no reward and no such poke.
+* **Fixture clearance is not symmetric.** Going down, `8024` checks three cells one
+  row below for empty plus one cell down-and-left for sprites; going **up**, `80A9`
+  checks three cells one row above for empty **and three cells two rows above for
+  sprites**.  `7FDC` and `8074` do not share a test.
+* **A fixture-C platform sitting on its own `lim_l`/`lim_r`** is never travelling the
+  way that would carry it past the limit: `82A6`/`82AB` reverse on the column just
+  *moved to*, so two of the four (column, direction) states at a limit never occur.
 * **MP10's boss corridor** is sealed left by the block at columns 119-122 and
   right by a conveyor staircase pushing right (`walk_left` refuses while
   `conveyor == 1`, and `gravity` skips `conveyor_check` while `vstate & 0x80`),
@@ -358,10 +365,16 @@ standing on a hazard tile are killed outright (`A26A`).
 ## 8. Items, doors, transitions
 
 * Pickups are objects with `type & 0x10`; state = `(type & 0x1F) − 0x10`
-  → table `8E14`: 0 corpse fade, 1 touch trigger, 2 flash, 3 treasure box
-  (50/100/−/500/1000 gold or drop), 4-5 coins (1/10/100 gold), 6 key, 7 lion
-  key, 8 potion (+80 HP over 10 frames), 9 full potion, A/B shoes, D boss
-  chest with message, E Hero's Crest. Touch test `9190`: item top-left within
+  → table `8E14`, dumped from the image as
+  `8E32 8E8D 8EE9 8EF6 8FAB 8FAB 8FE8 8FF8 9008 901C 909D 8FAB 903C 907F 9090`:
+  **0** sword-breakable (`8E32`; its `next` chains to whatever it hides), **1**
+  touch-breakable, **2** flash, **3** treasure box (`8EF6`, prize by `phase & 0xF`),
+  **4/5** coins, **6** key, **7** lion key, **8** potion (+80 HP over 10 frames),
+  **9** full potion, **A** the cavern's key item (`909D`→`90CA`/`90B8`), **B** a
+  **coin** (it jumps to `8FAB`, the same handler as 4/5 — `8FC0` pays 100 gold for
+  any `type & 0x0F` other than 4/5), **C** the message chest, **D** the **Hero's
+  Crest** (`907F`), **E** key item 1.  (An earlier revision of this list had A/B as
+  shoes and put the crest at E; the jump table above is the authority.) Touch test `9190`: item top-left within
   rows −1..+2 / cols −1..+2 of the hero's top-left (a 2×2 sprite overlapping the
   3×3 hero).
 * Doors: DCHR cell 0x4A one row above the hero's top-left + "up" (`7A83`);
