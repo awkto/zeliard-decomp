@@ -110,6 +110,15 @@ established the meaning. *uncertain* = inferred from a single use.
 | 9F2B | 1 | cast_timer | +2 per frame; spell fires at 4, cast ends at 6 |
 | 9F2C/9F2D | 1+1 | dist_col/dist_row | distance to the map start position |
 
+## Story flags (BASE:0000-0048)
+
+The bytes below the player record are a **story-flag array**, written by `7B25` (passing
+through an unlocked door), `7E39`, `914C` (removing an event object) and `72F1` (the last
+poke of a boss room's list), and read by every `[C00C]` patch list and by door records'
+`flag_ptr`.  The boss-defeated flags live at `[00] [08] [10] [18] [20] [28] [30] [32] [47]`
+(one per boss room); `[03] |= 0x20` is "cavern 1 cleared".  A `[C00C]` list is how a room
+restages itself between visits — see docs/FIGHT.md on the boss reward.
+
 ## Player record (BASE:0049-00E8, from STDPLY.BIN)
 
 | Off | Size | Name | Default | Notes |

@@ -345,19 +345,65 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 		--box 48 142 224 16 --label "Llama: the near ground strips (phase 0)"
 	python3 tools/compare_shot.py /tmp/zel_llama.png ../docs/screenshots/town_llama.png \
 		--box 51 174 136 10 --label "Llama HUD PLACE box + \"Llama Town\""
-	./zeliard --dir ../zeliard --map 0x15 --pos 27 13 --level 34 --life 1800 --sword 6 \
+	# Llama's cave record for MP73 is (27,13), which is two rows above the room's
+	# only floor; the hero the capture shows has already fallen those two rows and
+	# is standing at (27,15), so that is the cell the recipe names.  (Entering at
+	# (27,13) and letting the port drop him leaves him at (28,15) instead -- 69CB
+	# gives a hero who leaves the ground a step in the way he is facing, and the
+	# port applies it to a hero the *map* put in the air.  MP73 is the only cave
+	# record in the game that lands one there, which is why no other capture ever
+	# saw it; see port/README.md "The MP73 left wall".)
+	./zeliard --dir ../zeliard --map 0x15 --pos 27 15 --level 34 --life 1800 --sword 6 \
 		--shield 6 --gold 60000 --headless --frames 22 --script ".200" \
 		--screenshot 20 /tmp/zel_paguro.png
 	python3 tools/compare_shot.py /tmp/zel_paguro.png ../docs/screenshots/boss_paguro.png \
-		--box 64 14 92 120 --label "MP73 boss room, left of Paguro"
+		--box 48 14 108 120 --label "MP73 boss room, left of Paguro (from the wall)"
+	python3 tools/compare_shot.py /tmp/zel_paguro.png ../docs/screenshots/boss_paguro.png \
+		--box 48 14 16 186 --label "MP73's left wall, corner and all (screen x 48-63)"
 	python3 tools/compare_shot.py /tmp/zel_paguro.png ../docs/screenshots/boss_paguro.png \
 		--box 190 14 82 120 --label "MP73 boss room, right of him"
 	python3 tools/compare_shot.py /tmp/zel_paguro.png ../docs/screenshots/boss_paguro.png \
-		--box 64 130 208 28 --label "MP73 boss room floor"
+		--box 48 130 224 28 --label "MP73 boss room floor, wall to wall"
 	python3 tools/compare_shot.py /tmp/zel_paguro.png ../docs/screenshots/boss_paguro.png \
 		--box 51 186 66 10 --label "MP73 HUD name box + \"Paguro\""
 	python3 tools/compare_shot.py /tmp/zel_paguro.png ../docs/screenshots/boss_paguro.png \
 		--box 272 0 48 200 --label "MP73: the right stone frame"
+	# cavern 7 (MP70 "Cavern of Caliente", MPP7 lava) through Llama Town's
+	# column-8 door, and cavern 8's second map (MP81 "Cavern of Milagro")
+	# through Esco village's column-205 door -- the last two maps a town door
+	# reaches (docs/DOSBOX_RECIPE.md 9.1).  The sparkles in MP70's sky and the
+	# three hanging enemies at the top of MP81 are at a different animation
+	# phase than the capture, so they are outside the boxes.
+	./zeliard --dir ../zeliard --map 0x12 --pos 152 7 --level 34 --life 1800 --sword 6 \
+		--shield 6 --gold 60000 --headless --frames 4 --screenshot 2 /tmp/zel_cav7.png
+	python3 tools/compare_shot.py /tmp/zel_cav7.png ../docs/screenshots/cavern7.png \
+		--box 48 14 224 78 --label "MP70 playfield above the sparkles (MPP7 lava tileset)"
+	python3 tools/compare_shot.py /tmp/zel_cav7.png ../docs/screenshots/cavern7.png \
+		--box 48 120 224 38 --label "MP70 floor and the LLAMA door"
+	python3 tools/compare_shot.py /tmp/zel_cav7.png ../docs/screenshots/cavern7.png \
+		--box 51 174 136 10 --label "MP70 HUD PLACE box + \"Cavern of Caliente\""
+	python3 tools/compare_shot.py /tmp/zel_cav7.png ../docs/screenshots/cavern7.png \
+		--box 51 186 66 10 --label "MP70 HUD GOLD box (60000)"
+	python3 tools/compare_shot.py /tmp/zel_cav7.png ../docs/screenshots/cavern7.png \
+		--box 84 163 100 6 --label "MP70 HUD LIFE bar (1800)"
+	python3 tools/compare_shot.py /tmp/zel_cav7.png ../docs/screenshots/cavern7.png \
+		--box 0 0 48 200 --label "MP70: the left stone frame"
+	./zeliard --dir ../zeliard --map 0x18 --pos 123 6 --level 38 --life 2000 --sword 6 \
+		--shield 6 --gold 70000 --headless --frames 4 --screenshot 2 /tmp/zel_cav8b.png
+	python3 tools/compare_shot.py /tmp/zel_cav8b.png ../docs/screenshots/cavern8b.png \
+		--box 48 14 224 8 --label "MP81 ceiling, above the hanging enemies"
+	python3 tools/compare_shot.py /tmp/zel_cav8b.png ../docs/screenshots/cavern8b.png \
+		--box 48 38 224 56 --label "MP81 playfield (MPP8), below them"
+	python3 tools/compare_shot.py /tmp/zel_cav8b.png ../docs/screenshots/cavern8b.png \
+		--box 48 118 224 40 --label "MP81 floor and the ESCO door"
+	python3 tools/compare_shot.py /tmp/zel_cav8b.png ../docs/screenshots/cavern8b.png \
+		--box 51 174 136 10 --label "MP81 HUD PLACE box + \"Cavern of Milagro\""
+	python3 tools/compare_shot.py /tmp/zel_cav8b.png ../docs/screenshots/cavern8b.png \
+		--box 51 186 66 10 --label "MP81 HUD GOLD box (70000)"
+	python3 tools/compare_shot.py /tmp/zel_cav8b.png ../docs/screenshots/cavern8b.png \
+		--box 121 186 66 10 --label "MP81 HUD ALMAS box"
+	python3 tools/compare_shot.py /tmp/zel_cav8b.png ../docs/screenshots/cavern8b.png \
+		--box 272 0 48 200 --label "MP81: the right stone frame"
 	# and the gd decoders themselves against tools/grp2png.py's, the reference
 	# implementation that produced docs/screenshots/intro_art.png
 	python3 tools/compare_gdart.py ../zeliard

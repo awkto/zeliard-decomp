@@ -64,6 +64,7 @@ static int is_hazard(const Game *g, uint8_t v)                                  
     for (int n = 0; n < 4 && q[n]; n++) if (v == q[n]) return 1;
     return 0;
 }
+int game_cell_hazard(const Game *g, uint8_t v) { return is_hazard(g, v); }
 /* 76F6: 0 updraft, 1 current left, 2 current right, -1 none */
 static int special_tile(const Game *g, uint8_t v)
 {
@@ -581,16 +582,29 @@ static void fixture_draw_one(Game *g, Fixture *f)
     f->drawn = 1; f->drawn_col = f->col; f->drawn_row = f->row;
 }
 
-/* 0x82B4  is the hero standing on this fixture?  (grounded, its row is the row
- * under his feet, and one of its three columns is under his body). */
+/* 0x82B4  is the hero standing on this fixture?  Grounded and off the ladder
+ * (82B4: [FF3D] | [FF39]), its row is the row under his feet (82C0), it is on
+ * screen (82DC -> 82F8), and one of its three cells is the cell under his body
+ * column.  That last test is written the long way round: 82E2 puts his own ring
+ * column [83]+4 in DL and 82EC compares DL, DL+1 and DL+2 against
+ * AL = 0x21 - (the platform's ring column), which 82F8 leaves behind.  With the
+ * camera holding [83] at 0x0C -- 6FF9 does that on every frame outside a boss
+ * room, and no boss room carries a C fixture -- DL is 0x10 and the three
+ * matches are platform ring columns 0x11, 0x10 and 0x0F, i.e. exactly the three
+ * positions in which one of its cells is ring column [83]+5, the cell 6D6E+0x6D
+ * tests for ground under his body.  The port had `rc <= hc <= rc+2` here, one
+ * column to the left of that, so a platform moving right stopped carrying him a
+ * column *before* it stopped holding him up and walked him off its leading
+ * end -- which is what lost the ride on MP10's fix[5] every time. */
 static int hero_on_fixture(const Game *g, const Fixture *f)
 {
     if (g->vstate || g->on_ladder) return 0;
     if ((uint8_t)((g->hero_scr_row + g->scroll_row + 3) & 0x3F) != (f->row & 0x3F)) return 0;
     int rc = fixture_rcol(g, f->col);
     if (rc < 0) return 0;
-    int hc = g->hero_scr_col + 4;
-    return hc >= rc && hc < rc + 3;
+    int hc = g->hero_scr_col + 4;                                       /* 82E2 */
+    for (int k = 0; k < 3; k++) if (hc + k == 0x21 - rc) return 1;      /* 82EC */
+    return 0;
 }
 
 /* 0x8244/0x8252  fixture C: patrol between lim_l and lim_r, carrying the hero. */

@@ -158,10 +158,21 @@ The sprite is 3×3 cells but the **solid body is the middle column only**
   through the map's **locked** door (MP10's at (26,15) — which is why MP10's header
   start is (26,16); MP20's at (171,54)) and left through the door `72F1` creates on
   the hero's column, which lands on a shelf nothing else reaches.  The conveyor
-  "staircases" are one-way slopes by design.  Caveat: `72F1`'s third poke writes the
-  reward record's row as **5** in MP1D (13 in MP2D/MP3D), which is five to ten rows
-  above any floor in those rooms — so either that field is not a ring row, or the
-  reward (a Key, `type & 0x1F == 0x16`) is collected some other way.  Unresolved.
+  "staircases" are one-way slopes by design, and the shelf carries a **second door
+  back into the room** — which is how the reward is collected.
+* **The boss reward needs a second visit** (this is deliberate, not a quirk).  `72F1`'s
+  poke list installs a post-boss object list holding one **Key** (`type & 0x1F == 0x16`)
+  *and* lifts its row out of reach — MP1D's `.mdt` has it at row 16, two above the floor
+  at 18, and the third poke moves it to row 5 — so it cannot be taken on the way out.
+  The list's last poke sets the room's **boss-defeated story flag**, and the room's own
+  `[C00C]` list keys off it: on the next load the Key is back on the floor, `[C00A]`
+  points one record earlier so the room has two doors, and `[C20A]` clears bit 7 of the
+  level record — it is no longer a boss room.  So the intended sequence is: kill the
+  boss, leave by `72F1`'s door onto the shelf, come straight back in through the door
+  beside it, take the Key, and use it on the next locked door (MP10 (128,32)→Satono,
+  MP20 (205,47)→MP30, MP31 (188,20)).  Two further `[C00C]` records retire the item once
+  taken and stop the Tear cutscene replaying.  Identical in MP2D/MP3D/MP5D/MP6D/MP8D
+  (reward rows 13/13/13/5/0); MP4D/MP73/MP7D/MPA0 carry no reward and no such poke.
 * **MP10's boss corridor** is sealed left by the block at columns 119-122 and
   right by a conveyor staircase pushing right (`walk_left` refuses while
   `conveyor == 1`, and `gravity` skips `conveyor_check` while `vstate & 0x80`),

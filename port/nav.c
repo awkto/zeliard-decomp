@@ -182,6 +182,23 @@ static int standable(const Game *g, int c, int r)
     if (fixture_at(g->map, bc, r + 3) >= 0) return 1;
     return is_ladder(g, bc, r) || is_ladder(g, bc, r + 1);
 }
+/* 7505/73C0: the hero burns while any of the nine cells of his body -- or,
+ * off the ladder, the cell under his feet -- is one of the tileset's four
+ * hazard cells.  The survey cannot feel that (the probe is immortal), so every
+ * node is marked and `build_field` charges NAV_HAZCOST to enter one. */
+static int node_hazard(const Game *g, int c, int r)
+{
+    const Map *m = g->map;
+    if (g->shoes == 2) return 0;                                        /* 7505: Pirika shoes */
+    for (int dr = 0; dr < 3; dr++)
+        for (int dc = 0; dc < 3; dc++) {
+            int cc = c + dc;
+            if (cc < 0 || cc >= m->width) continue;
+            if (game_cell_hazard(g, m->grid[cc][(r + dr) & 0x3F])) return 1;
+        }
+    return c + 1 < m->width && game_cell_hazard(g, m->grid[c + 1][(r + 3) & 0x3F]);
+}
+
 /* 65C5 leaves the hero hanging: [FF39] = FF, no crouch, an odd climb frame */
 static void probe_grab_ladder(Game *p, int c, int r)
 {
@@ -241,12 +258,26 @@ static int probe_place_fixture(Nav *n, Game *p, int c, int r, uint8_t dirstate, 
 static int step_walks_off(const Game *g, uint8_t dirs);
 static uint8_t macro_first_dir(const Nav *n, int e);
 static int hero_carried(const Game *g);
+/* a macro that leaves the ground: nothing can be corrected once it starts */
+static int macro_aerial(int mi) { return mi >= 6 && mi <= 14; }
 static int edge_ready(const Nav *n, const Game *g, int e)
 {
     int fx = n->efix[e];
     if (!fx || fx > g->nfix) return 1;
     const Fixture *f = &g->fix[fx - 1];
     if (f->kind == 2) {
+        /* A patrolling platform's *phase*: the probe ran the whole macro with the
+         * real 81AE mover under it, so the edge does what it promised only from
+         * about the column and the direction it was probed at.  One column of
+         * tolerance, not zero: `probe_place_fixture` records where it *put* the
+         * platform, and by the time the executor looks, fixtures_draw has
+         * already moved it once for this frame (it runs at the top of frame(),
+         * above `present`).  Matching the post-move column exactly instead was
+         * tried and is worse on every leg -- `game_place` restarts [9F07] at 0,
+         * so the probe's first frame always moves a half-speed platform while
+         * the live one moves every other frame, and the phases drift apart over
+         * a ride.  What the tolerance cannot cover is a jump, so build_graph
+         * simply never records one that lands on a platform. */
         if (((f->state & 0x80) != 0) != ((n->efixpos[e] & NAV_FIXDIR) != 0)) return 0;
         int d = (int)f->col - (int)(n->efixpos[e] & ~NAV_FIXDIR);
         return d >= -1 && d <= 1;
@@ -292,7 +323,8 @@ static int carried_fixture(const Game *g)
 static int hero_carried(const Game *g)
 {
     if (g->vstate || g->on_ladder) return 0;
-    int bc = g->hero_scr_col + 4 + g->scroll_col, feet = (g->hero_scr_row + g->scroll_row + 3) & 0x3F;
+    /* the cell 6D6E+0x6D tests for ground: his own map column + 1 */
+    int bc = g->hero_scr_col + 5 + g->scroll_col, feet = (g->hero_scr_row + g->scroll_row + 3) & 0x3F;
     while (bc >= g->map->width) bc -= g->map->width;
     for (int i = 0; i < g->nfix; i++) {
         const Fixture *f = &g->fix[i];
@@ -304,7 +336,15 @@ static int hero_carried(const Game *g)
 }
 
 /* run one macro from the hero's current probe state; returns the number of
- * frames used, and leaves the probe wherever the hero settled. */
+ * frames used, and leaves the probe wherever the hero settled.
+ *
+ * (Recording where the platform is *after* the first 81AE move -- nominally
+ * where the executor sees it, since fixtures_draw runs above `present` -- and
+ * matching that exactly was tried and is worse in every measured leg: the
+ * probe's [9F07] restarts at 0 with `game_place`, so its first frame always
+ * moves a half-speed platform while the live one moves on every other frame,
+ * and the two phases drift apart over a multi-frame ride.  The placement plus
+ * a one-column window is what actually reproduces.) */
 static int run_macro(Nav *n, Game *p, int mi)
 {
     const Macro *m = &MACRO[mi];
@@ -345,9 +385,11 @@ static void build_graph(Nav *n, const Game *g)
     n->builds++;
     for (int c = 0; c < W; c++) for (int r = 0; r < MAP_ROWS; r++) n->node_of[c][r] = -1;
     n->nnode = 0;
+    memset(n->haz, 0, sizeof n->haz);
     for (int c = 0; c < W && n->nnode < NAV_MAX_NODE; c++)
         for (int r = 0; r < MAP_ROWS; r++)
             if (standable(g, c, r)) {
+                n->haz[c][r] = (uint8_t)node_hazard(g, c, r);
                 n->node_of[c][r] = n->nnode;
                 n->ncol[n->nnode] = (uint16_t)c; n->nrow[n->nnode] = (uint16_t)r;
                 n->nnode++;
@@ -382,6 +424,24 @@ static void build_graph(Nav *n, const Game *g)
                 if (c < 0 || c >= W || r < 0 || r >= MAP_ROWS) continue;
                 int j = n->node_of[c][r];
                 if (j < 0 || j == i) continue;
+                /* Never plan a jump that *lands* on a patrolling platform.  A
+                 * jump is the one move nothing can correct once it has started:
+                 * the hero is in the air for up to nine frames while the
+                 * platform slides four to nine columns under him, so the cell
+                 * the probe measured is only where he lands if the platform is
+                 * exactly where the probe had it -- which `edge_ready`'s
+                 * one-column tolerance cannot promise, and which a phase-exact
+                 * test cannot make happen often enough to be useful.  Missing
+                 * it is usually fatal rather than merely wrong: the jump west
+                 * off MP10's fix[2] lands in the lava pit at (0..6, 44..47),
+                 * which nothing can climb out of, and the run is over there.
+                 * Jumping *off* a platform onto solid ground is still offered,
+                 * because that is how the hero leaves one; only the landing
+                 * matters. */
+                if (macro_aerial(mi)) {
+                    int lf = fixture_at(&n->navmap, c + 1, r + 3);
+                    if (lf >= 0 && n->navmap.fix[lf].kind == 2 && n->navmap.fix[lf].var) continue;
+                }
                 if (n->nedge >= NAV_MAX_EDGE) break;
                 n->eto[n->nedge] = j;
                 n->emacro[n->nedge] = (uint8_t)mi;
@@ -435,7 +495,8 @@ static void build_field(Nav *n, const Game *g)
         unsigned dv = n->dist[v];
         for (int e = rfirst[v]; e < rfirst[v + 1]; e++) {
             int u = rto[e];
-            unsigned nd = dv + (unsigned)rcost[e] + n->pen[n->ncol[u]][n->nrow[u]];
+            unsigned nd = dv + (unsigned)rcost[e] + n->pen[n->ncol[u]][n->nrow[u]]
+                        + (n->haz[n->ncol[u]][n->nrow[u]] ? NAV_HAZCOST : 0u);
             if (nd < n->dist[u]) {
                 n->dist[u] = (uint16_t)nd;
                 if (qt < (int)(sizeof q / sizeof q[0])) q[qt++] = u;
@@ -567,10 +628,16 @@ static int step_walks_off(const Game *g, uint8_t dirs)
     if (!(dirs & (DIR_LEFT | DIR_RIGHT))) return 0;
     if (g->vstate || g->on_ladder) return 0;
     int w = g->map->width;
-    /* one cell to the side of the hero's own map column (his collision column
-     * is that + 1, so this is deliberately the *outer* cell: the test wants
-     * "is there still a platform beside me", not "exactly where do I land") */
-    int bc = g->scroll_col + g->hero_scr_col + 4 + ((dirs & DIR_RIGHT) ? 1 : -1);
+    /* Where his feet will be *after* the step: the cell fight.bin tests for
+     * ground is 6D6E + 0x6D, i.e. his own map column + 1 (`game_hero_cell` is
+     * at ring column [83]+4 and 0x6D is three rows down and one column right),
+     * so a step ends over map column + 1 +/- 1.  This used to read map column
+     * +/- 1 -- his *current* support cell going right, which always has ground
+     * under it -- so the guard never fired on a step off the right-hand end of
+     * anything, and MP10's row-0 floor (which stops at column 117, where the
+     * fix[5] platform takes over) dropped the hero through the ring wrap every
+     * single lap. */
+    int bc = g->scroll_col + g->hero_scr_col + 5 + ((dirs & DIR_RIGHT) ? 1 : -1);
     while (bc < 0) bc += w;
     while (bc >= w) bc -= w;
     int feet = (g->hero_scr_row + g->scroll_row + 3) & 0x3F;
@@ -578,7 +645,17 @@ static int step_walks_off(const Game *g, uint8_t dirs)
     for (int i = 0; i < g->nfix; i++) {
         const Fixture *f = &g->fix[i];
         if ((f->row & 0x3F) != feet) continue;
-        if (bc >= (int)f->col && bc <= (int)f->col + 2) return 0;       /* still carried */
+        /* a patrolling platform moves *before* the hero does -- fixtures_draw
+         * runs at the top of frame() and hero_input at the bottom of
+         * game_step -- so the cell he lands on is held up by where the
+         * platform will be, not where it is.  Accept both. */
+        int lo = f->col, hi = f->col;
+        if (f->kind == 2 && f->var) {
+            int nx = (f->state & 0x80) ? (int)f->col - 1 : (int)f->col + 1;
+            if (nx < lo) lo = nx;
+            if (nx > hi) hi = nx;
+        }
+        if (bc >= lo && bc <= hi + 2) return 0;                         /* still carried */
     }
     return 1;
 }
@@ -704,16 +781,25 @@ void nav_step(Nav *n, Game *g)
         return;
     }
     if (ea <= 4) {
+        /* In contact (751F charges every frame): get out of it before anything
+         * else, and give the move four frames.  A one-frame step is not enough:
+         * 6824 spends the first frame of a move in the wrong facing turning the
+         * hero round without moving him, so "turn to face it, then step away"
+         * as two one-frame macros just flips his facing back and forth on the
+         * spot while the enemy eats him -- which is exactly how Garland died
+         * beside the (149,50) crawler with a full 800 LIFE. */
+        if (ea <= 1) {
+            int away_left = eside > 0;                      /* it is on his right */
+            n->cur_macro = away_left ? 3 : 2;               /* L4 / R4 */
+            n->cur_frame = 1; n->cur_edge = -1;
+            emit(g, (uint8_t)(away_left ? DIR_LEFT : DIR_RIGHT), 0);
+            return;
+        }
         int left = (g->hero_flags & FACE_LEFT) != 0;
         int face_ok = (eside < 0) == (left != 0);
         if (!face_ok) {                                     /* turn to it first (6824) */
             n->cur_macro = eside < 0 ? 1 : 0; n->cur_frame = 1; n->cur_edge = -1;
             emit(g, (uint8_t)(eside < 0 ? DIR_LEFT : DIR_RIGHT), 0);
-            return;
-        }
-        if (ea <= 1) {                                      /* too close: step out of contact */
-            n->cur_macro = eside < 0 ? 0 : 1; n->cur_frame = 1; n->cur_edge = -1;
-            emit(g, (uint8_t)(eside < 0 ? DIR_RIGHT : DIR_LEFT), 0);
             return;
         }
         n->cur_macro = MACRO_STRIKE; n->cur_frame = 1; n->cur_edge = -1;
@@ -803,6 +889,30 @@ void nav_step(Nav *n, Game *g)
         if (d >= bestd) continue;
         if (!edge_ok(n, g, e, here)) { gated = 1; continue; }
         bestd = d; best = e;
+    }
+    if (best < 0) {
+        /* Every improving edge has been dropped as unrepeatable.  On a moving
+         * platform that verdict is usually about *phase*, not about the move:
+         * the hop from MP10's fix[2] onto the col-5 ladder at (4,37) only works
+         * from the column the probe took off at, and three misses in a row say
+         * nothing about the fourth.  Give them back rather than settle for
+         * riding up and down for ever -- the field will offer them again the
+         * next time the hero is on that cell, and by then the platform will
+         * have come round. */
+        int dropped = 0;
+        for (int e = n->efirst[here]; e < n->efirst[here + 1]; e++)
+            if (n->efail[e] >= 3 && n->dist[n->eto[e]] < n->dist[here]) { n->efail[e] = 0; dropped = 1; }
+        if (dropped) {
+            bestd = 2u * NAV_INF;
+            for (int e = n->efirst[here]; e < n->efirst[here + 1]; e++) {
+                int j = n->eto[e];
+                if (n->dist[j] >= n->dist[here]) continue;
+                unsigned d = (unsigned)n->dist[j] + n->ecost[e];
+                if (d >= bestd) continue;
+                if (!edge_ok(n, g, e, here)) { gated = 1; continue; }
+                bestd = d; best = e;
+            }
+        }
     }
     if (best < 0) {
         /* no outgoing edge improves the distance.  Either the goal is not

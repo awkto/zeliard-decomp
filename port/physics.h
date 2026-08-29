@@ -285,6 +285,7 @@ int  game_win(const Game *g);                      /* ring index of screen (0,0)
 uint8_t game_ring_cell(const Game *g, int scr_col, int scr_row);   /* screen cell (28x19) */
 int  game_passable_wall(const Game *g, uint8_t v);
 int  game_passable_body(const Game *g, uint8_t v);
+int  game_cell_hazard(const Game *g, uint8_t v);  /* 73C0: one of the tileset's 4 hazard cells */
 int  game_ring_index(const Game *g, uint8_t row, uint8_t col);     /* 6D6E ring_addr */
 int  game_ring_add(int p, int delta);                              /* 6D82/6D8E wrap */
 int  game_push_hero(Game *g, int left);      /* 66A5 / 684C try_move; 1 = blocked */

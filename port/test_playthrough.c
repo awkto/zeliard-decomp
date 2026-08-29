@@ -107,6 +107,18 @@ static void fixture_rides(const char *dir, int verbose)
     int f2 = ride(dir, 56, 50, 30, 50, 1500);
     if (verbose) printf("  fix[3] gap (56,50) -> (30,50): %d frames\n", f2);
     ck(f2 > 0, "fixture rides: crossed the fix[3] gap westward");
+
+    /* The long haul: the Muralla gate to door 5 at (159,50) is a full lap of
+     * MP10's 240-column ring, about three hundred macros, and it crosses the
+     * fix[5] platform at columns 118-127 on ring row 0 -- the gap in the row-0
+     * floor, which stops at column 117 and picks up again at 130.  That leg is
+     * what the navigator used to lose every time (issue #28): 82B4's carry
+     * window was a column out, so a rightward ride walked the hero off the
+     * platform's leading end, and `step_walks_off` read his *current* support
+     * cell instead of the one he was stepping onto, so nothing caught it. */
+    int f3 = ride(dir, 61, 7, 158, 51, 40000);
+    if (verbose) printf("  the Muralla gate (61,7) -> door 5 (159,50): %d frames\n", f3);
+    ck(f3 > 0, "fixture rides: walked the whole Muralla gate -> door 5 lap unaided");
 }
 
 
@@ -262,8 +274,17 @@ int main(int argc, char **argv)
         ck(g->exp > 0, "route 2: the bosses paid EXP");
         ck((unsigned)g->gold > 0, "route 2: the bosses paid gold");
         ck(p.shops_visited >= 3, "route 2: shopping between the caverns");
-        ck(p.doors_taken >= 4, "route 2: cavern 1's boss room is walked into and out of "
-                               "through its own doors (%u doors taken)", p.doors_taken);
+        ck(p.doors_taken >= 14, "route 2: every boss room is walked into and out of *twice* "
+                                "through its own doors (%u doors taken)", p.doors_taken);
+        /* the three Keys the boss rooms hand back on the second visit: two of
+         * them are spent again on the spot (MP10's (128,32) into Satono and
+         * MP20's (205,47) into MP30), so what is left at the end is Pollo's. */
+        ck(g->keys == 1, "route 2: Pollo's Key is in the bag (%u keys)", g->keys);
+        ck(g->page[0] == 0xFF && g->page[8] == 0xFF && g->page[0x10] == 0xFF,
+           "route 2: 72F1's boss-defeated flags are set for all three rooms");
+        ck((g->page[3] & 0x40) && (g->page[0x0B] & 0x20),
+           "route 2: both locked doors a boss Key opened stay unlocked (page[03]=%02X page[0B]=%02X)",
+           g->page[3], g->page[0x0B]);
 
     }
 

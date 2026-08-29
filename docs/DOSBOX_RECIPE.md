@@ -198,3 +198,12 @@ column-222 door) were captured.
 Restore keys, precisely: **F7** → `Sure?(Y/N)` → `y` → **Down** moves the *list* cursor →
 **Space copies the highlighted name into the input box** → **Enter** accepts.  Send all
 three as holds (`+key`/`-key`), not taps.
+
+### 9.2 The rest of the caverns
+
+`cavern7.png` (MP70 "Cavern of Caliente", Llama save at column 8, tap Up) and
+`cavern8b.png` (MP81 "Cavern of Milagro", Esco save at column 205, tap Up) complete the
+set — that is every map a town door reaches.
+
+Gotcha: **cavern 7 is the heat cavern**, so `704F` covers the playfield with "It's too
+hot !!" for 32 frames in every 64.  Take the shot in a gap.

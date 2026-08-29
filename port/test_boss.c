@@ -350,6 +350,78 @@ static void t_post_boss(void)
     load_boss_map();
 }
 
+/* What 72F1's third poke is for: the reward is meant to be collected on the
+ * *next* visit, not on the way out.
+ *
+ * Every boss room's level record ends with a {u16 addr, u16 val} list (7351)
+ * that installs a post-boss object list, a post-boss door list and -- for the
+ * six rooms that carry a reward -- a write to the object's +2/+3, which puts
+ * its row five to thirteen rows above the room's only floor and its rcol at
+ * 0xFF.  The last entry sets a story-flag byte, and the room's own C00C list
+ * (6BFC) keys off exactly that byte: the next time the map is loaded from disk
+ * the same object list comes back with the row the .mdt image has -- two rows
+ * above the floor, where the hero walks into it -- the level record loses its
+ * bit 7 so the room is no longer a boss room, and the door list becomes the
+ * ordinary two-door one.  A third record, keyed on the item's own flag, retires
+ * the object once it has been taken.  So the room is entered twice: once for
+ * the boss, once for the Key. */
+static void t_boss_reward(void)
+{
+    static const struct { int map; const char *name; uint8_t flag; uint8_t item_flag, item_mask;
+                          int parked, home, floor; int back_col, back_row; } R[] = {
+        {1,  "MP1D", 0x00, 0x02, 0x08,  5, 16, 18,  26, 15},
+        {4,  "MP2D", 0x08, 0x0B, 0x10, 13, 20, 22, 171, 54},
+        {7,  "MP3D", 0x10, 0x13, 0x04, 13, 20, 25, 188, 20},
+    };
+    for (unsigned k = 0; k < sizeof R / sizeof R[0]; k++) {
+        static Map m; static uint8_t page[256];
+        memset(page, 0, sizeof page);
+        memset(&m, 0, sizeof m);
+        if (map_load_system(&m, G_DIR, R[k].map)) { CHECK(0, "%s: cannot load", R[k].name); continue; }
+        CHECK(m.ndoors == 0 && m.nobj == 0 && (m.lvl_flags & 0x80),
+              "%s fresh: a boss room with no doors and no objects", R[k].name);
+        map_free(&m);
+        /* the boss is dead: 72F1's last poke set the flag byte */
+        memset(&m, 0, sizeof m);
+        map_load_system(&m, G_DIR, R[k].map);
+        page[R[k].flag] = 0xFF;
+        map_apply_patches(&m, page);
+        CHECK(!(m.lvl_flags & 0x80), "%s after the boss: no longer a boss room (flags %02X)",
+              R[k].name, m.lvl_flags);
+        CHECK(m.ndoors == 2, "%s after the boss: %d doors (want 2 - back the way you came, and the exit)",
+              R[k].name, m.ndoors);
+        if (m.ndoors == 2)
+            CHECK(m.doors[0].dest_col == (uint16_t)R[k].back_col && m.doors[0].dest_row == R[k].back_row,
+                  "%s door 0 leads back to (%u,%u)", R[k].name, m.doors[0].dest_col, m.doors[0].dest_row);
+        CHECK(m.nobj == 1, "%s after the boss: %d objects (want 1 - the reward)", R[k].name, m.nobj);
+        if (m.nobj == 1) {
+            CHECK((m.objs[0].type & 0x1F) == 0x16, "%s reward is a Key (type %02X)", R[k].name, m.objs[0].type);
+            CHECK(m.objs[0].row == (uint8_t)R[k].home,
+                  "%s reward is back at its image row %u (want %d), not the %d 72F1 parks it at",
+                  R[k].name, m.objs[0].row, R[k].home, R[k].parked);
+            CHECK(m.grid[m.objs[0].col][R[k].floor] && R[k].home < R[k].floor &&
+                  R[k].home > R[k].parked,
+                  "%s row %d is below the row 72F1 parks it at (%d) and above the floor at %d",
+                  R[k].name, R[k].home, R[k].parked, R[k].floor);
+            CHECK(!m.grid[m.objs[0].col][R[k].parked],
+                  "%s row %d, where 72F1 parks it, is empty air", R[k].name, R[k].parked);
+            CHECK((m.objs[0].home_col & 0xFF) == R[k].item_flag && m.objs[0].home_row == R[k].item_mask,
+                  "%s taking it sets page[%02X] |= %02X (914C)", R[k].name,
+                  m.objs[0].home_col & 0xFF, m.objs[0].home_row);
+        }
+        map_free(&m);
+        /* ... and once it has been taken it does not come back */
+        memset(&m, 0, sizeof m);
+        map_load_system(&m, G_DIR, R[k].map);
+        page[R[k].item_flag] |= R[k].item_mask;
+        map_apply_patches(&m, page);
+        CHECK(m.nobj == 0 || (m.objs[0].col >> 8) == 0xFF,
+              "%s with the Key taken: the reward is gone (%d objects, col %04X)", R[k].name,
+              m.nobj, m.nobj ? m.objs[0].col : 0xFF00);
+        map_free(&m);
+    }
+}
+
 /* -------------------------------------------------- TAKO / TORI / ZELA runs */
 static void run_overlay(int ai_index, int sysmap, const char *name)
 {
@@ -720,7 +792,7 @@ int main(int argc, char **argv)
     }
     struct { const char *name; void (*fn)(void); } tests[] = {
         {"info blocks", t_info}, {"mp1d", t_map}, {"init", t_init}, {"crab parts", t_parts},
-        {"crab damage", t_damage}, {"hit flash", t_hit_flash}, {"zela no flash", t_no_hit_flash}, {"crab death", t_death}, {"post-boss", t_post_boss},
+        {"crab damage", t_damage}, {"hit flash", t_hit_flash}, {"zela no flash", t_no_hit_flash}, {"crab death", t_death}, {"post-boss", t_post_boss}, {"boss reward", t_boss_reward},
         {"tako", t_tako}, {"tori", t_tori}, {"zela", t_zela}, {"zel2", t_zel2},
         {"meda", t_meda}, {"lega", t_lega}, {"layer tables", t_layers},
         {"drgn tables", t_drgn}, {"akma tables", t_akma},

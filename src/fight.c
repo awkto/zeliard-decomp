@@ -1481,6 +1481,25 @@ void map_transition(struct door *d);
  * into the ring each frame for records inside the window (82F8/831F: ring col
  * = 0x21 - (col - scroll_col)); 8352 writes under_sprite[] instead when the
  * cell holds a sprite marker. */
+/* 0x82B4  Is the hero standing on fixture record [SI]?  AL = the fixture's ring
+ * column (from 82F8).  Tests the hero's ring column + 4, + 5, + 6 against it:
+ *   82E2: mov dl,[0x83] / add dl,0x4 / mov cx,3
+ *   82EC: cmp dl,al / clc / jnz 82F2 / ret        (CF = 0: not this one)
+ *   82F2: inc dl / loop 82EC / stc                (CF = 1: carried)
+ * With [83] pinned at 0x0C by 6FF9 those are platform ring columns 0x11/0x10/0x0F —
+ * exactly the three placements in which one of the platform's cells is ring column
+ * [83]+5, the cell 6D6E+0x6D tests for ground.  In map terms the hero is carried iff
+ *   hero_map_col + 1  is within [fixture_col, fixture_col + 2]
+ * — note the +1: reading his own column instead walks him off the leading end of a
+ * platform moving right. */
+static u8 hero_on_fixture(struct fixture *f)      /* 82B4 */
+{
+    u8 dl = hero_scr_col + 4;                     /* 82E2 */
+    for (int i = 0; i < 3; i++, dl++)             /* 82E9, 82F2 */
+        if (dl == fixture_ring_col(f)) return 1;  /* 82EC -> 82F6 stc */
+    return 0;                                     /* 82EF clc */
+}
+
 /* 0x7FDC / 0x8074  Elevators (fixture A under the feet, 814C matches 0x40..0x42):
  * "down" moves the record one row down if the 3 cells below are empty and
  * scrolls the hero with it; "up" moves it up if the cells above are empty.
@@ -1496,7 +1515,10 @@ void hero_die(void);
 /* 0x72F1  Post-boss: reload AI/enemies from level record +6/+7, apply the
  * {ptr,val} pokes from +8, put the exit door at scroll_col+hero_col (+9 when
  * `test byte [si-5]` — the ring cell 5 columns left of the hero — is non-zero;
- * NOT the poke list's last byte).  mp1d's poke list also writes 0xFFFF to the
- * player page [00]/[01].  Restart fight_main. */
+ * NOT the poke list's last byte).  The list's last poke sets the room's
+ * **boss-defeated story flag** in the player page — every boss room has one
+ * ([00] [08] [10] [18] [20] [28] [30] [32] [47]) — which is what the room's own
+ * C00C patch list (6BFC) keys off to restage it for the reward visit (docs/FIGHT.md).
+ * Restart fight_main. */
 /* 0x79DC  vec 1: entry from the town (re-init locals, load hero bank FMAN.GRP
  * 9BE6 -> arena:6000, GF_CONVERT_2BPP SI=6333 BP=D000 CX=0xE6, tileset, walk-in). */

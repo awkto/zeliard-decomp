@@ -40,16 +40,19 @@ through the real game**: a file written by `port/` loads under DOS with F7
 "Restore Game", and because *every* town's map records carry a cave entry that
 is now enough to reach the second half of the game — cavern 4, 5, 6 and 8, four
 more towns and **Paguro**, cavern 7's boss, were captured that way for this
-milestone and are diffed in `make verify` (see "Ground truth" below).  Cavern 1's
-intended route was worked out at the same time, and the Cangrejo fight is now
-entered and left through its own doors with nobody at the keyboard.
+milestone and are diffed in `make verify` (see "Ground truth" below), along with
+MP70 and MP81, the last two maps a town door reaches.  Cavern 1's intended route
+was worked out at the same time, and **all three of caverns 1-3's boss rooms are
+now entered and left through their own doors, twice each**, with nobody at the
+keyboard: once for the fight, once for the reward the map hands back afterwards
+(see "What 72F1's third poke is for").
 
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 9 test binaries
-make test            # physics (139) + combat/AI (171) + town (138) + boss (594) + shop (118)
-                     #   + status (87) + playthrough (38) + audio (305) + cutscene (46) = 1636 assertions
-make verify          # 99 headless renders diffed against the DOSBox captures in docs/screenshots/,
+make test            # physics (141) + combat/AI (171) + town (138) + boss (627) + shop (118)
+                     #   + status (87) + playthrough (42) + audio (305) + cutscene (46) = 1675 assertions
+make verify          # 113 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
 make playthrough     # the same two routes as test_playthrough, with the step-by-step log
 ./zeliard            # the real boot: the opening demo, then Felishika's Castle
@@ -534,7 +537,28 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   refuses a bare left/right step whose destination has neither ground nor a fixture
   under it, so a stale plan cannot walk him off the end of one.  `test_playthrough`
   crosses both of MP10's floorless gaps with it (columns 1..15 at row 43 and 32..53 at
-  row 53).  Two bugs came out of the same work: the edge chooser tested
+  row 53), and walks the whole Muralla-gate -> door-5 lap.
+  **Three more things a player knows and the survey does not**, added while
+  walking that lap.  *Lava costs*: the probe is immortal, so a node whose body
+  cells touch one of the tileset's four hazard cells (7505/73C0) looks like any
+  other; `build_field` now charges `NAV_HAZCOST` (48) to enter one, enough to
+  walk round MP10's lava lake at columns 36-51 without forbidding a crossing that
+  is sometimes the only way.  *Contact is broken with a real step*: 751F charges
+  every frame an enemy is touching him, and the executor used to answer that by
+  turning to face it and then stepping away, one frame each -- but 6824 spends
+  the first frame of a move in the wrong facing just turning, so the two
+  one-frame macros only flipped his facing to and fro while the enemy ate him (a
+  full 800 LIFE gone beside MP10's (149,50) crawler).  Contact now gets a
+  four-frame step away, before anything else.  *A jump onto a moving platform is
+  never planned*: nine frames in the air is four to nine columns of platform, and
+  the cell the survey measured is only where he lands if the platform is exactly
+  where the probe had it; missing it off MP10's fix[2] drops him in the lava pit
+  at (0..6, 44..47), which nothing climbs out of.  Jumping *off* a platform onto
+  solid ground is still offered -- only the landing matters.  And an improving
+  edge that has been dropped as unrepeatable is handed back when nothing else
+  improves, because on a platform "it failed three times" is a statement about
+  phase, not about the move.
+  Two bugs came out of the same work: the edge chooser tested
   `dist[to] + cost < dist[here]`, which is *never* true where the anti-stuck penalty
   is still zero because that is exactly the equation `build_field` solved — so the
   navigator only moved at all once the "rooted to the spot" counter had poisoned the
@@ -633,15 +657,20 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     the MURALLA door, two visits to the Sage (level 1, 120 LIFE), the church and back
     into the cavern.  Asserts the gold, the shield, the level, the LIFE and that both
     hand-offs happened.
-  * **route 2, caverns 1-3 and their bosses**: MP1D/Cangrejo, MP2D/Pulpo and
-    MP3D/Pollo, each fought to the 40-frame death and the exit door 72F1 puts on the
-    hero's column taken back out into MP10 / MP20 / MP31, with Satono's smith and
-    Sage and Bosque's smith in between.  **Cavern 1 is now walked**: the route steps
-    off Satono Town's left edge, which is the town's own cave record into MP10
-    (128,33), walks the 13 columns along the shelf to the unlocked door at (141,32)
-    and goes through it, so the Cangrejo fight is entered and left through real
-    doors with no shell call and no fabricated position.  Asserts three bosses, no
-    deaths, the boss EXP and gold, three shops and four doors taken.
+  * **route 2, caverns 1-3, their bosses and their rewards**: MP1D/Cangrejo,
+    MP2D/Pulpo and MP3D/Pollo, each fought to the 40-frame death and left through
+    the exit door 72F1 puts on the hero's column, with Satono's smith and Sage and
+    Bosque's smith in between.  **All three boss rooms are now entered twice**, the
+    way the maps mean them to be (see "What 72F1's third poke is for"): out onto
+    the shelf, straight back in through the door standing beside him there, pick
+    the boss's Key up off the floor of what is now an ordinary room, out again, and
+    open the locked door the Key was for — MP10's (128,32) into Satono, MP20's
+    (205,47) into MP30, MP31's (188,20).  15 doors, three Keys and three shops, all
+    walked; the only shell calls left are two `P_GOTO`s that carry the hero across
+    MP20 and MP31, the two 200-column crossings the autopilot still cannot hold.
+    Asserts three bosses, no deaths, the boss EXP and gold, three shops, fourteen
+    doors, the Key left in the bag, the three boss-defeated story flags and both
+    doors a boss Key unlocked for good.
   * **cavern 1's topology**, surveyed three ways, because it is what the walking
     route depends on: from the Muralla gate at (61,7) the graph reaches 1073 of
     MP10's 1542 nodes and, of its six doors, only the MURALLA door back out and
@@ -1031,7 +1060,7 @@ as it is reached:
 [play] step 0 done in 128 frames (LIFE 80/80, EXP 0, GOLD 1000, keys 0)
 ...
 [boss] defeated: 4 pokes applied, exit door at column 39, post-boss AI 0 / bank 0
-route 2 (caverns 1-3 and their bosses): 1332 frames, 5044 probe frames, 3 bosses, 3 doors, 3 shops
+route 2 (caverns 1-3 and their bosses): 2769 frames, 1630607 probe frames, 3 bosses, 15 doors, 3 shops
 ```
 
 `./test_playthrough ../zeliard [--route 1|2] [-v] [--quiet] [--budget N]` runs them
@@ -1048,7 +1077,7 @@ navigator is debugged.  A route entry is
 | `P_CAV_CELL` | reach map cell `(a,b)` — a chest, a Key, a boss reward |
 | `P_BOSS` | fight until the boss is defeated and 72F1 has run |
 | `P_FARM` | patrol between columns `a` and `b` until EXP reaches `c` |
-| `P_GOTO` / `P_TOWN_GOTO` | the shell call a door or a town gate makes, for the legs the navigator cannot reach yet |
+| `P_GOTO` / `P_TOWN_GOTO` | the shell call a door or a town gate makes, for the legs the navigator cannot reach yet (route 2 has two left, both "cross a whole 200-column cavern") |
 
 `menu` is one character per widget the shop opens, in order: `0`..`9` picks that row,
 `y`/`n` answers a Yes/No, `c` cancels (which every shop reads as "Go outside").  So
@@ -1165,8 +1194,7 @@ save; the restore recipe above is unchanged.
 | **Pureza (8)** | left edge → **MP80** (111,21) |
 | Esco (9) | column 205 → MP81 (123,6) |
 
-Nine captures were taken that way for this milestone and all nine are in
-`make verify`:
+Eleven captures have been taken that way and all eleven are in `make verify`:
 
 | capture | save | in DOSBox |
 |---|---|---|
@@ -1179,14 +1207,21 @@ Nine captures were taken that way for this milestone and all nine are in
 | `cavern8.png` — MP80 | Pureza, column 4 | hold Left 2.5 s |
 | `town_llama.png` | Llama, column 222 | the restore itself |
 | `boss_paguro.png` — **MP73, cavern 7's boss "Paguro"** | Llama, column 222 | tap Up: the town door at 222 is a *cave* record and it opens straight into the boss room |
+| `cavern7.png` — **MP70 "Cavern of Caliente"**, the lava tileset | Llama, column 8 | tap Up: the column-8 door → MP70 (152,7) |
+| `cavern8b.png` — **MP81 "Cavern of Milagro"** | Esco, column 205 | tap Up: the column-205 door → MP81 (123,6) |
 
 So a boss capture no longer needs a long cavern walk at all: Llama's column-222
 door is a boss room's front door.  The port reproduces `boss_paguro.png` at
-`--map 0x15 --pos 27 13`, frame 20, at 100 % everywhere except a 16 px band at
-the left wall (screen x 48-63) and the hero/boss sprites themselves — that band
-is the only piece of the second half that does *not* match yet and is worth a
-look; everything else, tileset, HUD, the `ENEMY` gauge and the `[A002]` name
-record, is pixel-exact.
+`--map 0x15 --pos 27 15`, frame 20, at **100 %** over the whole playfield except
+the boss sprite's own animation band — the left-wall band that used to differ is
+explained and covered now (see "The MP73 left wall").
+
+The last two maps a town door reaches are captured too, and both reproduce: MP70
+at `--map 0x12 --pos 152 7` and MP81 at `--map 0x18 --pos 123 6`, each 100 % over
+everything but the sprites at a different animation phase (MP70's sky sparkles,
+MP81's three hanging enemies).  Cavern 7 is the heat cavern, so half the frames
+of the MP70 run carry `704F`'s "It's too hot !!" box; the capture is one of the
+frames in between.  `make verify` is 113 comparisons now.
 
 The only boss door still out of reach this way is MP6D's at (309,41), six
 columns from where Dorado Town drops into MP60 but eight rows up and locked.
@@ -1235,28 +1270,19 @@ columns from where Dorado Town drops into MP60 but eight rows up and locked.
    the shelf → (141,32) → Cangrejo → the exit door), and the topology above is
    asserted in `test_playthrough.c`.
 
-   Two things still stand in the way of walking the *whole* of it:
-   * **the executor, not the planner.**  The planner finds the Muralla→door-5
-     path (about 300 macros, a full lap of the 240-column ring), and the
-     executor now follows most of it — with waypoints it reached 13 of 16 — but
-     it still loses the ride on fix[5], the platform that patrols columns
-     118-127 at row 0 and carries the hero across the only gap in the row-61
-     floor.  A node in the graph is a *cell*, and the state the probe ran from
-     is not: this sprint added the three parts of it that bit hardest (the hero
-     must be facing the way `game_place` left the probe, must not be in 6B41's
-     two-frame post-fall crouch, and an edge that the live run does not
-     reproduce three times is dropped), plus a recovery for the off-graph cells
-     6B76 lets the hero rest in and a "walk with the platform" rule, but a
-     patrolling platform's *phase* is still not part of a node.
-   * **MP1D's reward is out of reach.**  72F1's third poke writes the reward
-     record's row, and for MP1D that is **row 5** — ten rows above the room's only
-     floor, in an otherwise empty box (MP2D and MP3D are the same at row 13).  It
-     is a Key (`type & 0x1F == 0x16`), and it is the key MP10's (128,32) door into
-     Satono wants, so until it can be collected the route takes `P_TOWN_GOTO` back
-     to Satono.  The old route asked for MP1D (38,16) and MP2D (33,20), which are
-     not where the record lands; those steps were passing on the "within two
-     cells" fallback without ever picking anything up (`keys` stayed 0 through the
-     whole run) and have been removed rather than left lying.
+   **The whole lap is walked now.**  `test_playthrough`'s "fixture rides" case
+   runs the navigator from the Muralla gate to door 5 at (159,50) — about three
+   hundred macros, a full lap of the 240-column ring — and it arrives in ~1400
+   frames.  What was in the way was not the planner and not, in the end, a
+   platform's *phase*: it was **82B4**, the engine's own "is the hero riding this
+   platform" test, which the port had a column out ("Corrections found while
+   walking cavern 1", below).  A rightward ride therefore walked him off the platform's leading end,
+   and the navigator's own `step_walks_off` guard could not catch it because that
+   was a column out too, in the same direction: it tested the cell the hero was
+   *standing* on rather than the one he was stepping onto, so it never once fired
+   on a step off the right-hand end of anything.  MP10's row-0 floor stops at
+   column 117 and the fix[5] platform bridges 118-129; every lap the hero walked
+   into the gap and fell through the ring wrap.
 
 2. **The remaining town machinery: the shopkeeper idle hooks.**  Everything else —
    the ympd/ckpd backdrops, all three parallax strips (now with the right *phase*,
@@ -1290,22 +1316,164 @@ columns from where Dorado Town drops into MP60 but eight rows up and locked.
    boss are now captured and in `make verify` (see "Every town is a door into the
    second half of the game" above); no long scripted cavern walk was needed after
    all, because every town's `[C00B]` cave records put a cavern one step from a
-   restore.  What is still uncaptured: caverns 7 and 9 (MP70 / MP81, both one town
-   door away — the same recipe, just not run yet), a town dialogue box, and the
-   nine bosses other than Cangrejo and Paguro, whose rooms have no town door.
+   restore.
    `docs/screenshots/menu.png` turned out to be a capture of the **select.bin status
    screen** (Enter in Felishika's Castle on a fresh game), not a shorter town menu, and
    `make verify` diffs the port's own status screen against it.
+   MP70 and MP81 are captured now (see the table above), which is every map a
+   town door reaches; what is left uncaptured is a town dialogue box and the nine
+   bosses other than Cangrejo and Paguro, whose rooms have no town door.
    `docs/screenshots/shop_armour.png` was captured for milestone (d) with
    `KEYS="6:Return 9:Return 16:Return 20:+Right 27.5:-Right"` followed by 26
    `+Right`/`-Right` + `+Up`/`-Up` tap pairs at 0.45 s intervals from 28 s
    (docs/DOSBOX_RECIPE.md §5's edge-stop-and-scan pattern, scanning *right* from the
    Muralla entry to the first door at column 39), captured at 43 s.
 
+## What 72F1's third poke is for: the boss reward, and the second visit
+
+Every `mpNd` boss room hides its reward behind the same trick, and the trick is
+why the reward looked unreachable.
+
+A boss room's level record ends with 7351's `{u16 addr, u16 val}` list.  For
+MP1D it is four entries:
+
+```
+[C010] = C224     the post-boss object list: one 16-byte record, a Key
+[C00A] = C1B6     the post-boss door list: one door, on the hero's column
+[C226] = FF05     that record's +2/+3: row = 5, rcol = 0xFF
+[0000] = FFFF     the story flag "Cangrejo is dead"
+```
+
+The `.mdt` image has that same record at row **16**, two rows above MP1D's only
+floor at 18 — exactly where a standing hero walks into it.  The third poke lifts
+it to row 5, thirteen rows up in empty air, and it is the *only* thing that puts
+it out of reach.  MP2D, MP3D and MP5D are poked to 13, MP6D to 5, MP8D to 0;
+MP4D, MP73, MP7D and MPA0 carry no reward at all and have no such poke.  So the
+poke is not a mistake and the field is a ring row: **72F1 deliberately parks the
+reward out of reach for the rest of that visit.**
+
+The last poke is the answer to why.  It writes a byte in the player page's
+story-flag area (`[00]` for cavern 1, `[08]`, `[10]`, `[18]`, `[20]`, `[28]`,
+`[30]`, `[32]`, `[47]` for the rest — one per boss room, eight apart), and the
+room's *own* `[C00C]` patch list (6BFC, applied every time a map is loaded from
+disk) keys off precisely that byte:
+
+```
+MP1D  if page[00] & FF:  [C010]=C224  [C00A]=C1AA  [C20D]=0000  [C20A]=0009
+```
+
+* `[C010]` is the same object list — but this is a *fresh* copy of the image, so
+  the Key is back at row 16, on the floor.
+* `[C00A]` is `C1AA`, which is `C1B6` minus one 12-byte record: the list now has
+  **two** doors, the exit one 72F1 rewrote *and* an ordinary door at (27,14) back
+  to MP10 (26,15).
+* `[C20A]` rewrites the level record's byte 0 from `99` to `09`, clearing bit 7 —
+  the room is not a boss room any more — and `[C20D]` swaps the AI and enemy
+  banks for the post-boss pair.
+
+So the room is meant to be entered **twice**.  The first visit is the fight and
+ends through the exit door 72F1 puts on the hero's column, onto the shelf outside
+(MP10 (141,32), MP20 (190,47), MP31 (174,4)); the second is one step back through
+the door that is already standing beside him there, into a quiet room with the
+Key on the floor.  Two further `[C00C]` records finish the job: one keyed on the
+item's own flag (`page[02] & 08` in MP1D, written by 914C when the Key is picked
+up) disables the record so it never comes back, and one keyed on the exit door's
+story flag clears that door's `+8` bit 7 so the Tear of Esmesanti cutscene plays
+only once.
+
+And the Key is the one the *next* locked door wants: MP10's (128,32) into Satono,
+MP20's (205,47) into MP30, MP31's (188,20).  `PLAY_ROUTE_BOSSES` now walks all
+three of those chains, and `test_boss.c`'s "boss reward" case asserts the whole
+mechanism for MP1D, MP2D and MP3D — fresh (no doors, no objects, a boss room),
+after the boss (two doors, no boss bit, the Key at its image row above the floor,
+the parked row empty air), and after the pickup (the record retired).
+
+**docs/FIGHT.md's "Unresolved" caveat on this can go** — see "Doc corrections"
+at the end of this file.
+
+## The MP73 left wall
+
+`boss_paguro.png`'s one unexplained band, screen x 48-63, is the boss room's left
+wall and the corner where it meets the floor; everything above row 38 there is a
+uniform wall texture, which is why the mismatch showed nowhere else.  It is not a
+camera clamp: the port's ring, its scrolling and the room's tiles are all right,
+and the port reproduces the capture **100%** — the whole playfield except the boss
+sprite's own animation band — from `--pos 27 15`.  What differs is one map column
+of *hero*.
+
+Llama Town's `[C00B]` record for MP73 is `(27,13)`, and MP73's only floor is at
+rows 18-20, so the hero is placed two rows in the air: the one cave record in the
+game that does that (cavern 6's and cavern 8's both land him standing).  He falls
+those two rows, and on the first frame of the fall `69CB` gives a hero who *left
+the ground* one extra step in the direction he is facing — so the port's Garland
+ends at (28,15) with `scroll_col` 12, while the capture has him at (27,15) with
+`scroll_col` 11.  The port's `gravity()` is faithful to 69CB (`mov al,[0xff3d]` /
+`mov byte [0xff3d],0x7f` / `test al,0xff` / `jnz 69E6`, else `jmp 67C6`), and the
+entry does set `[FF3D]` to 0 (7E5B), so on the disassembly alone the step should
+happen.  It evidently does not.  `make verify` now names the cell the capture
+shows him standing on and covers the wall, the corner and the floor wall-to-wall
+(four boxes, all 100%); the one-column drift on the way in is the last thing on
+this map that is not explained.
+
 ## Corrections found while walking cavern 1 (issue #28)
 
 Each of these was checked against `ndisasm` of the extracted overlay before it was
 written down; the addresses are the ones to look at.
+
+**`port/physics.c` — `hero_on_fixture` (fight.bin `82B4`) was one column out.**
+This is the bug that lost every ride on a patrolling platform, and with it the
+whole Muralla→door-5 lap.
+
+```
+000082C0  A08400            mov al,[0x84]          ; hero_scr_row
+000082C3  02068200          add al,[0x82]          ; + scroll_row
+000082C7  0403              add al,0x3             ; the row under his feet
+000082C9  243F              and al,0x3f
+000082CB  8A6402            mov ah,[si+0x2]
+000082CE  80E43F            and ah,0x3f            ; the platform's row
+000082D1  3AC4              cmp al,ah
+000082D3  F9 / 7401 / C3                           ; different row -> not carried
+000082D7  8B04 / 25FF3F     mov ax,[si] / and ax,0x3fff
+000082DC  E81900            call 0x82f8            ; BX = its ring column,
+                                                   ; AX = 0x21 - that, CF = off screen
+000082E2  8A168300          mov dl,[0x83]
+000082E6  80C204            add dl,0x4             ; *his* ring column
+000082E9  B90300            mov cx,0x3
+000082EC  3AD0              cmp dl,al              ; dl, dl+1, dl+2 vs 0x21 - fixcol
+000082EE  F8 / 7501 / C3                           ; a match -> CARRIED
+000082F2  FEC2 / E2F6       inc dl / loop 0x82ec
+000082F6  F9 / C3                                  ; no match -> not carried
+```
+
+Written the long way round, but with `6FF9` holding `[83]` at `0x0C` on every
+frame outside a boss room — and no boss room carries a C fixture — `DL` is 0x10
+and the three matches are platform ring columns 0x11, 0x10 and 0x0F.  Those are
+exactly the three positions in which one of the platform's three cells is ring
+column `[83]+5`, which is the cell `6D6E + 0x6D` tests for ground under his body
+column.  In map terms: **carried ⟺ `hero_map_col + 1` is one of `f->col ..
+f->col+2`** — the carry window and the ground window are the same window.
+
+The port had `rc <= hc <= rc+2`, i.e. `f->col <= hero_map_col <= f->col+2`: one
+column to the left.  A platform moving right therefore stopped carrying the hero
+one column *before* it stopped holding him up, and carried him one column *past*
+the point where it still did — so a ride ran him off the leading end.  Nothing in
+`make verify` could see it (no capture rides a platform), and it is why the
+navigator's fixture edges looked unrepeatable and the "phase" theory looked right.
+`test_physics.c`'s "fixtures" case now pins both ends of the window: standing on
+the platform's leftmost cell he must be carried, and a platform whose cells stop
+short of his support cell must not drag him.
+
+**`port/nav.c` — `step_walks_off` and `hero_carried` had the same off-by-one.**
+Not the original's code (nav.c is the autopilot, not a port of anything), but the
+same mistake about which cell holds the hero up: both read his own map column
+where the engine reads map column + 1.  For a rightward step that made the guard
+test the cell he was *standing* on, which always has ground under it, so it never
+fired — and MP10's row-0 floor, which ends at column 117 where the fix[5]
+platform takes over, dropped him through the ring wrap on every lap.  The guard
+now tests `map column + 1 ± 1`, and it lets a *moving* platform count from where
+it will be after this frame's 81AE move rather than where it is, because
+`fixtures_draw` runs at the top of `frame()` and `nav_step` is called below it
+from `present`.
 
 **`port/physics.c` — `scroll_right` (fight.bin `68A0`) was one column out.**
 
@@ -1491,3 +1659,56 @@ by hand from renders that are not reproducible from the current `GD_ART`
 geometry, so `make verify` checks the C decoder against **its generator**
 (`tools/grp2png.py`) over all 31 resources instead, and against the five DOSBox
 intro captures over the whole screen.
+
+## Doc corrections found while finishing issue #28
+
+Everything below is outside `port/` and has **not** been edited; each was checked
+against `ndisasm` of the extracted overlay or against the map images themselves
+before being written down.
+
+**`docs/FIGHT.md` §"Cavern layout, and the post-boss reward"** — the caveat
+("either that field is not a ring row, or the reward is collected some other way.
+Unresolved.") is now resolved and should be replaced.  `72F1`'s third poke *is* a
+ring row, and putting the reward out of reach is its whole purpose: the room's own
+`[C00C]` list, keyed on the story-flag byte `72F1`'s last poke sets, gives the same
+object list back at the `.mdt` image's own row — on the floor — the next time the
+map is loaded, in a room whose level record has lost its bit 7 and whose door list
+has grown a second, ordinary door.  The boss room is entered twice.  Full write-up
+in "What 72F1's third poke is for" above; the flag bytes are `[00]`, `[08]`, `[10]`,
+`[18]`, `[20]`, `[28]`, `[30]`, `[32]`, `[47]`, one per boss room.
+
+**`docs/FIGHT.md`, same bullet** — "left through the door `72F1` creates on the
+hero's column, which lands on a shelf nothing else reaches" is right as far as it
+goes, but the shelf's *other* door is the way back in for the Key: MP10 (141,32),
+MP20 (190,47), MP31 (174,4).  And the Key each room hands back is the one the next
+locked door wants — MP10 (128,32) into Satono, MP20 (205,47) into MP30, MP31
+(188,20) — which is the chain the whole first third of the game is built on.
+
+**`src/fight.c` `0x72F1`** — "mp1d's poke list also writes 0xFFFF to the player
+page `[00]`/`[01]`" reads as a curiosity; it is the boss-defeated story flag, every
+boss room has one, and `6BFC` keys the room's own patch list off it.
+
+**`docs/STATE_PAGE.md`** — the page table starts at `[49]` ("Player record
+(BASE:0049-00E8)") and `[00]..[48]` are not described at all.  They are the
+**story-flag array**: written by door records (`7B25` from `+9/+B`, and `7E39`
+when a key opens a locked door), by item pickups (`914C`, from the C010 record's
+`+B/+D`) and by `72F1`'s poke list; read by every map's `[C00C]` patch list
+(`6BFC`) and by door `flag_ptr`s.  A worked example is MP10's list, where
+`page[03] & 80` rewrites door 0's letter byte to `81` and `page[03] & 40` does the
+same for door 3 — which is how a locked door stays unlocked once a key has opened
+it.
+
+**`src/fight.c` has no decompilation of `82B4`** (the "is the hero riding this C
+fixture" test that `8271`/`828C` call).  It is worth adding, because it is written
+in a way that is easy to get wrong — see the correction above — and the port had it
+a column out for four sprints.
+
+**`docs/DOSBOX_RECIPE.md` §8 and §9.1** — the screenshot table and the "that is
+how ... were captured" list should gain `cavern7.png` (MP70 "Cavern of Caliente",
+from a Llama Town save at column 8, tap Up) and `cavern8b.png` (MP81 "Cavern of
+Milagro", from an Esco village save at column 205, tap Up).  Both were taken with
+the §9 restore timeline plus `44:+Up 44.3:-Up 47:+Up 47.3:-Up` and captured at
+53 s.  Worth adding to §9.1's gotchas: **cavern 7 is the heat cavern**, so `704F`
+puts "It's too hot !!" over the top of the playfield every 64 frames for 32 of
+them — take the capture in one of the gaps, or the message box covers the
+tileset.

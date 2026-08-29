@@ -340,6 +340,40 @@ static void t_fixtures(const char *dir)
     CHECK(moves == 5, "var 1 moves every other frame: %d steps in 12 frames", moves);
     for (int i = 0; i < 12; i++) step(0);
     CHECK(hcol() > 2, "the platform reversed and carried the hero back right: col %d", hcol());
+
+    /* 82B4: the carry window is exactly the ground window.  fight.bin compares
+     * the platform's ring column against 0x21 minus the hero's, three times
+     * (82E2/82EC), which with the camera holding [83] at 0x0C means "one of the
+     * platform's three cells is the cell under his body column", ring column
+     * [83]+5 -- the same cell 6D6E+0x6D tests for ground.  So the hero is
+     * carried on the platform's leading cell and not one column past it: place
+     * him where his support cell is the platform's *rightmost* cell and let it
+     * run right, and he must ride, not walk off the front.  (The port used to
+     * test `f->col <= hero <= f->col+2`, one column to the left, which pushed
+     * him off the leading end of every rightward ride.) */
+    {
+        /* (a) his support cell is the platform's LEFTMOST cell: carried. */
+        game_place(&G, 8, 40, 0); G.nobj = 0;
+        game_first_frame(&G);
+        Fixture *f = &G.fix[2];
+        int c = hcol();
+        f->state = 0; f->col = (uint16_t)(c + 1);        /* cells c+1..c+3, support = c+1 */
+        f->drawn = 0;
+        step(0); step(0);                                /* var 1: it moves every other frame */
+        CHECK(G.vstate == V_GROUND && hcol() == c + 1,
+              "82B4: carried off the platform's leftmost cell (col %d -> %d, vstate %02x)", c, hcol(), G.vstate);
+
+        /* (b) one column further on, his support cell is past its rightmost:
+         * not carried, and nothing may drag him along. */
+        game_place(&G, 8, 40, 0); G.nobj = 0;
+        game_first_frame(&G);
+        f = &G.fix[2]; c = hcol();
+        f->state = 0; f->col = (uint16_t)(c - 2);        /* cells c-2..c, support = c+1: off it */
+        f->drawn = 0;
+        step(0); step(0);
+        CHECK(hcol() == c, "82B4: a platform whose cells stop short of his support cell does not "
+                           "drag him (col %d -> %d)", c, hcol());
+    }
 }
 
 /* ================================================ locked doors and keys */

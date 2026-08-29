@@ -31,6 +31,11 @@
 #define NAV_MAX_NODE 24000
 #define NAV_MAX_EDGE (NAV_MAX_NODE * 12)
 #define NAV_FIXDIR   0x8000u    /* efixpos flag: the platform was moving left */
+/* what one step onto a hazard cell is worth in field cost.  Not a ban: MP10's
+ * lava lake at columns 36-51 is crossable and sometimes the only way, but at
+ * 48 a cell the planner will walk a long way round rather than paddle through
+ * it, which is what a player does. */
+#define NAV_HAZCOST  48
 
 typedef enum { NAV_REACH, NAV_DOOR, NAV_FIGHT } NavMode;
 
@@ -58,6 +63,7 @@ typedef struct Nav {
     uint16_t dist[NAV_MAX_NODE];    /* to the goal */
     uint16_t udist[NAV_MAX_NODE];   /* the same with the edges undirected */
     uint8_t  pen[MAP_MAX_WIDTH][MAP_ROWS];       /* anti-stuck cost bumps */
+    uint8_t  haz[MAP_MAX_WIDTH][MAP_ROWS];       /* 1 = standing here burns (7505) */
     int      built;
 
     /* execution */
