@@ -30,6 +30,7 @@
 #define NAV_INF      60000
 #define NAV_MAX_NODE 24000
 #define NAV_MAX_EDGE (NAV_MAX_NODE * 12)
+#define NAV_FIXDIR   0x8000u    /* efixpos flag: the platform was moving left */
 
 typedef enum { NAV_REACH, NAV_DOOR, NAV_FIGHT } NavMode;
 
@@ -45,6 +46,12 @@ typedef struct Nav {
     int      nnode;
     int      eto[NAV_MAX_EDGE];     /* forward edges, grouped by source node */
     uint8_t  emacro[NAV_MAX_EDGE], ecost[NAV_MAX_EDGE];
+    /* fixture rides: an edge probed with a moving platform / elevator put
+     * under the hero is only executable while that fixture really is there.
+     * efix = fixture index + 1 (0 = the edge needs no fixture), efixpos = the
+     * column (kind 2) or row (kinds 0/1) it was probed at. */
+    uint8_t  efix[NAV_MAX_EDGE];
+    uint16_t efixpos[NAV_MAX_EDGE];   /* | NAV_FIXDIR when it was probed moving left */
     int      efirst[NAV_MAX_NODE + 1];
     int      nedge;
     uint16_t dist[NAV_MAX_NODE];    /* to the goal */
@@ -56,6 +63,7 @@ typedef struct Nav {
     int      cur_macro, cur_frame, last_macro;
     int      expect_node;
     int      stall, same, last_col, last_row;
+    int      fixwait;               /* frames spent waiting for a platform */
     uint16_t best_dist;
 
     /* scratch */

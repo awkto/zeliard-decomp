@@ -101,6 +101,7 @@ void boss_meda_entry(Game *g)
 {
     Boss *b = &g->boss;
     uint8_t hit = boss_readback(g, meda_weak);                          /* A1F8 */
+    boss_hit_flash(g, hit != 0);   /* A4F5: every part this frame carries hit bit 5 */
 
     if (hit & 0x1F) {                                                   /* A24B */
         unsigned d = (unsigned)damage_for_source(g, (uint8_t)(hit & 0x1F)) / 8u;

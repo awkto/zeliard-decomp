@@ -83,6 +83,8 @@ typedef struct Boss {
     uint16_t hp;
     uint8_t  death_cnt;
     uint8_t  parts;                 /* parts placed this frame */
+    uint8_t  part_hit;              /* CRAB A7DD etc.: a hit landed this frame, so
+                                     * every part is emitted with `hit` bit 5 set */
     uint8_t  ported;                /* 1 = a line-by-line overlay port (all eleven) */
     /* per-overlay private state (only one boss is ever live) */
     uint8_t  pose, walk_dir, parity, u1, u2, u3, u4, u5, u6, u7, u8_, u9;
@@ -239,6 +241,8 @@ struct Game {
     struct Status         *status;  /* set while the screen owns the frame loop */
     const struct TextFont *font;    /* font.grp, shared with the town and the shops */
     const struct ItemPics *pics;    /* itemp.grp icon sections */
+    const struct ScreenFrame *screen; /* mole.bin: the boot-time stone frame + HUD panel */
+    const struct EncounterCard *encnt; /* encnt.grp: the boss-room "!" card */
 
     /* messages (7210/73E0): a box stays up for 32 frames */
     uint8_t  msg_timer;             /* 9EED */

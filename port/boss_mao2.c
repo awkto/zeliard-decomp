@@ -257,6 +257,7 @@ void boss_mao2_entry(Game *g)
     Boss *b = &g->boss;
     if (!ST(S_INIT)) { ST(S_INIT) = 1; ST(S_FACING) = 0xFF; }
     uint8_t hit = boss_readback(g, NULL);                       /* A2F6 */
+    boss_hit_flash(g, hit != 0);   /* A763: every part this frame carries hit bit 5 */
 
     if (hit) {                                                  /* A362 */
         unsigned d = (unsigned)damage_for_source(g, (uint8_t)(hit & 0x1F)) / 2;

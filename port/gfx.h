@@ -45,6 +45,37 @@ int gfx_load_hero(HeroGfx *h, const char *dir);
 typedef struct { Cell2R cell[ENEMY_CELLS]; int ncells; } EnemyGfx;
 int gfx_load_enemy_cells(EnemyGfx *e, const char *dir, int enp_index);
 
+/* mole.bin (ZELRES2[7]): the static screen furniture.  GAME.BIN loads it to
+ * (BASE+0x3000):0000 and far-calls it once at boot with the video mode in AL
+ * (A178..A18D), and nothing ever redraws it — which is why neither fight.bin
+ * nor town.bin owns any of it.  Four RLE'd two-plane pictures (mole.bin 0x0E,
+ * 0x34, 0x55, 0x80, painted by the MCGA blitter at 0x24B): the strip above the
+ * playfield (48,0) 224x13, the stone frame down the left (0,0) 48x200 and the
+ * right (272,0) 48x200, and the grey HUD panel with its three white item-slot
+ * frames (48,158) 224x42; then 0x38C ORs two 8x5 cyan marks on at (8,47) and
+ * (304,47).  `on[]` marks the pixels it covers, so a blit can be redone at any
+ * point in a frame without touching the playfield. */
+#define SCREEN_FRAME_W 320
+#define SCREEN_FRAME_H 200
+typedef struct ScreenFrame {
+    uint8_t px[SCREEN_FRAME_W * SCREEN_FRAME_H];
+    uint8_t on[SCREEN_FRAME_W * SCREEN_FRAME_H];
+    int loaded;
+} ScreenFrame;
+int gfx_load_screen_frame(ScreenFrame *f, const char *dir);
+
+/* encnt.grp (ZELRES3[55]) — the "!" encounter card fight.bin flashes when a
+ * boss room is entered (6078: the overlay is loaded raw to arena:4000, then
+ * gfmcga's [301C] at 0x4518 lays out 28 x 5 eight-pixel cells at (48,40)).
+ * Each cell is 16 bytes, one 16-bit row of eight 2-bit pixels; 0x4092 turns a
+ * pixel into 0 (black), [4FF5] = 0x10 for values 1 and 2 and [4FF6] = 0x12 for
+ * 3, so the card is two reds on black.  The 140-byte cell map is read out of
+ * gfmcga.bin itself at 0x4588. */
+#define ENCNT_W 224
+#define ENCNT_H 40
+typedef struct EncounterCard { uint8_t px[ENCNT_W * ENCNT_H]; int loaded; } EncounterCard;
+int gfx_load_encounter(EncounterCard *c, const char *dir);
+
 /* font.grp (ZELRES1[12]) section 2: the 6x7 HUD digit glyphs (docs/VIDEO_DRIVERS.md
  * [F502]).  glyph[d][row] = bits 5..0, left to right. */
 typedef struct { uint8_t glyph[10][7]; int loaded; } DigitFont;

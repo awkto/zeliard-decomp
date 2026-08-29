@@ -159,6 +159,7 @@ static int drgn_weak(uint8_t type) { return (type & 0x1F) == 0; }
 void boss_drgn_entry(Game *g)
 {
     uint8_t hit = boss_readback(g, drgn_weak);                      /* A2E1 */
+    boss_hit_flash(g, hit != 0);   /* A644: every part this frame carries hit bit 5 */
 
     if (hit) {                                                      /* A33E */
         unsigned d = (unsigned)damage_for_source(g, (uint8_t)(hit & 0x1F)) / 2;

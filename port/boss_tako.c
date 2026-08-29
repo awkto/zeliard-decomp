@@ -73,6 +73,7 @@ void boss_tako_entry(Game *g)
 {
     Boss *b = &g->boss;
     uint8_t hit = boss_readback(g, tako_weak);                             /* A28B..A2D4 */
+    boss_hit_flash(g, hit != 0);   /* A44D: every part this frame carries hit bit 5 */
 
     if (hit) {                                                             /* A2DE */
         unsigned d = (unsigned)damage_for_source(g, (uint8_t)(hit & 0x1F)) * 2u;

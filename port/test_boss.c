@@ -220,6 +220,79 @@ static void t_damage(void)
     CHECK(G.boss_cutscene == 0xFF, "HP 0 starts the death cutscene (FF2E)");
 }
 
+/* CRAB A6BC and its seven cousins: a hit read back this frame makes every
+ * record the overlay emits carry `hit` bit 5, and fight.bin's `sword_apply`
+ * (6F8B) refuses a marker whose object already has it — so the blade lands on
+ * a boss at most every other frame.  ZELA, ZEL2 and MAO1 have no such write
+ * in their images and must not set it. */
+static void t_hit_flash(void)
+{
+    start_boss();
+    boss_update(&G);
+    int i = find_part(0);
+    CHECK(i >= 0, "hit flash: a part to strike");
+    CHECK((G.obj[i].hit & 0x20) == 0, "hit flash: an unstruck boss emits hit = 0");
+    G.obj[i].hit = 0x41;                                            /* pending | source 1 */
+    boss_update(&G);
+    int flashing = 0, total = G.nobj;
+    for (int k = 0; k < G.nobj; k++) if (G.obj[k].hit & 0x20) flashing++;
+    CHECK(total > 0 && flashing == total,
+          "hit flash: all %d parts carry hit bit 5 the frame after a hit (%d did)", total, flashing);
+    /* ... and the sword cannot land on them while they do (6F8B) */
+    unsigned hp = G.boss.hp;
+    G.attacking = 0xFF; G.attack_type = 0; G.attack_var = 0;
+    sword_apply(&G);
+    int pending = 0;
+    for (int k = 0; k < G.nobj; k++) if (G.obj[k].hit & 0x40) pending++;
+    CHECK(pending == 0, "hit flash: sword_apply skips a part that is already flashing");
+    G.attacking = 0;
+    boss_update(&G);
+    CHECK(G.boss.hp == hp, "hit flash: so the boss takes no damage on that frame");
+    flashing = 0;
+    for (int k = 0; k < G.nobj; k++) if (G.obj[k].hit & 0x20) flashing++;
+    CHECK(flashing == 0, "hit flash: the flag is cleared again the next frame");
+    /* and a fresh pending hit does land */
+    i = find_part(0);
+    if (i >= 0) {
+        hp = G.boss.hp;
+        G.obj[i].hit = 0x41;
+        boss_update(&G);
+        CHECK(G.boss.hp < hp, "hit flash: the frame after that, the sword lands again");
+    }
+}
+
+/* ZELA (MP4D) is one of the three overlays whose image has no `or [si+5],0x20` */
+static void t_no_hit_flash(void)
+{
+    static Map m; static Tileset t; static AiOverlay o;
+    memset(&m, 0, sizeof m); memset(&t, 0, sizeof t);
+    if (map_load_system(&m, G_DIR, 10) || gfx_load_tileset(&t, G_DIR, m.tileset) || ai_load(&o, G_DIR, m.ai)) {
+        CHECK(0, "ZELA: cannot load MP4D"); return;
+    }
+    game_init(&G, &m, &t);
+    G.present = present; G.ai = &o;
+    G.boss_map = (uint8_t)((m.lvl_flags & 0x80) ? 0xFF : 0);
+    boss_init(&G);
+    G.encounter_frames = 0;
+    game_place(&G, (int)G.boss.start_col - 8, G.boss.start_row + 3, 0);
+    enemies_load(&G);
+    boss_update(&G);
+    int z = -1;
+    for (int k = 0; k < G.nobj; k++) if (!(G.obj[k].type & 0x20)) { z = k; break; }
+    CHECK(z >= 0, "ZELA: a part to strike");
+    if (z >= 0) {
+        unsigned hp = G.boss.hp;
+        G.obj[z].hit = 0x48;                    /* magic 7: every boss scales it to something */
+        boss_update(&G);
+        CHECK(G.boss.hp < hp, "ZELA: the hit still lands");
+        int any = 0;
+        for (int k = 0; k < G.nobj; k++) if (G.obj[k].hit & 0x20) any = 1;
+        CHECK(!any, "ZELA's image has no `or [si+5],0x20`, so it never sets hit bit 5");
+    }
+    ai_unload(&o);
+    map_free(&m);
+}
+
 static void t_death(void)
 {
     start_boss();
@@ -606,7 +679,7 @@ int main(int argc, char **argv)
     }
     struct { const char *name; void (*fn)(void); } tests[] = {
         {"info blocks", t_info}, {"mp1d", t_map}, {"init", t_init}, {"crab parts", t_parts},
-        {"crab damage", t_damage}, {"crab death", t_death}, {"post-boss", t_post_boss},
+        {"crab damage", t_damage}, {"hit flash", t_hit_flash}, {"zela no flash", t_no_hit_flash}, {"crab death", t_death}, {"post-boss", t_post_boss},
         {"tako", t_tako}, {"tori", t_tori}, {"zela", t_zela}, {"zel2", t_zel2},
         {"meda", t_meda}, {"lega", t_lega}, {"layer tables", t_layers},
         {"drgn tables", t_drgn}, {"akma tables", t_akma},

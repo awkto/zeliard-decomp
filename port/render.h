@@ -22,6 +22,11 @@ struct TextFont;
 void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
                 const struct TextFont *tf, const uint8_t *place);
 void render_window(uint8_t *fb, int x, int y, int w, int h, int framed);   /* [2000] */
+/* mole.bin's stone frame / HUD panel over rows y0..y1-1 (see gfx.h).  Only the
+ * pixels it actually covers are written, so it can be re-blitted after a
+ * [2002] playfield clear or a HUD-band clear without disturbing either. */
+struct ScreenFrame;
+void render_screen_frame(uint8_t *fb, const struct ScreenFrame *f, int y0, int y1);
 void render_to_rgb(const uint8_t *fb, uint8_t *rgb);                  /* FB_W*FB_H*3 */
 
 #endif

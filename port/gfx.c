@@ -175,3 +175,128 @@ int gfx_load_digits(DigitFont *f, const char *dir)
     free(d);
     return 0;
 }
+
+/* ------------------------------------------------------------------------ */
+/* mole.bin (ZELRES2[7]) — the boot-time screen furniture (see gfx.h)        */
+/* ------------------------------------------------------------------------ */
+
+/* mole.bin 0x454: an RLE over one byte.  `b & 0xF0` == the block's own run
+ * marker gives `b & 0x0F` copies of 0xAA, 0x40 gives that many 0x00, 0xD0
+ * (only where the block enables it) that many 0xFF; anything else is one
+ * literal byte.  0x00 ends the stream. */
+static void mole_unpack(const uint8_t *img, size_t len, size_t off, uint8_t marker, int allow_ff,
+                        uint8_t *out, size_t outlen)
+{
+    size_t o = 0;
+    memset(out, 0, outlen);
+    while (off < len) {
+        uint8_t b = img[off++];
+        if (!b) return;
+        uint8_t hi = (uint8_t)(b & 0xF0);
+        int n = b & 0x0F;
+        uint8_t v;
+        if (hi == marker)                  v = 0xAA;
+        else if (hi == 0x40)               v = 0x00;
+        else if (allow_ff && hi == 0xD0)   v = 0xFF;
+        else                             { v = b; n = 1; }
+        if (!n) n = 256;
+        while (n-- > 0 && o < outlen) out[o++] = v;
+    }
+}
+
+/* mole.bin 0x24B/0x294: two planes, 2 bits per PC-88 pixel; each source byte
+ * is 4 screen pixels, and the 4-bit (left<<2 | right) pair indexes the
+ * 16-entry table at 0x2AE, which is already in the driver's `l<<3 | r` form. */
+static void mole_blit(ScreenFrame *f, const uint8_t *s1, const uint8_t *s2,
+                      const uint8_t *pal, int x4, int y, int wbytes, int rows)
+{
+    for (int r = 0; r < rows; r++) {
+        int di = (y + r) * SCREEN_FRAME_W + x4 * 4;
+        for (int c = 0; c < wbytes; c++) {
+            uint8_t dh = s2[r * wbytes + c], dl = s1[r * wbytes + c];
+            for (int k = 0; k < 4; k++) {
+                int i = ((dh >> (7 - 2 * k)) & 1) << 3 | ((dl >> (7 - 2 * k)) & 1) << 2
+                      | ((dh >> (6 - 2 * k)) & 1) << 1 | ((dl >> (6 - 2 * k)) & 1);
+                if (di >= 0 && di < SCREEN_FRAME_W * SCREEN_FRAME_H) {
+                    f->px[di] = pal[i];
+                    f->on[di] = 1;
+                }
+                di++;
+            }
+        }
+    }
+}
+
+int gfx_load_screen_frame(ScreenFrame *f, const char *dir)
+{
+    memset(f, 0, sizeof *f);
+    size_t len;
+    uint8_t *d = sar_load(dir, 1, 7, 1, &len);              /* ZELRES2[7] = mole.bin */
+    if (!d) return -1;
+    if (len < 0x2800) { free(d); return -1; }
+    const uint8_t *pal = d + 0x2AE;                          /* 0x294's 16-entry table */
+    /* {stream 1, stream 2 (0 = a blank plane), run marker, 0xD0 allowed, x4, y,
+     * bytes per row, rows} — the four calls at 0x0E, 0x34, 0x55 and 0x80 */
+    static const struct { unsigned s1, s2; uint8_t marker; uint8_t ff; int x4, y, w, rows; } BLK[4] = {
+        {0x04AE, 0x073D, 0x90, 0, 0x0C, 0x00, 0x38, 0x0D},
+        {0x08CD, 0x10DB, 0x10, 0, 0x00, 0x00, 0x0C, 0xC8},
+        {0x1861, 0x2088, 0x10, 0, 0x44, 0x00, 0x0C, 0xC8},
+        {0x2799, 0,      0x50, 1, 0x0C, 0x9E, 0x38, 0x2A},
+    };
+    static uint8_t buf1[2400], buf2[2400];                   /* 0x2926 / 0x3286, BP = 0x960 apart */
+    for (int i = 0; i < 4; i++) {
+        mole_unpack(d, len, BLK[i].s1, BLK[i].marker, BLK[i].ff, buf1, sizeof buf1);
+        if (BLK[i].s2) mole_unpack(d, len, BLK[i].s2, BLK[i].marker, BLK[i].ff, buf2, sizeof buf2);
+        else           memset(buf2, 0, sizeof buf2);         /* 0x89: the second plane is zeroed */
+        mole_blit(f, buf1, buf2, pal, BLK[i].x4, BLK[i].y, BLK[i].w, BLK[i].rows);
+    }
+    /* 0x38C/0x3B3: 10 bytes per mark, 2 bits per pixel OR-ed in as colour 4 */
+    unsigned si = 0x49A;
+    static const int MARK[2] = {47 * SCREEN_FRAME_W + 8, 47 * SCREEN_FRAME_W + 304};
+    for (int m = 0; m < 2; m++)
+        for (int r = 0; r < 5; r++) {
+            int di = MARK[m] + r * SCREEN_FRAME_W;
+            for (int b = 0; b < 2; b++) {
+                uint8_t al = d[si++];
+                for (int k = 0; k < 4; k++) {
+                    int hi = (al >> (7 - 2 * k)) & 1, lo = (al >> (6 - 2 * k)) & 1;
+                    f->px[di] |= (uint8_t)(hi << 5 | lo << 2);
+                    f->on[di] = 1;
+                    di++;
+                }
+            }
+        }
+    free(d);
+    f->loaded = 1;
+    return 0;
+}
+
+/* ------------------------------------------------------------------------ */
+/* encnt.grp — the encounter card (see gfx.h)                                */
+/* ------------------------------------------------------------------------ */
+int gfx_load_encounter(EncounterCard *c, const char *dir)
+{
+    memset(c, 0, sizeof *c);
+    size_t glen, elen;
+    uint8_t *gf = sar_load(dir, 1, 6, 1, &glen);            /* ZELRES2[6] = gfmcga.bin @3000 */
+    uint8_t *en = sar_load(dir, 2, 55, 1, &elen);           /* ZELRES3[55] = encnt.grp */
+    if (!gf || !en || glen < 0x4588 - 0x3000 + 140) { free(gf); free(en); return -1; }
+    const uint8_t *map = gf + (0x4588 - 0x3000);            /* 5 rows x 28 cell indices */
+    for (int cr = 0; cr < 5; cr++)
+        for (int cc = 0; cc < 28; cc++) {
+            unsigned cell = map[cr * 28 + cc];
+            if ((cell + 1u) * 16u > elen) continue;
+            const uint8_t *src = en + cell * 16;
+            for (int r = 0; r < 8; r++) {
+                unsigned w = (unsigned)src[r * 2] << 8 | src[r * 2 + 1];   /* 4550: xchg al,ah */
+                for (int k = 0; k < 8; k++) {
+                    unsigned v = (w >> (14 - 2 * k)) & 3;                  /* 4092 */
+                    uint8_t px = v == 0 ? 0x00 : v == 3 ? 0x12 : 0x10;
+                    c->px[(cr * 8 + r) * ENCNT_W + cc * 8 + k] = px;
+                }
+            }
+        }
+    free(gf); free(en);
+    c->loaded = 1;
+    return 0;
+}

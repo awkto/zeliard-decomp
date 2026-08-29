@@ -54,6 +54,14 @@ uint16_t boss_img16(const Game *g, unsigned addr);
  * (source & 0x1F) | 0x80 when `weak` says the part is a weak point, or 0.
  * `weak` may be NULL (no weak points). */
 uint8_t boss_readback(Game *g, int (*weak)(uint8_t type));
+/* CRAB A6BC / TAKO A44D / TORI A510 / MEDA A4F5 / LEGA A501 / DRGN A644 /
+ * AKMA A5D1 / MAO2 A763: while the overlay's own hit variable is non-zero,
+ * every record it emits this frame carries `hit` bit 5.  fight.bin's
+ * `sword_apply` (6F8B) skips a marker whose object already has it, so a boss
+ * can be struck at most every other frame.  (ZELA, ZEL2 and MAO1 have no such
+ * write in their images, so they must not set it.)  `boss_readback` clears it
+ * again at the top of every frame. */
+void boss_hit_flash(Game *g, int on);
 /* the layer paste every image-composing overlay shares (DRGN A758, AKMA A7CC,
  * MAO1 A2D3, MAO2 A939): for `cols` columns take `bpc` bitmap bytes, and for
  * every set bit (bit 7 = the layer's first row) one byte off `list`, writing

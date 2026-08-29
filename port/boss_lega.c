@@ -124,6 +124,7 @@ void boss_lega_entry(Game *g)
 {
     Boss *b = &g->boss;
     uint8_t hit = boss_readback(g, NULL);                               /* A231 */
+    boss_hit_flash(g, hit != 0);   /* A501: every part this frame carries hit bit 5 */
 
     if (hit) {                                                          /* A275 */
         unsigned d = damage_for_source(g, (uint8_t)(hit & 0x1F));

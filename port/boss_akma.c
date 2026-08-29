@@ -153,6 +153,7 @@ void boss_akma_entry(Game *g)
 {
     if (!ST(S_INIT)) { ST(S_INIT) = 1; ST(S_DIR) = 0xFF; }          /* AA21 starts 0xFF */
     uint8_t hit = boss_readback(g, NULL);                           /* A32F */
+    boss_hit_flash(g, hit != 0);   /* A5D1: every part this frame carries hit bit 5 */
 
     if (hit) {                                                      /* A38C: no scaling */
         g->sfx_request = 0x22;

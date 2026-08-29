@@ -6,6 +6,7 @@
  * the BASE:2000 video-driver primitives only (text.c), because the original
  * has to run under both town.bin and fight.bin. */
 #include "status.h"
+#include "render.h"
 #include "town.h"
 #include "sar.h"
 #include "player.h"
@@ -109,9 +110,11 @@ void itemp_sword(uint8_t *fb, const ItemPics *p, int index, int x8, int y)
 void itemp_hud(uint8_t *fb, const ItemPics *p, const TextFont *f, const Game *g)
 {
     if (!p || !p->loaded) return;
-    itemp_sword(fb, p, g->sword ? g->sword - 1 : -1, 0x18, 0xAB);          /* (192,171) */
-    itemp_icon(fb, p, 3, g->magic_sel ? g->magic_sel - 1 : -1, 0x37, 0xA4);/* (222,164) */
-    itemp_icon(fb, p, 1, g->shield    ? g->shield    - 1 : -1, 0x3E, 0xA4);/* (250,164) */
+    /* GAME.BIN A195/A1A7/A1B9 each `test byte [..],0xff / jz`: an empty slot is
+     * not drawn at all, it keeps the white frame mole.bin painted there. */
+    if (g->sword)     itemp_sword(fb, p, g->sword - 1, 0x18, 0xAB);        /* (192,171) */
+    if (g->magic_sel) itemp_icon(fb, p, 3, g->magic_sel - 1, 0x37, 0xA4);  /* (222,164) */
+    if (g->shield)    itemp_icon(fb, p, 1, g->shield - 1, 0x3E, 0xA4);     /* (250,164) */
     if (g->magic_sel)                                                      /* [2018] */
         vid_draw_digits_raw(fb, f, g->magic_count[g->magic_sel - 1], 3, 0x36, 0xBB, 1, 1, 1);
     if (g->shield)                                                         /* [201A] */
@@ -504,8 +507,10 @@ void status_open(Status *s, Game *g, const TextFont *f, const ItemPics *p, int i
     s->g = g; s->font = f; s->pics = p;
     s->in_town = in_town ? 0xFF : 0;
     player_page_push(g);
-    /* the caller cleared the playfield first (town 6901 / fight 728C) */
+    /* the caller cleared the playfield first (town 6901 / fight 728C); the
+     * screen furniture around it is mole.bin's, painted once at boot */
     for (int y = 14; y < 158; y++) memset(s->fb + y * TEXT_W + 48, 0, 224);
+    render_screen_frame(s->fb, g->screen, 0, TEXT_H);
     for (int i = 0; i < 4; i++)                                              /* A015 */
         win(s, 0xFF, WINDOW[i].x4, WINDOW[i].y, WINDOW[i].w4, WINDOW[i].h);
     draw_headers(s);                                                         /* A02E */

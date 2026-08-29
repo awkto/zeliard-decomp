@@ -385,6 +385,97 @@ static void t_capture_routes(const char *dir)
     }
 }
 
+/* The static screen art nothing in fight.bin or town.bin owns: mole.bin's
+ * frame + HUD panel (GAME.BIN A185) and the two backdrop painters. */
+static void t_art(const char *dir)
+{
+    static ScreenFrame f;
+    CHECK(gfx_load_screen_frame(&f, dir) == 0, "mole.bin (ZELRES2[7]) loads");
+    if (!f.loaded) return;
+    /* the four blocks it paints, and nothing between them */
+    int on_left = 0, on_right = 0, on_top = 0, on_hud = 0, on_play = 0;
+    for (int y = 0; y < 200; y++)
+        for (int x = 0; x < 320; x++) {
+            int v = f.on[y * 320 + x];
+            if (x < 48)            on_left  += v;
+            else if (x >= 272)     on_right += v;
+            else if (y < 13)       on_top   += v;
+            else if (y >= 158)     on_hud   += v;
+            else                   on_play  += v;
+        }
+    CHECK(on_left == 48 * 200,  "the left stone frame is 48x200 (mole.bin 0x34)");
+    CHECK(on_right == 48 * 200, "the right stone frame is 48x200 (0x55)");
+    CHECK(on_top == 224 * 13,   "the strip above the playfield is 224x13 (0x0E)");
+    CHECK(on_hud == 224 * 42,   "the HUD panel is 224x42 (0x80)");
+    CHECK(on_play == 0,         "and it never touches the playfield");
+    /* the panel is the grey 0x08 (white+black pair) with three white slot frames */
+    int grey = 0, white = 0;
+    for (int y = 158; y < 200; y++)
+        for (int x = 48; x < 272; x++) {
+            uint8_t v = f.px[y * 320 + x];
+            if (v == 0x08) grey++;
+            if (v == 0x09) white++;
+        }
+    CHECK(grey > 3000, "the HUD panel is mostly grey (%d px)", grey);
+    CHECK(white > 100, "with white item-slot frames (%d px)", white);
+    /* the two cyan marks 0x38C ORs on at (8,47) and (304,47) */
+    int cyan = 0;
+    for (int y = 47; y < 52; y++)
+        for (int x = 0; x < 320; x++)
+            if ((f.px[y * 320 + x] & 0x24) == 0x24) cyan++;
+    CHECK(cyan > 0, "0x38C's cyan marks are there (%d px)", cyan);
+
+    /* ympd.bin: 224x88 at (48,14), colours 0/1/4/5 only, and two ground strips */
+    static TownBackdrop b;
+    CHECK(town_load_backdrop(&b, dir, 0) == 0, "ympd.bin (ZELRES2[8]) loads");
+    if (b.loaded) {
+        CHECK(b.back_y0 == 14 && b.back_y1 == 102, "ympd paints y14..101");
+        CHECK(!b.has_far, "and has no separate far strip");
+        int nz = 0, bad = 0;
+        for (int y = 14; y < 102; y++)
+            for (int x = 48; x < 272; x++) {
+                uint8_t v = b.back[y * 320 + x];
+                if (v) nz++;
+                int l = v >> 3, r = v & 7;
+                if (!(l == 0 || l == 1 || l == 4 || l == 5) || !(r == 0 || r == 1 || r == 4 || r == 5)) bad++;
+            }
+        CHECK(nz > 10000, "the mountain panorama is painted (%d non-black px)", nz);
+        CHECK(bad == 0, "every pair is one of the four colours 0,1,4,5 (0x34F9)");
+        int s142 = 0, s150 = 0;
+        for (int r = 0; r < 8; r++)
+            for (int x = 0; x < 112; x++) { s142 += b.near142[r][x] != 0; s150 += b.near150[r][x] != 0; }
+        CHECK(s142 > 200 && s150 > 200, "both near strips have content (%d / %d px)", s142, s150);
+    }
+    /* ckpd.bin: 224x72 at (48,30) plus the 112x16 far strip */
+    CHECK(town_load_backdrop(&b, dir, 1) == 0, "ckpd.bin (ZELRES2[9]) loads");
+    if (b.loaded) {
+        CHECK(b.back_y0 == 30 && b.back_y1 == 102, "ckpd paints y30..101");
+        CHECK(b.has_far, "and a far parallax strip of its own");
+        int nz = 0, far = 0;
+        for (int y = 30; y < 102; y++)
+            for (int x = 48; x < 272; x++) nz += b.back[y * 320 + x] != 0;
+        for (int r = 0; r < 16; r++) for (int x = 0; x < 112; x++) far += b.far14[r][x] != 0;
+        CHECK(nz > 4000, "the cave ceiling is painted (%d px)", nz);
+        CHECK(far > 200, "the far strip has content (%d px)", far);
+    }
+    /* encnt.grp: "ENCOUNTER!" in the two reds 0x10 and 0x12 on black */
+    static EncounterCard card;
+    CHECK(gfx_load_encounter(&card, dir) == 0, "encnt.grp (ZELRES3[55]) + gfmcga's 0x4588 map load");
+    if (card.loaded) {
+        int red = 0, bad = 0;
+        for (int i = 0; i < ENCNT_W * ENCNT_H; i++) {
+            uint8_t v = card.px[i];
+            if (v) red++;
+            if (v && v != 0x10 && v != 0x12) bad++;
+        }
+        CHECK(red > 1000, "the card has %d lit pixels", red);
+        CHECK(bad == 0, "and only 0x10 / 0x12 (4092's [4FF5] / [4FF6])");
+        int left = 0;
+        for (int y = 0; y < ENCNT_H; y++) left += card.px[y * ENCNT_W] != 0;
+        CHECK(left == 0, "and its leftmost column is clear (the map's column 0 is cell 0)");
+    }
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -399,6 +490,7 @@ int main(int argc, char **argv)
         {"edges", t_edges}, {"npcs", t_npcs}, {"hand-off", t_handoff},
         {"dialogue menu", t_dialogue_menu},
         {"save file", t_save}, {"capture routes", t_capture_routes},
+        {"screen art", t_art},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = fails;

@@ -37,6 +37,16 @@ static int town_load_banks(Shell *s)
         if (town_load_sprites(&s->tspr, s->dir, s->tmap.gfx)) { fprintf(stderr, "cannot load the NPC sprites\n"); return -1; }
         s->town_spr_idx = s->tmap.gfx;
     }
+    /* town.bin 60xx: the backdrop painter the level record's bit 0 names —
+     * ympd.bin above ground, ckpd.bin underground (docs/TOWN.md §4.3) */
+    {
+        int ug = (s->tmap.town_flags & 1) != 0;
+        if (s->town_back_idx != ug) {
+            if (town_load_backdrop(&s->tback, s->dir, ug))
+                fprintf(stderr, "note: no %s (flat sky)\n", ug ? "ckpd.bin" : "ympd.bin");
+            s->town_back_idx = ug;
+        }
+    }
     return 0;
 }
 
@@ -52,6 +62,7 @@ int shell_enter_town(Game *g, int idx, int col, int died)
     town_init(&s->town, &s->tmap, &s->ttiles, &s->tspr, &s->thero, g);
     s->town.user = s; s->town.present = s->town_present;
     s->town.font = &s->tfont; s->town.dir = s->dir; s->town.pics = &s->pics;
+    s->town.back = &s->tback;
     town_place(&s->town, col < 0 ? s->tmap.start_col : col, 0);
     g->cur_map = (uint8_t)(0x80 | idx);
     g->town_map = g->cur_map;
@@ -180,17 +191,23 @@ int shell_init(Shell *s, const char *dir_hint, int map_idx)
     if (text_load_font(&s->tfont, s->dir)) fprintf(stderr, "note: no proportional font (font.grp)\n");
     if (itemp_load(&s->pics, s->dir)) fprintf(stderr, "note: no itemp.grp (no item/magic/sword pictures)\n");
     if (town_load_hero(&s->thero, s->dir)) fprintf(stderr, "note: no tman.grp (town hero sprites)\n");
+    /* GAME.BIN A185: the boot-time far call into mole.bin paints the stone
+     * frame, the strip above the playfield and the grey HUD panel once. */
+    if (gfx_load_screen_frame(&s->frame, s->dir)) fprintf(stderr, "note: no mole.bin (no screen frame)\n");
+    if (gfx_load_encounter(&s->encnt, s->dir)) fprintf(stderr, "note: no encnt.grp (blank encounter card)\n");
 
     Game *g = &s->g;
     game_init(g, &s->maps[0], &s->tiles[0]);
     g->user = s; g->present = s->present; g->on_door = on_door; g->on_town = shell_enter_town;
     g->font = &s->tfont; g->pics = &s->pics;                            /* select.bin needs both */
+    g->screen = &s->frame; g->encnt = &s->encnt;
     g->post_boss = post_boss_banks;
     /* STDPLY.BIN is the fresh player record: HP, the training sword and the
      * per-town shop stock masks (docs/TOWN.md §7). */
     if (player_load_stdply(g, s->dir)) fprintf(stderr, "note: STDPLY.BIN not found: the shops will have no stock\n");
     s->ai_index = s->enp_index = -1;
     s->town_tiles_idx = s->town_spr_idx = -1;
+    s->town_back_idx = -1;
     return 0;
 }
 

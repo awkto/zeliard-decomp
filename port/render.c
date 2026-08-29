@@ -1,4 +1,5 @@
 #include "render.h"
+#include "gfx.h"
 #include "text.h"
 #include "enemy.h"
 #include <string.h>
@@ -207,11 +208,31 @@ void render_window(uint8_t *fb, int x, int y, int w, int h, int framed)
     vid_window(fb, framed, x / 4, y, w / 4, h);
 }
 
+void render_screen_frame(uint8_t *fb, const struct ScreenFrame *f, int y0, int y1)
+{
+    if (!f || !f->loaded) return;
+    if (y0 < 0) y0 = 0;
+    if (y1 > FB_H) y1 = FB_H;
+    for (int y = y0; y < y1; y++)
+        for (int x = 0; x < FB_W; x++) {
+            int i = y * FB_W + x;
+            if (f->on[i]) fb[i] = f->px[i];
+        }
+}
+
 void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
 {
     memset(fb, 0, FB_W * FB_H);
+    render_screen_frame(fb, g->screen, 0, FB_H);
     if (g->encounter_frames) {                          /* 60E6: the encounter card */
-        if (g->encounter_frames & 1) render_window(fb, 48, 40, 224, 40, 1);
+        /* 60BC draws the card, then six {wait, clear, wait, draw} pairs, so
+         * the twelve half-flashes start with the card up. */
+        if (!(g->encounter_frames & 1)) {
+            if (g->encnt && g->encnt->loaded)
+                for (int y = 0; y < ENCNT_H; y++)
+                    memcpy(fb + (40 + y) * FB_W + 48, g->encnt->px + y * ENCNT_W, ENCNT_W);
+            else render_window(fb, 48, 40, 224, 40, 1);
+        }
         return;
     }
     if (g->walk_in) {                                   /* 7C6E: the walk-in cutscene */
@@ -297,6 +318,11 @@ static void hud_label(uint8_t *fb, const struct TextFont *tf, const uint8_t *r)
 static void vid_gauge_bar(uint8_t *fb, int bh, int bl, int w)
 {
     int x0 = 48 + bh + 1, y0 = 158 + bl;
+    /* "the column before x is cleared first" (docs/VIDEO_DRIVERS.md [2004]):
+     * the trough is drawn on the grey panel mole.bin painted, so the blank
+     * column to its left has to be blacked out or the panel shows through. */
+    for (int r = 0; r <= 9; r++)
+        if (x0 - 1 >= 0 && y0 + r < FB_H) fb[(y0 + r) * FB_W + x0 - 1] = 0x00;
     for (int x = x0; x < x0 + w && x < FB_W; x++) {
         if (y0 >= 0 && y0 < FB_H) fb[y0 * FB_W + x] = 0x00;
         for (int r = 1; r <= 8; r++) if (y0 + r < FB_H) fb[(y0 + r) * FB_W + x] = 0x05;
@@ -308,6 +334,7 @@ void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
                 const struct TextFont *tf, const uint8_t *place)
 {
     for (int y = HUD_Y; y < FB_H; y++) memset(fb + y * FB_W, 0, FB_W);
+    render_screen_frame(fb, g->screen, HUD_Y, FB_H);
     vid_gauge_bar(fb, 0x02, 0x04, 0x21);            /* LIFE */
     vid_gauge_bar(fb, 0x02, 0x10, 0x88);            /* PLACE / ENEMY */
     vid_gauge_bar(fb, 0x02, 0x1C, 0x42);            /* GOLD */

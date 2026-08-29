@@ -119,7 +119,8 @@ via `jmp [0x6000]` / `jmp [0x6002]` after loading.
 | Slot | Origin | Overlays |
 |---|---|---|
 | A | `BASE:6000` | opdemo.bin (entry 0x6002), town.bin (0x6026/0x601E), fight.bin, enddemo.bin |
-| B | `BASE:A000` | select.bin, mole.bin, kingpro/omoypro/armrpro/bankpro/churpro/drugpro/innapro/kenjpro.bin, rokademo.bin — overwrite the spent GAME.BIN boot code |
+| B | `BASE:A000` | select.bin (parked at `arena:C000` and swapped in — docs/TOWN.md §12), kingpro/omoypro/armrpro/bankpro/churpro/drugpro/innapro/kenjpro.bin, rokademo.bin — overwrite the spent GAME.BIN boot code |
+| — | `(BASE+0x3000):0000` | **mole.bin** — not an overlay at all: GAME.BIN `A16C..A18D` loads it raw here, stores the segment at `A472` and `call far [0xA470]`s it **once** at boot with the video mode in AL.  It paints the permanent screen furniture (the two 48×200 stone side frames, the 224×13 strip above the playfield and the 224×42 grey HUD panel with its three item-slot frames), which is why neither engine contains code for them. |
 
 ## Graphics: cell format and MCGA palette — DECODED (`tools/cellsheet.py`, `tools/palette.py`)
 

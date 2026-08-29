@@ -219,6 +219,15 @@ wings (4), legs (3), head (4).  Hovers over the hero every 2nd frame (columns �
 cells left, damage 40) from (col+4, row+4).  Damage ×2, ×8 on the head (class 0, contact
 56); sound 0x29; a hit ends a dive.  Death: 40 frames, sound 0x2C.
 
+### `hit |= 0x20` in a boss room
+
+Eight of the eleven overlays write `or byte [si+5],0x20` in their part emitter (CRAB `A6BC`,
+TAKO `A44D`, TORI `A510`, MEDA `A4F5`, LEGA `A501`, DRGN `A644`, AKMA `A5D1`, MAO2 `A763`);
+ZELA, ZEL2 and MAO1 never do.  It is **not** a hit flash — gfmcga `3713` tests `[FF34]`
+*before* the palette `add al,3`, so nothing flashes in a boss room.  What the bit does is
+throttle the blade: `sword_apply` (`6F8B`) skips a marker that already carries bit 5, so a
+boss can be struck at most every **other** frame — half the damage an unthrottled port does.
+
 ### Boss HUD (all eleven overlays)
 
 A boss's `[A002]+9` name record has **y = 0xBB in every overlay** — the GOLD row.  `6150`

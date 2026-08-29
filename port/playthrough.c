@@ -297,7 +297,7 @@ const PStep PLAY_ROUTE_BOSSES[] = {
   {P_CAV_CELL,  38,16,  NULL,      "MP1D: the boss reward (a Key) at (38,16)", 0},
   {P_CAV_DOOR,  -1, 0,  NULL,      "MP1D: the exit door 72F1 put there -> MP10", 0},
   {P_TOWN_GOTO,  2, 4,  NULL,      "MP10 door (128,32) -> Satono Town, column 4", 0},
-  {P_TOWN_SHOP,185, 0,  "22yc",    "Satono weapon shop: the Spirit sword", 0},
+  {P_TOWN_SHOP,185, 0,  "22yc",    "Satono weapon shop: the best sword it stocks", 0},
   {P_TOWN_SHOP, 92, 0,  "1yc",     "Satono: the Sage levels him up", 0},
   {P_GOTO,       4,41,  NULL,      "MP20 door (190,47) -> MP2D (41,18)", 18},
   {P_BOSS,       0, 0,  NULL,      "MP2D: Pulpo", 0},

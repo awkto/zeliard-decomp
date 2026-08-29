@@ -27,11 +27,14 @@ typedef struct Shell {
     AiOverlay ai;
     EnemyGfx  egfx;
     DigitFont font;
+    ScreenFrame frame;                  /* mole.bin: the boot-time screen furniture */
+    EncounterCard encnt;                /* encnt.grp: the boss-room card */
     /* the town side of the loop (docs/TOWN.md) */
     TownMap     tmap;
     TownTiles   ttiles;
     TownSprites tspr;
     TownHero    thero;
+    TownBackdrop tback;  int town_back_idx;
     Town        town;
     TextFont    tfont;
     ItemPics    pics;

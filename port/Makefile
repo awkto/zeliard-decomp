@@ -189,6 +189,33 @@ verify: zeliard test_combat test_town test_shop test_status
 		--box 51 174 136 10 --label "castle HUD PLACE box + \"Felishika's Castle\""
 	python3 tools/compare_shot.py /tmp/zel_castle.png ../docs/screenshots/restore_menu.png \
 		--box 51 162 33 10 --label "castle HUD LIFE box"
+	# mole.bin's boot-time screen furniture: the stone frame down both sides,
+	# the strip above the playfield and the grey HUD panel with its item-slot
+	# frames.  It is identical in all nine captures, so the whole 320x200
+	# screen can be diffed where the port has the same state as the capture.
+	python3 tools/compare_shot.py /tmp/zel_start.png ../docs/screenshots/cavern.png \
+		--box 0 0 320 200 --label "MP10: the WHOLE screen, frame and all"
+	python3 tools/compare_shot.py /tmp/zel_town.png ../docs/screenshots/town.png \
+		--box 0 0 320 200 --label "Muralla: the WHOLE screen (ympd backdrop + parallax)"
+	python3 tools/compare_shot.py /tmp/zel_status.png ../docs/screenshots/menu.png \
+		--box 0 0 320 200 --label "status screen: the WHOLE screen"
+	python3 tools/compare_shot.py /tmp/zel_castle.png ../docs/screenshots/restore_menu.png \
+		--box 48 158 224 42 --label "castle HUD panel (mole.bin) + gauges"
+	python3 tools/compare_shot.py /tmp/zel_boss.png ../docs/screenshots/boss_cangrejo.png \
+		--box 0 0 48 200 --label "boss room: the left stone frame"
+	python3 tools/compare_shot.py /tmp/zel_shop.png ../docs/screenshots/shop_armour.png \
+		--box 272 0 48 200 --label "armour shop: the right stone frame"
+	python3 tools/compare_shot.py /tmp/zel_cav2.png ../docs/screenshots/cavern2.png \
+		--box 48 0 224 14 --label "MP20: the strip above the playfield"
+	# ckpd.bin, the underground backdrop, and the three parallax strips
+	python3 tools/compare_shot.py /tmp/zel_satono.png ../docs/screenshots/town_satono.png \
+		--box 48 30 224 48 --label "Satono: the ckpd cave backdrop (y30..77)"
+	python3 tools/compare_shot.py /tmp/zel_satono.png ../docs/screenshots/town_satono.png \
+		--box 48 14 224 16 --label "Satono: the ckpd far parallax strip (y14..29)"
+	python3 tools/compare_shot.py /tmp/zel_satono.png ../docs/screenshots/town_satono.png \
+		--box 48 142 224 16 --label "Satono: the near ground strips (y142..157)"
+	python3 tools/compare_shot.py /tmp/zel_town.png ../docs/screenshots/town.png \
+		--box 48 142 224 16 --label "Muralla: the near strips at scroll_col 179 (8/16 px a step)"
 
 clean:
 	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio

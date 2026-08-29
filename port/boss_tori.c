@@ -106,6 +106,7 @@ void boss_tori_entry(Game *g)
 {
     Boss *b = &g->boss;
     uint8_t hit = boss_readback(g, tori_weak);                             /* A1E2 */
+    boss_hit_flash(g, hit != 0);   /* A510: every part this frame carries hit bit 5 */
 
     if (hit) {                                                             /* A235 */
         unsigned d = (unsigned)damage_for_source(g, (uint8_t)(hit & 0x1F)) * 2u;

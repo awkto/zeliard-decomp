@@ -22,7 +22,13 @@ score their level record names, and the `FF75` sound effects run through
 arrangement instead.  **Every one of the eleven boss overlays is ported** —
 DRGN, AKMA, MAO1 and MAO2 were the last four — and the HUD now draws its own
 gauge troughs, the LIFE / PLACE / GOLD / ALMAS labels and the place name, all
-pixel-identical to the DOSBox captures.  The `.usr` save file **round-trips
+pixel-identical to the DOSBox captures.  **The screen is complete**: `mole.bin`'s
+stone frame, the strip above the playfield and the grey HUD panel with its
+item-slot frames are decoded and painted, `ympd.bin` / `ckpd.bin` paint the
+mountain and cave backdrops with their three parallax strips, and `encnt.grp`'s
+"ENCOUNTER!" card flashes when a boss room opens — `docs/screenshots/cavern.png`,
+`town.png` and `menu.png` now match the port over the **whole 320x200 screen**.
+The `.usr` save file **round-trips
 through the real game**: a file written by `port/` loads under DOS with F7
 "Restore Game", which is how the cavern-2, cavern-3 and Cangrejo captures in
 `docs/screenshots/` were taken (see "Ground truth" below).
@@ -30,9 +36,9 @@ through the real game**: a file written by `port/` loads under DOS with F7
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 8 test binaries
-make test            # physics (135) + combat/AI (171) + town (114) + boss (574) + shop (118)
-                     #   + status (87) + playthrough (14) + audio (305) = 1518 assertions
-make verify          # 42 headless renders diffed against the DOSBox captures in docs/screenshots/
+make test            # physics (135) + combat/AI (171) + town (138) + boss (584) + shop (118)
+                     #   + status (87) + playthrough (23) + audio (305) = 1561 assertions
+make verify          # 53 headless renders diffed against the DOSBox captures in docs/screenshots/
 make playthrough     # the same two routes as test_playthrough, with the step-by-step log
 ./zeliard            # play cavern 1 (needs ../zeliard/ZELRES1-3.SAR or zeliard/ in the cwd)
 ./zeliard --town 1   # start in Muralla Town instead
@@ -132,7 +138,17 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
 * `gfx.c` — the 64-entry MCGA DAC (GAME.BIN A41B), 48-byte PC-88 cells packed to 8×8
   6-bit pixels ([0x2044]), 32-byte 2-bpp sprite cells with the gfmcga outline mask,
   MPPx + DCHR tile banks (DCHR at slot 0x40), fman.grp frame maps (91 × 3×3, bit 7 flip),
-  the **interleaved** enemy-bank request table (9D8D: 0 ENP1, 1 CRAB, 2 ENP2 … 14 ENP8).
+  the **interleaved** enemy-bank request table (9D8D: 0 ENP1, 1 CRAB, 2 ENP2 … 14 ENP8),
+  **`mole.bin`** (ZELRES2[7]) — the screen furniture GAME.BIN far-calls once at boot
+  (`A178..A18D`) and nothing ever redraws, which is why neither engine owns any of
+  it: four RLE'd two-plane pictures (`0x0E` the 224x13 strip above the playfield,
+  `0x34`/`0x55` the 48x200 stone frames, `0x80` the 224x42 grey HUD panel with its
+  three white item-slot frames) blitted by the mode-4 entry at `0x24B` through the
+  16-entry pair table at `0x2AE`, plus the two 8x5 cyan marks `0x38C` ORs on at
+  (8,47) and (304,47) — and **`encnt.grp`** (ZELRES3[55]), the "ENCOUNTER!" card,
+  laid out by gfmcga `[301C]` (`0x4518`) as 28x5 eight-pixel cells at (48,40) from
+  the 140-byte map inside gfmcga.bin at `0x4588`, two bits a pixel through `0x4092`
+  (`0` transparent, `3` -> `[4FF6]` = 0x12, `1`/`2` -> `[4FF5]` = 0x10).
 * `map.c` — .mdt decode (header, column-major RLE stream, fixture lists A/B/C with the
   fixture-C variant/limit words, door table C00A, patch list C00C, object table C010) and
   the STICK.BIN system-map table (map index → archive/resource).  `map_apply_patches`
@@ -180,7 +196,10 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   are swapped in, `FF34` is cleared, the `{u16 ptr, u16 val}` pokes at +8 are
   applied to the map image *and* the player page, and the exit door is moved to
   the hero's column (`scroll_col + hero_scr_col`, +9 when the ring cell 5 to his
-  left is not empty).  Knockback obeys `9F01`.
+  left is not empty).  Knockback obeys `9F01`.  Eight of the eleven overlays also
+  set `hit` bit 5 on every part they emit while their own hit variable is set
+  (`boss_hit_flash`; CRAB `A6BC` and its seven cousins), which `sword_apply` reads
+  as "already struck" — so the blade lands on a boss every *other* frame at most.
 * `boss_crab.c` — **Cangrejo**, cavern 1's boss, ported line by line: the pose
   matrices read out of the image (`[A70A]` → the 6×10 walk matrix A71E and the
   jump matrix A75A), the every-second-frame walk between columns 0x10..0x31,
@@ -270,6 +289,22 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   seven NPC behaviours (6B41), NPC markers on grid row 5 (6C2B/6C4E), Space and
   auto-talk dialogue (623F/62ED, text only), doors (6E29), edge exits (6CB5), the
   conditional patch list (6AED) and the cavern hand-off both ways (6FF8 / 7DE1).
+  It also carries **`ympd.bin` / `ckpd.bin`** (ZELRES2[8]/[9], docs/TOWN.md §4.3),
+  the two backdrop painters town.bin parks at `(BASE+0x2000):3300` and far-calls
+  with the video mode in AL — so every address in `town_load_backdrop` is a file
+  offset + 0x3300.  Above ground `ympd` paints one 224x88 picture at (48,14)
+  (mode-4 entry `0x34B8`); underground `ckpd` paints 224x72 at (48,30) plus the
+  112x16 far strip at (48,14) that `GT_SCROLL_FAR_*` moves (`0x37F3`).  Both then
+  paint the two 112x8 ground strips at (48,142) and (48,150), each duplicated to
+  +112 px.  The pixel expanders (`0x34F9`/`0x383A`) give the backdrop four colours
+  0/1/4/5 and the ground strips 0/2/4/6 (ympd's second half 0/1/2/3, which drops
+  the last shift); the three RLEs differ per overlay (`0x335C`, `0x358D`, `0x3664`).
+  The strips are stored unshifted and rolled by `scroll_col * {4, 8, 16}` mod 112 —
+  Muralla's capture at `scroll_col` 179 is 88 px / 64 px along, which is exactly
+  what `GT_SCROLL_NEAR_*`'s 8 and 16 px a step give, and both towns then match the
+  capture over the whole screen.  Map rows 0-2 show the backdrop through each
+  cell's own sky mask, the strip `GT_CAPTURE_BACKDROP` (gtmcga 3028) grabs from
+  y 78..101 before the map is drawn over it.
 * `text.c` / `text.h` — **the presentation layer**: font.grp (ZELRES1[12]) section 0
   (the 8x8 text glyphs, `[F500]`), section 1 (the 6x7 digits, `[F502]`) and section 2
   (the 4-px narrow label glyphs, `[F504]`), the proportional metrics `font_xoff`
@@ -393,12 +428,36 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   node, and from each node a dozen short button macros are run on a throw-away clone
   of the real `Game` with the enemies switched off; wherever he settles becomes an
   edge tagged with the macro and its length.  The graph is executable by construction
-  (MP10: 1439 nodes, 16603 edges, 185 k simulated frames, ~0.1 s).  Dijkstra from the
+  (MP10: 1542 nodes, 18190 edges, 197 k simulated frames, ~0.2 s).  Dijkstra from the
   goal over the reversed graph gives the field; playing is "run the macro on the
   cheapest outgoing edge, re-plan when he ends up somewhere else", plus the things a
   player does that the survey cannot see — back out of contact range, face what is
   hitting him, down-thrust whatever he is standing on, stand still and let the 719E
   regeneration run, and bump the cost of a patch of ground he cannot get out of.
+  **Fixture rides.**  An elevator, a gate or a patrolling platform is a *moving*
+  standable cell whose three cells live only in the ring, so every position one can
+  reach is ground: `fixture_rows` / `fixture_cols` make a node of each of them
+  (8024's "all three cells empty" rule bounds an elevator shaft), `probe_place_fixture`
+  puts the fixture where the node needs it before the probe runs — under the hero's
+  feet for a node it holds up, alongside for a ledge it passes, which is what a player
+  does by waiting for it — and three extra macros ("ride 4", "ride 8", "sink 3") are
+  probed from a node a fixture holds up, in *both* patrol directions, so "stand still
+  and be carried" is a move.  Because the fixture's position is not part of the node,
+  each such edge remembers the fixture and the column (or row) and direction it was
+  probed at, and `edge_ready` refuses it until the live fixture is there: waiting on a
+  ledge for the platform falls out of the ordinary planner, and `step_walks_off`
+  refuses a bare left/right step whose destination has neither ground nor a fixture
+  under it, so a stale plan cannot walk him off the end of one.  `test_playthrough`
+  crosses both of MP10's floorless gaps with it (columns 1..15 at row 43 and 32..53 at
+  row 53).  Two bugs came out of the same work: the edge chooser tested
+  `dist[to] + cost < dist[here]`, which is *never* true where the anti-stuck penalty
+  is still zero because that is exactly the equation `build_field` solved — so the
+  navigator only moved at all once the "rooted to the spot" counter had poisoned the
+  ground around it, and route 1 is 29 000 frames shorter now that it picks the field's
+  own edge; and `fits` / `standable` rejected any row within three of the ring's wrap,
+  so MP20's entry cell from Satono (row 62, feet on row 1) was not even a node and the
+  whole map was unreachable.  Rows wrap with the ring now, and MP20's locked door to
+  MP2D at (171,54) is reachable from the Satono entry where nothing was before.
 * `playthrough.c` / `playthrough.h` — **the route driver**.  A route is a list of
   objectives ("walk to Muralla's weapon shop and buy a shield", "reach the door at
   map (128,32)", "kill the boss", "work this shelf until 500 EXP"); the *movement* is
@@ -417,7 +476,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   the sound stub; every eai overlay's A008/A010 tables and a 200-frame run of each
   cavern's AI; the tall (2×4) spawn**.  It also renders the DOSBox capture's scene
   for `make verify`.
-* `test_boss.c` — 313 assertions: the `[A002]` block of **all eleven** boss
+* `test_boss.c` — 584 assertions: the `[A002]` block of **all eleven** boss
   overlays against docs/ENEMIES.md §3 (HP, EXP, gold, camera column, knock-left,
   start cell, contact damage, the name record); mp1d's level record (boss bit 7,
   AI 1 = CRAB, bank +5, post-boss banks +6/+7, an *empty* C010 list and no door);
@@ -428,7 +487,12 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   player-page flag is set); and a 200-frame run of TAKO, TORI, ZELA, ZEL2 and
   the four generic overlays with their marker and reward checks; and the layer
   tables of MEDA (21 + 8 + 6 parts) and LEGA (the nine pose popcounts against
-  their byte-list run lengths) plus all four boss projectile templates.
+  their byte-list run lengths) plus all four boss projectile templates; and the
+  **part hit bit** — that an unstruck boss emits `hit = 0`, that the frame after a
+  hit *every* part carries bit 5, that `sword_apply` then refuses them all so the
+  boss takes no damage that frame, that the flag clears again the next frame and the
+  blade lands, and that ZELA — one of the three overlays whose image has no
+  `or byte [si+5],0x20` — never sets it while still taking the hit.
 * `test_shop.c` — 118 assertions: the font metrics and `format_number`; the
   STDPLY record and the page <-> Game mapping; the NAME.USR round trip (exactly
   256 bytes); **all nine rows of both the armour and the drug price tables**
@@ -444,12 +508,18 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   (level 0 + 120 EXP -> level 1, 120/120 LIFE, 70 EXP left) and the one-level
   clamp; and the first-visit spell + `[E5]` bit (Yasmin teaches spell 1, Marid
   teaches none).
-* `test_town.c` — 85 assertions: the mrmp header, doors, cave record, exits, NPCs,
+* `test_town.c` — 138 assertions: the mrmp header, doors, cave record, exits, NPCs,
   walker range and dialogue; the mpat block list; the walk/scroll model and the block
   list; the door ±1 window; the edge exit; NPC markers, the type-1 walker's 2-frame
   cadence and the type-3 facing rule; Space dialogue in and out of range; the
   town → cavern hand-off landing on MP10 (61,7) with scroll (45,61); the return
-  position (7DE1); and the death penalties.
+  position (7DE1); the death penalties; and **the static screen art** — that
+  mole.bin's four blocks cover exactly the left 48×200, the right 48×200, the
+  224×13 strip and the 224×42 panel and never the playfield, that the panel is grey
+  with white slot frames and carries `0x38C`'s cyan marks, that ympd paints y14..101
+  with no far strip of its own and ckpd y30..101 with one, that every pair in a
+  backdrop is one of the four colours the expander can make, and that encnt.grp
+  composes "ENCOUNTER!" out of nothing but `[4FF5]` and `[4FF6]`.
 * `test_status.c` — 87 assertions: the itemp.grp section layout (6 sword
   pictures of 270 bytes, whole numbers of 192-byte icons, the GMMCGA blank slot)
   and that the Training Sword picture actually paints; the three row lists
@@ -465,12 +535,12 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   `menu_result = 8`; selecting a spell into `[9D]` and wearing an item into
   `[9E]` through the real cursor; the row change; the Enter debounce; and the
   window frames and header colours in the rendered framebuffer.
-* `test_playthrough.c` — 14 assertions over two autopilot runs (`make playthrough`
-  prints them step by step):
+* `test_playthrough.c` — 23 assertions over two autopilot runs and two fixture
+  crossings (`make playthrough` prints them step by step):
   * **route 1, the opening**, played end to end with nobody at the keyboard: the
     castle, the King's 1000 gold, the road east into Muralla Town, the weapon shop
     (the Clay shield through the real menu widget), the cavern gate at column 205,
-    ~160 000 frames of work on MP10's entrance shelf for 500 EXP, back out through
+    ~130 000 frames of work on MP10's entrance shelf for 500 EXP, back out through
     the MURALLA door, two visits to the Sage (level 1, 120 LIFE), the church and back
     into the cavern.  Asserts the gold, the shield, the level, the LIFE and that both
     hand-offs happened.
@@ -478,7 +548,14 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     MP3D/Pollo, each fought to the 40-frame death, the reward collected, and the exit
     door 72F1 puts on the hero's column taken back out into MP10 / MP20 / MP31, with
     Satono's smith and Sage and Bosque's smith in between.  Asserts three bosses,
-    no deaths, 820 EXP, the boss gold and three shops.
+    no deaths, the boss EXP and gold and three shops.
+  * **the fixture rides**: that the elevator shaft at column 48 is a node at every
+    row 8024 lets the platform reach and not only at the row the record starts on,
+    that the whole of fix[2]'s patrol (columns 1..15 at row 43) is standable while
+    the map under it is not, that a mid-platform node really has ride edges and that
+    they remember the fixture they need — and then two live crossings of MP10's
+    floorless gaps with the planner driving, westward over fix[2] (69 frames) and
+    over fix[3] at row 53 (107 frames).
 * `test_audio.c` — 305 assertions over the sound back end:
   * **the score parser against `tools/msd2mid.py`**: all 17 scores in all three
     blob-B arrangements (AdLib, Tandy, PC speaker) are run through `msd.c`, and the
@@ -514,8 +591,10 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     the same `--dump-audio` script rendered twice is bit-identical.
 * `tools/compare_shot.py` — playfield diff against a DOSBox capture.
 
-Verification: `make verify` renders six positions headlessly and compares them with
-the DOSBox captures.  All sixteen checks are 100 % pixel-identical:
+Verification: `make verify` renders nine positions headlessly and compares them with
+the DOSBox captures.  All 53 checks are 100 % pixel-identical, three of them over
+the **whole 320×200 screen** — every pixel of the frame, the backdrop, the
+playfield and the HUD at once:
 
 | check | region | match |
 |---|---|---|
@@ -529,6 +608,15 @@ the DOSBox captures.  All sixteen checks are 100 % pixel-identical:
 | armour shop portrait / text box / menu vs `shop_armour.png` | (56,23) 96×52, (52,96) 216×55, (164,29) 96×55 | 100 % |
 | **status screen vs `menu.png`** | the whole 224×144 playfield | 100 % |
 | **status INVENTORY window vs `menu.png`** | (180,63) 92×94 | 100 % |
+| **MP10 vs `cavern.png`** | the **whole screen** 320×200 | 100 % |
+| **Muralla vs `town.png`** | the **whole screen** (ympd + parallax at `scroll_col` 179) | 100 % |
+| **the status screen vs `menu.png`** | the **whole screen** | 100 % |
+| mole.bin's stone frame vs `boss_cangrejo.png` / `shop_armour.png` | (0,0) 48×200, (272,0) 48×200 | 100 % |
+| the strip above the playfield vs `cavern2.png` | (48,0) 224×14 | 100 % |
+| the HUD panel vs `restore_menu.png` | (48,158) 224×42 | 100 % |
+| the ckpd cave backdrop vs `town_satono.png` | (48,30) 224×48 | 100 % |
+| the ckpd far parallax strip vs `town_satono.png` | (48,14) 224×16 | 100 % |
+| the near ground strips vs `town_satono.png` / `town.png` | (48,142) 224×16 | 100 % |
 
 A view shifted by 3 columns scores 83 %, so the comparison is sensitive.  The
 `cavern_enemy.png` scene is reproduced by putting the hero's top-left at map
@@ -642,6 +730,36 @@ facing right.
    through `[2010]` while `6C55`/`6C87` put ENEMY where PLACE goes.  So in a boss
    room the HUD reads `LIFE / ENEMY <bar> / <boss name> ALMAS` — there is no GOLD
    line at all.  The DOSBox capture `boss_cangrejo.png` confirms it.
+24. `docs/ARCHITECTURE.md`'s overlay-slot table (row **B**) lists `mole.bin` among
+   the overlays loaded to `BASE:A000`.  It is not: GAME.BIN `A16C..A18D` loads it to
+   **`(BASE+0x3000):0000`** (the segment goes into the far pointer at `A472`, whose
+   offset word at `A470` is 0) and `call far [0xa470]`s it once, with the video mode
+   in `AL`.  Nothing else ever touches it, and what it draws — the stone frame, the
+   strip above the playfield and the grey HUD panel with its item-slot frames — is
+   why neither engine has any code for them.  Worth a line in ARCHITECTURE.md and
+   in docs/VIDEO_DRIVERS.md; the port's `gfx_load_screen_frame` is the reader.
+25. `docs/TOWN.md` §4.3's screen table splits y 14..29 ("far backdrop strip") from
+   y 30..77 ("backdrop painted by ympd/ckpd, static").  That is the **underground**
+   layout: `ckpd.bin` really does paint the two separately (224×72 at (48,30) and a
+   112×16 strip at (48,14) that is duplicated to (160,14) and is the one
+   `GT_SCROLL_FAR_*` moves).  Above ground `ympd.bin` paints **one 224×88 picture
+   at (48,14)**, so rows 14..29 there are part of the panorama and never scroll.
+   Both also paint **to y 101**, not to y 77: rows 78..101 are the strip
+   `GT_CAPTURE_BACKDROP` grabs and rows 0-2 of the map then show through their sky
+   mask, which is why the table's "78..141 the 8 map rows" and "rows 0-2 show the
+   strip captured from y 78..101" are two views of the same pixels.
+26. `docs/TOWN.md` §4.3 does not say how far the near strips are shifted per step
+   beyond "8 / 16 px".  The phase is `scroll_col × 8` and `scroll_col × 16` modulo
+   the strips' own 112-px width: `town.png` was captured at `scroll_col` 179 and its
+   two strips are exactly 88 px and 64 px along, which is what `make verify` now
+   pins.  The far strip's step is 4 px on the same 112-px cycle.
+27. `docs/ENEMIES.md` §"A030/A070" is right that the hit flash is skipped in boss
+   maps — gfmcga `3713` tests `[FF34]` *before* the `add al,3` — but that leaves
+   `hit |= 0x20` looking useless in a boss room, and it is not: eight of the eleven
+   overlays write it into every part they emit while their own hit variable is set,
+   and `sword_apply` (6F8B) refuses a marker whose object already has bit 5.  Its
+   whole effect there is to halve how often the blade can land.  Worth a sentence
+   in §1 next to the part-buffer rebuild.
 
 **A port bug worth calling out** (found while porting MAO2, fixed in `shell.c`):
 `shell_load_enemy_banks` took the level record's `+5` bank whenever the map's AI
@@ -669,12 +787,20 @@ simply fails and leaves whatever 7EBB already loaded in place.  The rule is now
   there is DOSBox ground truth for Cangrejo but not for the later bosses,
   because none of their doors is within reach of a town.
 * **The per-boss idle animation hooks** and the `[E6]` boss-room walk-in (only
-  mp90 uses it) are still skipped, and a part's hit-flash bit (`hit |= 0x20`
-  when a hit was read back) is not written, so a struck boss does not flash.
-* **The encounter card** is 12 blank flashes of the right length in the right
-  rectangle; ENCNT.GRP itself (the "!" card art) is not decoded.  Boss maps also
-  skip the `[E6]` boss-room walk-in (only mp90 uses it) and the per-boss idle
-  animations the shop `[A002]` hooks would drive.
+  mp90 uses it) are still skipped.  The part hit bit **is** written now: eight of
+  the eleven overlays carry `or byte [si+5],0x20` in their part emitter (CRAB
+  `A6BC`, TAKO `A44D`, TORI `A510`, MEDA `A4F5`, LEGA `A501`, DRGN `A644`, AKMA
+  `A5D1`, MAO2 `A763`), gated on the overlay's own hit variable, and ZELA, ZEL2
+  and MAO1 have no such write.  It is **not** a flash: gfmcga `3713` tests
+  `[FF34]` before the palette bump, so nothing flashes in a boss room at all.
+  What it does is throttle the blade — `sword_apply` (6F8B) skips a marker whose
+  object already has bit 5 — so a boss can be struck at most every other frame,
+  which is half the damage the port used to do.
+* **The encounter card is in** — `encnt.grp` decoded through gfmcga's own 28x5
+  cell map, "ENCOUNTER!" in the two reds on black, flashing twelve half-frames
+  starting with the card up (60BC draws it before the loop).  Boss maps still skip
+  the `[E6]` boss-room walk-in (only mp90 uses it) and the per-boss idle animations
+  the shop `[A002]` hooks would drive.
 * **Shop details.**  The bank's amount entry is simplified to "deposit/withdraw
   everything" (the original's 24-bit Up/Down/Left/Right entry is not ported), the
   sage's name-entry dialog and `*.usr` file browser are replaced by `--name`, and the
@@ -693,14 +819,12 @@ simply fails and leaves whatever 7EBB already loaded in place.  The rule is now
   `[FF18] == 0x0286` in the original (docs/TOWN.md §12.3).  The port has no
   key-mask model, so it is reachable only through the `K` script token / a third
   button bit.
-* **The town backdrop**: ympd.bin / ckpd.bin (the mountain / cave panorama) and the
-  near/far parallax strips are not decoded, so rows y 14..77 and y 142..157 are a flat
-  sky instead of artwork.  The dialogue box scrolls by whole lines where the original
-  slides the box up ten single pixels.
-* **NPC sprite frames.**  The town NPCs are drawn from the mman/cman frame tables, but
-  the one NPC visible in `docs/screenshots/town.png` (Muralla column 188) matches only
-  ~75 %; every sprite/frame combination was tried, so either the frame table's stride
-  or the bank's cell base needs another look.  The hero (tman) is 100 %.
+* **The town backdrop is in** (ympd.bin / ckpd.bin and all three parallax strips,
+  see `town.c` above); what is still approximate is the *phase* of the strips, which
+  the port derives from `scroll_col` rather than keeping the original's running
+  `FF2A` counter — the same value in every situation the captures cover, but a
+  restore into a scrolled town would leave the original at phase 0.  The dialogue box
+  scrolls by whole lines where the original slides the box up ten single pixels.
 * **Magic sprite artwork.**  The spell shapes, motion, timing and damage are the
   originals, but the 24 cells the sprites use (bank slots 0x67..0x7E) are refilled per
   spell by gfmcga 44CE from a table in the *parked* segment, which the port does not
@@ -710,13 +834,13 @@ simply fails and leaves whatever 7EBB already loaded in place.  The rule is now
   is simplified to "collect on overlap".
 * The swing length is a 6-frame approximation: the original's `attack_var` is
   driven by gfmcga 3E45, which has not been decoded.
-* HUD: the four gauge troughs, the LIFE/ENEMY bars, the GOLD/ALMAS digits, the
-  narrow-font labels and the place name are all pixel-exact now.  What is still
-  missing is the **grey panel behind them and the stone frame around the
-  playfield** (drawn once at boot and never redrawn, so nothing in fight.bin or
-  town.bin draws it), the white item/magic slot frames and the sign text.
-  Because the panel is missing, the HUD area outside the troughs is black
-  instead of grey.
+* HUD: the gauge troughs, the LIFE/ENEMY bars, the GOLD/ALMAS digits, the
+  narrow-font labels, the place name, the grey panel, the stone frame and the
+  item-slot frames are all pixel-exact now — `make verify` diffs the whole
+  320x200 screen against three of the captures.  What is still missing there is
+  the row of **Tear slots** GAME.BIN's `A3A5` draws along the top border through
+  `[203E]` when `[A0]` is non-zero: a fresh player has none, so no capture shows
+  them and the port skips the call.  The sign text is not drawn either.
 * Music: the MT-32 (`MSCMT.DRV`, blob A) and Tandy/PCjr (`MSCJR.DRV`, SN76496) back
   ends are not implemented — `msd.c` parses both arrangements (the Tandy tracks feed
   the speaker) but only OPL2 and the speaker are synthesised.  `SNDJR.DRV`'s effect
@@ -794,7 +918,7 @@ as it is reached:
 [play] step 0 done in 128 frames (LIFE 80/80, EXP 0, GOLD 1000, keys 0)
 ...
 [boss] defeated: 4 pokes applied, exit door at column 39, post-boss AI 0 / bank 0
-route 2 (caverns 1-3 and their bosses): 1166 frames, 5044 probe frames, 3 bosses, 3 doors, 3 shops
+route 2 (caverns 1-3 and their bosses): 1332 frames, 5044 probe frames, 3 bosses, 3 doors, 3 shops
 ```
 
 `./test_playthrough ../zeliard [--route 1|2] [-v] [--quiet] [--budget N]` runs them
@@ -842,8 +966,9 @@ Muralla's `"30yc"` is *Buy shield → the first shield → Yes → leave*.
 
 ## Ground truth
 
-`make verify` compares 42 boxes of headless renders against the DOSBox captures
-in `docs/screenshots/`; all of them are at 100 %.  Five of the captures were
+`make verify` compares 53 boxes of headless renders against the DOSBox captures
+in `docs/screenshots/`; all of them are at 100 %, and three of them are the whole
+320×200 screen.  Five of the captures were
 taken for this milestone, and getting them is worth writing down because it also
 **validated the save format end to end**.
 
@@ -907,25 +1032,39 @@ Town drops into MP60 but eight rows up and locked.
 
 ## What is left of milestone (e), and after
 
-1. **The autopilot cannot yet cross MP10's lower level unaided.**  It plays the
-   opening, the entrance shelf, the return trip and every boss room end to end, but
-   the survey graph makes the descent from the row-7 corridor to the Key at (99,41)
-   and on to the locked door at (26,15) a 694-node island that does not reach the
-   249-node island the door sits on.  Some move the twelve macros do not express is
-   missing — the likely candidates are riding the fixture-A elevator at (48,24) (its
-   nodes only exist at the row the record starts on) and the fixture-C platforms at
-   columns 7/42/43, none of which the survey can place at more than one row.
-   `nav.c` would need edges generated per fixture position.  Until then
-   `PLAY_ROUTE_BOSSES` enters each boss room with `shell_enter_cavern` at the door's
-   own destination cell — the same call the door and the town gate make — and starts
-   from the character the shops would have built by then (level 12, the Knight's
-   sword, the Honor shield, 20 000 gold), because the autopilot also cannot farm the
-   6800 gold the Spirit sword costs.  Both deviations are in one place
-   (`playthrough.c` / `test_playthrough.c`) and are the only ones.
-2. **The remaining town machinery**: the parallax strips and the ympd/ckpd
-   backdrops (neither module is decoded), the shopkeeper idle hooks, ENCNT.GRP,
-   and the HUD's grey panel + stone frame + item-slot frames.  The HUD's
-   troughs, labels, bars, digits and place name are done and verified.
+1. **MP10's boss door still cannot be walked to from the Muralla gate — and the
+   fixtures were not why.**  The survey now rides them (see `nav.c` above) and
+   crosses both of MP10's floorless gaps, and the two navigator bugs the work turned
+   up are fixed, but the entrance is still a 764-node island of the map's 1542.  Two
+   *one-way* barriers hold it, and both are the original's:
+   * the staircase at **columns 14-18, rows 19-22** is roofed with MPP1's tile
+     `0x0B`, which the tileset's own list at `[0x18]` marks as a **left-pushing
+     conveyor** (`0x0C` at `[0x1C]` is its right-pushing twin).  `walk_right`
+     (67C6) refuses to move while `conveyor == 2`, so the staircase can be walked
+     *down* and never up — the exact mirror of the right-pushing staircase at
+     columns 153-156 that docs/FIGHT.md §5 already records for the boss corridor;
+   * the second frontier, (97,39) → (93,39), is solid rock: columns 95-97 are
+     impassable from row 26 to row 42 and columns 95-105 from row 33 to row 38.
+
+   Neither the Ruzeria shoes (`max_rise` 4, tried) nor the C00C patch list (it only
+   unlocks doors) opens either.  Started instead from MP10's *own* header start
+   (26,16) — the cell beside the locked door — **1494 of the 1542 nodes and four of
+   the six doors are reachable**, including the boss door, so the map is fine and it
+   is the Muralla gate that lands the hero on the far side of the two barriers.
+   Whatever the intended route through cavern 1 is, it is not a walk from (61,7);
+   finding it is the next piece of work.  Until then `PLAY_ROUTE_BOSSES` still
+   enters each boss room with `shell_enter_cavern` at the door's own destination
+   cell — the same call the door and the town gate make — and starts from the
+   character the shops would have built by then (level 16, the Knight's sword, the
+   Honor shield, 20 000 gold; the LIFE went up when the hit throttle halved the
+   damage the blade does to a boss).  Both deviations are in one place
+   (`playthrough.c` / `test_playthrough.c`) and are the only ones.  The same work
+   *did* open MP20: its locked door to MP2D at (171,54) is now reachable from the
+   Satono entry, where before the entry cell was not even a node.
+2. **The remaining town machinery**: the shopkeeper idle hooks and the row of Tear
+   slots along the top border.  The ympd/ckpd backdrops, all three parallax strips,
+   ENCNT.GRP and the HUD's grey panel + stone frame + item-slot frames are done and
+   verified against the captures.
 3. **The rest of the sound**: the MT-32 driver (`MSCMT.DRV` over blob A, which
    `tools/msd2mid.py --mt` already decodes) and the Tandy SN76496 pair
    (`MSCJR.DRV` + `SNDJR.DRV`); `SNDADLIB`'s `15A3` ambient/proximity routine, which

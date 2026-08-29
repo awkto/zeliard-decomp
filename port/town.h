@@ -54,6 +54,30 @@ typedef struct {
     int     index;
 } TownTiles;
 
+/* ympd.bin / ckpd.bin (ZELRES2[8]/[9]): the far-called backdrop painters
+ * town.bin loads to (BASE+0x2000):3300 and calls with the video mode in AL
+ * (docs/TOWN.md §4.3).  Both are RLE'd two-plane pictures, drawn by the
+ * mode-4 entries ympd 0x34B8 / ckpd 0x37F3 with the pixel expanders 0x34F9 /
+ * 0x383A (four colours 0,1,4,5 in the driver's `l<<3 | r` form):
+ *   ympd  224x88 at (48,14) — the mountain panorama, no separate far strip;
+ *   ckpd  224x72 at (48,30) plus a 112x16 far strip at (48,14) duplicated to
+ *         (160,14), which is the one `GT_SCROLL_FAR_*` moves 4 px a step.
+ * Both then paint the near ground strips (ympd 0x374E, ckpd 0x3548): 112x8 at
+ * (48,142) and at (48,150), each duplicated to +112 px, and those are what
+ * `GT_SCROLL_NEAR_*` moves 8 and 16 px a step.  The strips are stored here
+ * unshifted; `town_render` rolls them by `scroll_col * {4,8,16} mod 112`. */
+typedef struct {
+    uint8_t back[320 * 200];        /* the static part, screen coordinates */
+    int     back_y0, back_y1;       /* the rows `back` actually covers */
+    uint8_t far14[16][112];         /* ckpd only */
+    uint8_t near142[8][112], near150[8][112];
+    int     has_far;
+    int     index;                  /* 8 = ympd, 9 = ckpd, -1 = none */
+    int     loaded;
+} TownBackdrop;
+/* `underground` = the map's town_flags bit 0 (ckpd) */
+int town_load_backdrop(TownBackdrop *b, const char *dir, int underground);
+
 /* mman/cman.grp (ZELRES2[29..30]): 5 sprites x 8 frames x 6 cell indices
  * (1-based), then 48-byte cells from 0x100 (docs/TOWN.md §4.2) */
 typedef struct { uint8_t frame[5][8][6]; Cell2 cell[256]; int ncells; int index; } TownSprites;
@@ -83,6 +107,7 @@ struct Town {
     TownTiles   *tiles;
     TownSprites *spr;
     TownHero    *hero;
+    const TownBackdrop *back;       /* ympd/ckpd (may be NULL) */
     Game        *g;                 /* the shared player record (gold, hp, keys, page) */
 
     int      scroll_col;            /* [80] */

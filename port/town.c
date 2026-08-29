@@ -429,6 +429,149 @@ static void decode48_sprite(const uint8_t *c, Cell2 *out)
     }
 }
 
+/* ======================================================================== */
+/* ympd.bin / ckpd.bin — the backdrop painters (town.h TownBackdrop)         */
+/* ======================================================================== */
+
+/* Both overlays are assembled for origin 0x3300 (town.bin parks them at
+ * (BASE+0x2000):3300), so every address below is a file offset + 0x3300. */
+#define BD_ORG 0x3300
+
+/* ckpd 0x3664: 0x1n = n zero bytes, 0x4n = n copies of 0xAA, anything else one
+ * literal; 0x00 ends the stream. */
+static void bd_unpack_ck(const uint8_t *d, size_t len, size_t off, uint8_t *out, size_t n)
+{
+    size_t o = 0;
+    memset(out, 0, n);
+    while (off < len) {
+        uint8_t b = d[off++];
+        if (!b) return;
+        uint8_t hi = (uint8_t)(b & 0xF0), v; int c;
+        if (hi == 0x10)      { c = b & 0x0F; v = 0x00; }
+        else if (hi == 0x40) { c = b & 0x0F; v = 0xAA; }
+        else                 { c = 1;        v = b;    }
+        if (!c) c = 256;
+        while (c-- > 0 && o < n) out[o++] = v;
+    }
+}
+/* ympd 0x335C: a literal byte, or 0x06 followed by {value, count}; the stream
+ * ends after `rows` rows of `w` bytes, not on a terminator. */
+static void bd_unpack_ym(const uint8_t *d, size_t len, size_t off, uint8_t *out, int w, int rows)
+{
+    int col = 0, row = 0;
+    size_t o = 0, n = (size_t)w * (size_t)rows;
+    memset(out, 0, n);
+    while (off < len && o < n) {
+        uint8_t v = d[off++]; int c = 1;
+        if (v == 6 && off + 1 < len) { v = d[off]; c = d[off + 1]; off += 2; }
+        while (c-- > 0) {
+            if (o < n) out[o++] = v;
+            if (++col == w) { col = 0; if (++row == rows) return; }
+        }
+    }
+}
+/* ympd 0x358D: the ground strips use a different RLE — 0x6n = n zero bytes,
+ * anything else one literal — and one call fills exactly one 28-byte row. */
+static void bd_unpack_ym_strip(const uint8_t *d, size_t len, size_t off, uint8_t *out, int w, int rows)
+{
+    size_t o = 0, n = (size_t)w * (size_t)rows;
+    memset(out, 0, n);
+    for (int r = 0; r < rows; r++) {
+        int bl = 0;
+        while (bl < w && off < len) {
+            uint8_t v = d[off++]; int c = 1;
+            if ((v & 0xF0) == 0x60) { c = v & 0x0F; v = 0; }
+            while (c-- > 0 && bl < w) { if (o < n) out[o++] = v; bl++; }
+        }
+    }
+}
+/* ympd 0x34F9 / ckpd 0x383A: two planes, two bits a pixel, expanded into the
+ * driver's pair byte as (p2a<<5 | p1a<<3 | p2b<<2 | p1b) — colours 0,1,4,5. */
+static void bd_pairs(uint8_t *dst, const uint8_t *p1, const uint8_t *p2, int w, int rows, int pitch)
+{
+    for (int r = 0; r < rows; r++)
+        for (int c = 0; c < w; c++) {
+            uint8_t dl = p1[r * w + c], dh = p2[r * w + c];
+            for (int k = 0; k < 4; k++) {
+                int p2a = (dh >> (7 - 2 * k)) & 1, p1a = (dl >> (7 - 2 * k)) & 1;
+                int p2b = (dh >> (6 - 2 * k)) & 1, p1b = (dl >> (6 - 2 * k)) & 1;
+                dst[r * pitch + c * 4 + k] = (uint8_t)(p2a << 5 | p1a << 3 | p2b << 2 | p1b);
+            }
+        }
+}
+
+int town_load_backdrop(TownBackdrop *b, const char *dir, int underground)
+{
+    memset(b, 0, sizeof *b);
+    b->index = -1;
+    int res = underground ? 9 : 8;                       /* ZELRES2[8] ympd / [9] ckpd */
+    size_t len;
+    uint8_t *d = sar_load(dir, 1, res, 1, &len);
+    if (!d) return -1;
+    static uint8_t p1[8192], p2[8192];
+    if (underground) {
+        /* ckpd 0x3321..0x3348: 224x72 at (48,30) */
+        bd_unpack_ck(d, len, 0x38E0 - BD_ORG, p1, 0x0FC0);
+        bd_unpack_ck(d, len, 0x426A - BD_ORG, p2, 0x0FC0);
+        bd_pairs(b->back + 30 * FB_W + 48, p1, p2, 0x38, 0x48, FB_W);
+        b->back_y0 = 30; b->back_y1 = 102;
+        /* 0x3351..0x3380: the 112x16 far strip drawn at (48,14) */
+        bd_unpack_ck(d, len, 0x4C6D - BD_ORG, p1, 0x01C0);
+        bd_unpack_ck(d, len, 0x4DB8 - BD_ORG, p2, 0x01C0);
+        bd_pairs(&b->far14[0][0], p1, p2, 0x1C, 0x10, 112);
+        b->has_far = 1;
+        /* 0x3548: the near strips, two raw planes at the end of the image
+         * (0x4F25 / 0x50E5), 28 bytes x 16 rows, expander 0x35AB (0,2,4,6) */
+        size_t o1 = 0x4F25 - BD_ORG, o2 = 0x50E5 - BD_ORG;
+        if (o2 + 0x1C0 <= len)
+            for (int r = 0; r < 16; r++)
+                for (int c = 0; c < 0x1C; c++) {
+                    uint8_t dl = d[o1 + r * 0x1C + c], dh = d[o2 + r * 0x1C + c];
+                    for (int k = 0; k < 4; k++) {
+                        int p2a = (dh >> (7 - 2*k)) & 1, p1a = (dl >> (7 - 2*k)) & 1;
+                        int p2b = (dh >> (6 - 2*k)) & 1, p1b = (dl >> (6 - 2*k)) & 1;
+                        uint8_t v = (uint8_t)(p2a << 5 | p1a << 4 | p2b << 2 | p1b << 1);
+                        if (r < 8) b->near142[r][c * 4 + k] = v;
+                        else       b->near150[r - 8][c * 4 + k] = v;
+                    }
+                }
+    } else {
+        /* ympd 0x3321..0x3333: 224x88 at (48,14) — no separate far strip */
+        bd_unpack_ym(d, len, 0x38E7 - BD_ORG, p1, 0x38, 0x58);
+        bd_unpack_ym(d, len, 0x4759 - BD_ORG, p2, 0x38, 0x58);
+        bd_pairs(b->back + 14 * FB_W + 48, p1, p2, 0x38, 0x58, FB_W);
+        b->back_y0 = 14; b->back_y1 = 102;
+        /* 0x333E..0x3357: two 448-byte streams, each 8 rows of {28, 28} bytes;
+         * 0x374E draws them at (48,142) and (48,150).  The halves swap their
+         * planes and the second drops the last shift, so its colours are
+         * 0,1,2,3 where the first half's are 0,2,4,6. */
+        static uint8_t st[896];
+        bd_unpack_ym_strip(d, len, 0x559E - BD_ORG, st,       0x1C, 0x10);
+        bd_unpack_ym_strip(d, len, 0x56F1 - BD_ORG, st + 448, 0x1C, 0x10);
+        for (int half = 0; half < 2; half++)
+            for (int r = 0; r < 8; r++) {
+                const uint8_t *row = st + half * 448 + r * 0x38;
+                for (int i = 0; i < 14; i++) {
+                    unsigned w1 = (unsigned)row[2*i] << 8 | row[2*i + 1];
+                    unsigned w2 = (unsigned)row[0x1C + 2*i] << 8 | row[0x1C + 2*i + 1];
+                    unsigned dx = half ? w2 : w1, bx = half ? w1 : w2;
+                    for (int k = 0; k < 8; k++) {
+                        int da = (dx >> (15 - 2*k)) & 1, ba = (bx >> (15 - 2*k)) & 1;
+                        int db = (dx >> (14 - 2*k)) & 1, bb = (bx >> (14 - 2*k)) & 1;
+                        unsigned al = 16u*da + 8u*ba + 2u*db + bb;
+                        if (!half) al = (al * 2) & 0xFF;
+                        if (half) b->near150[r][i * 8 + k] = (uint8_t)al;
+                        else      b->near142[r][i * 8 + k] = (uint8_t)al;
+                    }
+                }
+            }
+    }
+    free(d);
+    b->index = res;
+    b->loaded = 1;
+    return 0;
+}
+
 int town_load_sprites(TownSprites *s, const char *dir, int index)
 {
     if (index < 0 || index > 1) return -1;
@@ -760,12 +903,14 @@ void town_step(Town *t)
 
 /* ------------------------------------------------------------- rendering */
 /* docs/TOWN.md §4.3: the 8 map rows are drawn at y 78..141, x = 48 + col*8;
- * rows 0-2 show the backdrop through the cells' sky mask (the port paints a
- * flat sky instead of running ympd/ckpd).  The HUD is fight.bin's. */
+ * rows 0-2 show the ympd/ckpd backdrop through the cells' own sky mask — the
+ * strip GT_CAPTURE_BACKDROP (gtmcga 3028) grabs from y 78..101 before the map
+ * is drawn over it.  The HUD is fight.bin's. */
 #define TOWN_Y   78
 #define SKY_IDX  0x2C
 
-static void blit_cell8(uint8_t *fb, const Cell8 *c, const uint8_t sky[8][8], int x, int y)
+static void blit_cell8(uint8_t *fb, const Cell8 *c, const uint8_t sky[8][8],
+                       const TownBackdrop *bd, int x, int y)
 {
     for (int r = 0; r < 8; r++) {
         int yy = y + r;
@@ -773,9 +918,28 @@ static void blit_cell8(uint8_t *fb, const Cell8 *c, const uint8_t sky[8][8], int
         for (int k = 0; k < 8; k++) {
             int xx = x + k;
             if (xx < 48 || xx >= 48 + 224) continue;
-            fb[yy * FB_W + xx] = (sky && sky[r][k]) ? SKY_IDX : c->px[r][k];
+            uint8_t v;
+            if (sky && sky[r][k])
+                v = (bd && bd->loaded) ? bd->back[yy * FB_W + xx] : SKY_IDX;
+            else v = c->px[r][k];
+            fb[yy * FB_W + xx] = v;
         }
     }
+}
+/* GT_SCROLL_FAR_* / GT_SCROLL_NEAR_* (gtmcga 3677/3628): a walking step that
+ * scrolls the map slides the y14 strip 4 px, the y142 strip 8 and the y150
+ * strip 16, all three 112 px wide and repeated once.  The phase is therefore
+ * `scroll_col * step` modulo 112, which is what the two DOSBox town captures
+ * show (Muralla at scroll_col 179 is 88 px / 64 px along). */
+static void blit_strip(uint8_t *fb, const uint8_t strip[][112], int rows, int y, int shift)
+{
+    shift = ((shift % 112) + 112) % 112;
+    for (int r = 0; r < rows; r++)
+        for (int x = 0; x < 224; x++) {
+            int s = (x - shift) % 112;
+            if (s < 0) s += 112;
+            fb[(y + r) * FB_W + 48 + x] = strip[r][s];
+        }
 }
 static void blit_sprite(uint8_t *fb, const Cell2 *c, int x, int y)
 {
@@ -794,7 +958,18 @@ static void blit_sprite(uint8_t *fb, const Cell2 *c, int x, int y)
 void town_render(uint8_t *fb, const Town *t)
 {
     memset(fb, 0, FB_W * FB_H);
-    for (int y = 14; y < TOWN_Y; y++) memset(fb + y * FB_W + 48, SKY_IDX, 224);
+    render_screen_frame(fb, t->g ? t->g->screen : NULL, 0, FB_H);   /* mole.bin */
+    const TownBackdrop *bd = (t->back && t->back->loaded) ? t->back : NULL;
+    if (bd) {
+        for (int y = bd->back_y0; y < bd->back_y1 && y < TOWN_Y; y++)
+            memcpy(fb + y * FB_W + 48, bd->back + y * FB_W + 48, 224);
+        if (bd->has_far) blit_strip(fb, bd->far14, 16, 14, t->scroll_col * 4);
+        else for (int y = 14; y < bd->back_y0; y++) memset(fb + y * FB_W + 48, 0, 224);
+        blit_strip(fb, bd->near142, 8, 142, t->scroll_col * 8);
+        blit_strip(fb, bd->near150, 8, 150, t->scroll_col * 16);
+    } else {
+        for (int y = 14; y < TOWN_Y; y++) memset(fb + y * FB_W + 48, SKY_IDX, 224);
+    }
     for (int c = 0; c < TOWN_SCR_COLS; c++) {
         int mc = t->scroll_col + 4 + c;                                 /* gtmcga 3074 skips 4 columns */
         if (mc < 0 || mc >= t->map->width) continue;
@@ -805,8 +980,10 @@ void town_render(uint8_t *fb, const Town *t)
                     if (t->map->npcs[i].col == (uint16_t)mc) { v = t->map->npcs[i].saved; break; }
                 if (v == TOWN_MARK) v = 0;
             }
-            if (!v || !t->tiles->present[v]) continue;
-            blit_cell8(fb, &t->tiles->cell[v], r < 3 ? t->tiles->sky[v] : NULL, 48 + c * 8, TOWN_Y + r * 8);
+            /* GT_FLUSH draws *every* cell, cell 0 included: in rows 0-2 its
+             * mask is all sky, which is how the backdrop shows through. */
+            if (!t->tiles->present[v]) continue;
+            blit_cell8(fb, &t->tiles->cell[v], r < 3 ? t->tiles->sky[v] : NULL, bd, 48 + c * 8, TOWN_Y + r * 8);
         }
     }
     /* NPCs: 2 columns x 3 rows on rows 5-7 (34EC: frame = (anim & 3) + 4*right) */

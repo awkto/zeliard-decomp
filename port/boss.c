@@ -101,9 +101,12 @@ uint16_t boss_hero_col(const Game *g, int n)
     return (uint16_t)c;
 }
 
+void boss_hit_flash(Game *g, int on) { g->boss.part_hit = (uint8_t)(on ? 0x20 : 0); }
+
 uint8_t boss_readback(Game *g, int (*weak)(uint8_t type))
 {
     uint8_t hit = 0;
+    g->boss.part_hit = 0;                              /* A2F3: cleared every frame */
     for (int i = 0; i < g->nobj; i++) {
         MapObj *o = &g->obj[i];
         uint8_t r;
@@ -157,7 +160,7 @@ void boss_part(Game *g, uint16_t col, uint8_t row, uint8_t type, uint8_t phase)
     MapObj *o = &g->obj[i];
     memset(o, 0, sizeof *o);
     o->col = col; o->row = (uint8_t)(row & 0x3F); o->rcol = r;
-    o->type = type; o->hit = 0; o->phase = phase;
+    o->type = type; o->hit = g->boss.part_hit; o->phase = phase;
     o->home_col = 0xFFFF; o->flags = 0x20;              /* never respawned by 8D90 */
     int p = game_ring_index(g, o->row, r);
     g->under_sprite[i] = g->ring[p];

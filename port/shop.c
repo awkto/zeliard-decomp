@@ -9,6 +9,7 @@
  * the text, the names, the descriptions and the price tables are read out of
  * ZELRES2[10..17] at the documented addresses instead of being retyped. */
 #include "shop.h"
+#include "render.h"
 #include "sar.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -371,7 +372,10 @@ static void draw_portrait(Shop *s)
 /* ---------------------------------------------------------- the prologue */
 static void shop_prologue(Shop *s)
 {
-    memset(s->fb, 0, (size_t)TEXT_W * 158);                     /* [2002] vid_clear_playfield */
+    /* [2002] vid_clear_playfield clears the *playfield* only — rows 14..157,
+     * x 48..271 — and everything around it is mole.bin's boot-time frame. */
+    for (int y = 14; y < 158; y++) memset(s->fb + y * TEXT_W + 48, 0, 224);
+    render_screen_frame(s->fb, s->g ? s->g->screen : NULL, 0, TEXT_H);
     unsigned label = SHOPS[s->dest].label;
     if (s->dest == SHOP_SAGE) label = img16(s, 0xACBD + 2u * (unsigned)(s->town_id - 1));
     if (label) vid_label_text(s->fb, s->font, imgp(s, label));

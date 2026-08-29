@@ -116,6 +116,7 @@ void boss_crab_entry(Game *g)
 {
     Boss *b = &g->boss;
     uint8_t hit = boss_readback(g, crab_weak);                             /* A2FE..A349 */
+    boss_hit_flash(g, hit != 0);   /* A6BC: every part this frame carries hit bit 5 */
 
     if (!g->boss_cutscene && hit) {                                        /* A351 */
         unsigned d = (unsigned)damage_for_source(g, (uint8_t)(hit & 0x1F)) * 4u;
