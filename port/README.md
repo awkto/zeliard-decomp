@@ -11,18 +11,22 @@ cavern-1 boss can be reached and killed**: the Cangrejo fight, its EXP/gold
 award and the post-boss transition that opens the exit door all run.  **The
 shops work**: the proportional text box, the menu widgets and the eight
 overlays' own text and price tables, so swords, shields, potions, healing,
-inn nights, banking, spells, levels and the NAME.USR save are all in.  No sound
-output (the requests are logged) and no status screen.
+inn nights, banking, spells, levels and the NAME.USR save are all in.  **The
+status / inventory screen works** (select.bin: Enter in town or in the caverns —
+spell selection, the worn key item, the eight potion effects and the Kioku
+Feather warp), and so does the **town dialogue box**.  No sound output (the
+requests are logged).
 
 ```
 cd port
-make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 4 test binaries
-make test            # physics (135) + combat/AI (149) + town (73) + boss (313) + shop (118)
+make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 6 test binaries
+make test            # physics (135) + combat/AI (149) + town (73) + boss (313) + shop (118) + status (87)
 make verify          # headless renders diffed against the DOSBox captures in docs/screenshots/
 ./zeliard            # play cavern 1 (needs ../zeliard/ZELRES1-3.SAR or zeliard/ in the cwd)
 ./zeliard --town 1   # start in Muralla Town instead
 ./zeliard --map 1 --sword 4 --level 40 --life 800   # the cavern-1 boss room (mp1d)
 ./zeliard --town 1 --gold 5000                     # Muralla: the shops are at 39/59/111/138/172
+./zeliard --map 0 --potions 0,5,6,7 --spells 1,3,6 # then Enter: the status screen with something in it
 ```
 
 SDL2 is optional at build time.  Without the dev package the same binary is built
@@ -41,7 +45,8 @@ config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`
 | Up (or W / Z / Space) | jump (hold for up to 2 rows), climb a ladder, enter a door, **ride an elevator up**; with Left/Right: diagonal jump |
 | Down (or S) | crouch, descend a ladder, let go of a ladder, **ride an elevator down** |
 | X (or Ctrl) | **attack** — sword slash; with Up an upward slash; held with Down while airborne a down-thrust (×2 damage) |
-| C (or Alt) | **cast the selected spell** (`magic_sel`; see `--map`/tests — the item menu that picks one is not ported) |
+| C (or Alt) | **cast the selected spell** (`magic_sel`, picked on the status screen) |
+| Enter | **the status / inventory screen** (select.bin): pick a spell, wear a key item, drink a potion |
 | F12 | dump the framebuffer to the `--screenshot` file |
 | Esc | quit |
 
@@ -51,8 +56,18 @@ config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`
 |---|---|
 | Left / Right | walk one column per frame; the map scrolls while the hero is on screen columns 0x0B..0x10 |
 | Up | in front of a door: enter it (a shop is logged, a cavern gate hands over to fight.bin) |
-| Space (or X) | talk to an NPC 1-3 columns ahead (the script text goes to the window title / `--verbose`) |
+| Space (or X) | talk to an NPC 1-3 columns ahead: the **dialogue box** opens; Space turns the page, Alt cancels |
+| Enter | **the status / inventory screen** (select.bin); the potion row is disabled in town, as in the original |
 | Esc | quit |
+
+### The status screen (select.bin)
+
+| key | action |
+|---|---|
+| Left / Right | move the cursor along the row (`SELECT-MAGIC:` / `WEAR:` / `USE:`) |
+| Up / Down | change row |
+| X (or Ctrl) | on the `USE:` row only: drink the potion under the cursor |
+| Enter | close |
 
 ### Shops (kingpro / armrpro / drugpro / churpro / innapro / bankpro / kenjpro)
 
@@ -242,6 +257,20 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   Like the original the shop takes over the frame loop (town.bin does
   `call [A000]`), so SDL, `--screenshot` and `--script` all work unchanged; it
   draws into its own 320x200 buffer, which is what the driver's A000 is.
+* `status.c` / `status.h` — **the status / inventory screen** (select.bin,
+  ZELRES2[1], `src/select.c` and docs/TOWN.md §12).  Both entry vectors are here:
+  `status_run_town` = `[A002]` (the potion row is disabled) and
+  `status_run_fight` = `[A000]`.  It owns a 320×200 framebuffer and drives the
+  caller's `present` callback itself, the way `Shop` does, so the original's
+  "the overlay takes over the frame loop" shape is preserved.  The four windows,
+  the three rows, the `(count)/(max)` magic line, the INVENTORY window and the
+  "I have used …" box are drawn with the BASE:2000 primitives only, exactly as
+  the original has to be to run under both engines.  It also carries the
+  **itemp.grp** reader (`ItemPics`): the seven picture sections, the 32×16 icon
+  blitter (video_mcga 2748) and the 40×18 sword blitter (254C), plus the
+  driver's built-in blank slot read out of `GMMCGA.BIN` @2658 — which is what
+  finally puts the sword / magic / shield pictures on the HUD too
+  (`itemp_hud`).  The eight potion effects are the A452 jump table.
 * `sound.c` — the FF75 requests fight.bin and town.bin produce are consumed, counted
   and (with `--sound`) logged with their names.  No synthesis yet; docs/MUSIC.md and
   `tools/msd2mid.py` are the source for a real driver.
@@ -298,10 +327,25 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   cadence and the type-3 facing rule; Space dialogue in and out of range; the
   town → cavern hand-off landing on MP10 (61,7) with scroll (45,61); the return
   position (7DE1); and the death penalties.
+* `test_status.c` — 87 assertions: the itemp.grp section layout (6 sword
+  pictures of 270 bytes, whole numbers of 192-byte icons, the GMMCGA blank slot)
+  and that the Training Sword picture actually paints; the three row lists
+  packed out of the record (spells from `[BB..C1]`, key items from `[A1..A5]`
+  with the leading "NO USE" slot, potions from `[A6..AA]`) and each cursor
+  starting on the value in the record; that the potion row is offered outside
+  town and not in it (A09E/A293); **all eight potion effects** — Ken'ko +80
+  capped, Juu-en to full, Elixir only the selected spell (and nothing with none
+  selected, but still consumed), Chikara all seven, the Magia Stone's four orb
+  records (phases 0/4/8/12, ±1, 80 hits), the Holy Water table 80/90/100/110/
+  115/120 capped at `[96]` (and nothing without a shield), Sabre Oil stacking
+  `[E4]` and doubling / tripling `damage_for_source`, and the Kioku Feather's
+  `menu_result = 8`; selecting a spell into `[9D]` and wearing an item into
+  `[9E]` through the real cursor; the row change; the Enter debounce; and the
+  window frames and header colours in the rendered framebuffer.
 * `tools/compare_shot.py` — playfield diff against a DOSBox capture.
 
-Verification: `make verify` renders five positions headlessly and compares them with
-the DOSBox captures.  All fourteen checks are 100 % pixel-identical:
+Verification: `make verify` renders six positions headlessly and compares them with
+the DOSBox captures.  All sixteen checks are 100 % pixel-identical:
 
 | check | region | match |
 |---|---|---|
@@ -312,6 +356,9 @@ the DOSBox captures.  All fourteen checks are 100 % pixel-identical:
 | whole `cavern_enemy.png` playfield | 224×144, hero masked | 100 % |
 | town tiles vs `town.png`, screen cols 0-3 / 7-9 / 12-25 | map rows 3-7 (y 102..141) | 100 % |
 | town hero sprite vs `town.png` | (256,118) 16×24 | 100 % |
+| armour shop portrait / text box / menu vs `shop_armour.png` | (56,23) 96×52, (52,96) 216×55, (164,29) 96×55 | 100 % |
+| **status screen vs `menu.png`** | the whole 224×144 playfield | 100 % |
+| **status INVENTORY window vs `menu.png`** | (180,63) 92×94 | 100 % |
 
 A view shifted by 3 columns scores 83 %, so the comparison is sensitive.  The
 `cavern_enemy.png` scene is reproduced by putting the hero's top-left at map
@@ -410,13 +457,19 @@ facing right.
   priest, the innkeeper's blink, the drug shop's pot, the sage's ritual aura) do not
   run — the portraits are static.  omoypro (the Princess' chamber, the ending
   hand-off) is loaded but only draws its picture.
-* **The status screen** (select.bin, Enter in town) and the potion effects it applies:
-  select.bin is not decompiled at all (docs/TOWN.md §11), so the potions bought in the
-  drug shop sit in `[A6..AA]` with nothing to use them.
+* **Two dialogue opcodes.**  The town dialogue box runs `2F`, `FF`, `83` (the Elf
+  Crest), `85`, `87` and `8B`, but the two that need the yes/no menu widget —
+  `81` (the bsmp sentry's question) and `89` (the Asbestos cape for 2500 almas) —
+  take the "no" branch (scripts 13 and 6) instead of prompting.  The widget
+  exists in `shop.c`; it has to be lifted out of `Shop` first.
+* **The status screen's hidden LEVEL/EXP panel** is bound to the exact key chord
+  `[FF18] == 0x0286` in the original (docs/TOWN.md §12.3).  The port has no
+  key-mask model, so it is reachable only through the `K` script token / a third
+  button bit.
 * **The town backdrop**: ympd.bin / ckpd.bin (the mountain / cave panorama) and the
   near/far parallax strips are not decoded, so rows y 14..77 and y 142..157 are a flat
-  sky instead of artwork.  The dialogue box is not drawn either — the script text goes
-  to the window title and `--verbose`.
+  sky instead of artwork.  The dialogue box scrolls by whole lines where the original
+  slides the box up ten single pixels.
 * **NPC sprite frames.**  The town NPCs are drawn from the mman/cman frame tables, but
   the one NPC visible in `docs/screenshots/town.png` (Muralla column 188) matches only
   ~75 %; every sprite/frame combination was tried, so either the frame table's stride
@@ -467,22 +520,22 @@ facing right.
    "read the layer/pose tables out of the image and port the state machine" — the
    same shape as `boss_tako.c` / `boss_tori.c` / `boss_meda.c`.  DRGN, AKMA and MAO1
    need the ndisasm listings because the Ghidra output for them is unusable.
-2. **The status screen** (select.bin) and the potion effects, which is the last thing
-   between the port and a finishable game: the potions and the spell selection both
-   live there.  select.bin has not been decompiled yet.
-3. **The remaining town machinery**: the dialogue box (the text renderer is now in
-   `text.c`, so this is mostly wiring `town.c`'s 63C5 interpreter to it), the
-   parallax strips and the ympd/ckpd backdrops, the shopkeeper idle hooks, ENCNT.GRP.
-4. **Milestone (e), sound**: `sound.c` counts and names every FF75 request the two
+2. **The remaining town machinery**: the two menu dialogue opcodes (`81` / `89`),
+   the parallax strips and the ympd/ckpd backdrops, the shopkeeper idle hooks,
+   ENCNT.GRP.
+3. **Milestone (e), sound**: `sound.c` counts and names every FF75 request the two
    engines produce, and `docs/MUSIC.md` + `tools/msd2mid.py` describe the score
    format; what is missing is a driver — the AdLib/PC-speaker synthesis
    (`src/music_adlib.c`, `src/music_std.c`) behind an SDL2 audio callback, plus the
    sound-effect table.  Nothing in the engine has to change: the requests are
    already produced at the right frames.
-5. **More ground truth**: DOSBox captures of caverns 2-9, of a boss encounter (the
+4. **More ground truth**: DOSBox captures of caverns 2-9, of a boss encounter (the
    cavern-1 boss needs a full run through mp10, so it is a long timeline), of the
    other shops and of a town dialogue box, so `make verify` can cover the remaining
-   tilesets, the boss HP bar and the dialogue renderer.
+   tilesets, the boss HP bar and the dialogue renderer.  `docs/screenshots/menu.png`
+   turned out to be a capture of the **select.bin status screen** (Enter in
+   Felishika's Castle on a fresh game), not a shorter town menu, and `make verify`
+   now diffs the port's own status screen against it.
    `docs/screenshots/shop_armour.png` was captured for this milestone with
    `KEYS="6:Return 9:Return 16:Return 20:+Right 27.5:-Right"` followed by 26
    `+Right`/`-Right` + `+Up`/`-Up` tap pairs at 0.45 s intervals from 28 s

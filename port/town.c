@@ -1,11 +1,13 @@
 /* town.c — the town engine (town.bin) and the town maps.
  *
  * Port of the walking / NPC / door / edge-exit part of src/town.c; the shops
- * (src/shops.c), the status screen and the parallax backdrop painters are not
- * implemented.  Hex tags are town.bin addresses; docs/TOWN.md is the spec.  */
+ * (src/shops.c) and the status screen (select.bin, status.c) run on top of it;
+ * the parallax backdrop painters are not implemented.  Hex tags are town.bin addresses; docs/TOWN.md is the spec.  */
 #include "town.h"
 #include "sar.h"
 #include "render.h"
+#include "status.h"
+#include "text.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -106,6 +108,155 @@ int town_load_map(TownMap *m, const char *dir, int index)
 }
 
 void town_free_map(TownMap *m) { free(m->raw); m->raw = NULL; m->rawlen = 0; }
+
+/* ======================================================================== */
+/* The dialogue box — town.bin dialogue_start 635A / dialogue_run 63C5       */
+/* docs/TOWN.md §4 (geometry) and §6 (the script opcodes).                   */
+/* ======================================================================== */
+
+/* 65E6: the pixel width of the next word (stops at a space, '/' or an opcode) */
+static int dlg_word_width(const uint8_t *s, const uint8_t *end)
+{
+    int w = 0;
+    for (; s < end && *s < 0x80 && *s != ' ' && *s != '/'; s++)
+        if (*s >= 0x20) w += FONT_ADVANCE[*s - 0x20];
+    return w;
+}
+/* 6609: how many lines the text takes, word-wrapped at 0xA8 px */
+static int dlg_count_lines(const uint8_t *s, const uint8_t *end)
+{
+    int n = 0, x = 0;
+    for (; s < end; ) {
+        uint8_t c = *s++;
+        if (c & 0x80) return x ? n + 1 : n;
+        if (c == '/') { n++; x = 0; continue; }
+        if (c >= 0x20) x += FONT_ADVANCE[c - 0x20];
+        if (c == ' ' && x + dlg_word_width(s, end) >= 0xA8) { x = 0; n++; }
+    }
+    return x ? n + 1 : n;
+}
+
+static void dlg_frame(Town *t)
+{
+    t->frame_no++;
+    if (t->present) t->present(t);
+}
+/* 65A1 dialogue_end: wait for the button to be released, then for Space/Alt */
+static void dlg_wait_key(Town *t)
+{
+    t->btn1_edge = t->btn2_edge = 0;
+    for (int i = 0; i < 3000 && !t->quit; i++) {
+        dlg_frame(t);
+        if (t->btn1_edge || t->btn2_edge) return;
+        if (!(t->buttons & 3)) break;
+    }
+    for (int i = 0; i < 6000 && !t->quit; i++) {
+        dlg_frame(t);
+        if (t->btn1_edge || t->btn2_edge) return;
+    }
+}
+/* 64E6 newline: advance a line, scroll when the 8th is reached, and pause with
+ * the red '|' marker every 7 lines while more text is left. */
+static void dlg_newline(Town *t, int *shown, int *left, int total)
+{
+    if (t->dlg.nvis < 8) t->dlg.nvis++;
+    else {                                                          /* 64FA: scroll */
+        for (int i = 0; i < 7; i++) memcpy(t->dlg.line[i], t->dlg.line[i + 1], sizeof t->dlg.line[0]);
+    }
+    t->dlg.line[t->dlg.nvis - 1][0] = 0;
+    (*shown)++;                                                     /* 6516 */
+    if (*shown < 7 || total == 8) return;                           /* 651A */
+    *left -= 7;                                                     /* 652E */
+    t->dlg.marker = 1;                                              /* 6533: the red '|' */
+    t->btn1_edge = t->btn2_edge = 0;
+    for (int i = 0; i < 6000 && !t->quit; i++) {
+        dlg_frame(t);
+        if (!t->dlg_forced && t->btn2_edge) break;                  /* 6567: Alt cancels */
+        if (t->btn1_edge) break;
+    }
+    t->dlg.marker = 0;                                              /* 657D */
+    t->btn1_edge = 0; *shown = 0; t->sfx_request = 0x1D;            /* 658F */
+}
+
+void town_dialogue_run(Town *t, int script, int face_left)
+{
+    const TownMap *m = t->map;
+    if (script < 0 || script >= m->ndlg || !m->raw) return;
+    size_t o = (size_t)m->dlg_ptr[script] - BASE;
+    if (o >= m->rawlen) return;
+    const uint8_t *p = m->raw + o, *end = m->raw + m->rawlen;
+
+    t->hero_anim |= 1;                                              /* 63C5 */
+    t->sfx_request = 0x1E;                                          /* 636B */
+    int total = dlg_count_lines(p, end);                            /* 63F2 */
+    int left = total, shown = 0;
+    int cl = total > 8 ? 8 : (total ? total : 1);                   /* 63FA */
+    memset(&t->dlg, 0, sizeof t->dlg);
+    t->dlg.x8 = face_left ? 7 : 11;                                 /* 6370: x8 7 or 11 */
+    t->dlg.w4 = 0x2C;                                               /* 176 px */
+    t->dlg.h  = cl * 10 + 6;                                        /* 6401 */
+    t->dlg.y  = 24 + (0x56 - t->dlg.h) - ((0x40 - ((cl & 0xFE) << 3)) >> 1);   /* 640F..642A */
+    t->dlg.nvis = 1;
+    t->dlg.active = 1;
+    t->message[0] = 0;
+    int mlen = 0, x = 0, col = 0;
+
+    for (int guard = 0; guard < 4096; guard++) {
+        if (p >= end) break;
+        uint8_t c = *p++;
+        if (c == 0x2F) {
+            dlg_newline(t, &shown, &left, total); x = col = 0;
+            if (mlen < (int)sizeof t->message - 1) t->message[mlen++] = '\n';
+            continue;
+        }
+        if (c == 0xFF) break;                                       /* 6471 */
+        if (c == 0x83) { t->g->page[0x34] |= 0x80; t->g->page[0x9A] = 0xFF;   /* 6685: the Elf Crest */
+                         town_apply_patches((TownMap *)m, t->g->page); break; }
+        if (c == 0x8B) { t->g->page[0x04] |= 0x80;                  /* 664D */
+                         town_apply_patches((TownMap *)m, t->g->page); break; }
+        if (c == 0x85) { t->dlg_forced = 0xFF; t->dlg.active = 0;    /* 6695: restart with script 4 */
+                         town_dialogue_run(t, 4, face_left); return; }
+        if (c == 0x87) { dlg_wait_key(t); t->dlg.active = 0;         /* 66A2: then script 5 */
+                         town_dialogue_run(t, 5, face_left); return; }
+        /* 0x81 (yes/no) and 0x89 (Take / No Take) need the menu widget; the
+         * port takes the "no" branch (scripts 13 and 6) for now. */
+        if (c == 0x81) { t->dlg.active = 0; town_dialogue_run(t, 13, face_left); return; }
+        if (c == 0x89) { t->dlg.active = 0; town_dialogue_run(t, 6, face_left); return; }
+        if (c >= 0x80 || c < 0x20) continue;
+        if (col < (int)sizeof t->dlg.line[0] - 1) {                  /* 6478: printable */
+            t->dlg.line[t->dlg.nvis - 1][col++] = (char)c;
+            t->dlg.line[t->dlg.nvis - 1][col] = 0;
+        }
+        x += FONT_ADVANCE[c - 0x20];                                 /* 64B8 */
+        if (mlen < (int)sizeof t->message - 1) t->message[mlen++] = (char)(c == '\\' ? '\'' : c);
+        if (c == ' ' && x + dlg_word_width(p, end) >= 0xA8) {         /* 64C7 */
+            dlg_newline(t, &shown, &left, total); x = col = 0;        /* t->message keeps the
+                         unwrapped text: only an explicit 0x2F breaks a line there */
+        }
+    }
+    t->message[mlen] = 0;
+    dlg_wait_key(t);                                                 /* 65A1 */
+    t->dlg.active = 0;                                               /* 6396: the box comes down */
+    t->btn1_edge = t->btn2_edge = 0; t->dlg_forced = 0;
+}
+
+/* draw the box and its lines over the finished town frame (63C5 / 6478) */
+static void dlg_render(uint8_t *fb, const Town *t)
+{
+    if (!t->dlg.active || !t->font) return;
+    vid_window(fb, 0xFF, t->dlg.x8 * 2, t->dlg.y, t->dlg.w4, t->dlg.h);
+    for (int l = 0; l < t->dlg.nvis; l++) {
+        int x = t->dlg.x8 * 8 + 4, y = t->dlg.y + l * 10 + 4;
+        for (const char *c = t->dlg.line[l]; *c; c++) {
+            uint8_t ch = (uint8_t)*c;
+            if (ch < 0x20 || ch >= 0x80) continue;
+            vid_putchar(fb, t->font, ch, 1, x - FONT_XOFF[ch - 0x20], y);
+            x += FONT_ADVANCE[ch - 0x20];
+        }
+    }
+    if (t->dlg.marker)                                               /* 6533 */
+        vid_putchar(fb, t->font, 0x7C, 2, t->dlg.x8 * 8 + 0x54, t->dlg.y + 0x4A);
+}
 
 const char *town_dialogue(const TownMap *m, int script)
 {
@@ -394,8 +545,7 @@ static void check_talk(Town *t)
         if (!n || (n->flags & 0xC0)) return;                            /* 6288 */
         if (step > 0) n->sprite |= 0x80; else n->sprite &= 0x7F;        /* face the hero */
         n->anim |= 1;
-        t->sfx_request = 0x1E;
-        snprintf(t->message, sizeof t->message, "%s", town_dialogue(t->map, n->script));
+        town_dialogue_run(t, n->script, (t->hero_flags & 1) != 0);      /* 638F */
         return;
     }
 }
@@ -414,7 +564,8 @@ static void check_auto_talk(Town *t)
     n->anim |= 1;
     n->flags &= 0x7F;                                                   /* 635A: only once */
     t->sfx_request = 0x1E;
-    snprintf(t->message, sizeof t->message, "%s", town_dialogue(t->map, n->script));
+    t->dlg_forced = 0xFF;                                               /* 62ED: uncancellable */
+    town_dialogue_run(t, n->script, (t->hero_flags & 1) != 0);
 }
 
 /* 0x6E29  "up" in front of a door (the hero's column ±1). */
@@ -480,11 +631,26 @@ void town_init(Town *t, TownMap *m, TownTiles *ti, TownSprites *s, TownHero *h, 
 }
 
 /* 0x61FC  one iteration of the town main loop. */
+/* 0x68F3  Enter: swap select.bin in from arena:C000 and run the status screen
+ * (status.c).  town.bin then clears the playfield, repaints the backdrop and
+ * forces a full redraw; nothing reads menu_result [FF4B] on this side. */
+static void check_status_menu(Town *t)
+{
+    if (!t->menu_key) { t->menu_debounce = 0; return; }                 /* 68F3 */
+    if (t->menu_debounce) return;
+    t->g->sfx_request = 0x0B;                                           /* 68FC */
+    status_run_town(t);                                                 /* 6909 */
+    t->menu_debounce = 0xFF;
+    t->btn1_edge = t->btn2_edge = 0;                                    /* 692D/6932 */
+}
+
 void town_step(Town *t)
 {
     town_npc_update(t);                                                 /* 68AC */
     t->frame_no++;
     if (t->present) t->present(t);
+    if (t->action) return;
+    check_status_menu(t);                                               /* 68F3 */
     if (t->action) return;
     check_edge_exit(t);                                                 /* 6202 */
     if (t->action) return;
@@ -578,4 +744,5 @@ void town_render(uint8_t *fb, const Town *t)
             blit_sprite(fb, &t->hero->cell[cell], 48 + cx * 8, TOWN_Y + cy * 8);
         }
     }
+    dlg_render(fb, t);                                              /* 63C5 */
 }

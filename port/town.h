@@ -96,7 +96,23 @@ struct Town {
     void    *user;
     /* the shop overlay currently swapped into A000 (town.bin 6E7E) — while it
      * is set the shop owns the screen and the frame loop */
+    /* the dialogue box (town.bin dialogue_run 63C5) while it is up: the box
+     * geometry and the lines currently visible in it.  The renderer replays
+     * them with the proportional font every frame. */
+    struct {
+        int  active, x8, y, w4, h, marker, nvis;
+        char line[8][80];
+    } dlg;
+    int      dlg_forced;            /* 7C54: an auto-talk script cannot be cancelled */
+    int      quit;                  /* port: the shell wants out of a blocking box */
+
     struct Shop *shop;
+    /* select.bin, swapped in on Enter (town.bin 68F3); while it is set the
+     * status screen owns the screen and the frame loop */
+    struct Status *status;
+    uint8_t  menu_key;              /* FF18 bit0 (Enter) */
+    uint8_t  menu_debounce;
+    const struct ItemPics *pics;    /* itemp.grp, shared with the status screen */
     const struct TextFont *font;    /* font.grp, shared with the shops */
     const char  *dir;               /* the game directory, for the overlays */
 };
@@ -110,6 +126,9 @@ int  town_hero_col(const Town *t);                  /* scroll_col + hero_scr_col
 int  town_cell_walkable(const Town *t, uint8_t v);  /* 686E */
 void town_npc_update(Town *t);                      /* 6B1C */
 void town_npc_markers_reset(Town *t);               /* 6C2B */
+/* 635A/63C5: open the box for `script` and run it to the end.  Blocks on
+ * t->present exactly as the original blocks on its frame loop. */
+void town_dialogue_run(Town *t, int script, int face_left);
 /* render one 320x200 MCGA frame (playfield rows at y 78..141) */
 void town_render(uint8_t *fb, const Town *t);
 

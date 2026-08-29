@@ -133,7 +133,7 @@ established the meaning. *uncertain* = inferred from a single use.
 | 9B | 1 | glory_crest | 0 | |
 | 9C | 1 | hero_crest | 0 | |
 | 9D | 1 | magic_sel | 0 | 1..7 |
-| 9E | 1 | shoes | 0 | 1 Feruza (jump 4) 2 Pirika (hazard immune) 3 Silkarn (no conveyor kick) 4 Ruzeria (no ice slide) 5 heat immune |
+| 9E | 1 | worn_key_item | 0 | the **worn** key item, selected in select.bin's WEAR row (`[A1..A5]` is the bag): 1 Feruza shoes (jump 4) 2 Pirika (hazard immune) 3 Silkarn (no conveyor kick) 4 Ruzeria (no ice slide) 5 Asbestos cape (heat immune) |
 | A1 | ~10 | inventory | 0 | item ids, 0-terminated (`90B9`) |
 | AB | 7 | magic_count | 0C 06 08 04 03 04 03 | |
 | B2 | 2 | max_hp | 0x50 | |
@@ -160,3 +160,23 @@ established the meaning. *uncertain* = inferred from a single use.
 | EB80 | 31×13 | enemy projectiles (`struct shot`) |
 | ED20 | 128 | cell saved under sprite marker i |
 | EDA0 | 1 | boss_state (0xFF = defeated; written by boss AI) |
+
+## select.bin additions (Sprint 13)
+
+Documented in full in `docs/TOWN.md` §12; the fields it owns or reveals:
+
+| Addr | Size | Name | Meaning |
+|---|---|---|---|
+| `9D` | 1 | `magic_sel` | selected spell 1-7 (0 = none); **select.bin is the only writer** |
+| `9E` | 1 | `worn_key_item` | the worn key item (see above); `[A1..A5]` is the bag |
+| `A6..AA` | 5 | `potion_slots` | each holds *drug id + 1*; zeroed when drunk (`A422..A437`) |
+| `AB..B1` / `B4..BA` | 7+7 | `magic_charge` / `magic_max` | per-spell charges and maxima |
+| `94` / `96` | 1+1 | `shield_hp` / `shield_hp_max` | max confirmed; Holy Water adds `{80,90,100,110,115,120}[shield−1]` capped |
+| `E4` | 1 | `sabre_oil` | +1 per Sabre Oil, **no cap**; cleared on entering town |
+| `FF4B` | 1 | `menu_result` | potion slot value; **8 = Kioku Feather → warp to town** (fight.bin 99E0, no death penalty) |
+| `FF18` | 2 | `key_mask` | `== 0x0286` on the potion row opens the hidden LEVEL/EXP panel |
+| `EB60..EB7B` | 28 | `orbs[4]` | 7-byte records `{phase, dir, hits, 0,0,0,0}`; Magia Stone arms 4 × 80 hits |
+
+**Original bug** (replicated in `port/`): at `A199` the magic row's Down tests `[ADF8]`
+(the in-town flag) but the following `mov cl,2` discards the flags, so the potion row is
+reachable from the magic row in town even though it was meant to be town-only.

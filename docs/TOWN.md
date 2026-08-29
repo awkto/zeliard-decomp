@@ -424,3 +424,225 @@ table" is wrong.  ARCHITECTURE.md "Town maps … pointers at odd offsets" → §
 * gd `[3006]` call in omoypro's ending hand-off; the unreferenced gdtga record.
 * `[9F]`, `[2B]` bit4, `[42]` bit3 meanings; fight.bin's death penalty formula at 9715.
 * Dialogue opcode 0x8B and the `\x01` byte at the start of llmp script 3 (drawn as a glyph).
+
+## 12. select.bin — the status / inventory screen and the potion effects
+
+Companion to `src/select.c` (ZELRES2[1], 3613 bytes, image `A000..AE1C`).  This
+closes the first bullet of §11: select.bin **is** decoded now.  Addresses are
+BASE offsets; everything was read from `disasm/overlays/select.asm`.
+
+### 12.1 Loading and calling convention
+
+select.bin is a slot-B overlay that is never loaded on demand: GAME.BIN parks it
+at **`arena:C000`** at boot, and both engines *swap* it into `BASE:A000` for the
+duration of the screen so that whatever already lives at A000 (a shop overlay in
+town, the enemy/boss AI in a cavern) survives.  The swap is 0x800 words in both
+directions — town.bin `swap_select_overlay` 6938, fight.bin `swap_C000_A000`
+72D9.
+
+| Vector | Addr | Caller | `in_town` `[ADF8]` |
+|---|---|---|---|
+| `[A000]` | A004 | fight.bin `check_item_menu` 728C (`call [A000]`) | `0x00` |
+| `[A002]` | A00B | town.bin `check_status_menu` 6909 (`call [A002]`) | `0xFF` |
+
+Both fall into `select_main` A010 and differ *only* in that byte.  The caller
+sets `sfx_request [FF75] = 0x0B`, calls `vid_clear_playfield [2002]`, swaps,
+calls the vector, swaps back and repaints the world (town 6911..6932, fight
+72A1..72B9).  The screen returns with a plain `ret`.
+
+The **only** value handed back is `menu_result [FF4B]`, which `use_potion` sets
+to the *potion slot value* (drug id + 1) of whatever was drunk.  fight.bin tests
+it for **8** — id 7, the Kioku Feather — and runs `return_to_town` (729C).  No
+other id means anything to the caller, and nothing ever clears `[FF4B]` again
+(GAME.BIN zeroes it once at A044).
+
+Everything is drawn through the **video driver** at `BASE:2000`
+(docs/VIDEO_DRIVERS.md), never through gtmcga or gfmcga, because the same image
+must run under both engines.  select.bin is the sole caller of `[202E]`
+(cursor frame), `[2030]`/`[2032]` (digits) and `[2034]`/`[2036]`/`[203A]`/
+`[203C]` (itemp icon sections 6/5/4/2), and the reason those slots exist.
+Waiting is `idle_poll` AA58, which runs the five kernel hotkey services
+`[110]..[118]` and then reports the menu key; input is `int 61h` (AL =
+directions, AH = buttons) read directly.
+
+### 12.2 Layout
+
+Four framed windows (`vid_window` style `0xFF`), from the table at `ADE8`:
+
+| # | x4, y | w4, h | pixels | contents |
+|---|---|---|---|---|
+| 0 | 0C, 0E | 38, 33 | (48,14) 224×51 | `SELECT-MAGIC:` + spell name, the magic row |
+| 1 | 0C, 3F | 22, 30 | (48,63) 136×48 | `WEAR:` + item name, the item row |
+| 2 | 0C, 6D | 22, 30 | (48,109) 136×48 | `USE:` + potion name, the potion row |
+| 3 | 2D, 3F | 17, 5E | (180,63) 92×94 | `INVENTORY`: sword, shield, keys, crests |
+
+The playfield outside those windows is left as the caller cleared it, so the
+town's / cavern's decorative border outside x 48..271 stays on screen —
+`docs/screenshots/menu.png` is exactly this screen (opened with Return in
+Felishika's Castle), **not** a shorter town menu.
+
+Headers (`draw_headers` A9D5, table A9FC, records `{u16 x_px, u8 y, asciiz}`)
+are drawn in the 8×8 font with a blue drop shadow; the header of the active row
+is red (colour 2), the others green (3).  `INVENTORY` is index 3 and therefore
+never highlighted.
+
+| header | x px | y | drawn red when |
+|---|---|---|---|
+| `SELECT-MAGIC:` | 52 | 18 | `pane == 0` |
+| `WEAR:` | 52 | 67 | `pane == 1` |
+| `USE:` | 52 | 113 | `pane == 2` |
+| `INVENTORY` | 184 | 67 | never |
+
+Row geometry — each row is a strip of 20×20 cursor cells (`[202E]`), with the
+32×16 icon two pixels inside:
+
+| row | icon vector | icon x4, y | cursor x4, y | pitch |
+|---|---|---|---|---|
+| magic | `[201E]` itemp §3 | 0E, 1C | 0E, 1A | +8 x4 (32 px) |
+| item | `[2034]` itemp §6 | 0E, 55 | 0E, 53 | +5 x4 (20 px) |
+| potion | `[2036]` itemp §5 | 0E, 83 | 0E, 81 | +5 x4 (20 px) |
+
+Cursor colours: **2** red = the active row, **5** blue = an inactive row, **0**
+erases.  Under each magic icon `draw_magic_counts` A929 prints the charge count
+`[AB+n-1]` (colour 1) at y 46 and `(max)` `[B4+n-1]` (colour 4) at y 55.
+
+Empty rows all print `NOTHING` (`AA92`, colour 1, no shadow): magic at (158,18),
+items at (92,67), potions at (84,113).  `NO USE` (`AA9A`) is the *name* of the
+leading blank slot of the item and potion rows when the row is not empty.
+
+### 12.3 The three rows and their model
+
+`pane [ADF9]` selects the row; the jump table is at `A0C4` = {A0CA magic, A1BB
+item, A2B9 potion}.  Left/Right move within a row, Up/Down change rows, and each
+row is entered only when it is non-empty.  The lists are packed at entry:
+
+| list | source | count | cursor |
+|---|---|---|---|
+| `magic_list[7]` `AE03` | spell numbers 1..7 where `[BB+n-1] != 0` | `n_magic [ADFA]` | `[ADFB]` |
+| `item_list[6]` `AE0A` | `0` then the non-zero bytes of `[A1..A5]` | `n_items [ADFC]` = items+1 | `[ADFD]` |
+| `potion_list[6]` `AE10` | `0` then the non-zero bytes of `[A6..AA]` | `n_potions [ADFE]` = potions+1 | `[AE00]` |
+
+The leading `0` entry of the item and potion lists is the "NO USE" slot, drawn
+with the driver's built-in blank icon; the counts are `n+1` when `n > 0` and
+`0` when the record is empty.  Each cursor starts on the value currently in the
+record (`repne scasb` A8D7 / A6F6).
+
+* **Magic row** — `magic_select` A135 writes the spell number to `magic_sel
+  [9D]`, prints the name from the table at `AAB8` (Espada, Saeta, Fuego,
+  Lanzar, Rascar, Agua, Guerra) at (158,18), and refreshes the HUD's magic box
+  (`[201E]` at (222,164)) and its charge count (`[2018]`).  This is the only
+  place the player picks a spell.
+* **Item row (`WEAR:`)** — `item_select` A228 writes the *item id* to `[9E]`,
+  the field docs/STATE_PAGE.md calls `shoes`.  So `[A1..A5]` is the bag of key
+  items and `[9E]` is the single one currently **worn**; wearing is exclusive
+  and choosing the leading `0` entry takes everything off.  Names from `AAF3`,
+  indexed by `[9E]` itself (0 = "NO USE"): 1 Feruza shoes, 2 Pirika shoes,
+  3 Silkarn shoes, 4 Ruzeria shoes, 5 Asbestos cape.
+* **Potion row (`USE:`)** — moving the cursor calls `potion_show` A33C, which
+  stores the slot value in `potion_sel [ADFF]` and prints the two-line name
+  from `AC32`.  **The sword button (`int 61h` AH bit 0) drinks it** — see §12.4.
+
+**Potions are cavern-only.**  The initial row choice at A09E skips the potion
+row when `in_town`, and the item row's Down at A293 refuses to go there in town;
+`draw_potion_row` A669 does not even draw a cursor in town.  The magic row's
+Down (A190) *means* to make the same check but the `test [ADF8]` at A199 is
+immediately clobbered by the `mov cl,2` that follows, so the potion row is
+reachable from the magic row in town — an **original bug**, harmless because
+`use_potion` still works there (the effects just have nothing to act on).
+
+**Hidden LEVEL / EXP panel** (`show_level_box` A3B7): while the potion row is
+active, `key_mask [FF18] == 0x0286` exactly opens a framed box at (108,67)
+104×36 showing `LEVEL` = `[8D]+1` (2 digits) and `EXP` = `[8E]` (5 digits).
+Any direction key closes it.  This is the only place outside the sage where the
+level and the experience are shown.
+
+Both the level box and the "I have used" box save the 28×36-cell region behind
+them with `vid_save_rect [2026]` (`x8 6, y 0x43, w8 0x1C, 0x24 rows`, staging
+offset 0) and put it back with `[2028]`; `box_open [AE02]` is the flag.
+
+### 12.4 Potion effects (`use_potion` A40D, jump table `A452`)
+
+Using a potion first **removes it from the record**: A422..A437 walks `[A6..AA]`
+counting non-zero slots until it reaches `potion_cursor` and zeroes that byte,
+then rebuilds `potion_list`.  `menu_result [FF4B]` is set to `potion_sel`.  Two
+return addresses are pushed — `A5B4` `potion_epilogue` (repaint the row) and
+`A2C7` (back to the potion loop) — and the effect is dispatched on
+`potion_sel - 1`, i.e. the drugpro item id of §7.
+
+| id | item | addr | effect | record fields | redraw |
+|---|---|---|---|---|---|
+| 0 | Ken'ko Potion | A462 | `hp += 80`, capped at `max_hp` | `[90]`, cap `[B2]` | `[2008]` life bar |
+| 1 | Juu-en Fruit | A483 | `hp = max_hp` | `[90] = [B2]` | `[2008]` |
+| 2 | Elixir of Kashi | A496 | refill the **selected** spell; **no effect if `[9D] == 0`** (the potion is still consumed) | `[AB+[9D]-1] = [B4+[9D]-1]` | `[2018]` + the count row |
+| 3 | Chikara Powder | A4BE | refill **all seven** spells | `[AB..B1] = [B4..BA]` | `[2018]` + the count row |
+| 4 | Magia Stone | A52C | arm the four orbiting spheres | writes `EB60/EB67/EB6E/EB75` | – |
+| 5 | Holy Water of Acero | A4EA | `shield_hp += HOLY[shield-1]`, capped; **no effect if `[93] == 0`** | `[94]`, cap `[96]` | `[201A]` |
+| 6 | Sabre Oil | A4DB | `attack_bonus++` | `[E4] += 1` | the `(n)` under the sword |
+| 7 | Kioku Feather | A58B | return to the last sage | `[FF4B] = 8`, `[FF24] = 8` | dissolve + music stop |
+
+* **Holy Water table** (`A520`, indexed by `[93]-1`): Clay **80**, Wise Man's
+  **90**, Stone **100**, Honor **110**, Light **115**, Titanium **120** — added
+  and then clamped to `[96]` (armrpro's maxima 30/80/180/300/300/600), so it is
+  a full restore only for the two weakest shields, not "shield to full
+  strength" as the shop claims.
+* **Magia Stone** copies the 7-byte template at `A584` (`00 00 50 00 00 00 00`)
+  into the four orb records at `EB60` (`struct Orb`, docs/FIGHT.md §6), patching
+  bytes 0 and 1 each time: phases **0, 4, 8, 0x0C** and directions **+1, −1,
+  −1, +1**, all with **0x50 = 80** hits.  fight.bin's `orbs_update` 86FC then
+  runs them.  Drinking it in town writes the records but nothing animates them.
+* **Sabre Oil** stacks (`inc [E4]`, no cap) but town.bin zeroes `[E4]` on every
+  town entry (60CC), so the bonus lasts only for the current trip.
+* **Kioku Feather** is the odd one: it shows its "I have used" box, repaints the
+  row, then **pops the two return addresses** and returns straight out of the
+  overlay after `music_fade [FF24] = 8`, a 120-tick wait, `vid_dissolve [2040]`
+  and `int 60h AX=1` (stop the music).  fight.bin sees `[FF4B] == 8` and warps
+  to `[C5]` (§9).  In town nothing reads `[FF4B]`, so it only fades the screen.
+
+After any other effect the pushed `potion_epilogue` A5B4 erases the cursor,
+clears the icon strip (`x4 0x0E, y 0x83, 0x1E×0x10`), forces `n_potions` to at
+least 1 so the "NO USE" slot survives, redraws the row and puts the red cursor
+back; then A2C7 resumes the potion loop.
+
+The "I have used / *&lt;name&gt;*" box (`show_used_box` A5DA) is a framed window at
+(60,67) 200×36 with `I have used` at (68,76) and the right-aligned name from the
+table at `AB62` at (72,86).
+
+### 12.5 The INVENTORY window (`draw_equipment` A752)
+
+Read-only; nothing here can be selected.
+
+| item | condition | icon | name (narrow font `[2038]`) | number |
+|---|---|---|---|---|
+| sword | `[92]` | `[201C]` §0, 20×18 at (184,77) | `ACD9[[92]-1]`, two lines at x4 0x34, y 0x4E / 0x56 | `draw_power` A86E: `([E4])` at y 0x57 when `[E4] != 0` |
+| shield | `[93]` | `[2020]` §1 at (186,97) | `AD67[[93]-1]`, y 0x61 / 0x69 | `draw_shield_hp` A844: `(` `[96]` `)` at y 0x69 |
+| keys | `[98]` | `[203A]` §4 idx 0 at (186,117) | – | `^` glyph at (200,126) + 1 digit at x4 0x34 |
+| lion keys | `[99]` | `[203A]` §4 idx 1 at (234,117) | – | `^` at (248,126) + 1 digit at x4 0x40 |
+| crests | `[9A]`/`[9B]`/`[9C]` | `[203C]` §2 idx 0/1/2, packed left from (192,137), +24 px | – | – |
+
+Sword names `ACD9`: Training / Wise man's / Spirit / Knight's / Illumination /
+Enchantment Sword.  Shield names `AD67`: Clay / Wise Man's / Stone / Honor /
+Light / Titanium Shield.  `\` is the apostrophe glyph, as in the dialogue text.
+
+Note `draw_shield_hp` prints the **maximum** `[96]`, not the current `[94]`; the
+live durability is only on the HUD (`[201A]`).
+
+### 12.6 STATE_PAGE.md additions from select.bin
+
+| Addr | Meaning | Evidence |
+|---|---|---|
+| `[9D]` | **selected magic 1..7** — confirmed; select.bin is the only writer | A13C |
+| `[9E]` | **worn key item** (0 none, 1..5 = the `[A1..A5]` item id), not "shoes" as such — 5 = Asbestos cape | A22F, `AAF3` names |
+| `[A1..A5]` | key items, packed, 0-terminated in practice | A052 |
+| `[A6..AA]` | potion slots, drug id + 1, packed | A643, A422 |
+| `[E4]` | sword power bonus, `+1` per Sabre Oil, no cap, cleared on town entry | A4E0, town 60CC |
+| `[96]` | shield HP **max** (confirmed: the INVENTORY line and the Holy Water cap) | A844, A50C |
+| `FF4B` | `menu_result` — the potion slot value (id+1); **8** = Kioku Feather = warp to town | A43E, fight 729C |
+| `FF18` | `key_mask`: `== 0x0286` opens the hidden LEVEL/EXP box in the potion row | A2CD |
+| `EB60..EB7B` | four 7-byte orb records `{phase, dir, hits, 0,0,0,0}` — written by the Magia Stone as `{0,+1,80}`, `{4,-1,80}`, `{8,-1,80}`, `{12,+1,80}` | A52C |
+| `ADF8..AE1C` | select.bin's private variables (all zero in the image) | §12.3 |
+
+Corrections to docs/VIDEO_DRIVERS.md §1.2 that select.bin settles: `[201E]`
+(there `vid_icon_item`) is the **magic** icon and `[2018]` (`vid_num_item_count`)
+its **charge count**; `[2020]` (`vid_icon_magic`) is the **shield** icon and
+`[201A]` (`vid_num_magic`) its **durability**.  The HUD's three boxes are, left
+to right, sword `[92]` / magic `[9D]` / shield `[93]`.

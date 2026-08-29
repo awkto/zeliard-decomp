@@ -13,13 +13,13 @@ SDL_LIBS   ?= $(shell pkg-config --libs sdl2 2>/dev/null || sdl2-config --libs 2
 CORE = sar.o gfx.o map.o physics.o render.o png.o enemy.o ai.o combat.o shots.o sound.o \
        ai_eai1.o ai_eai2.o ai_eai3.o ai_eai4.o ai_eai5.o ai_eai6.o ai_eai7.o ai_eai8.o town.o \
        boss.o boss_crab.o boss_tako.o boss_tori.o boss_zela.o boss_meda.o boss_lega.o boss_generic.o \
-       text.o player.o shop.o
+       text.o player.o shop.o status.o
 ifneq ($(strip $(SDL_LIBS)),)
   CFLAGS += -DHAVE_SDL $(SDL_CFLAGS)
   LIBS   += $(SDL_LIBS)
 endif
 
-all: zeliard test_physics test_combat test_town test_boss test_shop
+all: zeliard test_physics test_combat test_town test_boss test_shop test_status
 
 zeliard: main.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
@@ -39,19 +39,23 @@ test_boss: test_boss.o $(CORE)
 test_shop: test_shop.o $(CORE)
 	$(CC) -o $@ $^
 
-%.o: %.c sar.h gfx.h map.h physics.h render.h png.h enemy.h town.h boss.h text.h player.h shop.h
+test_status: test_status.o $(CORE)
+	$(CC) -o $@ $^
+
+%.o: %.c sar.h gfx.h map.h physics.h render.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: test_physics test_combat test_town test_boss test_shop
+test: test_physics test_combat test_town test_boss test_shop test_status
 	./test_physics
 	./test_combat
 	./test_town
 	./test_boss
 	./test_shop
+	./test_status
 
 # start position vs docs/screenshots/cavern.png, and the cavern-1 frog sprite
 # vs docs/screenshots/cavern_enemy.png (needs python3 + Pillow)
-verify: zeliard test_combat test_town test_shop
+verify: zeliard test_combat test_town test_shop test_status
 	./zeliard --dir ../zeliard --screenshot 1 /tmp/zel_start.png
 	python3 tools/compare_shot.py /tmp/zel_start.png ../docs/screenshots/cavern.png
 	python3 tools/compare_shot.py /tmp/zel_start.png ../docs/screenshots/cavern.png \
@@ -89,8 +93,16 @@ verify: zeliard test_combat test_town test_shop
 		--box 52 96 216 55 --label "shop text box (proportional font)"
 	python3 tools/compare_shot.py /tmp/zel_shop.png ../docs/screenshots/shop_armour.png \
 		--box 164 29 96 55 --label "shop menu widget + cursor"
+	# the status / inventory screen (select.bin) opened with Enter in
+	# Felishika's Castle on a fresh player, vs docs/screenshots/menu.png
+	./zeliard --dir ../zeliard --town 0 --headless --frames 40 \
+		--script "E3 .30" --screenshot 6 /tmp/zel_status.png
+	python3 tools/compare_shot.py /tmp/zel_status.png ../docs/screenshots/menu.png \
+		--box 48 14 224 144 --label "status screen (whole playfield)"
+	python3 tools/compare_shot.py /tmp/zel_status.png ../docs/screenshots/menu.png \
+		--box 180 63 92 94 --label "status INVENTORY window (sword picture + name)"
 
 clean:
-	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop
+	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop test_status
 
 .PHONY: all test verify clean

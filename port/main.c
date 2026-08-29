@@ -15,6 +15,7 @@
 #include "text.h"
 #include "player.h"
 #include "shop.h"
+#include "status.h"
 #ifdef HAVE_SDL
 #include <SDL.h>
 #endif
@@ -37,6 +38,7 @@ typedef struct {
     TownHero    thero;
     Town        town;
     TextFont    tfont;
+    ItemPics    pics;
     int      in_town;                   /* 0 = fight.bin, 1 = town.bin */
     int      town_tiles_idx, town_spr_idx;
     int      ai_index, enp_index;
@@ -71,13 +73,17 @@ static void usage(void)
         "              exact town placement, used by `make verify`\n"
         "  --screenshot N FILE   dump the framebuffer after N rendered frames (implies --headless)\n"
         "  --script S  headless input: tokens like R10 (hold Right 10 frames), UR2, D3, .5 (idle 5),\n"
-        "              letters U D L R, X (sword) and M (magic), separated by spaces/commas\n"
+        "              letters U D L R, X (sword), M (magic), E (Enter = status screen) and\n"
+        "              K (the LEVEL/EXP chord),\n"
+        "              separated by spaces/commas\n"
         "  --speed N   FF33 speed (frame = 4*N ticks; default 5 = 84.5 ms)\n"
         "  --scale N   window scale (default 3)\n"
         "  --frames N  quit after N rendered frames (SDL and headless)\n"
         "  --sound     log every FF75 sound request the engine produces\n"
         "  --sword N --shield N --level N --life N --gold N\n"
         "              set the player record directly (the shops do it properly)\n"
+        "  --potions L comma list of drug ids 0..7 into the five [A6..AA] slots (Enter -> USE:)\n"
+        "  --spells L  comma list of spell numbers 1..7 to mark learned at [BB..C1]\n"
         "  --name NAME the NAME.USR the sage's \"Record Experience\" writes\n"
         "  --load NAME restore NAME.USR (town.bin 7592) before starting\n");
 }
@@ -98,6 +104,8 @@ static int script_next(App *a)
             else if (c == 'R' || c == 'r') d |= DIR_RIGHT;
             else if (c == 'X' || c == 'x') b |= 1;
             else if (c == 'M' || c == 'm') b |= 2;
+            else if (c == 'E' || c == 'e') b |= 4;              /* Enter: the status screen */
+            else if (c == 'K' || c == 'k') b |= 8;              /* the FF18 == 0x0286 chord */
             else if (c == '.') ;
             else break;
             a->script_pos++;
@@ -113,8 +121,10 @@ static int script_next(App *a)
 static void dump_png(App *a, Game *g)
 {
     static uint8_t rgb[FB_W * FB_H * 3];
-    render_frame(a->fb, g, &a->hero);
+    if (g->status) memcpy(a->fb, status_framebuffer(g->status), FB_W * FB_H);
+    else render_frame(a->fb, g, &a->hero);
     render_hud(a->fb, g, &a->font);
+    itemp_hud(a->fb, &a->pics, &a->tfont, g);
     render_to_rgb(a->fb, rgb);
     if (png_write_rgb(a->shot_path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", a->shot_path);
     else fprintf(stderr, "wrote %s (frame %u, hero map (%d,%d) scr (%d,%d) scroll (%d,%d))\n", a->shot_path,
@@ -142,16 +152,27 @@ static void present(Game *g)
                 g->dirs, g->hp, g->attacking, g->attack_var, g->on_hazard ? " HAZARD" : "",
                 g->hero_hit ? " HIT" : "");
     if (a->max_frames && g->frame_no >= a->max_frames) a->quit = 1;
+    if (a->quit && g->status) g->status->done = 1;   /* let the status screen out */
     if (a->headless) {
         if (a->shot_path && g->frame_no == a->shot_frame) dump_png(a, g);
-        if (!script_next(a)) { if (!a->shot_path || g->frame_no >= a->shot_frame) a->quit = 1; g->dirs = 0; set_buttons(g, 0); }
-        else { g->dirs = a->script_dirs; set_buttons(g, a->script_btns); }
+        if (!script_next(a)) {
+            if (!a->shot_path || g->frame_no >= a->shot_frame) a->quit = 1;
+            g->dirs = 0; set_buttons(g, 0); g->menu_key = 0;
+            if (a->quit && g->status) g->status->done = 1;
+        }
+        else {
+            g->dirs = a->script_dirs;
+            set_buttons(g, (uint8_t)((a->script_btns & 3) | (a->script_btns & 8 ? 4 : 0)));
+            g->menu_key = (uint8_t)(a->script_btns & 4 ? 1 : 0);
+        }
         return;
     }
 #ifdef HAVE_SDL
     static uint8_t rgb[FB_W * FB_H * 3];
-    render_frame(a->fb, g, &a->hero);
+    if (g->status) memcpy(a->fb, status_framebuffer(g->status), FB_W * FB_H);
+    else render_frame(a->fb, g, &a->hero);
     render_hud(a->fb, g, &a->font);
+    itemp_hud(a->fb, &a->pics, &a->tfont, g);
     render_to_rgb(a->fb, rgb);
     SDL_UpdateTexture(a->tex, NULL, rgb, FB_W * 3);
     SDL_RenderClear(a->ren);
@@ -190,6 +211,7 @@ static void present(Game *g)
     if (k[SDL_SCANCODE_X] || k[SDL_SCANCODE_LCTRL] || k[SDL_SCANCODE_RCTRL]) b |= 1;
     if (k[SDL_SCANCODE_C] || k[SDL_SCANCODE_LALT]) b |= 2;
     set_buttons(g, b);
+    g->menu_key = (uint8_t)(k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]);   /* FF18 bit0 */
 #endif
 }
 
@@ -202,29 +224,41 @@ static void town_present(Town *t)
                 t->frame_no, town_hero_col(t), t->hero_scr_col, t->scroll_col, t->hero_anim, t->hero_flags,
                 t->message[0] ? "  msg: " : "", t->message);
     if (a->max_frames && t->frame_no >= a->max_frames) a->quit = 1;
+    if (a->quit && t->status) t->status->done = 1;
+    if (a->quit) t->quit = 1;
     if (a->headless) {
         if (a->shot_path && t->frame_no == a->shot_frame) {
             static uint8_t rgb[FB_W * FB_H * 3];
-            if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
+            if (t->status) memcpy(a->fb, status_framebuffer(t->status), FB_W * FB_H);
+            else if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
             else town_render(a->fb, t);
             render_hud(a->fb, t->g, &a->font);
+            itemp_hud(a->fb, &a->pics, &a->tfont, t->g);
             render_to_rgb(a->fb, rgb);
             if (png_write_rgb(a->shot_path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", a->shot_path);
             else fprintf(stderr, "wrote %s (town frame %u, hero col %d)\n", a->shot_path, t->frame_no, town_hero_col(t));
         }
-        if (!script_next(a)) { if (!a->shot_path || t->frame_no >= a->shot_frame) a->quit = 1; t->dirs = 0; t->buttons = 0; }
+        if (!script_next(a)) {
+            if (!a->shot_path || t->frame_no >= a->shot_frame) a->quit = 1;
+            t->dirs = 0; t->buttons = 0; t->menu_key = 0;
+            if (a->quit) { t->quit = 1; if (t->status) t->status->done = 1; }
+        }
         else {
             if ((a->script_btns & 1) && !(t->buttons & 1)) t->btn1_edge = 0xFF;
             if ((a->script_btns & 2) && !(t->buttons & 2)) t->btn2_edge = 0xFF;
-            t->dirs = a->script_dirs; t->buttons = a->script_btns;
+            t->dirs = a->script_dirs;
+            t->buttons = (uint8_t)((a->script_btns & 3) | (a->script_btns & 8 ? 4 : 0));
+            t->menu_key = (uint8_t)(a->script_btns & 4 ? 1 : 0);
         }
         return;
     }
 #ifdef HAVE_SDL
     static uint8_t rgb[FB_W * FB_H * 3];
-    if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
+    if (t->status) memcpy(a->fb, status_framebuffer(t->status), FB_W * FB_H);
+    else if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
     else town_render(a->fb, t);
     render_hud(a->fb, t->g, &a->font);
+    itemp_hud(a->fb, &a->pics, &a->tfont, t->g);
     render_to_rgb(a->fb, rgb);
     SDL_UpdateTexture(a->tex, NULL, rgb, FB_W * 3);
     SDL_RenderClear(a->ren);
@@ -257,11 +291,12 @@ static void town_present(Town *t)
     if (k[SDL_SCANCODE_RIGHT] || k[SDL_SCANCODE_D]) d |= DIR_RIGHT;
     t->dirs = d;
     uint8_t b = 0;
-    if (k[SDL_SCANCODE_SPACE] || k[SDL_SCANCODE_X] || k[SDL_SCANCODE_RETURN]) b |= 1;
+    if (k[SDL_SCANCODE_SPACE] || k[SDL_SCANCODE_X]) b |= 1;
     if (k[SDL_SCANCODE_C] || k[SDL_SCANCODE_LALT] || k[SDL_SCANCODE_RALT] || k[SDL_SCANCODE_BACKSPACE]) b |= 2;
     if ((b & 1) && !(t->buttons & 1)) t->btn1_edge = 0xFF;
     if ((b & 2) && !(t->buttons & 2)) t->btn2_edge = 0xFF;
     t->buttons = b;
+    t->menu_key = (uint8_t)(k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]);   /* FF18 bit0 */
 #endif
 }
 
@@ -289,7 +324,7 @@ static int enter_town(Game *g, int idx, int col, int died)
     if (town_load_banks(a)) return 0;
     town_init(&a->town, &a->tmap, &a->ttiles, &a->tspr, &a->thero, g);
     a->town.user = a; a->town.present = town_present;
-    a->town.font = &a->tfont; a->town.dir = a->dir;
+    a->town.font = &a->tfont; a->town.dir = a->dir; a->town.pics = &a->pics;
     town_place(&a->town, col < 0 ? a->tmap.start_col : col, 0);
     g->cur_map = (uint8_t)(0x80 | idx);
     g->town_map = g->cur_map;
@@ -466,6 +501,7 @@ int main(int argc, char **argv)
     int map_idx = 0, pos_col = -1, pos_row = -1, start_in_town = -1, town_col = -1, town_scr = -1, town_anim = -1, town_face = 0, npc_i = -1, npc_f = 0;
     int dbg_sword = -1, dbg_shield = -1, dbg_level = -1, dbg_life = -1;
     long dbg_gold = -1;
+    const char *dbg_potions = NULL, *dbg_spells = NULL;
     const char *save_name = "ZELIARD", *load_name = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--dir") && i + 1 < argc) dir = argv[++i];
@@ -488,6 +524,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--level") && i + 1 < argc) dbg_level = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--life") && i + 1 < argc) dbg_life = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--gold") && i + 1 < argc) dbg_gold = atol(argv[++i]);
+        else if (!strcmp(argv[i], "--potions") && i + 1 < argc) dbg_potions = argv[++i];
+        else if (!strcmp(argv[i], "--spells") && i + 1 < argc) dbg_spells = argv[++i];
         else if (!strcmp(argv[i], "--name") && i + 1 < argc) save_name = argv[++i];
         else if (!strcmp(argv[i], "--load") && i + 1 < argc) load_name = argv[++i];
         else if (!strcmp(argv[i], "--verbose") || !strcmp(argv[i], "-v")) a.verbose = 1;
@@ -502,10 +540,12 @@ int main(int argc, char **argv)
 
     if (gfx_load_digits(&a.font, a.dir)) fprintf(stderr, "note: no HUD digit font (font.grp)\n");
     if (text_load_font(&a.tfont, a.dir)) fprintf(stderr, "note: no proportional font (font.grp)\n");
+    if (itemp_load(&a.pics, a.dir)) fprintf(stderr, "note: no itemp.grp (no item/magic/sword pictures)\n");
 
     Game g;
     game_init(&g, &a.maps[0], &a.tiles[0]);
     g.user = &a; g.present = present; g.on_door = on_door;
+    g.font = &a.tfont; g.pics = &a.pics;                                /* select.bin needs both */
     /* STDPLY.BIN is the fresh player record: HP, the training sword and the
      * per-town shop stock masks (docs/TOWN.md §7).  Without it the shops have
      * nothing to sell. */
@@ -516,10 +556,30 @@ int main(int argc, char **argv)
                 load_name, g.hp, g.max_hp, g.level, g.exp, (unsigned)g.gold);
     else if (load_name) fprintf(stderr, "[save] cannot read %s.usr\n", load_name);
     if (dbg_sword >= 0)  g.sword = (uint8_t)dbg_sword;                   /* [92] */
-    if (dbg_shield >= 0) { g.shield = (uint8_t)dbg_shield; g.shield_hp = 0x100; }  /* [93]/[94] */
+    if (dbg_shield >= 1 && dbg_shield <= 6) {                            /* [93]/[94]/[96] */
+        g.shield = (uint8_t)dbg_shield;
+        g.shield_hp = SHIELD_HP[dbg_shield - 1];                        /* armrpro A6BF */
+        g.page[P_SHIELD_MAX] = (uint8_t)g.shield_hp;
+        g.page[P_SHIELD_MAX + 1] = (uint8_t)(g.shield_hp >> 8);
+    } else if (dbg_shield == 0) g.shield = 0;
     if (dbg_level >= 0)  g.level = (uint8_t)dbg_level;                   /* [8D] */
     if (dbg_life >= 0)   { g.max_hp = (uint16_t)dbg_life; g.hp = g.max_hp; }       /* [B2]/[90] */
     if (dbg_gold >= 0)   g.gold = (uint32_t)dbg_gold;                    /* [85..87] */
+    if (dbg_potions) {                                                  /* [A6..AA] = drug id + 1 */
+        int n = 0;
+        for (const char *c = dbg_potions; *c && n < 5; ) {
+            if (*c >= '0' && *c <= '9') { g.page[0xA6 + n++] = (uint8_t)(*c - '0' + 1); }
+            while (*c && *c != ',') c++;
+            if (*c) c++;
+        }
+    }
+    if (dbg_spells) {                                                   /* [BB..C1] */
+        for (const char *c = dbg_spells; *c; ) {
+            if (*c >= '1' && *c <= '7') g.page[0xBB + (*c - '1')] = 0xFF;
+            while (*c && *c != ',') c++;
+            if (*c) c++;
+        }
+    }
     player_page_push(&g);
     a.ai_index = a.enp_index = -1;
     g.post_boss = post_boss_banks;

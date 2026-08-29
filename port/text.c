@@ -59,28 +59,39 @@ static inline void px(uint8_t *fb, int x, int y, uint8_t v)
     if (x >= 0 && x < TEXT_W && y >= 0 && y < TEXT_H) fb[y * TEXT_W + x] = v;
 }
 
-/* 0x2000 (MCGA 2046).  AL = 0: clear.  Otherwise a 2-px white frame with the
- * four corner pixels cut, interior cleared. */
+/* 0x2000 (MCGA 2046) verbatim.  AL = 0 clears the rect.  Otherwise: the
+ * *interior* (rows 2..h-3, full width) is cleared and a 2-px frame drawn with
+ * frame_hline (20C2), whose first and last words are read-modify-write with a
+ * mask — so the four pixels at each corner are **left as they were**, and a
+ * window drawn over an older one keeps the older one's edge there.  That is
+ * what makes the four boxes of the status screen join up
+ * (docs/screenshots/menu.png).
+ *   row 0      x+2 .. x+w-3
+ *   row 1      x+1 .. x+w-2
+ *   rows 2..h-3  x, x+1 and x+w-2, x+w-1 (the rest cleared)
+ *   row h-2    = row 1        row h-1 = row 0                              */
 void vid_window(uint8_t *fb, int style, int x4, int y, int w4, int h)
 {
     int x = x4 * 4, w = w4 * 4;
-    for (int r = 0; r < h; r++)
-        for (int c = 0; c < w; c++) px(fb, x + c, y + r, 0);
-    if (!style) return;
-    /* the corner is a 2-px diagonal step, measured off
-     * docs/screenshots/shop_armour.png: the outermost row is inset 2 px, the
-     * next 1 px, the rest flush. */
-    for (int r = 0; r < h; r++)
-        for (int c = 0; c < w; c++) {
-            int dr = r < h - 1 - r ? r : h - 1 - r;
-            int dc = c < w - 1 - c ? c : w - 1 - c;
-            if (dr > 1 && dc > 1) continue;                 /* interior */
-            if (dr == 0 && dc < 2) continue;                /* cut corners */
-            if (dr == 1 && dc < 1) continue;
-            if (dc == 0 && dr < 2) continue;
-            if (dc == 1 && dr < 1) continue;
-            px(fb, x + c, y + r, PC88[1]);
-        }
+    if (!style) {
+        for (int r = 0; r < h; r++)
+            for (int c = 0; c < w; c++) px(fb, x + c, y + r, 0);
+        return;
+    }
+    uint8_t v = PC88[1];
+    int ih = h - 4;                                     /* 2077: cl_h -= 4 */
+    if (ih < 0) ih = 0;
+    for (int r = 0; r < ih; r++)                        /* 207C: the interior */
+        for (int c = 0; c < w; c++) px(fb, x + c, y + 2 + r, 0);
+    for (int i = 2; i <= w - 3; i++) px(fb, x + i, y, v);            /* row 0 */
+    for (int i = 1; i <= w - 2; i++) px(fb, x + i, y + 1, v);        /* row 1 */
+    for (int r = 0; r < ih; r++) {                                   /* 209A */
+        int yy = y + 2 + r;
+        px(fb, x, yy, v); px(fb, x + 1, yy, v);
+        px(fb, x + w - 2, yy, v); px(fb, x + w - 1, yy, v);
+    }
+    for (int i = 1; i <= w - 2; i++) px(fb, x + i, y + 2 + ih, v);   /* row h-2 */
+    for (int i = 2; i <= w - 3; i++) px(fb, x + i, y + 3 + ih, v);   /* row h-1 */
 }
 
 /* 0x2022: one glyph, only the set bits are written (transparent background) */
@@ -194,4 +205,27 @@ void gt_cursor(uint8_t *fb, int x4, int y, int on)
             if (on) { if (set) px(fb, x + c, y + r, PC88[2]); }
             else px(fb, x + c, y + r, 0);
         }
+}
+
+/* [2030] video_mcga 24A3 verbatim: x = x4*4 (+2 when `nudge`), 6-px pitch, the
+ * glyph starts at that pixel, `colour` is a PC-88 number and every digit is
+ * drawn — vid_to_decimal (2032) does not blank leading zeros, only the HUD's
+ * private to_digits_blank_leading (241B) does. */
+void vid_draw_digits_raw(uint8_t *fb, const TextFont *f, unsigned value, int n,
+                         int x4, int y, int colour, int nudge, int box)
+{
+    uint8_t d[7];
+    unsigned v = value;
+    for (int i = 6; i >= 0; i--) { d[i] = (uint8_t)(v % 10); v /= 10; }
+    const uint8_t *src = d + (7 - (n > 7 ? 7 : n));
+    int x = x4 * 4 + (nudge ? 2 : 0);
+    for (int i = 0; i < n; i++, x += 6) {
+        if (box)
+            for (int r = 0; r < 7; r++)
+                for (int c = 0; c < 6; c++) px(fb, x + c, y + r, 0x05);
+        if (!f || !f->loaded) continue;
+        for (int r = 0; r < 7; r++)
+            for (int c = 0; c < 6; c++)
+                if ((f->digit[src[i]][r] >> (5 - c)) & 1) px(fb, x + c, y + r, PC88[colour & 7]);
+    }
 }

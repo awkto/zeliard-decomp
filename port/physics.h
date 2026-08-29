@@ -229,6 +229,16 @@ struct Game {
     /* the STDPLY player-record page, for the C00C patch conditions (6BFC) */
     uint8_t  page[256];
 
+    /* the status / inventory screen (select.bin -> status.c, docs/TOWN.md §12).
+     * fight.bin 7202 runs it on the menu key and warps to town when the
+     * overlay leaves 8 (the Kioku Feather) in menu_result [FF4B]. */
+    uint8_t  menu_key;              /* FF18 bit0 (Enter) */
+    uint8_t  menu_debounce;         /* 9EF5 */
+    uint8_t  menu_result;           /* FF4B */
+    struct Status         *status;  /* set while the screen owns the frame loop */
+    const struct TextFont *font;    /* font.grp, shared with the town and the shops */
+    const struct ItemPics *pics;    /* itemp.grp icon sections */
+
     /* messages (7210/73E0): a box stays up for 32 frames */
     uint8_t  msg_timer;             /* 9EED */
     uint8_t  msg_box;               /* 9EEF */

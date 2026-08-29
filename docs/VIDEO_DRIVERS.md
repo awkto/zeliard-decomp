@@ -84,11 +84,11 @@ routines clobber freely (AX BX CX DX SI DI BP ES; DS preserved where noted).
 | 2012 | `vid_enemy_gauge_trough` | – | = `vid_gauge_bar(0, 2, 0x10, 0x88)`: blue trough (50,174) 136 px for the ENEMY bar | 2385 | 243A | 24BB | 24A9 | 24DC | fight 0x6179 |
 | 2014 | `vid_num_almas` | – (`[cs:8B]`) | 5 digits (blank-led) at (152,187), white on dark-blue 6×7 boxes | 238F | 2444 | 24C5 | 24B3 | 24E6 | fight 0x6199 |
 | 2016 | `vid_num_gold` | – (`[cs:85..87]`) | 6 digits at (76,187) | 23AC | 2461 | 24E2 | 24D0 | 2503 | fight 0x618A |
-| 2018 | `vid_num_item_count` | – (`[cs:AB+[cs:9D]-1]`) | 3 digits at (220,187) | 23CC | 2481 | 2502 | 24F0 | 2523 | fight 0x881F (after `dec byte [bx+0xAB]`) |
-| 201A | `vid_num_magic` | – (`[cs:94]` if `[cs:93]`) | 3 digits at (248,187); no-op when no magic selected | 23F5 | 24AA | 252B | 2519 | 254C | fight 0x75B4 |
+| 2018 | `vid_num_magic_charges` | – (`[cs:AB+[cs:9D]-1]`) | 3 digits at (220,187) | 23CC | 2481 | 2502 | 24F0 | 2523 | fight 0x881F (after `dec byte [bx+0xAB]`) |
+| 201A | `vid_num_shield_hp` | – (`[cs:94]` if `[cs:93]`) | 3 digits at (248,187); no-op when no magic selected | 23F5 | 24AA | 252B | 2519 | 254C | fight 0x75B4 |
 | 201C | `vid_icon_sword` | AL 1-based #, BH x8, BL y | 40×18 PC-88-px picture from itemp section 0 (`arena:[E200]`, 270 b/record) | 254C | 262C | 26BE | 2698 | 26B0 | GAME 0xA19C: `al=[0x92], bx=0x18AB` → (192,171) |
-| 201E | `vid_icon_item` | AL 1-based, BH x4, BL y | 32×16 picture, itemp section 3 (`[E206]`, 192 b/record), drawn at x4·4+2 | 25E2 | 26DB | 2745 | 275A | 2771 | GAME 0xA1C0: `al=[0x9D], bx=0x37A4` → (222,164) |
-| 2020 | `vid_icon_magic` | AL 1-based, BH x4, BL y | 32×16, section 1 (`[E202]`) | 25FC | 26F5 | 275F | 2774 | 278B | GAME 0xA1AE: `al=[0x93], bx=0x3EA4` → (250,164) |
+| 201E | `vid_icon_magic` | AL 1-based, BH x4, BL y | 32×16 picture, itemp section 3 (`[E206]`, 192 b/record), drawn at x4·4+2 | 25E2 | 26DB | 2745 | 275A | 2771 | GAME 0xA1C0: `al=[0x9D], bx=0x37A4` → (222,164) |
+| 2020 | `vid_icon_shield` | AL 1-based, BH x4, BL y | 32×16, section 1 (`[E202]`) | 25FC | 26F5 | 275F | 2774 | 278B | GAME 0xA1AE: `al=[0x93], bx=0x3EA4` → (250,164) |
 | 2022 | `vid_putchar` | AL char, AH colour, BX x px, CL y | one 8×8 glyph (font `[F500]`), set bits only (transparent) | 27E9 | 294B | 2958 | 29D4 | 29D9 | STICK 0x07EF: `al=digit+'0', ah=1, bx=0xCC, cl=0x5A` |
 | 2024 | `vid_scroll_up_1` | BH x8, BL y, CH w8, CL rows | moves rect up one row (row+1 → row) | 2857 | 29F5 | 29E9 | 2AA0 | 2A68 | town 0x650E (`bx=[0x7C4E]+4, cx=([0x7C5A]>>1)-8`) |
 | 2026 | `vid_save_rect` | AH x8, AL y (BH=0), CH w8, CL rows, DI dst | copy screen rect → `(CS+3000):DI` | 289A | 2A56 | 2A33 | 2AF9 | 2ABB | STICK 0x073D: `ax=0x101E, cx=0x0810, di=0x3C80` (16 cells, 30, 8×16) |
@@ -117,6 +117,11 @@ Slot-usage census (all callers): 2000 ×87, 2022 ×20, 2002/2040/2044 ×16,
 200A/200C/202C/2030/2032/2034/2036/203C ×1. select.bin is the only user of
 202E–203C (the status/inventory screen); STICK uses 2000/2022/2026/2028/202A
 for the disk prompt; GAME.BIN uses 201C/201E/2020/203E for the initial HUD.
+
+*(Names corrected in Sprint 13: the HUD's three boxes are sword `[92]` (201C/2016),
+magic `[9D]` (201E icon, 2018 charges) and shield `[93]` (2020 icon, 201A durability) —
+the icon/count pairs were previously labelled item/magic. `src/select.c` is the clearest
+caller.)*
 
 ## 2. Per-driver notes
 

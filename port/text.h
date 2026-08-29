@@ -54,6 +54,11 @@ void vid_label_narrow(uint8_t *fb, const TextFont *f, const char *s, int len, in
 void vid_label_text(uint8_t *fb, const TextFont *f, const uint8_t *rec);
 /* [2030] 6x7 digits on a 6-px pitch; `box` fills a dark-blue background */
 void vid_draw_digits(uint8_t *fb, const TextFont *f, unsigned value, int n, int x, int y, int box);
+/* [2030] verbatim (video_mcga 24A3): `x4`/`y` are the driver's units, `nudge`
+ * adds 2 px, `colour` is a PC-88 number and leading zeros are NOT suppressed —
+ * select.bin's draw_number (A9B3) feeds it the last `n` of 7 raw digits. */
+void vid_draw_digits_raw(uint8_t *fb, const TextFont *f, unsigned value, int n,
+                         int x4, int y, int colour, int nudge, int box);
 /* [2032] vid_to_decimal / town.bin 72C7 format_number: no leading zeros */
 int  format_number(uint32_t v, char *out);
 /* gtmcga [3016] GT_DRAW_CELL: one 48-byte cell of the shop portrait bank */

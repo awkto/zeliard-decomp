@@ -9,12 +9,12 @@ Reverse engineering of **Zeliard** v1.208 (Game Arts / Sierra On-Line).
 - `tools/resnames.py` — recovers original resource filenames → `docs/RESOURCES.md`
 - `tools/ghidra.sh` — headless Ghidra decompile of any binary/overlay to C (uses `tools/ghidra_dump_c.py`)
 - `tools/run_dosbox.sh` — ground-truth harness: runs the real game in Xvfb+DOSBox, captures screenshots
-- `port/` — the SDL2 source port (Phase 3): `make && ./zeliard` renders cavern 1 and walks Garland with the original collision rules; `make test` (149 checks), `make verify` (7 pixel comparisons, all 100%); enemies, eai1 AI and sword combat implemented
+- `port/` — the SDL2 source port (Phase 3): `make && ./zeliard` plays the cavern-1 + town loop with the original collision rules; `make test` (875 checks in 6 binaries), `make verify` (16 pixel comparisons, all 100%); enemies + AI, combat, the eight shops, the status/inventory screen and the town dialogue box are implemented
 - `docs/ROADMAP.md` — phased plan, mirrors the tracking epic
 - `tools/grp2png.py` — renders .grp graphics (tiles, enemies, hero frames, portraits, font) to PNG; `tools/palette.py` = the MCGA palette
 - `src/kernel.c`, `src/video_mcga.c` — hand-cleaned C of the STICK.BIN kernel and the MCGA video driver (original addresses in comments)
 - `src/fight.c`, `docs/FIGHT.md`, `docs/STATE_PAGE.md` — the cavern game loop: physics, collision, combat, enemy records, AI-overlay interface, FF00 state page
-- `src/town.c`, `src/shops.c`, `docs/TOWN.md` — town walk/dialogue engine, all 8 shops (prices, effects), save-file format, town map format
+- `src/town.c`, `src/shops.c`, `src/select.c`, `docs/TOWN.md` — town walk/dialogue engine, all 8 shops (prices, effects), the status/inventory screen and the potion effects, save-file format, town map format
 - `src/ai/`, `docs/ENEMIES.md` — all 8 cavern enemy AIs + 11 bosses: stats tables, movement/attack patterns, AI-overlay ABI
 - `docs/DOSBOX_RECIPE.md` — verified key timelines to skip the intro and enter cavern 1 in the harness
 - `tools/msd2mid.py`, `docs/MUSIC.md`, `src/music_{std,adlib}.c` — music score format + drivers; converts every score to MIDI

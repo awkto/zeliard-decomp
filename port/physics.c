@@ -4,8 +4,11 @@
 #include "physics.h"
 #include "boss.h"
 #include "enemy.h"
+#include "status.h"
 #include <stdio.h>
 #include <string.h>
+
+static void check_status_menu(Game *g);   /* 7202, below */
 
 /* ------------------------------------------------------------------ ring */
 static inline int wrap_down(int p) { return p >= RING_SIZE ? p - RING_SIZE : p; }
@@ -778,6 +781,26 @@ static void frame(Game *g)
     }
     if (g->post_boss_pending) { post_boss_transition(g); return; }       /* 71C2 -> 72F1 */
     boss_rewards(g);                                                     /* 71CC */
+    check_status_menu(g);                                                /* 7202 */
+}
+
+/* 0x7202  The menu key opens select.bin (status.c).  fight.bin swaps the
+ * overlay in from arena:C000, calls [A000] and, when the screen leaves 8 in
+ * menu_result [FF4B] (the Kioku Feather), jumps to 99E0 — the same "back to
+ * town" tail as the death path but *without* the gold/almas penalty. */
+static void check_status_menu(Game *g)
+{
+    if (!g->menu_key) { g->menu_debounce = 0; return; }                  /* 7202 */
+    if (g->menu_debounce || g->casting || g->magic_active || g->boss_intro) return;  /* 7275 */
+    g->sfx_request = 0x0B;                                               /* 728C */
+    g->menu_result = (uint8_t)status_run_fight(g);
+    if (g->menu_result == 8) {                                           /* 729C -> 99E0 */
+        g->cur_map = g->town_map ? g->town_map : 0x81;
+        if (g->on_town && g->on_town(g, g->cur_map & 0x7F, -1, 0)) return;
+    }
+    g->menu_debounce = 0xFF;                                             /* 72BA */
+    g->btn1_edge = g->btn2_edge = 0;                                     /* 72C2/72C7 */
+    g->msg_box = 0; g->msg_timer = 0;                                    /* 72CC/72D1 */
 }
 
 /* 62DB: main-loop variant while on a ladder */
