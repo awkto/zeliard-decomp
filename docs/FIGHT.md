@@ -69,7 +69,7 @@ Cell-value classes used by the collision tests:
 
 | Test | Address | Passable when |
 |---|---|---|
-| `passable_wall` (head row, vertical probes, wall-unstick, door/ledge checks) | `6DE5` | value ≥ 0x40 (any DCHR fixture/item, any sprite marker) **or** in the 8000 list |
+| `passable_wall` (head row, vertical probes, wall-unstick, door/ledge checks) | `6DE5` | value ≥ 0x40 (any DCHR fixture/item, any sprite marker) **or** in the 8000 list.  Third arm (`6E07`), omitted here before: once the 24-entry scan misses, a value with bit 7 set is passable **unless** `(al & 0x9F)` is `0x90` or `0x91`.  Only observable for sprite markers at object indices 0x10/0x11, which no map places under the hero's head |
 | `passable_body` (feet rows when walking, floor under feet) | `6E1B` | value ≥ 0x49 **or** in the list. So DCHR 0x40..0x48 (elevator cells 40-42, gate fixtures 43-48) are solid to the body and can be stood on |
 | `passable_shot` (projectiles) | `6DEC` | same as body |
 | AI `cell_passable_ai` (vec 23) | `94E1` | cells < 0x49 passable iff in the list; 0x49..0x7F pass; ≥ 0x80 (sprite markers) block — verified in docs/ENEMIES.md |
@@ -122,8 +122,11 @@ The sprite is 3×3 cells but the **solid body is the middle column only**
   hero is pushed 1 cell every 4th frame (`6A8B`) unless walking against it;
   for `max_rise/2` frames (1, or 2 with Feruza shoes) right after a jump
   start the push is 1 cell **every** frame (`9F0C`, skipped with Silkarn
-  shoes `[0x9E]==3`). Walking flag is cleared; walking *with* the belt is
-  refused (`6655`/`67DA`).
+  shoes `[0x9E]==3`). Walking flag is cleared; walking **against** the belt is
+  refused — `67DA` (inside `67C6`, walk right) is `cmp byte [0xff42],2 / jz`, and
+  `[FF42] == 2` is what `6BC4` sets for the `8018` list, which `6A9F` turns into a
+  push *left*.  Combined with the "unless walking against it" clause above, a hero
+  holding uphill stands still: a treadmill.  (An earlier revision said *with*.)
 * Currents (lists 8028/802C, `7699`): the hero is pushed 2 cells per
   main-loop iteration and **the frame is aborted before rendering** (`76C2`
   pops two return addresses), so the push repeats without delay until the

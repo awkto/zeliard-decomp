@@ -135,17 +135,30 @@ static int fixture_row_free(const Map *m, const Fixture *f, int row)
     return 1;
 }
 #define FIX_ROW_SPAN 24                 /* sanity bound on an open shaft */
-/* the rows an elevator (7FDC/8074, both ways) or a gate (818E, down only) can
- * be at.  The hero drives both, so every one of those rows is real ground. */
-static void fixture_rows(const Map *m, const Fixture *f, int *lo, int *hi)
+/* How far an elevator (7FDC/8074, both ways) or a gate (818E, down only) can
+ * travel from its record row.  The hero drives both, so every row it can reach
+ * is real ground.  Counted as a distance *up* and *down* rather than as a
+ * [lo,hi] pair, because the ring's rows are cyclic: 8024/80AF walk the shaft
+ * with 6D82/6D8E, which wrap, and MP20's fix[0] (column 102, home row 61) has
+ * a shaft that really runs rows 55..63 **and on into 0..5**, the top-of-map
+ * corridor whose floor is row 6.  Clamping the walk at row 0/63 lost six of
+ * its fifteen positions and every node that hangs off them. */
+static void fixture_span(const Map *m, const Fixture *f, int *up, int *down)
 {
-    int home = f->row & 0x3F, r = home;
+    int home = f->row & 0x3F, n = 0;
     if (f->kind == 0)
-        while (r > 0 && home - r < FIX_ROW_SPAN && fixture_row_free(m, f, r - 1)) r--;
-    *lo = r;
-    r = home;
-    while (r < MAP_ROWS - 1 && r - home < FIX_ROW_SPAN && fixture_row_free(m, f, r + 1)) r++;
-    *hi = r;
+        while (n < FIX_ROW_SPAN && fixture_row_free(m, f, (home - n - 1) & 0x3F)) n++;
+    *up = n;
+    n = 0;
+    while (n < FIX_ROW_SPAN && fixture_row_free(m, f, (home + n + 1) & 0x3F)) n++;
+    *down = n;
+}
+/* is row `r` one of them? */
+static int fixture_row_in_span(const Map *m, const Fixture *f, int r)
+{
+    int up, down, d = (r - (f->row & 0x3F)) & 0x3F;
+    fixture_span(m, f, &up, &down);
+    return d <= down || 64 - d <= up;
 }
 static void fixture_cols(const Fixture *f, int *lo, int *hi)
 {
@@ -162,9 +175,7 @@ static int fixture_at(const Map *m, int bc, int r)
         if (f->kind == 2) {
             if ((f->row & 0x3F) != (r & 0x3F)) continue;
         } else {
-            int rlo, rhi;
-            fixture_rows(m, f, &rlo, &rhi);
-            if ((r & 0x3F) < rlo || (r & 0x3F) > rhi) continue;
+            if (!fixture_row_in_span(m, f, r & 0x3F)) continue;
         }
         fixture_cols(f, &lo, &hi);
         if (bc >= lo && bc <= hi) return i;

@@ -132,6 +132,29 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 		--box 76 187 36 8 --label "MP20 HUD GOLD digits (20000)"
 	python3 tools/compare_shot.py /tmp/zel_cav2.png ../docs/screenshots/cavern2.png \
 		--box 152 187 30 8 --label "MP20 HUD ALMAS digits"
+	# ... and MP20 thirty columns *in*: the first ground truth taken after a
+	# scripted walk rather than at a map's entry frame.  Satono column 210 ->
+	# hold Right off the right edge -> MP20 (6,62) -> hold Right ~7 s: Garland
+	# falls into the column-16 pit and walks the rows 9-14 corridor east until
+	# an enemy (the C010 record at (38,13)) stops him at (37,12).  This is the
+	# only capture of MP20's *interior* -- a different tile band, a different
+	# parallax offset (scroll 21,2) and the row wrap that puts the entry band
+	# (rows 55-63) and the corridors (rows 0-14) in one strip.  See
+	# port/README.md "Walking cavern 2 under DOSBox".
+	./zeliard --dir ../zeliard --map 2 --pos 37 12 --level 40 --life 2000 --sword 6 \
+		--shield 6 --gold 40000 --headless --frames 3 --screenshot 2 /tmp/zel_cav2c.png
+	python3 tools/compare_shot.py /tmp/zel_cav2c.png ../docs/screenshots/cavern2_corridor.png \
+		--box 48 14 96 144 --label "MP20 corridor: everything west of Garland"
+	python3 tools/compare_shot.py /tmp/zel_cav2c.png ../docs/screenshots/cavern2_corridor.png \
+		--box 48 14 224 78 --label "MP20 corridor: the ceiling band above him"
+	python3 tools/compare_shot.py /tmp/zel_cav2c.png ../docs/screenshots/cavern2_corridor.png \
+		--box 48 126 224 32 --label "MP20 corridor: the row-15 floor under him"
+	python3 tools/compare_shot.py /tmp/zel_cav2c.png ../docs/screenshots/cavern2_corridor.png \
+		--box 224 14 48 144 --label "MP20 corridor: the east end (columns 43-48)"
+	python3 tools/compare_shot.py /tmp/zel_cav2c.png ../docs/screenshots/cavern2_corridor.png \
+		--box 51 174 136 10 --label "MP20 corridor: HUD PLACE \"Cavern of Peligro\""
+	python3 tools/compare_shot.py /tmp/zel_cav2c.png ../docs/screenshots/cavern2_corridor.png \
+		--box 272 0 48 200 --label "MP20 corridor: the right stone frame"
 	# cavern 3 (MP30 "Cavern of Madera", MPP3) at the BOSQUE door, with two
 	# enp5 enemies on screen
 	./zeliard --dir ../zeliard --map 5 --pos 185 19 --level 14 --life 700 --sword 3 --shield 4 \

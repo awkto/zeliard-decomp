@@ -68,8 +68,12 @@ def main() -> None:
     lines.append("")
     lines.append(f"{total} of 194 entries named.")
     out = Path("docs/RESOURCES.md")
-    out.write_text("\n".join(lines) + "\n")
-    print(f"{total} entries named -> {out}")
+    if "--write" in sys.argv:
+        out.write_text("\n".join(lines) + "\n")
+        print(f"{total} entries named -> {out}")
+    else:
+        print(f"{total} entries named (pass --write to rewrite {out};")
+        print(" it carries hand-written correction notes that a rewrite would clobber)")
     for (archive, idx) in sorted(found):
         print(f"  ZELRES{archive+1}[{idx:2d}] = {', '.join(sorted(found[(archive, idx)]))}")
 

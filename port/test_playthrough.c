@@ -291,6 +291,53 @@ static void cavern_routes(const char *dir, int verbose)
            csh.g.map->objs[k20b].row);
         ck(cell_reachable(88, 43), "MP20: the first Key is on the entrance side");
     }
+    /* The ring's 64 rows are cyclic (6D6E/6D82) and so is an elevator's shaft:
+     * 8024/80AF walk it with the wrapping ring helpers, so MP20's fix[0]
+     * (column 102, home row 61) really runs rows 55..63 *and on into* 0..5 --
+     * the top-of-map corridor whose floor is row 6, the same strip the entry
+     * from Satono lands on at row 62 with his feet on row 1.  `fixture_rows`
+     * clamped the walk at row 0/63 and lost six of the shaft's fifteen
+     * positions, and fix[1] (column 124, home 61, bottom row 7 over the row-8
+     * floor) lost eight. */
+    ck(cnav.node_of[102][63] >= 0 && cnav.node_of[102][1] >= 0,
+       "MP20: fix[0]'s shaft wraps past row 63 into rows 0-2");
+    ck(cell_reachable(102, 63) && cell_reachable(102, 1),
+       "MP20: and the hero can ride it round the wrap");
+    ck(cnav.node_of[124][63] >= 0 && cnav.node_of[124][4] >= 0,
+       "MP20: so does fix[1]'s, down to row 4 over the row-8 floor");
+    /* Where cavern 2 stops, pinned to the cell (issue #31).  Three elevators
+     * -- MP20's fix[1] (column 124, home row 61, shaft 57..7 through the row
+     * wrap, floor row 8), MP20's fix[4] (column 157, home 39, shaft 35..45,
+     * floor 46) and MP21's fix[0] (column 47, home 36, shaft 32..44, floor 45)
+     * -- have exactly the same shape: the record row is flush with a ledge
+     * above, and the *bottom* of the shaft is exactly one row above a floor
+     * the hero already walks.  Every one of those floors is in reach from
+     * Satono's right edge and every one of those platforms is not, because
+     * 7FB1 only draws a fixture-A record: 7FDC/8074 are the only code that
+     * moves one and both need the hero standing on it first.  So each is a
+     * one-way drop out of the corridor until somebody has ridden it down --
+     * and standing on any one of them opens all of MP20 and MP21's east half.
+     * That is the whole of route 2's last `P_GOTO`. */
+    survey(dir, 2, 6, 62);
+    reach_from(6, 62);
+    ck(cnav.node_of[123][4] >= 0 && !cell_reachable(123, 4),
+       "MP20: fix[1]'s shaft bottom (123,4) is a node, and not reachable");
+    ck(cell_reachable(122, 5), "MP20: ... one row under it the row-5 corridor is walked");
+    ck(cnav.node_of[157][42] >= 0 && !cell_reachable(157, 42),
+       "MP20: fix[4]'s shaft bottom (157,42) is a node, and not reachable");
+    ck(cell_reachable(156, 43), "MP20: ... one row under it the second Key's pocket is walked");
+    survey(dir, 2, 123, 4);
+    reach_from(123, 4);
+    ck(door_reachable(146, 35), "MP20: standing on fix[1] at its shaft bottom opens (146,35)");
+    ck(door_reachable(171, 54), "MP20: ... and the LOCKED boss door (171,54) with it");
+    ck(!door_reachable(205, 47),
+       "MP20: (205,47) still needs the boss room's own exit shelf, as before");
+    survey(dir, 3, 78, 51);
+    reach_from(78, 51);
+    ck(cnav.node_of[47][41] >= 0 && !cell_reachable(47, 41),
+       "MP21: fix[0]'s shaft bottom (47,41) is a node, and not reachable from the lower level");
+    ck(cell_reachable(46, 42), "MP21: ... one row under it the row-42 floor is walked");
+
     /* MP31 (system map 6) is the same shape, and its way in is Bosque's
      * column-7 door -- the one the sentry at column 9 stands in front of. */
     int n31 = survey(dir, 6, 149, 14);

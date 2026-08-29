@@ -222,3 +222,14 @@ Each shop overlay's `[A002]` hook is an `[FF50]` state machine polled far faster
 against the captures: armrpro's blink period 1.00-1.01 s (predicted 1.014 s), churpro
 0.40-0.41 s (0.406 s), kingpro's mouth 0.10 s (0.101 s).  Note `shop_armour.png` (taken for
 milestone (d)) happens to catch the smith **mid-blink**.
+
+### 9.5 Walking inside a cavern
+
+§9–§9.1 stop at a map's entry frame.  To capture anything deeper the hero has to be walked
+under DOSBox, which is how `cavern2_corridor.png` was taken: Satono column 210 → off the
+right edge into MP20 (6,62) → Right held for ~7 s, so Garland falls into the column-16 pit
+and walks the rows 9-14 corridor east until the C010 enemy at (38,13) stops him at (37,12).
+The port reproduces it at 99.50% with the hero masked (only the two enemies beside him
+differ) and 100% in six boxes clear of them — which also confirms the ring's row wrap in the
+original, the parallax at a *scrolled* offset, and the 84.5 ms frame under `cycles=3000`.
+The full timeline is in `port/README.md` under "Walking cavern 2 under DOSBox".
