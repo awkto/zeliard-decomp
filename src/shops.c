@@ -266,10 +266,11 @@ void omoy_main(void)
     jmp [0x6000];                                   /* A0A9 enddemo.bin entry 0 */
 }
 static const struct req omoy_enddemo_req = /* A0AD */ {1, 0x33, "enddemo.bin"};
-static const struct req *const omoy_gd_req[5] = /* A0BB */ {A0C5 /*gdega ZELRES1[1]*/, A0D3 /*gdcga [2]*/, A0D3 /*cga2 -> gdcga*/, A0DF /*gdhgc [3]*/, A0EB /*gdmcga [5]*/};
-/* records @A0C5: {0,0x02,"gdega.bin"} {0,0x03,"gdcga.bin"} {0,0x04,"gdhgc.bin"} {0,0x06,"gdmcga.bin"} {0,0x05,"gdtga.bin"}
- * (note: the table has no entry for video mode 5/Tandy = A0F7 gdtga — index 4 is gdmcga; uncertain whether
- *  mode 5 is reachable here) */
+static const struct req *const omoy_gd_req[6] = /* A0BB */ {A0C7 /*gdega*/, A0D3 /*gdcga*/, A0D3 /*cga2 -> gdcga*/, A0DF /*gdhgc*/, A0EB /*gdmcga*/, A0F8 /*gdtga*/};
+/* Six words, one per video mode 0-5 (dumped from the image: A0C7 A0D3 A0D3 A0DF A0EB A0F8):
+ * {0,0x02,"gdega.bin"} {0,0x03,"gdcga.bin"} {0,0x03,"gdcga.bin"} {0,0x04,"gdhgc.bin"}
+ * {0,0x06,"gdmcga.bin"} {0,0x05,"gdtga.bin"} — an earlier note here claimed five entries with
+ * no Tandy row; there is one. */
 /* omoy_draw_picture @A104: 16 rows x 17 cols at (x4 0x1E = 120 px, y 0x0C = 12) from omoy_picture_map */
 static const u8 omoy_picture_map[16][17] = /* A129 */ {
     {0,0,0,0,0,0,0,0x01,0x02,0,0,0,0,0,0,0,0},

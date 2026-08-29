@@ -20,6 +20,7 @@ Reverse engineering of **Zeliard** v1.208 (Game Arts / Sierra On-Line).
 - `port/` also has audio: a from-scratch OPL2 core with the MSC*/SND* drivers ported, cross-checked against the Python converter
 - `tools/msd2mid.py`, `docs/MUSIC.md`, `src/music_{std,adlib}.c` — music score format + drivers; converts every score to MIDI
 - `docs/SERVICES.md`, `docs/VIDEO_DRIVERS.md` — every kernel service vector (0x10C+) and video-driver vector (0x2000+, all 5 drivers) with args and callers
+- `src/opdemo.c`, `src/enddemo.c`, `src/rokademo.c`, `docs/CUTSCENES.md` — the intro, ending and Tear cutscenes, plus the gd art format
 - `docs/ARCHITECTURE.md` — boot chain, memory map, SAR format, kernel protocol, graphics formats
 
 Original game files, extracted resources, and disassembly listings stay

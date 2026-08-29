@@ -145,8 +145,12 @@ table @A3ED; EGA branch @A3FE does `int 10h AX=1002h` with the 17-byte block
 per component, BASE from the table above with components 0x00/0x1F — i.e.
 every on-screen colour is the additive blend of two PC-88 colours (0..0x3E of
 0x3F). `tools/palette.py` reproduces the 64 entries. The intro/title renderer
-(gdmcga @425E) programs a different 256-entry scheme (16 base colours × 16
-offsets via a table at `[0x44F8]`) for the demo/ending art — not yet decoded.
+(gdmcga @425E) uses its own palette: `gd_set_palette` (`4221`) programs
+`DAC[l*16 + r] = C[l] + C[r]` over a **16-entry** base table (ten 48-byte records at
+`4289`) — the 16-colour version of the same additive blend. `tools/palette.py` has it as
+`GD_BASE`/`gd_rgb8()`. Note DOSBox expands a 6-bit DAC component as `(v<<2)|(v>>4)`, not
+`round(v*255/63)`; the two agree on 0x00/0x1F/0x3E (all the 64-colour table uses) but not
+on the 0x07/0x0E/0x0F/0x1E the gd palettes use — `tools/palette.py:dac8()`.
 
 ### .grp resource families (`tools/grp2png.py`, Sprint 2)
 
@@ -158,7 +162,8 @@ offsets via a table at `[0x44F8]`) for the demo/ending art — not yet decoded.
 | **font** | font.grp (AL=2 two-variant container; 3 sections `0006 0606 06A6`) | section 1: 192 glyphs × 8 bytes 1 bpp from char 0x20 | kernel/video text service `[0x202A]` |
 | **3-section shape containers** | sword.grp (`0006 06D1 1043`), itemp.grp, magic.grp | `{u16 hdr_len=6, u16 off2, u16 off3}` then three sub-resources, each `{u16 data_off, u16 ptr[14]}` (ptrs relative to the sub-resource) → per-item byte scripts (`46 01 23 01 01 22 … ff`) and 16-bit bitmask rows at `data_off` (sword-swing shapes). sword shapes decoded in docs/FIGHT.md §6 | partially decoded |
 | **town tiles** | cpat/mpat/dpat.grp (→ `arena:8000` for town.bin) | 0x100 header (type table = which plane is the sky mask, block list, tile-cycle list) + 48-byte cells — docs/TOWN.md | town.bin / gt* renderer (`tools/mdt2png.py --town`) |
-| **town/demo art** | mman/cman/tman.grp (`GAME.BIN @A1E0` picks MMAN/CMAN by map byte, → `arena:4000` for town.bin), ttl1-3, end4-7, ame/dmaou/hime/… (intro/ending) | mman/cman = 5 NPC sprites × 8 frames × 6 cells48 (colour 0 transparent), tman = 46 hero cells48 (docs/TOWN.md); intro art is the gd* renderer's own format with the 256-entry palette (gdmcga @425E) | gtmcga / gdmcga — **not decoded yet** |
+| **town art** | mman/cman/tman.grp (`GAME.BIN @A1E0` picks MMAN/CMAN by map byte, → `arena:4000` for town.bin) | mman/cman = 5 NPC sprites × 8 frames × 6 cells48 (colour 0 transparent), tman = 46 hero cells48 (docs/TOWN.md) | gtmcga |
+| **gd art** (intro/ending) | ttl1-3, end4-7, nec, waku, ame, dmaou, hime, oup/yuup… (31 resources) | DECODED (docs/CUTSCENES.md): *N* PC-88 planes of `wbytes × rows`; the packer at gdmcga `4469` makes each pixel 4 bits and packs **adjacent pairs into one byte** `left<<4\|right` = the DAC index, so a picture is half as wide on screen as in PC-88 pixels; the plane→shift-register mapping is chosen by the entry point. Two unpackers: mask + lag-2 XOR delta (most) and a 6/14-bit RLE (`ttl1-3`). `tools/grp2png.py --all` renders them | gdmcga |
 
 `tools/grp2png.py --all OUTDIR` renders every resource with a known family; `tools/cellsheet.py` is the low-level 48-byte viewer.
 
