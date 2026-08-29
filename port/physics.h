@@ -28,6 +28,10 @@
 
 #define DOOR_CELL 0x4A
 
+#define MAX_OBJS 128            /* ED20 has 128 saved cells, so 128 markers max */
+
+struct AiOverlay;
+
 typedef struct Game Game;
 
 /* one rendered frame: main loop presents the frame, waits 4*speed ticks and
@@ -81,6 +85,44 @@ struct Game {
     uint8_t  slide_dir;             /* 9F23 */
     uint8_t  prev_facing;           /* 9F24 */
 
+    /* enemies: the live copy of the map's C010 table (docs/FIGHT.md §7) */
+    MapObj   obj[MAX_OBJS];
+    int      nobj;
+    uint8_t  under_sprite[MAX_OBJS];   /* ED20 */
+    uint8_t  obj_index;                /* FF4A */
+    const struct AiOverlay *ai;        /* eai1..8 tables */
+    const EnemyGfx         *egfx;      /* enp1..8 cells */
+
+    /* player record (docs/STATE_PAGE.md) */
+    uint8_t  level;                 /* [8D] strength term of the damage formulas */
+    uint16_t exp;                   /* [8E] */
+    uint32_t gold;                  /* [85..87] */
+    uint16_t almas;                 /* [8B] */
+    uint8_t  sword;                 /* [92] 1..6 */
+    uint16_t shield_hp;             /* [94] */
+    uint8_t  keys, lion_keys;       /* [98], [99] */
+    uint8_t  hero_crest;            /* [9C] */
+    uint16_t hp_regen_pending;      /* [C6] */
+    uint8_t  attack_bonus;          /* [E4] */
+
+    /* combat state (FF page + 9F0E..) */
+    uint8_t  attacking;             /* FF43 */
+    uint8_t  attack_type;           /* FF45 0 slash, 1 upward, 2 down-thrust */
+    uint8_t  attack_var;            /* FF46 swing frame */
+    uint8_t  thrust_latch;          /* FF47 */
+    uint8_t  buttons;               /* INT 61h AH: bit0 sword, bit1 magic */
+    uint8_t  btn1_edge;             /* FF1D */
+    uint8_t  hit_side[4];           /* 9F0E..9F11 */
+    uint16_t contact_damage;        /* 9F12 */
+    uint8_t  sfx_request;           /* FF75 (logged only) */
+    uint8_t  heat_timer;            /* 9F25 */
+    uint8_t  boss_map, boss_room, boss_cutscene, boss_defeated;
+    uint16_t rng;                   /* kernel [11A] KRN_RANDOM source (FF1B) */
+    unsigned deaths;                /* hero deaths (the port restarts at the entry) */
+    uint8_t  death_anim;            /* 9F28 */
+    int      entry_col, entry_row;  /* where hero_die() puts him back */
+    uint8_t  entry_face;
+
     /* port side */
     uint8_t  dirs;                  /* INT 61h AL: current direction bits */
     unsigned frame_no;              /* rendered frames */
@@ -110,5 +152,9 @@ int  game_win(const Game *g);                      /* ring index of screen (0,0)
 uint8_t game_ring_cell(const Game *g, int scr_col, int scr_row);   /* screen cell (28x19) */
 int  game_passable_wall(const Game *g, uint8_t v);
 int  game_passable_body(const Game *g, uint8_t v);
+int  game_ring_index(const Game *g, uint8_t row, uint8_t col);     /* 6D6E ring_addr */
+int  game_ring_add(int p, int delta);                              /* 6D82/6D8E wrap */
+int  game_push_hero(Game *g, int left);      /* 66A5 / 684C try_move; 1 = blocked */
+void game_knock_fall(Game *g);               /* 64A2: one row of fall after a knockback */
 
 #endif

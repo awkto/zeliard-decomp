@@ -63,6 +63,22 @@ void gfx_decode32(const uint8_t *c, const uint8_t *pal16, Cell2 *out)
     }
 }
 
+void gfx_decode32_raw(const uint8_t *c, Cell2R *out)
+{
+    for (int row = 0; row < 8; row++) {
+        unsigned a = c[row * 4] << 8 | c[row * 4 + 1], b = c[row * 4 + 2] << 8 | c[row * 4 + 3];
+        unsigned m = a | b;
+        unsigned d = (m | (m >> 1) | (m << 1)) & 0xFFFF;         /* gfmcga @4EDD */
+        for (int k = 0; k < 8; k++) {
+            int x0 = 2 * k, x1 = 2 * k + 1;
+            unsigned l = ((b >> (15 - x0)) & 1) << 1 | ((a >> (15 - x0)) & 1);
+            unsigned r = ((b >> (15 - x1)) & 1) << 1 | ((a >> (15 - x1)) & 1);
+            out->mask[row][k] = (uint8_t)(((d >> (14 - 2 * k)) & 3) != 0);
+            out->idx[row][k] = (uint8_t)(l << 2 | r);
+        }
+    }
+}
+
 /* ZELRES3 indices: MPP1..MPP9, MPPA, MPPB (fight.bin @9C43), DCHR.GRP */
 static const int MPP_RES[11] = {74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84};
 #define DCHR_RES 54
@@ -103,6 +119,56 @@ int gfx_load_hero(HeroGfx *h, const char *dir)
     if (n > 256) n = 256;
     for (int i = 0; i < n; i++) gfx_decode32(d + 0x333 + i * 32, PAL2BPP[0], &h->cell[i]);
     h->ncells = n;
+    free(d);
+    return 0;
+}
+
+/* fight.bin 9D8D: the per-cavern enemy sprite banks ENP1..ENP8 */
+static const int ENP_RES[8] = {56, 57, 58, 59, 60, 61, 62, 63};
+
+int gfx_load_enemy_cells(EnemyGfx *e, const char *dir, int enp_index)
+{
+    pal_init();
+    memset(e, 0, sizeof *e);
+    if (enp_index < 0 || enp_index > 7) return -1;
+    size_t len;
+    uint8_t *d = sar_load(dir, 2, ENP_RES[enp_index], 1, &len);
+    if (!d) return -1;
+    int n = (int)(len / 32);
+    if (n > ENEMY_CELLS) n = ENEMY_CELLS;
+    for (int i = 0; i < n; i++) gfx_decode32_raw(d + i * 32, &e->cell[i]);
+    e->ncells = n;
+    free(d);
+    return 0;
+}
+
+/* font.grp = ZELRES1[12], a 3-section container {u16 hdr=6, u16 off2, u16 off3}.
+ * Section 2 (off2..off3) holds the 6x7 digit glyphs; the MCGA variant stores
+ * 8 bytes per glyph (bits 5..0 of rows 0..6), the EGA mode-0 stream 16 (16 px). */
+int gfx_load_digits(DigitFont *f, const char *dir)
+{
+    memset(f, 0, sizeof *f);
+    size_t len;
+    uint8_t *d = sar_load(dir, 0, 12, 1, &len);
+    if (!d) return -1;
+    if (len < 6) { free(d); return -1; }
+    size_t o2 = d[2] | d[3] << 8, o3 = d[4] | d[5] << 8;
+    if (o3 <= o2 || o3 > len) { free(d); return -1; }
+    size_t span = o3 - o2, stride = span >= 160 ? 16 : 8;
+    if (span < 10 * 8) { free(d); return -1; }
+    for (int g = 0; g < 10; g++) {
+        const uint8_t *p = d + o2 + (size_t)g * stride;
+        for (int r = 0; r < 7; r++) {
+            if (stride == 8) f->glyph[g][r] = (uint8_t)(p[r] & 0x3F);
+            else {                                  /* 16-px EGA glyph: take every 2nd pixel */
+                unsigned v = p[2 * r] << 8 | p[2 * r + 1];
+                uint8_t b = 0;
+                for (int c = 0; c < 6; c++) if ((v >> (15 - (4 + 2 * c))) & 1) b |= (uint8_t)(0x20 >> c);
+                f->glyph[g][r] = b;
+            }
+        }
+    }
+    f->loaded = 1;
     free(d);
     return 0;
 }

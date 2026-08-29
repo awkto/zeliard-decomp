@@ -9,7 +9,7 @@ Reverse engineering of **Zeliard** v1.208 (Game Arts / Sierra On-Line).
 - `tools/resnames.py` — recovers original resource filenames → `docs/RESOURCES.md`
 - `tools/ghidra.sh` — headless Ghidra decompile of any binary/overlay to C (uses `tools/ghidra_dump_c.py`)
 - `tools/run_dosbox.sh` — ground-truth harness: runs the real game in Xvfb+DOSBox, captures screenshots
-- `port/` — the SDL2 source port (Phase 3): `make && ./zeliard` renders cavern 1 and walks Garland with the original collision rules; `make test`, `make verify`
+- `port/` — the SDL2 source port (Phase 3): `make && ./zeliard` renders cavern 1 and walks Garland with the original collision rules; `make test` (149 checks), `make verify` (7 pixel comparisons, all 100%); enemies, eai1 AI and sword combat implemented
 - `docs/ROADMAP.md` — phased plan, mirrors the tracking epic
 - `tools/grp2png.py` — renders .grp graphics (tiles, enemies, hero frames, portraits, font) to PNG; `tools/palette.py` = the MCGA palette
 - `src/kernel.c`, `src/video_mcga.c` — hand-cleaned C of the STICK.BIN kernel and the MCGA video driver (original addresses in comments)

@@ -269,6 +269,7 @@ static void t_mp10(const char *dir)
     CHECK(t.lists[0] == 0 && t.lists[3] == 8 && t.lists[0x18] == 0x0B && t.lists[0x1C] == 0x0C && t.lists[0x20] == 0x0F, "MPP1 cell-0 lists");
     game_init(&G, &m, &t); G.present = present;
     game_place(&G, 61, 7, 0);
+    G.nobj = 0;                 /* milestone (a) checks: no enemies (see test_combat.c) */
     CHECK(G.scroll_col == 45 && G.scroll_row == 61 && G.hero_scr_col == 12 && G.hero_scr_row == 10, "MURALLA door entry: scroll (%d,%d)", G.scroll_col, G.scroll_row);
     game_first_frame(&G);
     CHECK(game_ring_cell(&G, 12, 9) == DOOR_CELL, "door cell 0x4A above the hero after signs_draw: %02x", game_ring_cell(&G, 12, 9));
@@ -284,7 +285,7 @@ static void t_mp10(const char *dir)
     for (int i = 0; i < 15; i++) step(DIR_RIGHT);
     CHECK(hcol() == 76 && hrow() == 7, "walked 15 cells right on the MURALLA platform: (%d,%d)", hcol(), hrow());
     /* horizontal wrap: walk left across column 0 */
-    game_place(&G, 3, 7, 1); game_first_frame(&G);
+    game_place(&G, 3, 7, 1); G.nobj = 0; game_first_frame(&G);
     for (int i = 0; i < 6; i++) step(DIR_LEFT);
     CHECK(hcol() >= 230 || hrow() != 7 || G.vstate != V_GROUND || hcol() < 3, "wrapped/moved: col %d row %d", hcol(), hrow());
 }

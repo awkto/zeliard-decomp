@@ -9,6 +9,7 @@
 #include "physics.h"
 #include "render.h"
 #include "png.h"
+#include "enemy.h"
 #ifdef HAVE_SDL
 #include <SDL.h>
 #endif
@@ -21,6 +22,10 @@ typedef struct {
     Tileset  tiles[2];
     int      cur;                       /* which maps[]/tiles[] slot is live */
     HeroGfx  hero;
+    AiOverlay ai;
+    EnemyGfx  egfx;
+    DigitFont font;
+    int      ai_index, enp_index;
     uint8_t  fb[FB_W * FB_H];
     int      headless;
     unsigned shot_frame;
@@ -28,7 +33,7 @@ typedef struct {
     const char *shot_path;
     const char *script;                 /* headless key script */
     int      script_pos, script_left;
-    uint8_t  script_dirs;
+    uint8_t  script_dirs, script_btns;
     double   frame_ms;
     int      scale;
     int      quit;
@@ -48,7 +53,7 @@ static void usage(void)
         "  --pos C R   hero top-left map cell (default: the MURALLA door in MP10, 61 7)\n"
         "  --screenshot N FILE   dump the framebuffer after N rendered frames (implies --headless)\n"
         "  --script S  headless input: tokens like R10 (hold Right 10 frames), UR2, D3, .5 (idle 5),\n"
-        "              letters U D L R, separated by spaces/commas\n"
+        "              letters U D L R and X (sword), separated by spaces/commas\n"
         "  --speed N   FF33 speed (frame = 4*N ticks; default 5 = 84.5 ms)\n"
         "  --scale N   window scale (default 3)\n"
         "  --frames N  quit after N rendered frames (SDL and headless)\n");
@@ -61,20 +66,21 @@ static int script_next(App *a)
         if (!s) return 0;
         while (s[a->script_pos] == ' ' || s[a->script_pos] == ',') a->script_pos++;
         if (!s[a->script_pos]) return 0;
-        uint8_t d = 0;
+        uint8_t d = 0, b = 0;
         for (;;) {
             char c = s[a->script_pos];
             if (c == 'U' || c == 'u') d |= DIR_UP;
             else if (c == 'D' || c == 'd') d |= DIR_DOWN;
             else if (c == 'L' || c == 'l') d |= DIR_LEFT;
             else if (c == 'R' || c == 'r') d |= DIR_RIGHT;
+            else if (c == 'X' || c == 'x') b |= 1;
             else if (c == '.') ;
             else break;
             a->script_pos++;
         }
         int n = 0;
         while (s[a->script_pos] >= '0' && s[a->script_pos] <= '9') n = n * 10 + (s[a->script_pos++] - '0');
-        a->script_dirs = d; a->script_left = n ? n : 1;
+        a->script_dirs = d; a->script_btns = b; a->script_left = n ? n : 1;
     }
     a->script_left--;
     return 1;
@@ -84,6 +90,7 @@ static void dump_png(App *a, Game *g)
 {
     static uint8_t rgb[FB_W * FB_H * 3];
     render_frame(a->fb, g, &a->hero);
+    render_hud(a->fb, g, &a->font);
     render_to_rgb(a->fb, rgb);
     if (png_write_rgb(a->shot_path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", a->shot_path);
     else fprintf(stderr, "wrote %s (frame %u, hero map (%d,%d) scr (%d,%d) scroll (%d,%d))\n", a->shot_path,
@@ -91,32 +98,43 @@ static void dump_png(App *a, Game *g)
                  g->scroll_col, g->scroll_row);
 }
 
+/* INT 61h AH: bit0 sword, bit1 magic.  The kernel latches the press edge in
+ * FF1D (btn1_edge) and fight.bin clears it when it consumes it (6EF7). */
+static void set_buttons(Game *g, uint8_t b)
+{
+    if ((b & 1) && !(g->buttons & 1)) g->btn1_edge = 0xFF;
+    g->buttons = b;
+}
+
 static void present(Game *g)
 {
     App *a = g->user;
     if (a->verbose)
-        fprintf(stderr, "frame %4u  hero map (%3d,%2d) scr (%2d,%2d) scroll (%3d,%2d) v=%02x anim=%02x flags=%02x crouch=%02x ladder=%02x dirs=%x%s\n",
+        fprintf(stderr, "frame %4u  hero map (%3d,%2d) scr (%2d,%2d) scroll (%3d,%2d) v=%02x anim=%02x flags=%02x "
+                "crouch=%02x ladder=%02x dirs=%x hp=%u atk=%02x/%u%s%s\n",
                 g->frame_no, game_hero_map_col(g), game_hero_map_row(g), g->hero_scr_col, g->hero_scr_row,
                 g->scroll_col, g->scroll_row, g->vstate, g->hero_anim, g->hero_flags, g->crouching, g->on_ladder,
-                g->dirs, g->on_hazard ? " HAZARD" : "");
+                g->dirs, g->hp, g->attacking, g->attack_var, g->on_hazard ? " HAZARD" : "",
+                g->hero_hit ? " HIT" : "");
     if (a->max_frames && g->frame_no >= a->max_frames) a->quit = 1;
     if (a->headless) {
         if (a->shot_path && g->frame_no == a->shot_frame) dump_png(a, g);
-        if (!script_next(a)) { if (!a->shot_path || g->frame_no >= a->shot_frame) a->quit = 1; g->dirs = 0; }
-        else g->dirs = a->script_dirs;
+        if (!script_next(a)) { if (!a->shot_path || g->frame_no >= a->shot_frame) a->quit = 1; g->dirs = 0; set_buttons(g, 0); }
+        else { g->dirs = a->script_dirs; set_buttons(g, a->script_btns); }
         return;
     }
 #ifdef HAVE_SDL
     static uint8_t rgb[FB_W * FB_H * 3];
     render_frame(a->fb, g, &a->hero);
+    render_hud(a->fb, g, &a->font);
     render_to_rgb(a->fb, rgb);
     SDL_UpdateTexture(a->tex, NULL, rgb, FB_W * 3);
     SDL_RenderClear(a->ren);
     SDL_RenderCopy(a->ren, a->tex, NULL, NULL);
     SDL_RenderPresent(a->ren);
-    char title[128];
-    snprintf(title, sizeof title, "Zeliard port — %s  hero (%d,%d)  %s", g->map->name, game_hero_map_col(g),
-             game_hero_map_row(g), g->message);
+    char title[256];
+    snprintf(title, sizeof title, "Zeliard — %s  (%d,%d)  LIFE %u/%u  EXP %u  GOLD %u  %s", g->map->name,
+             game_hero_map_col(g), game_hero_map_row(g), g->hp, g->max_hp, g->exp, (unsigned)g->gold, g->message);
     SDL_SetWindowTitle(a->win, title);
 
     /* wait out the frame (4*speed ticks), pumping events */
@@ -143,7 +161,28 @@ static void present(Game *g)
     if (k[SDL_SCANCODE_LEFT] || k[SDL_SCANCODE_A]) d |= DIR_LEFT;
     if (k[SDL_SCANCODE_RIGHT] || k[SDL_SCANCODE_D]) d |= DIR_RIGHT;
     g->dirs = d;
+    uint8_t b = 0;
+    if (k[SDL_SCANCODE_X] || k[SDL_SCANCODE_LCTRL] || k[SDL_SCANCODE_RCTRL]) b |= 1;
+    if (k[SDL_SCANCODE_C] || k[SDL_SCANCODE_LALT]) b |= 2;
+    set_buttons(g, b);
 #endif
+}
+
+/* fight.bin 7EBB: (re)load the AI overlay and the enemy sprite bank named by
+ * the map's level record (+3 AI request index, +4 ENPn). */
+static void load_enemy_banks(App *a, Game *g, const Map *m)
+{
+    if (!a->ai.loaded || a->ai_index != m->ai) {
+        ai_unload(&a->ai);
+        if (ai_load(&a->ai, a->dir, m->ai)) fprintf(stderr, "cannot load AI overlay %d\n", m->ai);
+        a->ai_index = m->ai;
+    }
+    if (a->egfx.ncells == 0 || a->enp_index != m->enemies) {
+        if (gfx_load_enemy_cells(&a->egfx, a->dir, m->enemies)) fprintf(stderr, "cannot load enp%d.grp\n", m->enemies + 1);
+        a->enp_index = m->enemies;
+    }
+    g->ai = a->ai.loaded ? &a->ai : NULL;
+    g->egfx = a->egfx.ncells ? &a->egfx : NULL;
 }
 
 static int on_door(Game *g, const Door *d)
@@ -160,6 +199,7 @@ static int on_door(Game *g, const Door *d)
     }
     if (gfx_load_tileset(&a->tiles[slot], a->dir, a->maps[slot].tileset)) return 0;
     a->cur = slot;
+    load_enemy_banks(a, g, &a->maps[slot]);
     game_enter(g, &a->maps[slot], &a->tiles[slot], d->dest_col, d->dest_row, (d->letter & 0x40) != 0);
     fprintf(stderr, "[door] entered %s (cavern %d, %d cols, tileset MPP%c) at hero (%d,%d)\n", a->maps[slot].name,
             a->maps[slot].cavern, a->maps[slot].width, "123456789AB"[a->maps[slot].tileset],
@@ -204,9 +244,13 @@ int main(int argc, char **argv)
     if (gfx_load_tileset(&a.tiles[0], a.dir, a.maps[0].tileset)) { fprintf(stderr, "cannot load tileset\n"); return 1; }
     if (gfx_load_hero(&a.hero, a.dir)) { fprintf(stderr, "cannot load fman.grp\n"); return 1; }
 
+    if (gfx_load_digits(&a.font, a.dir)) fprintf(stderr, "note: no HUD digit font (font.grp)\n");
+
     Game g;
     game_init(&g, &a.maps[0], &a.tiles[0]);
     g.user = &a; g.present = present; g.on_door = on_door;
+    a.ai_index = a.enp_index = -1;
+    load_enemy_banks(&a, &g, &a.maps[0]);
     if (pos_col < 0) {
         if (map_idx == 0) { pos_col = 61; pos_row = 7; }                 /* mrmp.mdt cavern entry (61,7): the MURALLA door */
         else if (a.maps[0].start_col != 0xFFFF) { pos_col = a.maps[0].start_col; pos_row = a.maps[0].start_row; }
@@ -235,8 +279,9 @@ int main(int argc, char **argv)
     game_first_frame(&g);
     while (!a.quit) game_step(&g);
 
-    fprintf(stderr, "stopped after %u frames: hero map (%d,%d), %u hazard frames\n", g.frame_no, game_hero_map_col(&g),
-            game_hero_map_row(&g), g.hazard_frames);
+    fprintf(stderr, "stopped after %u frames: hero map (%d,%d), LIFE %u/%u, EXP %u, GOLD %u, %u hazard frames, %u deaths\n",
+            g.frame_no, game_hero_map_col(&g), game_hero_map_row(&g), g.hp, g.max_hp, g.exp, (unsigned)g.gold,
+            g.hazard_frames, g.deaths);
 #ifdef HAVE_SDL
     if (a.tex) SDL_DestroyTexture(a.tex);
     if (a.ren) SDL_DestroyRenderer(a.ren);

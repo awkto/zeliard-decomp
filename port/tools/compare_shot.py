@@ -6,7 +6,12 @@ Reports the percentage of identical pixels over the visible playfield (x 48..271
 y 14..157) with the hero (3x3 cells at screen cell (12,10)) and the door arch
 (5x4 cells from screen cell (11,9)) masked out, plus the per-row match.
 
+With --box X Y W H the comparison is restricted to that rectangle of the port
+image (game coordinates) and no masking is applied - used for the enemy-sprite
+check (docs/screenshots/cavern_enemy.png).
+
 usage: compare_shot.py PORT.png DOSBOX.png [--diff OUT.png] [--no-mask]
+                       [--box X Y W H] [--label TEXT]
 """
 import sys
 from PIL import Image
@@ -16,9 +21,15 @@ def main():
     b = Image.open(sys.argv[2]).convert("RGB")
     diff_out = sys.argv[sys.argv.index("--diff") + 1] if "--diff" in sys.argv else None
     mask = "--no-mask" not in sys.argv
+    box = None
+    if "--box" in sys.argv:
+        i = sys.argv.index("--box")
+        box = tuple(int(v) for v in sys.argv[i + 1:i + 5])
+        mask = False
+    label = sys.argv[sys.argv.index("--label") + 1] if "--label" in sys.argv else None
     oy = 20 if b.height == 240 else 0
     A, B = a.load(), b.load()
-    x0, y0, w, h = 48, 14, 224, 144
+    x0, y0, w, h = box if box else (48, 14, 224, 144)
     hero = (48 + 12 * 8, 14 + 10 * 8, 24, 24)
     arch = (48 + 11 * 8, 14 + 9 * 8, 40, 32)
     def masked(x, y):
@@ -41,7 +52,8 @@ def main():
                 diff.putpixel((x - x0, y - y0), A[x, y])
         tot += rt; same += rs
         rows.append((y, rs, rt))
-    print(f"playfield match: {same}/{tot} = {100.0 * same / tot:.2f}% ({'hero+arch masked' if mask else 'unmasked'})")
+    what = label or ("playfield" if not box else f"box {x0},{y0} {w}x{h}")
+    print(f"{what} match: {same}/{tot} = {100.0 * same / tot:.2f}% ({'hero+arch masked' if mask else 'unmasked'})")
     bad = [(y, s, t) for (y, s, t) in rows if s != t]
     if bad:
         print("rows with differences (y, same/total):", " ".join(f"{y}:{s}/{t}" for y, s, t in bad[:40]))

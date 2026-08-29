@@ -2,6 +2,7 @@
  * the hex tags match fight.c; the ring is addressed with linear indices and the
  * same single wrap the original applies to pointers (6D82/6D8E). */
 #include "physics.h"
+#include "enemy.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -12,6 +13,8 @@ int game_win(const Game *g) { return (g->scroll_row & 0x3F) * RING_W; }
 int game_hero_cell(const Game *g) { return wrap_down(game_win(g) + g->hero_scr_row * RING_W + g->hero_scr_col + 4); }   /* 6DB1 */
 int game_hero_map_col(const Game *g) { int c = g->scroll_col + g->hero_scr_col + 4; if (c >= g->map->width) c -= g->map->width; return c; }
 int game_hero_map_row(const Game *g) { return (g->scroll_row + g->hero_scr_row) & 0x3F; }
+int game_ring_index(const Game *g, uint8_t row, uint8_t col) { (void)g; return (row & 0x3F) * RING_W + col; }   /* 6D6E */
+int game_ring_add(int p, int delta) { p += delta; while (p >= RING_SIZE) p -= RING_SIZE; while (p < 0) p += RING_SIZE; return p; }
 uint8_t game_ring_cell(const Game *g, int sc, int sr) { return g->ring[wrap_down(game_win(g) + sr * RING_W + sc + 4)]; }
 
 /* 6DCB: plain cell -> (value, is_sprite=0); marker -> object type */
@@ -21,7 +24,7 @@ static uint8_t cell_or_type(const Game *g, int p, int *is_sprite)
     if (!(v & 0x80)) { *is_sprite = 0; return v; }
     *is_sprite = 1;
     int i = v & 0x7F;
-    return i < g->map->nobj ? g->map->objs[i].type : 0;
+    return i < g->nobj ? g->obj[i].type : 0;
 }
 
 /* 6DF3 */
@@ -105,6 +108,7 @@ static void walk_left(Game *g);
 static void walk_right(Game *g);
 static int  try_move_left(Game *g);
 static int  try_move_right(Game *g);
+static int  floor_under_hero(Game *g);
 
 static void stop_rising(Game *g) { g->conveyor = 0; g->vstate = V_FALL; }                              /* 65BA */
 static void turn_around(Game *g) { g->hero_flags ^= FACE_LEFT; if (!g->on_ladder) g->hero_anim = 0x80; }   /* 6824 */
@@ -159,6 +163,13 @@ static int try_move_right(Game *g)
     }
     scroll_right(g);
     return 0;
+}
+
+int game_push_hero(Game *g, int left) { return left ? try_move_left(g) : try_move_right(g); }
+void game_knock_fall(Game *g)                                                                           /* 64A2 */
+{
+    if (floor_under_hero(g)) return;
+    if (g->rise_rows) { g->rise_rows--; g->hero_scr_row++; } else scroll_down(g);
 }
 
 static void ice_slide_start(Game *g)                                                                    /* 6508 */
@@ -515,7 +526,12 @@ static void hazard_check(Game *g)
         s = wrap_down(s + RING_W);
     }
     if (!g->on_ladder && is_hazard(g, g->ring[wrap_down(s + 1)])) g->on_hazard = 0xFF;
-    if (g->on_hazard) { g->hero_hit_flash = 0xFF; g->hazard_frames++; }
+    if (g->on_hazard) {                                                 /* 7505 */
+        static const uint8_t hazard_damage[9] = {1, 1, 4, 8, 20, 20, 20, 20, 20};
+        int c = g->map->cavern; if (c < 1) c = 1; if (c > 9) c = 9;
+        g->hero_hit_flash = 0xFF; g->sfx_request = 9; g->hazard_frames++;
+        hero_damage(g, hazard_damage[c - 1]);
+    }
 }
 
 /* 6F9B: the per-frame simulation of everything but the hero, then render + wait */
@@ -534,19 +550,38 @@ static void frame(Game *g)
     g->hero_map_row = (uint8_t)((g->hero_scr_row + g->scroll_row) & 0x3F);
     fixtures_draw(g);
     signs_draw(g);
-    /* enemies_update, contact, shots, orbs: milestone (b) */
+    if (!g->boss_defeated) enemies_update(g);                           /* 8D19 */
     g->hero_hit_flash = 0; g->hero_hit = 0;
+    hero_enemy_contact(g);                                              /* 751F */
+    /* shots_update / orbs_update (8422/86FC): no projectiles yet */
     hazard_check(g);
-    if (!g->hero_dead) g->hero_hidden = 0;
+    if (g->map->cavern == 7 && g->shoes != 5 && ((++g->heat_timer & 0x3F) == 0)) {   /* 704F */
+        g->hero_hit_flash = 0xFF; g->sfx_request = 9; hero_damage(g, 0x0F);
+        snprintf(g->message, sizeof g->message, "It's too hot !!");
+    }
+    if (g->hero_dead) g->hero_hit_flash = 0; else g->hero_hidden = 0;
     g->frame_no++;
+    g->rng += 20;                                                       /* FF1B: ticks per frame at speed 5 */
     if (g->present) g->present(g);                                      /* draw + wait 4*speed ticks + poll input */
+    sword_apply(g);                                                     /* 7147: second half of the frame */
+    if (g->hero_dead) return;
+    if (g->hp == 0) { hero_die(g); return; }                            /* 718C */
+    if (++g->regen_tick >= 0x10) {                                      /* 719E */
+        g->regen_tick = 0;
+        if (g->hp < g->max_hp) { g->hp += 2; if (g->hp > g->max_hp) g->hp = g->max_hp; }
+    }
+    if (g->hp_regen_pending) {                                          /* 70D9: potion */
+        g->hp_regen_pending--; g->hp += 8;
+        if (g->hp > g->max_hp) { g->hp = g->max_hp; g->hp_regen_pending = 0; }
+    }
 }
 
 /* 62DB: main-loop variant while on a ladder */
 static void ladder_step(Game *g)
 {
-    g->crouching = 0; g->vstate = V_GROUND; g->conveyor = 0;
+    g->crouching = 0; g->vstate = V_GROUND; g->conveyor = 0; g->attacking = 0;
     frame(g);
+    hero_knockback(g);
     hero_input(g);
     if (g->on_ladder == 0xFF) {
         int tl = game_hero_cell(g);
@@ -560,12 +595,12 @@ static void ladder_step(Game *g)
 void game_step(Game *g)
 {
     if (g->on_ladder) { ladder_step(g); return; }
-    /* sword_input (6E3B): milestone (b) */
+    sword_input(g);                                                     /* 6E3B */
     ice_slide_step(g);
     frame(g);
     /* magic_input (87B0): stub */
     unstick_from_wall(g);
-    /* knockback (6412): needs enemies */
+    hero_knockback(g);                                                  /* 6412 */
     if (++g->crouch_release == 2) g->crouching = 0;
     if (g->dirs & DIR_DOWN) g->hero_flags &= (uint8_t)~WALKING;
     if (gravity(g)) hero_input(g);
@@ -578,6 +613,8 @@ void game_init(Game *g, const Map *m, const Tileset *t)
     memset(g, 0, sizeof *g);
     g->map = m; g->tiles = t;
     g->hero_anim = 0x80; g->hp = g->max_hp = 0x50;
+    g->sword = 1;                                                       /* the training sword */
+    g->rng = 0x1234;
     g->max_rise = 2; g->hero_scr_col = 0x0C; g->hero_scr_row = m->row_bias; g->hero_home_row = m->row_bias;
 }
 
@@ -591,7 +628,10 @@ void game_place(Game *g, int col, int row, int face_left)
     g->hero_flags = face_left ? FACE_LEFT : 0;
     g->hero_anim = 0x80; g->vstate = V_GROUND; g->on_ladder = 0; g->crouching = 0;
     g->fall_rows = g->rise_rows = 0; g->diag_jump = 0;
+    g->attacking = 0; g->attack_var = 0; g->hero_dead = 0; g->death_anim = 0;
+    g->entry_col = col; g->entry_row = row; g->entry_face = (uint8_t)(face_left ? 1 : 0);
     ring_fill(g);
+    enemies_load(g);
 }
 
 void game_enter(Game *g, const Map *m, const Tileset *t, int dest_col, int dest_row, int face_left)

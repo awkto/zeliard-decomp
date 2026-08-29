@@ -174,9 +174,12 @@ The sprite is 3×3 cells but the **solid body is the middle column only**
 ### Sword input (`6E3B`, needs `[0x92] != 0`)
 * Button-1 edge, not already attacking/casting → `attacking = 0xFF`
   (`6F01`), `attack_type` = **1 (upward slash)** if "up" is held or, outside
-  boss rooms, if any hittable enemy sprite (type bits 5/6 clear, not an item)
-  is in the 4×8 block rows −4..−1, cols −3..+4 relative to the hero's top-left
-  (`6EA0..6ED4`); otherwise **0 (slash)**. Sound 3.
+  boss rooms, if any hittable enemy sprite is in the 4×8 block rows −4..−1, cols −3..+4 relative to the hero's top-left
+  (`6EA0..6ED4`); otherwise **0 (slash)**. Sound 3.  The hittable test is
+  `spr && !(type & 0x60) && !(flags & 0x10)` (`6EB4..6EC3`) — i.e. not
+  sword-immune, not harmless, and not the second record of a tall enemy; note
+  it does **not** exclude items (`type & 0x10`).  `port/combat.c` approximates
+  it as `!(type & 0x70)`, which also skips items — a deviation worth checking.
 * Button-1 **held** + "down" while airborne and not on a conveyor →
   `attack_type = 2` (down-thrust), sound 4 once (`6E5C`).
 * The renderer runs the swing: it increments `FF46` each frame and clears
@@ -358,6 +361,11 @@ vector 26 → `sword_base[0] + level/2 = 1 + level/2` per hit, death phase 3 →
 drop, EXP `A008[class]`.
 
 ## 10. Not decoded / uncertain
+
+* **Swing length** — how `FF46`/`attack_var` advances and when `attacking`
+  clears (gfmcga `3E45`/`3F1A`) is not decoded; it is the one combat number not
+  traceable to an instruction.  `port/combat.c` approximates 6 rendered frames
+  (3 shapes × 2).
 
 * Which kernel mode-4 blocks hold sword levels 4-6 (sword.grp has 3 sections).
 * `[0x8D]` "level", `[0xE4]` attack bonus, `[0x7F]`, `[0x49]`: roles inferred

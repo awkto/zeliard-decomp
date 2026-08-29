@@ -10,10 +10,14 @@ extern const uint8_t PAL2BPP[5][16];          /* gfmcga @4F98.. sprite colour ta
 
 typedef struct { uint8_t px[8][8]; } Cell8;   /* VGA indices, 0 = black/transparent */
 typedef struct { uint8_t px[8][8]; uint8_t mask[8][8]; } Cell2;  /* 2bpp sprite: mask 1 = drawn */
+/* the same cell before the palette is applied: idx = (left<<2|right) pair index */
+typedef struct { uint8_t idx[8][8]; uint8_t mask[8][8]; } Cell2R;
 
 void gfx_decode48(const uint8_t *src, Cell8 *out);
 /* 2bpp cell with the gfmcga vec_20 outline mask (horizontal dilation). */
 void gfx_decode32(const uint8_t *src, const uint8_t *pal16, Cell2 *out);
+/* the same, palette-free (enemy frames pick their colour table per frame) */
+void gfx_decode32_raw(const uint8_t *src, Cell2R *out);
 
 /* Cavern tile bank as at arena:8000: MPPx cells 1..N and DCHR.GRP at 0x40..
  * Cell 0 holds the 8 classification lists (docs/FIGHT.md §3). */
@@ -34,5 +38,16 @@ typedef struct {
     int     ncells;
 } HeroGfx;
 int gfx_load_hero(HeroGfx *h, const char *dir);
+
+/* enp1..8.grp: a plain cells32 bank (arena:4000), 32 bytes per cell, cell 0 blank.
+ * `enp_index` is the level record's byte +4 (0 = ENP1 = cavern 1). */
+#define ENEMY_CELLS 256
+typedef struct { Cell2R cell[ENEMY_CELLS]; int ncells; } EnemyGfx;
+int gfx_load_enemy_cells(EnemyGfx *e, const char *dir, int enp_index);
+
+/* font.grp (ZELRES1[12]) section 2: the 6x7 HUD digit glyphs (docs/VIDEO_DRIVERS.md
+ * [F502]).  glyph[d][row] = bits 5..0, left to right. */
+typedef struct { uint8_t glyph[10][7]; int loaded; } DigitFont;
+int gfx_load_digits(DigitFont *f, const char *dir);
 
 #endif

@@ -133,7 +133,8 @@ extracted/ZELRES3/020_data.bin OUT.png` (mp10, MPP1 tileset).
 * Colours match pixel-exactly (the `tools/palette.py` DAC), including the parallax-free black
   background.
 * **Enemies** (`cavern_enemies.png`, from AB/shot_60): a green frog with white eye pixels and a
-  salmon/red ceiling blob.  `python3 tools/grp2png.py extracted/ZELRES3/056_data.bin OUT.png`
+  salmon/red ceiling creature — identified by the port as the **class-1 snail** (enp1 cells 79/80,
+  frame 0 facing left), not a bat.  `python3 tools/grp2png.py extracted/ZELRES3/056_data.bin OUT.png`
   (enp1.grp, "cells32" sheet) decodes 8×8 cells with exactly those colours — the bright-green
   scaly frog cells and the salmon/red blob cells are recognisable in the sheet — but grp2png does
   not yet assemble enemy metasprites (ROADMAP Phase 1 item 2), so only cell content/palette are
@@ -153,6 +154,6 @@ windows are ≈24 px.  `+key`/`-key` hold and release a key (`xdotool keydown/ke
 | `town.png` | X1 44 s | Muralla Town, red-rock end with the cavern gate at the right; the Garland look-alike at the left is NPC #3 (column 188), Garland himself is at the right edge |
 | `menu.png` | R1 22 s | the Return menu at game start |
 | `cavern.png` | BB 56 s | cavern 1 just after entry, Garland in the MURALLA door |
-| `cavern_enemy.png` | AB 60 s | frog + ceiling blob, LIFE already red |
+| `cavern_enemy.png` | AB 60 s | frog + ceiling snail, LIFE already red (reproduced 100% by `port/`, `make verify`) |
 | `cavern_enemies.png` | AB 60 s | 3× crops of both enemies |
 | `cavern_vs_mp10.png` | BB 56 s | play area vs. mdt2png window (§6) |
