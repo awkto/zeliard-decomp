@@ -87,7 +87,7 @@ config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`
 | key | action |
 |---|---|
 | Space / Return | abort the current act (`[FF1D]` / `[FF29]`); the next one starts |
-| Esc | quit |
+| Esc | skip the rest of the cutscene |
 
 ### Caverns (fight.bin)
 
@@ -101,7 +101,8 @@ config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`
 | Enter | **the status / inventory screen** (select.bin): pick a spell, wear a key item, drink a potion |
 | F1 / F2 | toggle the music / the sound effects (STICK's own hotkeys) |
 | F12 | dump the framebuffer to the `--screenshot` file |
-| Esc | quit |
+| F11 / Alt+Enter | toggle fullscreen (the window is resizable; `--fullscreen` starts there) |
+| Esc | **pause** — Esc or Enter resumes, **Q** quits |
 
 ### Town (town.bin)
 
@@ -112,7 +113,23 @@ config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`
 | Space (or X) | talk to an NPC 1-3 columns ahead: the **dialogue box** opens; Space turns the page, Alt cancels |
 | Enter | **the status / inventory screen** (select.bin); the potion row is disabled in town, as in the original |
 | F1 / F2 | toggle the music / the sound effects |
-| Esc | quit |
+| F11 / Alt+Enter | toggle fullscreen |
+| Esc | **pause** — Esc or Enter resumes, **Q** quits |
+
+### A game controller
+
+Picked up automatically if one is plugged in, hotplug included; the keyboard
+keeps working alongside it.  If the controller subsystem will not start, nothing
+changes.
+
+| button | action |
+|---|---|
+| D-pad / left stick | move (past half deflection on the stick) |
+| A | jump (the same input as Up) |
+| X | sword |
+| Y | magic |
+| Start | the status / inventory screen |
+| Back | pause |
 
 ### The status screen (select.bin)
 
