@@ -14,6 +14,17 @@
 #     "N pixel comparisons"
 set -eu
 log="$1"
+
+# Without the game files the binaries run their reduced half (or print no
+# summary at all), so the numbers cannot match the documented full-suite
+# counts.  Skip loudly, the same contract as make verify / make playthrough:
+# the check bites wherever zeliard/ exists, which is where the docs are edited.
+if [ ! -f ../zeliard/ZELRES1.SAR ] && [ ! -f ../zeliard/zelres1.sar ]; then
+    echo "SKIP: the assertion-count check needs the original game files in"
+    echo "      zeliard/ -- the reduced no-data suite cannot match the docs."
+    exit 0
+fi
+
 fail=0
 complain() { echo "COUNT DRIFT: $*" >&2; fail=1; }
 
