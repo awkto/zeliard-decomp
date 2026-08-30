@@ -1,0 +1,36 @@
+# Notice on the original game
+
+The MIT license in `LICENSE` covers **this repository's own contents**: the
+`port/` re-implementation, the `tools/` scripts, the `src/` reference
+decompilation and the `docs/`.  All of it was written for this project.
+
+It does **not** cover, and cannot cover, *Zeliard* itself.
+
+*Zeliard* (1987 PC-88, 1990 MS-DOS) is copyright **Game Arts**, published in the
+United States by **Sierra On-Line**.  This project claims no rights in it and is
+not affiliated with, endorsed by, or connected to either company.
+
+## No game data is distributed here
+
+This repository contains **no** files from the game.  These paths are
+`.gitignore`d deliberately and must never be committed:
+
+- `zeliard/`   — the original DOS release (`GAME.BIN`, `ZELRES*.SAR`, the
+                 `GM*.BIN` video drivers, the `SND*.DRV` sound drivers, ...)
+- `extracted/` — resources unpacked from those archives
+- `disasm/`    — disassembly derived from those binaries
+
+Everything in `port/` reads the original files **at runtime, from a copy you
+supply yourself**.  Nothing is baked in: the build needs no game data at all
+(`make test` runs to completion without it, and CI proves that), and the
+`docs/screenshots/` captures used by `make verify` are small excerpts kept for
+comparison purposes.
+
+To run the port you must already own a copy of *Zeliard* and point it at your
+own installation.  Please do not open issues or pull requests that include game
+data, and do not distribute builds with the game files bundled.
+
+## Third-party components
+
+The port links **SDL2** (zlib license) when it is available, and builds without
+it otherwise.  No other third-party code is vendored.

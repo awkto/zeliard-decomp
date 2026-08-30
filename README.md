@@ -46,3 +46,11 @@ tools/disasm.sh                    # regenerate disassembly listings
 Findings are tracked as issues on the project tracker.
 
 See `docs/ARCHITECTURE.md` for the full picture.
+
+## License
+
+This repository's own code and documentation are **MIT** (`LICENSE`).
+
+*Zeliard* itself is copyright Game Arts / Sierra On-Line and is **not**
+distributed here — no game file is in this repository, and the port reads the
+originals at runtime from a copy you supply yourself.  See `NOTICE`.
