@@ -47,19 +47,28 @@ static const Macro MACRO[] = {
     {M_U,   1,  3, 0, "hop"},           /* 14 */
     {M_U,   1, 14, 0, "climb up"},      /* 15 */
     {M_D,   1, 14, 0, "climb down"},    /* 16 */
+    /* Two frames of "right"/"left" -- the granularity between the one-frame
+     * nudge, which on a moving platform does not leave the cell it started in
+     * (the macro settles where it began, so no edge is recorded), and the
+     * four-frame walk, which carries the hero off the end of the platform into
+     * thin air.  Stepping onto a platform's *outermost* cell takes exactly
+     * two, and MP21's fix[2] is where that matters: it is the second half of
+     * cavern 2's missing link (port/README.md, "How MP21 crosses"). */
+    {M_R,   1,  2, 0, "R2"},            /* 17 */
+    {M_L,   1,  2, 0, "L2"},            /* 18 */
     /* the fixture rides: only probed from a node a fixture holds up, because
      * "stand still and be carried" is a move only a moving platform offers */
-    {M_0,   1,  4, 0, "ride 4"},        /* 17 */
-    {M_0,   1,  8, 0, "ride 8"},        /* 18 */
-    {M_D,   1,  3, 0, "sink 3"},        /* 19 */
+    {M_0,   1,  4, 0, "ride 4"},        /* 19 */
+    {M_0,   1,  8, 0, "ride 8"},        /* 20 */
+    {M_D,   1,  3, 0, "sink 3"},        /* 21 */
     /* not survey moves: the executor's own idle and swing */
-    {M_0,   1,  4, 0, "wait"},          /* 20 */
-    {M_0,   1,  3, 1, "thrust"},        /* 21 */
+    {M_0,   1,  4, 0, "wait"},          /* 22 */
+    {M_0,   1,  3, 1, "thrust"},        /* 23 */
 };
 #define NMACRO   ((int)(sizeof MACRO / sizeof MACRO[0]))
-#define MACRO_MOVE_N  17                /* 0..16: probed from every node */
-#define MACRO_RIDE0   17                /* 17..19: probed from fixture nodes */
-#define MACRO_RIDE1   19
+#define MACRO_MOVE_N  19                /* 0..18: probed from every node */
+#define MACRO_RIDE0   19                /* 19..21: probed from fixture nodes */
+#define MACRO_RIDE1   21
 #define MACRO_WAIT    (NMACRO - 2)      /* also the swing: the button is on frame 0 */
 #define MACRO_STRIKE  MACRO_WAIT
 #define MACRO_THRUST  (NMACRO - 1)
@@ -528,7 +537,22 @@ static void build_graph(Nav *n, const Game *g)
          * going when the hero steps on decides where the ride ends */
         int onfix = fixture_at(&n->navmap, nc + 1, nr + 3);
         int last = onfix >= 0 ? MACRO_RIDE1 : MACRO_MOVE_N - 1;
-        int ndir = (onfix >= 0 && n->navmap.fix[onfix].kind == 2) ? 2 : 1;
+        /* A *ledge* node beside a patrolling platform is probed with the
+         * platform going both ways too, and for every macro rather than only
+         * the rides: stepping off the ledge is a drop of a row or two, and
+         * which way the platform is travelling decides whether it is still
+         * under the hero when he lands.  Only when the platform is *below* the
+         * ledge, though -- one level with it is a step across, which the
+         * single-direction probe already covers, and probing that twice gates
+         * the ledge's ordinary walks on two different platform positions.
+         * MP21's fix[2] (row 61, columns 1-14) is what needs this: the step
+         * west off the column-13 ladder at (12,56) lands on the platform only
+         * while it is moving left, and that step is the first half of cavern
+         * 2's missing link (port/README.md, "How MP21 crosses"). */
+        int nearfix = onfix >= 0 ? -1 : probe_fixture_for(&n->navmap, nc, nr);
+        int patrol  = nearfix >= 0 && n->navmap.fix[nearfix].kind == 2 && n->navmap.fix[nearfix].var
+                   && (n->navmap.fix[nearfix].row & 0x3F) != ((nr + 3) & 0x3F);
+        int ndir = ((onfix >= 0 && n->navmap.fix[onfix].kind == 2) || patrol) ? 2 : 1;
         for (int d = 0; d < ndir; d++) {
             uint8_t st = (uint8_t)(d ? 0x80 : 0);
             /* ...and every node is surveyed in *both facings*.  6824 spends the
@@ -547,7 +571,7 @@ static void build_graph(Nav *n, const Game *g)
              * turn in front of it, which the executor can produce anyway. */
             for (int fc = 0; fc < 2; fc++)
             for (int mi = 0; mi <= last; mi++) {
-                if (d && mi < MACRO_RIDE0) continue;         /* both ways only for the rides */
+                if (d && onfix >= 0 && mi < MACRO_RIDE0) continue;  /* on a fixture: both ways only for the rides */
                 if (fc && !(MACRO[mi].dirs[0] & DIR_LEFT)) continue;
                 probe_reset(n, g);
                 Game *p = &n->probe;

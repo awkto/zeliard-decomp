@@ -127,6 +127,10 @@ The sprite is 3×3 cells but the **solid body is the middle column only**
   `[FF42] == 2` is what `6BC4` sets for the `8018` list, which `6A9F` turns into a
   push *left*.  Combined with the "unless walking against it" clause above, a hero
   holding uphill stands still: a treadmill.  (An earlier revision said *with*.)
+  `695A` also returns before calling `6A67` whenever `[FF3D] & 0x80` (rising), so
+  `[FF42]` keeps the last grounded frame's value for the whole of a jump — which is
+  why jumping *up* a left-pushing scree slope (MP20 (189,0), MP21 (37,26)) gains one
+  column instead of three.
 * Currents (lists 8028/802C, `7699`): the hero is pushed 2 cells per
   main-loop iteration and **the frame is aborted before rendering** (`76C2`
   pops two return addresses), so the push repeats without delay until the

@@ -310,12 +310,14 @@ const PStep PLAY_ROUTE_START[] = {
  * is MP20's (205,47) into MP30 and cavern 3's is MP31's (188,20); both are
  * taken with the Key the boss room handed back.
  *
- * The two `P_GOTO`s that remain are the shell call a *door* makes, and they
- * cover the one thing the autopilot still cannot do: hold a route across a
- * whole 200-column cavern (MP20's entry from Satono to its boss shelf is 160
- * columns, MP30/MP31's is longer).  Everything on either side of them --
- * finding a door, taking it, the encounter, the fight, the reward, the locked
- * doors and the shops -- is played. */
+ * There is no `P_GOTO` left: every leg of caverns 1-3 is walked by nav.c with
+ * the real physics, every door is found and entered on foot, and every locked
+ * door is opened with a Key the route picked up.  The one that used to need
+ * the shell -- MP20's row-36 corridor -- is opened the way the game means it
+ * to be: the Key at (89,44) unlocks MP20's (95,35) into MP21, and MP21 is
+ * crossed through the ring's *column* wrap (port/README.md, "How MP21
+ * crosses").  `P_TOWN_GOTO` at the head of the route is not a leg at all; it
+ * is the character this route starts from (see test_playthrough.c). */
 const PStep PLAY_ROUTE_BOSSES[] = {
   {P_TOWN_GOTO,  2, 4,  NULL,      "Satono Town, column 4", 0},
   {P_TOWN_EDGE,  0, 0,  NULL,      "off Satono's left edge -> MP10 (128,33)", 0},
@@ -330,14 +332,17 @@ const PStep PLAY_ROUTE_BOSSES[] = {
   {P_TOWN_SHOP, 92, 0,  "1yc",     "Satono: the Sage levels him up", 0},
   {P_TOWN_EDGE,  1, 0,  NULL,      "off Satono's right edge -> MP20 (6,62)", 0},
   {P_CAV_CELL,  89,44,  NULL,      "MP20: the first of its two Keys, at (89,44)", 0},
-  /* The one leg of cavern 2 the survey cannot reach.  MP20's row-36 corridor
-   * -- and with it the column-157 elevator, the second Key and the whole
-   * descent to the boss door -- hangs off a single door, (146,35) <-> MP21
-   * (66,35), and in the survey MP21's own east half has no way in either (see
-   * port/README.md, "Where cavern 2 stops").  So this is the shell call that
-   * door makes, and nothing after it is assisted. */
-  {P_GOTO,       3, 65, NULL,      "MP21 (65,36), the far side of MP20's (146,35) door", 35},
-  {P_CAV_DOOR,  66,35,  NULL,      "MP21: the (66,35) door -> MP20 (145,36), the row-36 corridor", 0},
+  /* Cavern 2's own hidden half, and the way the game means you to open it.
+   * MP20's row-36 corridor -- the column-157 elevator, the second Key and the
+   * whole descent to the boss door -- hangs off one door, (146,35) <-> MP21
+   * (66,35); the way to MP21's side of it is MP20's *locked* (95,35), which is
+   * exactly what the Key at (89,44) is for, and then a lap of MP21 that goes
+   * out through the ring's column wrap (port/README.md, "How MP21 crosses").
+   * Route 2 has no `P_GOTO` left. */
+  {P_CAV_DOOR,  95,35,  NULL,      "MP20: the first Key opens the locked (95,35) -> MP21 (14,36)", 0},
+  {P_CAV_DOOR,  66,35,  NULL,      "MP21: west along row 36, down to the fix[2] platform, off the map's "
+                                   "west edge round the ring to (94,56), then the east ledge to the "
+                                   "(66,35) door -> MP20 (145,36), the row-36 corridor", 0},
   {P_CAV_CELL, 149,44,  NULL,      "MP20: down the column-157 elevator to the second Key at (149,44)", 0},
   {P_CAV_DOOR, 171,54,  NULL,      "MP20: back up the elevator, west over fix[7], down the column-108 "
                                    "ladder and along row 50 to the locked (171,54) -> MP2D (24,18)", 0},
@@ -362,13 +367,34 @@ const PStep PLAY_ROUTE_BOSSES[] = {
    * (113,7) reaches it, which is four doors away from where MP20 lets you in. */
   {P_CAV_DOOR,  19,49,  NULL,      "MP30: the (19,49) door -> MP31 (18,50)", 0},
   {P_CAV_DOOR,  47,14,  NULL,      "MP31: the (47,14) door -> MP30 (46,15)", 0},
-  {P_CAV_CELL,  57,10,  NULL,      "MP30: up the column-58 shaft", 0},
-  {P_CAV_CELL,  58, 8,  NULL,      "MP30: out onto the row-7 gallery", 0},
+  /* the column-58 ladder, rows 4-16.  Name cells the survey really has a node
+   * at: (58,8) is the ladder tile itself, not a place the hero can be, and a
+   * waypoint two cells wide let him "arrive" hanging one rung short with the
+   * gallery already out of reach. */
+  {P_CAV_CELL,  57,11,  NULL,      "MP30: onto the column-58 ladder", 0},
+  {P_CAV_CELL,  57, 5,  NULL,      "MP30: up it to the top rung", 0},
+  {P_CAV_CELL,  63, 7,  NULL,      "MP30: east off the ladder onto the row-7 gallery", 0},
   {P_CAV_CELL,  70, 7,  NULL,      "MP30: east along the gallery", 0},
   {P_CAV_DOOR,  88, 6,  NULL,      "MP30: the (88,6) door -> MP31 (87,7)", 0},
   {P_CAV_DOOR, 114, 6,  NULL,      "MP31: the (114,6) door -> MP30 (113,7)", 0},
   {P_CAV_BREAK,166,54,  NULL,      "MP30: break the biggest tree and take the Hero's Crest", 0},
   {P_CAV_DOOR, 153,43,  NULL,      "MP30: the (153,43) door -> MP31 (152,44)", 0},
+  /* cavern 3's own Key, and the last one the accounting needs: seven Keys lie
+   * in caverns 1-3 (four lying in the maps, one handed back by each of the three
+   * boss rooms on the second visit) and there are exactly seven locked doors --
+   * MP30's is what opens MP31's boss door at (188,20).  It lies on MP30's
+   * row-54 shelf, which the crest ledge drops into one way only, so the way to
+   * it is back through the *paired* (153,43) door from the MP31 side. */
+  {P_CAV_DOOR, 153,43,  NULL,      "MP31: straight back through the paired door -> MP30 (152,44)", 0},
+  {P_CAV_CELL, 133,55,  NULL,      "MP30: the Key at (133,55)", 0},
+  /* back up the column-131 ladder and along the row-42 shelf.  Waypoints,
+   * because the shelf is one of MP30's burning ones and the field's own next
+   * hop out of (131,44) is eight columns at once: the hero was left jumping at
+   * it and taking hazard damage until he died. */
+  {P_CAV_CELL, 130,44,  NULL,      "MP30: back to the foot of the column-131 ladder", 0},
+  {P_CAV_CELL, 132,43,  NULL,      "MP30: up onto the row-42 shelf", 0},
+  {P_CAV_CELL, 140,42,  NULL,      "MP30: east along it", 0},
+  {P_CAV_DOOR, 153,43,  NULL,      "MP30: out again -> MP31 (152,44)", 0},
   {P_CAV_DOOR, 186,46,  NULL,      "MP31: the (186,46) door -> MP30 (185,47)", 0},
   {P_CAV_CELL,   6,47,  NULL,      "MP30: east round the ring to the column-6 elevator", 0},
   {P_CAV_CELL,   4,20,  NULL,      "MP30: up the elevator and the column-5 ladder", 0},

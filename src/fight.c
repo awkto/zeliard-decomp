@@ -103,7 +103,7 @@ u8   hero_dead;            /* 0xE8 */
 /* ------------------------------------------------------------------------ */
 /* Global state page FF00 (see docs/STATE_PAGE.md)                            */
 /* ------------------------------------------------------------------------ */
-u8   snd_proximity;        /* FF08  distance-to-entrance volume (774E) */
+u8   snd_proximity;        /* FF08  boss-door proximity cue (774E; [C013] is the boss door, not an entrance) */
 u8   tick;                 /* FF1A  +1 per 236.7 Hz timer tick (kernel), zeroed per frame */
 u16  frame_counter;        /* FF1B */
 u8   btn1_edge, btn2_edge; /* FF1D, FF1E  button press edges set by kernel INT9/joystick */
@@ -211,8 +211,8 @@ u8   boss_state;                   /* EDA0  0xFF = boss defeated (71DA) */
 #define MAP_VIDINIT   (*(u8 **)0xC00E)
 #define MAP_OBJECTS   (*(struct obj **)0xC010)
 #define MAP_CAVERN    (*(u8 *)0xC012)
-#define MAP_START_COL (*(u16 *)0xC013)
-#define MAP_START_ROW (*(u8 *)0xC015)
+#define MAP_GOAL_COL  (*(u16 *)0xC013)   /* cell in front of the locked boss door, not a start */
+#define MAP_GOAL_ROW  (*(u8 *)0xC015)
 #define MAP_ROW_BIAS  (*(u8 *)0xC016)
 #define MAP_TEXTS     (*(u16 **)0xC017)  /* chest-message pointers (903C) */
 #define MAP_STREAM_END (*(u8 **)0xC019)
@@ -1150,9 +1150,11 @@ void hero_mark_screen(void) { p = &screen[hero_scr_row][hero_scr_col]; for (r = 
 /* 0x73B3 */ void screen_force_redraw(void) { memset(screen, 0xFD, 0x214); }
 /* 0x72D9 */ void swap_C000_A000(void) { swap 0x800 words between arena:C000 and BASE:A000; }
 
-/* 0x774E  Proximity to the map's start position -> snd_proximity (table 77C7
+/* 0x774E  Proximity to [C013]/[C015] -> snd_proximity (table 77C7
  * squares-ish {0,1,4,9,16,25,36,49,64,81,100,121,144,169,196,225}, then
- * 77D7 maps the sum to a volume 0x0F..). */
+ * 77D7 maps the sum to a volume 0x0F..).  [C013] is NOT the map's entrance: it is
+ * the cell in front of the map's locked boss door (0xFFFF when it has none), so this
+ * is a boss-proximity cue that rises as the hero approaches.  See ARCHITECTURE.md. */
 void entrance_proximity(void);
 
 /* ======================================================================== */
@@ -1509,7 +1511,7 @@ static u8 hero_on_fixture(struct fixture *f)      /* 82B4 */
 /* 0x98FC  Death: 3-frame animation cycle every 8 frames until hero_anim==2,
  * blink 30 frames, then: exp += 127 - 2*level, gold /= 2, lifetime gold
  * counter zeroed, hp = max_hp, return to town (99E0: cur_map = town_map,
- * entry = MAP_START_COL, hero col 2, jump to the town overlay entry 6002). */
+ * entry = MAP_GOAL_COL, hero col 2, jump to the town overlay entry 6002). */
 void hero_die(void);
 /* 0x78D7  Quit key: town overlay entry 601C. */
 /* 0x72F1  Post-boss: reload AI/enemies from level record +6/+7, apply the

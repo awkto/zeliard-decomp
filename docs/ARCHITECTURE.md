@@ -184,7 +184,14 @@ C00C u16 patches      {u16 ptr, u8 mask, u16 ptr, u16 val}* conditional pokes (6
 C00E u16 init data    passed to video service [0x2010] at level start
 C010 u16 objects      16-byte records {u16 col, u8 row, u8 ?, u8 type, ...}; col 0xFFxx = disabled
 C012 u8  cavern       1..10
-C013 u16 start col    0xFFFF = none (entered from another map);  C015 u8 start row
+C013 u16 goal col     **not an entrance**: the cell in front of the map's LOCKED BOSS DOOR
+                      (MP10 C013/C015 = (26,16) vs door (26,15); MP20 (171,55)/(171,54);
+                      MP31 (188,21)/(188,20)); 0xFFFF in maps with no boss door.  Nothing
+                      enters here — 7B32 and town 6FF8 carry their own destination, and the
+                      death return reads it only after [C4] has been set from [C5], which is
+                      always a town.  Its one live reader is 774E, which squares |dcol|,|drow|
+                      through table 77C7 into 77D7 to make the boss-proximity cue in [FF08]
+                      (a value that RISES as the hero approaches);  C015 u8 goal row
 C016 u8  row bias     10 = normal cavern, 12 = boss room, 13 = mp90
 C017 u16 ?            usually 0, sometimes a pointer
 C019 u16 stream end   == C004: the byte after the tile stream (used to decode backwards)

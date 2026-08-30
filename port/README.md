@@ -671,7 +671,8 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     open the locked door the Key was for — MP10's (128,32) into Satono, MP20's
     (205,47) into MP30, MP31's (188,20).  **Cavern 2's whole descent is walked**:
     off Satono's *right* edge into MP20 at (6,62), the first of its two Keys at
-    (89,44), and then — after the one leg the survey cannot reach, below — into
+    (89,44), the **locked (95,35)** that Key opens into MP21, a lap of MP21 that
+    leaves by the ring's *column* wrap (see "How MP21 crosses"), back into
     MP20's row-36 corridor at (145,36), down the column-157 elevator to the second
     Key at (149,44), back up it, west across fix[7]'s gap at columns 113-122, down
     the column-108 ladder to the row-50 corridor, over fix[6] and the two elevators
@@ -683,9 +684,10 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     the sword, three doors back out to Bosque, the smith, and then *west past the
     sentry* through his own column-7 door into MP31 (149,14) and the locked boss
     door at (188,20) — see "The sentry at Bosque's gate" below.  23 doors, five
-    Keys, one Crest and three shops, all walked, in 14,008 frames.  **One
-    `P_GOTO` is left**, MP21 (65,36) — see "Where cavern 2 stops".  Asserts three
-    bosses, no deaths, the boss EXP and gold, three shops, twenty-two doors, the
+    Keys, one Crest and three shops, all walked.  **There is no `P_GOTO` left**:
+    26 doors, 16,691 frames, every leg walked by `nav.c` with the real physics
+    and every locked door opened with a Key the route picked up.  Asserts three
+    bosses, no deaths, the boss EXP and gold, three shops, fourteen doors, the
     Key left in the bag, the three boss-defeated story flags, that MP20's locked
     boss door was opened with a Key, and both doors a boss Key unlocked for good.
   * **cavern 1's topology**, surveyed three ways, because it is what the walking
@@ -1103,7 +1105,7 @@ navigator is debugged.  A route entry is
 | `P_CAV_BREAK` | reach map cell `(a,b)` and swing until what is standing on it is gone — fight.bin's item state 0x10, the sword-breakable |
 | `P_BOSS` | fight until the boss is defeated and 72F1 has run |
 | `P_FARM` | patrol between columns `a` and `b` until EXP reaches `c` |
-| `P_GOTO` / `P_TOWN_GOTO` | the shell call a door or a town gate makes, for the legs the navigator cannot reach yet (route 2 has one left: MP21 (65,36), the far side of MP20's (146,35) door — see "Where cavern 2 stops") |
+| `P_GOTO` / `P_TOWN_GOTO` | the shell call a door or a town gate makes.  Neither route uses `P_GOTO` any more; route 2's `P_TOWN_GOTO` at the head is not a leg but the character it starts from |
 
 `menu` is one character per widget the shop opens, in order: `0`..`9` picks that row,
 `y`/`n` answers a Yes/No, `c` cancels (which every shop reads as "Go outside").  So
@@ -1213,7 +1215,7 @@ save; the restore recipe above is unchanged.
 |---|---|
 | Muralla (1) | the gate at column 205 → MP10 (61,7) |
 | Satono (2) | left edge → MP10 (128,33) *(the boss shelf)*; right edge → MP20 (6,62) |
-| Bosque (3) | column 185 → MP30 (185,19); column 149 → MP31 (149,14) |
+| Bosque (3) | column 142 → MP30 (185,19); column 7 → MP31 (149,14) *(the columns are the town's, the coordinates the cavern's — they are not the same number)* |
 | **Helada (4)** | left edge → **MP40** (86,22); right edge → MP41 (16,22) |
 | **Tumba (5)** | left edge → **MP50** (94,11); right edge → MP50 (131,10) |
 | **Dorado (6)** | left edge → MP61 (31,6); right edge → **MP60** (315,49) |
@@ -1318,95 +1320,160 @@ columns from where Dorado Town drops into MP60 but eight rows up and locked.
 
 2. ~~**The remaining town machinery: the shopkeeper idle hooks.**~~  **DONE** —
    see "The shopkeepers' `[A002]` idle hooks" below.
-2a. **Where cavern 2 stops: route 2's last `P_GOTO`, and what is under it.**  Cavern 2's boss door,
-   cavern 3, Bosque and everything past them hang off a single door — MP20's
-   (146,35) into MP21 (66,35) — and in the survey **nothing reaches either side
-   of it**.  This is the one place in caverns 1-3 where the port's model of the
-   maps is demonstrably incomplete.  It is now pinned down to **three cells**
-   (`test_playthrough.c`, "cavern topology"), and they all say the same thing.
+2a. ~~**Where cavern 2 stops: route 2's last `P_GOTO`.**~~  **DONE** — see
+   "How MP21 crosses" below.  Route 2 has no assisted leg left.
 
-   **The frontier is not a line, it is three elevator shafts.**  Call *A* what
-   Satono's right edge reaches in MP20 (1046 of the map's 1467 nodes, walked —
-   the entrance band, the rows 0-5 / 9-14 / 20-26 corridors, the west half of
-   the row-36 corridor, the wrap-around western half of the map, the second
-   Key's pocket at rows 43-45 and the east ledge above it) and *B* what MP20
-   (145,36) reaches (1327 nodes: the whole row-36 corridor, the ladders, the
-   lava lake, the row-55 shelf and the boss door).  Sweeping every A node
-   against every B-only node, the **only** places the two sets come within
-   three cells of each other are the bottoms of three elevator shafts:
+### How MP21 crosses, and how cavern 2 is meant to be played
 
-   | fixture | column | record row | shaft (ring rows) | floor under it | A stands at | B stands at |
-   |---|---|---|---|---|---|---|
-   | MP20 fix[1] | 124 | 61 | 57..63,0..7 | row 8 | (122,5) | (123,4) |
-   | MP20 fix[4] | 157 | 39 | 35..45 | row 46 | (155,43) | (156,42) |
-   | MP21 fix[0] | 47 | 36 | 32..44 | row 45 | (45,42) | (46,41) |
+Cavern 2's boss door, cavern 3, Bosque and everything past them hang off one
+door — MP20's (146,35) into MP21 (66,35) — and for four sprints the survey
+reached neither side of it.  It does now, and the way through was never in
+MP20 at all.
 
-   Every one of them has the same shape, and it is plainly deliberate: the
-   record row is **flush with a ledge above** (MP20's row-58 ledges at columns
-   123/127, the row-36 corridor, MP21's row-33 shelf), and the **bottom of the
-   shaft is exactly one row above a floor the hero already walks**.  Standing on
-   any one of the three opens all of B — `test_playthrough` asserts that from
-   (123,4) the (146,35) door and the locked boss door at (171,54) are both in
-   reach.  A one-row step up is nothing; the hero rises two rows.  The platform
-   is simply not there.
+**The progression, read off the door and Key tables.**  Caverns 1-3 hold
+**exactly seven locked doors** — MP10 (26,15) and (128,32), MP20 (95,35),
+(171,54) and (205,47), MP31 (188,20) and (192,4) — and **exactly seven Keys**:
+four lying in the maps (MP10 (99,41), MP20 (89,44) and (149,44), MP30
+(133,55)) and one handed back by each of the three boss rooms on the second
+visit.  One Key per door, and **MP20's (95,35) is in the list** — the door the
+port could never use.  The doors are also colour-coded, and the colours are in
+the DCHR letter tiles the arch draws (`78DD`, cell `0x61 + (letter & 7)`): **A
+and E magenta, B red, C blue, D green.**  Read that way the plan of every
+cavern is the same — a red B door, locked, into the boss room; a blue C pair
+between the cavern's two halves; a magenta A door, locked, out to the town or
+on to the next cavern; and green D doors back to the cavern before.
 
-   **And it cannot be.**  `7FB1` only *draws* a fixture-A record — it reads
-   `[si]`/`[si+2]` and writes the three cells, and nothing else in `6F9B`'s
-   frame touches list A.  The only code that moves one is `7FDC` (down) and
-   `8074` (up), and both begin by demanding an elevator cell at
-   `hero_cell + 0x6D` — the cell under the hero's *feet* — before they call
-   `8024`/`80AF`.  So an elevator sits on its record row until the hero is
-   already standing on it: each of these three is a **one-way drop** out of the
-   corridor, and becomes a two-way shortcut only after somebody has ridden it
-   down.  That is checked against `ndisasm`, not assumed.
+Satono's own villager (`stmp` script 3) then says how cavern 2 works, in as
+many words:
 
-   So the port's model is self-consistent and closed, and the first visit to
-   cavern 2's upper half needs a move that is *not* in it.  What the brute force
-   says about that:
+> If you fall down the stone slab in front of the blue door, you will see a
+> green door nearby.  Don't go through that door under any circumstances — it
+> is a doorway to the past.
 
-   * A **breadth-first search over settled hero states** using the real engine
-     and a far richer move set than the navigator's macros (nine direction
-     combinations held for 1..30 frames, composed arbitrarily, enemies off,
-     immortal hero) reaches exactly the same 1046-node component from (6,62).
-     So this is not the macro table being too small — the *engine* cannot cross.
-   * Ruled out, each with its reason: the Feruza shoes (`max_rise` 4 — four rows
-     short of every one of the three platforms); a jump onto a patrolling
-     platform (banned in `build_graph`, and neither map has one at the
-     frontier); a conveyor (MPP2's `8018` list names tile `0x10` and MP20/MP21
-     contain **ten** cells of it in total, all in three- and four-cell
-     down-left diagonals — decorative rock corners that behave as scree, and
-     `67DA` refuses to walk *up* one, which is exactly the A/B boundary at
-     MP20 (189,0) → (190,63) and MP21 (37,26) → (38,25); both lead to
-     nine-node pockets, not to B); a door arch punching through rock (`78DD`
-     overwrites the ring with cells ≥ 0x49, which *are* passable — but a sweep
-     of all 90 doors in the game found not one arch cell over a solid map
-     cell); the map's own `C00C` conditional pokes (MP20's and MP21's touch
-     only door letters and picked-up items, never the tile stream); and
-     standing on an enemy (no `type & 0x80` object anywhere near the frontier).
-   * The two "one passable tile" lines the previous pass named are real walls,
-     not near-misses.  MP20's column 105 has no three free rows anywhere below
-     the row-31 ceiling (rows 33-34 only, and a crouching hero cannot walk);
-     MP21's mound at columns 37-42 runs from the row-36 shelf up into the
-     ceiling.  The genuinely narrow places are the three shaft bottoms above,
-     and the lava lake's west shore, where column 107 is solid at rows 52-56
-     and 58 with a **single** free cell at row 57 — a one-cell hole a three-cell
-     hero cannot use.
+The blue door is MP21's (66,35); the "stone slab" is MP21's `fix[0]`, the
+elevator at column 47 parked at row 36 flush with the rows 33-36 ledge that
+door opens onto; and the green doors are MP21's (15,50) and (79,50), which are
+**cavern 1's**.  So the elevator is meant to be a one-way drop out of cavern 2
+into cavern 1's level — exactly what the port models — and the traffic through
+MP21's east half runs *west to east and downward*, never up.  Which leaves only
+one way in, and it is the one the Key accounting already named:
 
-   The rest of the loop is real and now walked: MP20 (204,48), where MP30's
-   (21,6) door lands, reaches all six MP20 doors, and Bosque's column-142 door
-   lands at MP30 (185,19), which reaches (21,6).  So *after* cavern 2's boss the
-   corridor is reachable the ordinary way; it is only the first visit that has
-   no path, and route 2 still asks the shell for that one leg.
+> Satono → MP20 (6,62) → the Key at **(89,44)** → the locked **(95,35)** →
+> MP21 **(14,36)** → *across MP21* → MP21 **(66,35)** → MP20 **(145,36)**, the
+> row-36 corridor → the second Key at (149,44) → the locked boss door (171,54).
 
-   **What is left to try**, in the order they look promising: (a) the town
-   network — a `.usr` reaches any town, and if the *game* expects the player to
-   pick up cavern 2's upper half from Bosque (MP30 (185,18) → Bosque, Bosque
-   (185,19) → MP30, MP30 (21,6) → MP20 (204,48), the boss-exit shelf, which
-   reaches 1356 nodes — more than B's 1327) then the missing thing is not a move at
-   all but the order of the routes, and route 2 should visit cavern 3 first;
-   (b) a scripted DOSBox walk all the way to one of the three shaft bottoms to
-   see the platform with one's own eyes — 218 frames from MP20's entrance to
-   fix[0]'s bottom at (104,3), which is feasible now that the walk below works.
+**And MP21 is crossed through the ring's *column* wrap.**  MP21 is 96 columns
+of cylinder, and the west end of the bottom-left pit is the east end of the
+map:
+
+> (14,36) → west along the row-36 corridor and down into the pit → the
+> **column-13 ladder** to (12,56) → a step *west* onto **`fix[2]`**, the
+> platform that patrols row 61 between columns 1 and 14 over a floorless gap →
+> ride it to its west limit and step onto its outermost cell at **(0,58)** →
+> **jump left off column 0**: the ring wraps and the hero lands on the row-59
+> shelf at **(94,56)** → the far-east ladders (columns 90, 92, 94) up to the
+> row-39 level → west along the rows 33-36 ledge to the (66,35) door.
+
+That is about a thousand frames of walking from (14,36) to the door with nobody
+at the keyboard, and MP21 is one component now: the survey reaches 594 nodes
+from (14,36) and the same 594 from (65,36), where before the west half saw 320
+and could not reach the 259 the east half added.
+
+**What the survey was missing** — two things, both in `nav.c`, and both about
+`fix[2]`:
+
+* **A ledge beside a patrolling platform was only ever probed with the platform
+  going one way.**  `probe_fixture_for` already brought the platform alongside
+  such a node so the step onto it would exist at all, but `ndir` was 2 only for
+  a node the platform *holds up*.  The step west off the column-13 ladder at
+  (12,56) is a two-row drop, and it lands on `fix[2]` only while the platform
+  is travelling **left**; probed rightward the hero falls straight past it into
+  the pit, which is the only edge the graph had.  A ledge is probed both ways
+  now — but only when the platform is *below* it.  One level with it is a step
+  across, which the single-direction probe already covers, and probing that
+  twice gates the ledge's ordinary walks on two different platform positions:
+  doing it unconditionally cost MP30's column-58 ladder, where the hero spent
+  the whole frame budget jumping at the row-7 gallery.
+* **There was no two-frame walk macro.**  The table had a one-frame nudge and a
+  four-frame walk and nothing between, and stepping onto a moving platform's
+  *outermost* cell takes exactly two: one frame does not leave the cell the
+  hero started in, so `run_macro` settles where it began and no edge is
+  recorded, and four carry him off the end into thin air.  `R2`/`L2` are macros
+  17 and 18 now, and (1,58) → **(0,58)** is the edge they buy.
+
+Everything on the far side was already in the graph, including the wrap jump
+itself: (0,58) → (94,56) had been sitting there as a "hop L" edge out of a node
+nothing could reach.
+
+**How it was found.**  Not by more staring at the frontier — by fuzzing the
+engine.  `closure` seeds a set with every node the survey reaches from (14,36),
+then runs the real `game_step` from each of them with random directions changed
+every eight frames, adds every *settled* cell that comes back, and repeats until
+the set stops growing.  From MP21's west half it reaches all 259 of the east
+half's nodes in nine passes and eight seconds, and the very first crossing it
+found — replayed deterministically — is the jump above.  Two things had to be
+switched off for it to mean anything: the door callbacks (the hero walks
+through MP21's (15,35) and comes back into a different map, and every node
+lookup after that is nonsense) and the enemies.
+
+**What the frontier looked like before, and why none of it was the answer.**
+The MP20 half of the search stands as written and is worth keeping, because it
+is what ruled MP20 out.  Call *A* what Satono's right edge reaches in MP20
+(1046 of the map's 1467 nodes) and *B* what MP20 (145,36) reaches (1327).  The
+281 nodes of *B \ A* are the row-36 corridor and its column-157 elevator, the
+column-107 and column-109 ladders, the row-50 level, the lava lake at row 54,
+the row-52 and row-55 shelves and the column-124/128 elevator shafts — and
+sweeping every A node against every B-only node, the **only** places the two
+sets come within four cells of each other are three elevator shafts and two
+walls:
+
+| | where | what |
+|---|---|---|
+| MP20 `fix[1]` | column 124, record row 61, shaft 57..63 and 0..7 | A walks the row-5 corridor under its bottom |
+| MP20 `fix[4]` | column 157, record row 39, shaft 35..45 | A walks the second Key's pocket under its bottom |
+| MP21 `fix[0]` | column 47, record row 36, shaft 32..44 | cavern 1's row-45 floor is under its bottom |
+| MP20 column 105 | rows 33-34 free, nothing else below the row-31 ceiling | a two-row slot, and column 106 is solid rows 28-41 behind it |
+| MP20 column 107 | solid rows 52-56 and 58, one free cell at row 57 | the lava lake's west shore |
+
+Every one of the three elevators is parked flush with a ledge *above* and stops
+one row above a floor the hero already walks — and every one of them is a
+**one-way drop**, because `7FB1` only *draws* a fixture-A record and `7FDC`
+(down) and `8074` (up) are the only code that moves one: both call `814C`,
+which compares the three cells at `hero_cell + 0x6D` to `0x40/0x41/0x42`, so
+the platform has to be under the hero's feet before it will go anywhere.  There
+is no "call the lift".  `8109` then finds the record by matching the hero's own
+map column and feet row exactly, so there is no range search either.  Checked
+against `ndisasm`, not assumed — and `stmp` script 3 says the same thing about
+`fix[0]` in English.
+
+Also ruled out, each with its own evidence: the Feruza shoes (`max_rise` 4 —
+and no map in the game carries an item state `0x1E`, so they cannot be had in
+caverns 1-3 at all; surveyed with `shoes = 1` MP20's A is 1045 nodes, not
+1327); conveyors (walking *against* the belt is refused at `67DA`/`6655`, and
+`695A` skips `6A67` entirely while `[FF3D] & 0x80` — so a rising hero keeps the
+last frame's `[FF42]`, which is why a jump up MP20's column-190 scree gets one
+column and falls back); door arches punching through rock (`78DD` writes cells
+≥ 0x49, which are passable, but a sweep of all 90 doors in the game found not
+one arch cell over a solid map cell); the maps' own `C00C` conditional pokes
+(MP20's and MP21's touch only door letter bytes and picked-up items, never the
+tile stream); standing on an enemy (`6B76` really does let a `type & 0x80`
+object hold the hero up, but the only three in MP20 and MP21 are the item-state
+`0x10` breakables at (47,63), (179,24) and MP21 (17,43), none of them near the
+frontier); the `[C017]` message chests (there are two in the whole game and
+they say "Danger!! Don't open the box ahead." and "It is the biggest tree");
+the Kioku Feather (`A58B` leaves 8 in `[FF4B]` and `729C` sends the hero back
+to the last *town*); and the spells, which only damage.
+
+**And the route-order lead is dead, with a proof.**  MP30 (21,6) → MP20
+(204,48) does reach 1356 nodes, more than B — but nothing can get to MP30 before
+cavern 2's boss.  Sweeping every door in all 31 cavern maps: exactly three lead
+into MP20 and four into MP21, and of those seven only **one** comes from
+outside cavern 2 — MP30's (21,6), which is the far side of MP20's *locked*
+(205,47).  The only other way to MP30/MP31 is Bosque, and Bosque has **no edge
+exits at all**; its two cave records are MP30 and MP31 themselves.  So cavern 3
+cannot precede cavern 2's east half, and the entrance side has to open it.
+`test_playthrough.c`'s "progression graph" case asserts all of it.
+
 
 ### Walking cavern 2 under DOSBox
 
@@ -2303,10 +2370,11 @@ record row (still bounded by `FIX_ROW_SPAN`) and tests membership with
 `(r - home) & 0x3F`, so a shaft that straddles the wrap is one interval instead
 of two.  The port gains 42 nodes in MP20 and 19 of them are reachable from
 Satono's right edge; `test_playthrough` asserts that `(102,63)`, `(102,1)` and
-`(124,4)` are nodes and that the first two are walked.  It does **not** close
-the frontier — see "Where cavern 2 stops" — but it is what made MP20 fix[1]'s
-shaft bottom visible as the third instance of the pattern described there, and
-without it the diagnosis would have been two cases instead of three.
+`(124,4)` are nodes and that the first two are walked.  It did **not** close
+the frontier — that turned out to be in MP21, see "How MP21 crosses" — but it
+is what made MP20 fix[1]'s shaft bottom visible as the third instance of the
+one-way-drop pattern, and without it the diagnosis would have been two cases
+instead of three.
 
 ## Doc corrections found while pinning cavern 2's frontier (issue #31)
 
@@ -2353,3 +2421,97 @@ adding because it is the pattern any deeper ground truth will need, and because
 it establishes that the game frame really is 84.5 ms under the harness's
 `cycles=3000` (the walk lands within one column of the port's own 160-frame
 run).
+
+## Corrections found while opening cavern 2 (issue #31)
+
+Two in `nav.c`, both about a patrolling platform, and both needed for MP21's
+crossing (see "How MP21 crosses" for what they buy):
+
+**A ledge beside a patrolling platform was probed with the platform going only
+one way.**  `build_graph` set `ndir = 2` — probe the node once with the platform
+travelling right and once travelling left — only for a node the platform *holds
+up*.  For a node standing on rock beside one, `probe_fixture_for` brought the
+platform alongside so the step onto it would exist at all, but always in the
+one direction, and a step off a ledge is a drop of a row or two during which
+the platform slides out from under the hero.  MP21's `fix[2]` is the case: the
+step west off the column-13 ladder at (12,56) lands on it only while it is
+moving **left**.  The second direction is offered now, and for every macro
+rather than only the rides — but only when the platform's row is *below* the
+node's feet.  A platform level with the ledge is a step across, which the
+single-direction probe already covers, and probing it twice gates the ledge's
+ordinary walks (plain rock, no platform involved) on two different platform
+positions: doing it unconditionally cost MP30's column-58 ladder, where the
+hero spent the whole frame budget jumping at the row-7 gallery with the
+gallery's own nodes ready and the field's own next hop never executable.
+
+**There was no two-frame walk macro.**  `MACRO` had `R`/`L` (one frame) and
+`R4`/`L4` (four) and nothing between, which is exactly the granularity a step
+onto a moving platform's *outermost* cell needs: one frame does not leave the
+cell the hero started in, so `run_macro`'s settle loop returns him to the
+source and `build_graph` drops the edge (`j == i`), and four carry him past the
+end of the platform into thin air.  `R2`/`L2` are macros 17 and 18; `MACRO_MOVE_N`
+is 19 and the rides moved to 19..21.  The edge they buy is MP21 (1,58) →
+**(0,58)**, `fix[2]`'s leftmost cell at its west limit, from which the jump
+across the ring's column wrap is a macro the graph already had.
+
+Two route changes came with them, in `playthrough.c`:
+
+* **MP30's column-58 ladder is named by its own nodes now.**  The waypoints were
+  `(57,10)`, `(58,8)`, `(70,7)`; `(58,8)` is the *ladder tile*, not a cell the
+  hero can occupy, and `P_CAV_CELL` finishes within one cell of its target, so
+  "arriving" there could leave him a rung short with the gallery already out of
+  reach.  They are `(57,11)`, `(57,5)`, `(63,7)`, `(70,7)` now — all nodes.
+* **MP30's Key at (133,55) is collected**, because route 2 now spends a Key on
+  MP20's (95,35) and the accounting is exact (seven Keys, seven locked doors).
+  It is on MP30's row-54 shelf, which the crest ledge drops into one way only,
+  so the route goes back through the *paired* (153,43) door from the MP31 side
+  to fetch it, and climbs out by the column-131 ladder with waypoints on the
+  row-42 shelf — that shelf is one of MP30's burning ones and the distance
+  field's own next hop out of (131,44) is eight columns at once, which left the
+  hero jumping at it and taking hazard damage until he died.
+
+## Doc corrections found while opening cavern 2 (issue #31)
+
+**In `port/README.md` itself (fixed here).**  The "Every town is a door into the
+second half of the game" table gave Bosque's cave columns as 185 and 149.  Those
+are the *cavern* coordinates in `bsmp`'s `[C00B]` records, `(185,19,0,MP30)` and
+`(149,14,1,MP31)`; Bosque is 152 columns wide and has no column 185.  The town
+columns are the ones in its `[C009]` door list — **142** for MP30 and **7** for
+MP31 — which is what the capture table and route 2 have always used.
+
+**Outside `port/`, not edited.**
+
+`docs/ARCHITECTURE.md` (the `[C013]` row of the level-header table) and
+`src/fight.c` (`MAP_START_COL`, and `snd_proximity`'s "distance-to-entrance")
+both read the map header's start record as an *entrance*.  It is the opposite:
+`[C013]/[C015]` is the cell a hero stands on to open the map's **locked
+letter-B boss door**.
+
+* MP10's is `(26,16)` and its boss door is `(26,15)`; MP20's is `(171,55)` and
+  its boss door is `(171,54)`; MP31's is `(188,21)` and its boss door is
+  `(188,20)`.  Every cavern that has a boss door has a start record one row
+  below it, and the maps that do not (MP21, the boss rooms) have `0xFFFF`.
+* Nothing enters a cavern there.  `7B32` (a door) and `6FF8` (a town gate) both
+  carry their own destination; `99F4`, the death return, does read `[C013]` —
+  but `99E5` has already set `[C4]` from `[C5]`, and `[C5]` is only ever written
+  by `town.c`/`town.bin` (`p[0xC5] = town_map`) and by `99B4` (`0x80`, the
+  castle), so the `[C013]` it reads is always a *town's* start column.
+* The one live reader is `774E`, called every frame from `7202`'s neighbourhood:
+  it takes `|hero_col - [C013]|` and `|hero_row - [C015]|` (mod 64), squares each
+  through the `77C7` table `{0,1,4,9,…,225}`, and if the sum is in range indexes
+  `77D7`, a run of `0x0F`s that tails off to `0x0E` and below — a value that
+  *rises as the hero approaches*.  It is a proximity cue for the boss door, not
+  a spawn point.
+
+Suggested wording for `docs/ARCHITECTURE.md`: "C013 u16 goal col — the cell in
+front of the map's locked boss door, read by 774E for the proximity cue in
+[FF08]; 0xFFFF = none.  C015 u8 goal row."  And for `src/fight.c`:
+`snd_proximity` is the *boss-door* proximity, not the entrance's.
+
+`docs/FIGHT.md` §5's conveyor bullet needs one more clause beyond the direction
+fix already reported: `695A` returns before it calls `6A67` whenever
+`[FF3D] & 0x80` (the hero is rising), so `[FF42]` keeps the value the last
+grounded frame left in it for the whole of a jump.  That is why a hero who jumps
+*up* a left-pushing scree slope — MP20 (189,0), MP21 (37,26) — gets his two rows
+of rise but no horizontal movement until the frame the rise ends, and so covers
+one column instead of three.

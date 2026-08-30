@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include "playthrough.h"
 #include "player.h"
+#include "town.h"
 
 static int checks, failures;
 static void ck(int cond, const char *what, ...)
@@ -238,15 +239,12 @@ static void cavern_routes(const char *dir, int verbose)
      * The boss room is entered through a LOCKED door and left through an
      * unlocked one onto a shelf, and the Key for the locked door is lying in
      * the cavern.  Route 2 walks cavern 2's half of that now. */
-    /* Where cavern 2 stops.  MP20's row-36 corridor -- and with it the
-     * column-157 elevator, the second Key and the whole descent to the boss
-     * door -- hangs off one door, (146,35) <-> MP21 (66,35).  From Satono's
-     * right edge the only doors in reach are the way back out and the *locked*
-     * (95,35), which lands in a pocket of MP21 that reaches nothing else.
-     * (This used to read the other way round: the survey believed an elevator
-     * could be anywhere in its shaft, and MP20's fix[4] appeared to bridge the
-     * row-42 pocket to the corridor -- but an elevator only moves while the
-     * hero rides it, so that edge could never be taken.  See port/README.md.) */
+    /* How cavern 2 opens (issue #31).  MP20's row-36 corridor -- and with it
+     * the column-157 elevator, the second Key and the whole descent to the
+     * boss door -- hangs off one door, (146,35) <-> MP21 (66,35), and MP20's
+     * own half never reaches either side of it.  The way in is the *locked*
+     * (95,35), which the first Key opens, and then a lap of MP21 that leaves
+     * by the ring's *column* wrap (port/README.md, "How MP21 crosses"). */
     int n20 = survey(dir, 2, 6, 62);
     ck(n20 > 1400, "MP20: the survey found the cavern (%d nodes)", n20);
     reach_from(6, 62);
@@ -262,15 +260,48 @@ static void cavern_routes(const char *dir, int verbose)
     ck(cell_reachable(149, 43), "MP20: so is the second Key's ledge at (149,43)");
     ck(cell_reachable(155, 36) && cell_reachable(110, 36),
        "MP20: and the whole row-36 corridor, from the column-157 elevator to the column-108 ladder");
-    /* MP21's own east half has no way in either: nothing that any of its four
-     * doors lands on can reach (65,36), the cell MP20's (146,35) door arrives
-     * at.  That is the one leg route 2 still asks the shell for. */
+    /* MP21 is the hinge, and it is crossed by the ring's *column* wrap.  From
+     * (14,36), where MP20's locked (95,35) lands, the way east is not east at
+     * all: down the column-13 ladder into the bottom-left pit, west onto
+     * fix[2] -- the platform that patrols row 61 between columns 1 and 14 --
+     * out to its own west limit, and then a jump *left* off column 0, which
+     * wraps to column 95 and lands on the row-59 shelf at (94,56).  From there
+     * the far-east ladders climb to the row-39 level and the rows 33-36 ledge
+     * carries the hero west to the (66,35) door.  Two things in the survey had
+     * to change for it (nav.c): a ledge beside a patrolling platform is probed
+     * with the platform going *both* ways, because the step west off the
+     * ladder at (12,56) only lands on it while it is moving left; and there
+     * are now two-frame "R2"/"L2" macros, because stepping onto the platform's
+     * outermost cell at (0,58) takes exactly two frames -- one leaves the hero
+     * where he started and four walk him off the end. */
     survey(dir, 3, 14, 36);
-    reach_from(14, 36);
-    ck(!door_reachable(66, 35), "MP21: (66,35) is not reachable from (14,36), where MP20's (95,35) lands");
+    int r21 = reach_from(14, 36);
+    ck(door_reachable(66, 35), "MP21: (66,35) IS reachable from (14,36), where MP20's (95,35) lands");
+    ck(cell_reachable(12, 56), "MP21: by way of the column-13 ladder at (12,56)");
+    ck(cell_reachable(0, 58), "MP21: fix[2]'s west limit at (0,58)");
+    ck(cell_reachable(94, 56), "MP21: and (94,56), the far side of the ring's column wrap");
+    ck(cnav.node_of[0][58] >= 0 && cnav.node_of[94][56] >= 0, "MP21: both are nodes");
+    /* the two halves are one component now: (65,36) is where MP20's other door
+     * lands, and it sees exactly what (14,36) sees */
+    survey(dir, 3, 65, 36);
+    int r21b = reach_from(65, 36);
+    ck(r21 == r21b, "MP21: the two halves are one component (%d nodes from (14,36), %d from (65,36))",
+       r21, r21b);
+    /* fix[2] is the only thing holding the pit's row-58 band up: the map has
+     * no floor under it at all */
+    ck(game_passable_body(&csh.g, csh.g.map->grid[1][61]) &&
+       game_passable_body(&csh.g, csh.g.map->grid[13][61]),
+       "MP21: fix[2]'s row-61 patrol runs over a gap with no floor of its own");
+    /* cavern 1's own traffic through MP21 still cannot climb to the C doors:
+     * the row-51 level is where MP10's two green (D) doors land, and the game
+     * says so itself -- Satono's script 3, "if you fall down the stone slab in
+     * front of the blue door you will see a green door nearby ... a doorway to
+     * the past".  The slab is MP21's fix[0] (column 47, parked at row 36 flush
+     * with the rows 33-36 ledge the blue door opens onto) and it only ever
+     * goes down. */
     survey(dir, 3, 14, 51);
     reach_from(14, 51);
-    ck(!door_reachable(66, 35), "MP21: nor from (14,51), where MP10's (95,50) lands");
+    ck(!door_reachable(66, 35), "MP21: (66,35) is NOT reachable from (14,51), where MP10's (95,50) lands");
     survey(dir, 3, 78, 51);
     reach_from(78, 51);
     ck(!door_reachable(66, 35), "MP21: nor from (78,51), where MP10's door 5 lands");
@@ -412,6 +443,106 @@ static void cavern_routes(const char *dir, int verbose)
     } else ck(0, "cave records: MP10 loads");
 }
 
+
+/* ------------------------------------------------- the progression graph */
+/* Caverns 1-3 as a graph of doors and Keys (issue #31).  Three things fall
+ * out of the tables and they settle the order the game is meant to be played
+ * in:
+ *
+ *  - **Seven locked doors, seven Keys.**  MP10 (26,15) and (128,32), MP20
+ *    (95,35), (171,54) and (205,47), MP31 (188,20) and (192,4) are the only
+ *    locked doors in caverns 1-3; four Keys lie in the maps (MP10 (99,41),
+ *    MP20 (89,44) and (149,44), MP30 (133,55)) and the three boss rooms hand
+ *    one back apiece on the second visit.  Every Key has exactly one door, and
+ *    MP20's (95,35) -- the one the port could not use -- is in the list.
+ *  - **Nothing outside MP20/MP21 opens into them but MP30's (21,6)**, and that
+ *    is the far side of MP20's own locked (205,47).  So cavern 2's east half
+ *    cannot be picked up from cavern 3 first: Bosque, the only other way to
+ *    MP30/MP31, is itself only reachable *from* MP30 (185,18) or MP31
+ *    (149,13).  The loop closes; the entrance side has to open it.
+ *  - **A map's `[C013]` start record is its boss door**, not its entrance:
+ *    774E measures the hero's distance to it and turns that into [FF08],
+ *    and the death return at 99F4 reads the *town's* [C013], not a cavern's.
+ *    MP10's is (26,16), MP20's (171,55), MP31's (188,21) -- each the cell a
+ *    hero stands on to open the locked B (red) door into the boss room. */
+static void cavern_progression(const char *dir, int verbose)
+{
+    static const struct { int idx; const char *name; } CAV[8] = {
+        {0,"MP10"},{1,"MP1D"},{2,"MP20"},{3,"MP21"},{4,"MP2D"},{5,"MP30"},{6,"MP31"},{7,"MP3D"} };
+    int locked = 0, keys = 0, towns = 0;
+    uint32_t maskbits = 0;
+    for (int i = 0; i < 8; i++) {
+        Map m; memset(&m, 0, sizeof m);
+        if (map_load_system(&m, dir, CAV[i].idx)) { ck(0, "%s loads", CAV[i].name); continue; }
+        for (int d = 0; d < m.ndoors; d++) {
+            const Door *o = &m.doors[d];
+            if (!(o->letter & 0x80)) {
+                locked++;
+                ck(o->flag_ptr != 0xFFFF, "%s's locked (%d,%d) records the Key that opened it",
+                   m.name, o->col, o->row);
+                maskbits |= (uint32_t)o->flag_mask << (8 * ((o->flag_ptr & 0xFF) == 0x03 ? 0 :
+                                                           (o->flag_ptr & 0xFF) == 0x0B ? 1 : 2));
+            }
+            if (o->dest_row == 0xFF) towns++;
+        }
+        for (int k = 0; k < m.nobj; k++) if ((m.objs[k].type & 0x1F) == 0x16) keys++;
+        map_free(&m);
+    }
+    if (verbose) printf("  caverns 1-3: %d locked doors, %d Keys in the maps, %d town doors\n",
+                        locked, keys, towns);
+    ck(locked == 7, "caverns 1-3 hold exactly seven locked doors (%d)", locked);
+    ck(keys == 4, "and four Keys lying in the maps (%d)", keys);
+    ck(__builtin_popcount(maskbits) == 7, "each locked door has its own story-flag bit");
+    ck(towns == 5, "and five doors out to a town (%d): MP10's two, MP20's, MP30's and MP31's", towns);
+
+    /* nothing in the whole game opens into MP20 or MP21 but their own doors
+     * and MP30's (21,6), which is the far side of MP20's locked (205,47) */
+    int in20 = 0, in21 = 0, foreign = 0;
+    for (int i = 0; i <= 0x1E; i++) {
+        Map m; memset(&m, 0, sizeof m);
+        if (map_load_system(&m, dir, i)) continue;
+        for (int d = 0; d < m.ndoors; d++) {
+            const Door *o = &m.doors[d];
+            if (o->dest_row == 0xFF) continue;
+            if (o->dest_map == 2) { in20++; if (i != 2 && i != 3) { foreign++;
+                ck(i == 5 && o->col == 21 && o->row == 6,
+                   "the only foreign door into MP20 is MP30's (21,6) (%s (%d,%d))", m.name, o->col, o->row); } }
+            if (o->dest_map == 3) { in21++; if (i != 2 && i != 3 && i != 0) foreign++; }
+        }
+        map_free(&m);
+    }
+    if (verbose) printf("  doors into MP20: %d, into MP21: %d, from outside cavern 2: %d\n",
+                        in20, in21, foreign);
+    ck(in20 == 3 && in21 == 4, "three doors lead into MP20 and four into MP21 (%d/%d)", in20, in21);
+    ck(foreign == 1, "exactly one of them comes from outside cavern 2 (%d)", foreign);
+
+    /* Bosque -- the only other way to MP30/MP31 -- hangs off MP30 and MP31
+     * themselves, so cavern 3 cannot come before cavern 2's east half */
+    {
+        TownMap t; memset(&t, 0, sizeof t);
+        ck(town_load_map(&t, dir, 3) == 0, "Bosque village loads");
+        ck(t.ncaves == 2 && t.caves[0].map == 5 && t.caves[1].map == 6,
+           "Bosque's cave table is MP30 and MP31");
+        ck(t.nexits == 0, "and it has no edge exits at all -- nothing walks into Bosque");
+    }
+
+    /* the header start record is the boss door */
+    static const struct { int idx; int col, row; } BOSSDOOR[3] = { {0,26,15}, {2,171,54}, {6,188,20} };
+    for (int i = 0; i < 3; i++) {
+        Map m; memset(&m, 0, sizeof m);
+        if (map_load_system(&m, dir, BOSSDOOR[i].idx)) continue;
+        const Door *b = NULL;
+        for (int d = 0; d < m.ndoors; d++)
+            if (m.doors[d].col == BOSSDOOR[i].col && m.doors[d].row == BOSSDOOR[i].row) b = &m.doors[d];
+        ck(b && !(b->letter & 0x80) && (b->letter & 7) == 1,
+           "%s's (%d,%d) is a locked letter-B (red) door", m.name, BOSSDOOR[i].col, BOSSDOOR[i].row);
+        ck(m.start_col == BOSSDOOR[i].col && m.start_row == BOSSDOOR[i].row + 1,
+           "%s's [C013] start record (%d,%d) is that door's own standing cell",
+           m.name, m.start_col, m.start_row);
+        map_free(&m);
+    }
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -493,6 +624,7 @@ int main(int argc, char **argv)
 
     fixture_rides(dir, verbose);
     cavern_routes(dir, verbose);
+    cavern_progression(dir, verbose);
 
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;
