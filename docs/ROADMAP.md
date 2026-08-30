@@ -46,7 +46,9 @@ Method per overlay: run ghidra_dump_c.py, then rename functions/globals against 
 3. Milestone gates: ~~(a) walk cavern 1 with correct collision~~ (#23); ~~(b) kill an enemy with correct damage~~ (#24); ~~(c) full cavern 1 + town loop~~ (#25); ~~(d) caverns + bosses~~ (#26: all 11 boss overlays, 8 shops, status screen, saves); ~~(e) audio~~ (#27: own OPL2 core; all 51 score streams match tools/msd2mid.py).
 4. Also done beyond the original plan: the intro/title/ending cutscenes (#30), so `./zeliard` boots like the real game; and an autonomous playthrough (`make playthrough`) that walks caverns 1-3 and their bosses with no assisted legs (#28, #31).
 
-**Where the port stands:** `make test` = 1833 assertions in 9 binaries; `make verify` = 149 pixel comparisons against 48 DOSBox captures, **all at 100%**, eight of them whole-screen 320×200; `make playthrough` = two autonomous routes.
+**Where the port stands:** `make test` = 1951 assertions in 10 binaries; `make verify` = 208 pixel comparisons against the DOSBox captures, **all at 100%**, eight of them whole-screen 320×200; `make playthrough` = two autonomous routes.
+
+Play-test fixes since the roadmap closed: #35 (the sword was never drawn), #36 (cavern coins paid gold, not almas), #37 (music started before the intro), #38 (a town lost its backdrop at an edge exit), #39 (the treasure-box prize was one place out and two of its seven outcomes unreachable), #40 (the autopilot entered the castle at the death return), and #41 — **`ai_step`'s carry is the refusal, not the move**, so every ground enemy from cavern 2 on returned before acting and the caverns were full of statues.
 
 ## Phase 4 — polish/stretch
 

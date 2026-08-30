@@ -4,6 +4,7 @@
 #include "enemy.h"
 #include "boss.h"
 #include "sar.h"
+#include "player.h"      /* P_GLORY_CREST */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -205,11 +206,17 @@ void item_update(Game *g, MapObj *o)
         item_break_step(g, o);
         return;
     }
-    /* animation: every other frame (the original uses each state's own rate) */
-    if (g->frame_no & 1) o->phase = (uint8_t)((o->phase + 1) & 3);
+    /* Each state runs its own animation, and most run none: the frame drawn is
+     * `phase & 0xF` (ai_frame), and only the coins (8FAB) advance it.  The port
+     * used to spin `phase` for every state here, which destroyed the two states
+     * that keep *data* in it -- the treasure box's prize index (8F23) and the
+     * message chest's [C017] string index (905D) -- so a box paid whatever the
+     * frame counter happened to be sitting on (issue #39). */
+    if (st == 0x14 || st == 0x15 || st == 0x1B)                         /* 8FAE */
+        o->phase = (uint8_t)((o->phase + 1) & 3);
 
     if (st == 0x12) {                                                   /* 8EE9 3-frame flash */
-        if (++o->timer >= 3) enemy_remove(g, o);
+        if (++o->phase >= 3) enemy_remove(g, o);
         return;
     }
     if (!hero_overlaps_item(g, o)) { o->flags &= (uint8_t)~0x80; return; }
@@ -218,13 +225,38 @@ void item_update(Game *g, MapObj *o)
                              * pickups, which caverns 1-3 have none of */
     switch (st) {
     case 0x13: {                                                        /* 8EF6 treasure box */
-        static const unsigned box[5] = {50, 100, 0, 500, 1000};         /* 8F33 */
-        static const int msg[5] = {MSG_GOLD50, MSG_GOLD100, MSG_BOX_EMPTY, MSG_GOLD500, MSG_GOLD1000};
-        int i = o->phase & 0xF; if (i > 4) i = 2;
-        if (box[i]) gold_add(g, box[i]);
+        /* 8F23: `bl = (phase & 0xF); dec bl; add bl,bl` -- the prize index is
+         * **one less** than the map's digit, over the SEVEN-entry table at
+         * 8F33 (8F41 8F4D 8F59 8F5F 8F6B 8F77 8F83).  The port indexed with the
+         * digit itself against a five-entry table clamped at 2, so every prize
+         * was one place out and the last two arms could never fire (#39).
+         * Digit 0 is not a prize at all: 8F01 falls through to 8F07, which
+         * turns the box into whatever its `next` hides. */
+        g->sfx_request = 0x14;                                          /* 8EFC */
+        if (!(o->phase & 0xF)) {                                        /* 8F01 */
+            uint8_t nx = o->next;                                       /* 8F07 */
+            if (nx & 0x10) { nx = (uint8_t)(nx | 0x60); o->flags |= 0x80; o->timer = 0; }
+            o->type = nx;                                               /* 8F18 */
+            o->next = 0;
+            return;
+        }
+        enemy_remove(g, o);                                             /* 8F20 -> 914C */
+        int i = (o->phase & 0xF) - 1;
+        if (i >= 7) {                       /* 8F2F would jump off the table */
+            fprintf(stderr, "[item] treasure box phase %02X at (%u,%u): no such prize\n",
+                    o->phase, o->col, o->row);
+            return;
+        }
+        static const unsigned box[7] = {50, 100, 0, 500, 1000, 0, 0};   /* 8F33 */
+        static const int msg[7] = {MSG_GOLD50, MSG_GOLD100, MSG_BOX_EMPTY, MSG_GOLD500,
+                                   MSG_GOLD1000, MSG_GLORY_CREST, MSG_ENCHANT_SWORD};
         game_message(g, fight_message(msg[i]));                         /* 9A1E table */
-        g->sfx_request = 0x11;
-        enemy_remove(g, o);
+        if (box[i]) gold_add(g, box[i]);                                /* 916B */
+        if (i == 5) g->page[P_GLORY_CREST] = 0xFF;                      /* 8F7D */
+        if (i == 6) g->sword = 6;   /* 8F8F, then 8F94/8FA2 reload the blade's
+                                     * cells; the port picks those from g->sword
+                                     * at draw time (SWORD_SECTION), so setting
+                                     * it is the whole of it. */
         return; }
     case 0x14: case 0x15: case 0x1B: {                                   /* 8FAB coins */
         /* 8FC0 picks the amount from `type & 0x0F` (4 -> 1, 5 -> 10, else 100)
@@ -241,12 +273,16 @@ void item_update(Game *g, MapObj *o)
         snprintf(g->message, sizeof g->message, "%u A", n);
         enemy_remove(g, o);
         return; }
-    case 0x16: g->keys++;      g->sfx_request = 0x14; game_message(g, fight_message(MSG_KEY)); enemy_remove(g, o); return;
-    case 0x17: g->lion_keys++; g->sfx_request = 0x14; game_message(g, fight_message(MSG_LION_KEY)); enemy_remove(g, o); return;
+    /* 8FE8/8FF8 both go through 90D3, which sets sound **0x11**; the treasure
+     * box is the one that uses 0x14 (8EFC).  The port had the two swapped. */
+    case 0x16: g->keys++;      g->sfx_request = 0x11; game_message(g, fight_message(MSG_KEY)); enemy_remove(g, o); return;
+    case 0x17: g->lion_keys++; g->sfx_request = 0x11; game_message(g, fight_message(MSG_LION_KEY)); enemy_remove(g, o); return;
+    /* 9008 and 901C write no sound at all -- the potions are silent; the port
+     * gave them 0x13, which no arm of the item table ever asks for. */
     case 0x18: g->hp_regen_pending += 10;                       /* 9008: +80 HP */
-        game_message(g, fight_message(MSG_RECOVERED)); g->sfx_request = 0x13; enemy_remove(g, o); return;
+        game_message(g, fight_message(MSG_RECOVERED)); enemy_remove(g, o); return;
     case 0x19: g->hp_regen_pending = (uint16_t)(g->hp_regen_pending + g->max_hp / 8 + 1);   /* 901C */
-        game_message(g, fight_message(MSG_RECOVERED_FULL)); g->sfx_request = 0x13; enemy_remove(g, o); return;
+        game_message(g, fight_message(MSG_RECOVERED_FULL)); enemy_remove(g, o); return;
     case 0x1A: case 0x1E: {                                     /* 909D / 9090: a key item */
         /* 90B8 drops the item's id into the first free `[A1..A5]` slot and the
          * status screen decides what wearing it does; the port keeps the pair
@@ -261,7 +297,7 @@ void item_update(Game *g, MapObj *o)
             for (int i = 0; i < 5; i++) if (!g->page[0xA1 + i]) { g->page[0xA1 + i] = (uint8_t)sh; break; }
             game_message(g, fight_message(sh == 1 ? MSG_FERUZA : msg[sh]));
         }
-        g->sfx_request = 0x13; enemy_remove(g, o); return; }
+        g->sfx_request = 0x11; enemy_remove(g, o); return; }    /* 90D3 */
     case 0x1D: g->hero_crest = 0xFF;                            /* 907F */
         game_message(g, fight_message(MSG_HERO_CREST)); g->sfx_request = 0x11;
         enemy_remove(g, o); return;

@@ -143,7 +143,7 @@ static void runner_update(Game *g, MapObj *e)
     if (!e->hp) e->hp = 8;
     if (e->hit & HIT_STUN) { enemy_take_damage(g, e); return; }
     if (e->next & 0x18) { runner_jump(g, e); return; }                  /* A76A */
-    if (STEP(e, 6)) return;
+    if (!STEP(e, 6)) return;
     if (!(e->next & 2)) {                                               /* A77B */
         uint8_t f = ai_hero_dir(g, e, 6, &facing);
         if (!facing && f != 0xFF) { e->hit = (uint8_t)((e->hit & 0x7F) | f); e->next |= 2; return; }

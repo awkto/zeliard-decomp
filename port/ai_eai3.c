@@ -93,7 +93,7 @@ static void crab_update(Game *g, MapObj *e)
         e->hit |= FACING_RIGHT;
         if (e->rcol >= 0x11) e->hit ^= FACING_RIGHT;
     }
-    if (STEP(e, 6)) return;                                             /* A47C */
+    if (!STEP(e, 6)) return;                                             /* A47C */
     e->phase &= 0xF0;
     unsigned t = (unsigned)e->phase + 0x80; e->phase = (uint8_t)t;      /* A488 */
     if (t & 0x100) { e->phase = 0; e->next |= 8; }
@@ -105,7 +105,7 @@ static void snake_update(Game *g, MapObj *e)
     int facing;
     if (!e->hp) e->hp = 4;
     if (e->hit & HIT_STUN) { enemy_take_damage(g, e); return; }         /* A4FA */
-    if (STEP(e, 6)) return;                                             /* A505 */
+    if (!STEP(e, 6)) return;                                             /* A505 */
     int p = game_ring_index(g, e->row, e->rcol);
     switch (e->next & 3) {
     case 0: {                                                           /* A521 */
@@ -156,7 +156,7 @@ static void beetle_update(Game *g, MapObj *e)
     if (!e->hp) e->hp = 4;
     if (e->hit & HIT_STUN) { enemy_take_damage(g, e); return; }         /* A678 */
     uint8_t ph = e->phase; e->phase = 0;
-    if (STEP(e, 6)) return;                                             /* A68B */
+    if (!STEP(e, 6)) return;                                             /* A68B */
     e->phase = ph;
     if (!(e->next & 1)) {                                               /* A697 */
         e->phase = 1; e->link = 0;

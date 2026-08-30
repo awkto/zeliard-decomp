@@ -62,7 +62,7 @@ static void shell_update(Game *g, MapObj *e)
     if (e->hit & HIT_STUN) { enemy_take_damage(g, e); return; }         /* A28B */
     if (e->next & 8) { shell_wall_jump(g, e); return; }                 /* A296 */
     if (e->next & 4) { shell_dash(g, e); return; }                      /* A29F */
-    if (STEP(e, 6)) return;                                             /* A2A8 */
+    if (!STEP(e, 6)) return;                                             /* A2A8 */
     if (e->next & 1) {                                                  /* A324: curl 8..B */
         if ((e->phase & 0xF) < 8) { e->phase = 8; return; }
         if (++e->phase == 0xB) { e->phase |= 0x10; e->next &= (uint8_t)~1; }
@@ -153,7 +153,7 @@ static void slime_update(Game *g, MapObj *e)
         e->phase = (uint8_t)((e->phase & 0xF0) | ((e->phase + 1) & 7));
         if ((e->phase & 7) == 6) { slime_split(g, e); return; }
     } else e->phase = (uint8_t)((e->phase & 0xF0) | ((e->phase + 1) & 3));   /* A4FF */
-    if (STEP(e, 6)) return;                                             /* A514 */
+    if (!STEP(e, 6)) return;                                             /* A514 */
     e->phase = (uint8_t)(e->phase - 0x10);
     if (e->phase & 0xF0) return;                                        /* A51C */
     e->phase |= 0x40;
@@ -176,7 +176,7 @@ static void icicle_update(Game *g, MapObj *e)
         if (krn_random(g) & 3) return;                                  /* A6C8 */
         e->phase = 1; e->next |= 1; return;
     }
-    if (STEP(e, 6)) return;                                             /* A6DB */
+    if (!STEP(e, 6)) return;                                             /* A6DB */
     e->flags = (uint8_t)((e->flags & 0xF0) | 1);
     enemy_killed(g, e);                                                 /* A6E3 */
 }

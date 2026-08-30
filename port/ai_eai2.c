@@ -96,7 +96,7 @@ static void slime_update(Game *g, MapObj *e)
 {
     if (!e->hp) e->hp = 4;                                              /* A6D8 */
     if (e->hit & HIT_STUN) { enemy_take_damage(g, e); return; }         /* A6E2 */
-    if (STEP(e, 6)) return;                                             /* A6ED */
+    if (!STEP(e, 6)) return;                                             /* A6ED */
     if (!(e->next & 1)) {                                               /* A6F5 */
         e->phase = (uint8_t)((e->phase + 1) & 7);
         if (!e->phase) { e->next = (uint8_t)((e->next | 1) & ~2); e->link = 0; }   /* A705 */
@@ -168,7 +168,7 @@ static void redfrog_update(Game *g, MapObj *e)
     if (e->next & 4) { redfrog_spit(g, e); return; }                    /* A871 */
     if (e->next & 8) { redfrog_hop(g, e); return; }                     /* A82B */
     e->phase = (uint8_t)((e->phase + 0x21) & 0xE1);                     /* A7DD */
-    if (STEP(e, 6)) return;                                             /* A7E5 */
+    if (!STEP(e, 6)) return;                                             /* A7E5 */
     uint8_t f = ai_hero_dir(g, e, 5, &facing);                          /* A7ED */
     if (!facing) {
         if (e->phase & 0xE0) return;                                    /* A7F2 */

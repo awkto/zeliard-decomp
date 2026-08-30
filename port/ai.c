@@ -95,7 +95,22 @@ int ai_probe(Game *g, MapObj *o, int dir)
 
 /* ------------------------------------------------------------------- steps */
 /* vec 4..11 (91E5..926C): the ring-edge refusal, then the probe, then move.
- * col wraps at the map width (927F/9293), row is masked & 0x3F (92A4/92AC). */
+ * col wraps at the map width (927F/9293), row is masked & 0x3F (92A4/92AC).
+ *
+ * **Returns 1 when the step was REFUSED, 0 when the sprite moved** -- 925D /
+ * 9263 / 9269 all `stc` before their `ret`, while the move at 92A4 ends in an
+ * `and`, which clears carry.  So the idiom every ground AI opens with,
+ *
+ *     call [cs:0x6014]        ; step down
+ *     jc   <keep going>       ; blocked = standing on something
+ *     ret                     ; it moved = it is falling, do nothing else
+ *
+ * is `if (!ai_step(g, e, 6)) return;` in C.  ai_eai1.c had it that way and
+ * every other overlay had it inverted, so from cavern 2 on **every enemy that
+ * stands on the ground returned before doing anything** and the caverns were
+ * populated with statues.  The `eai run` assertion in test_combat.c did not
+ * catch it: its "something changed" metric was being satisfied by the item
+ * animation that item_update used to run for every state (issue #39). */
 int ai_step(Game *g, MapObj *o, int dir)
 {
     int right = (dir == 0 || dir == 1 || dir == 7);

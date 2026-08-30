@@ -388,7 +388,14 @@ standing on a hazard tile are killed outright (`A26A`).
   → table `8E14`, dumped from the image as
   `8E32 8E8D 8EE9 8EF6 8FAB 8FAB 8FE8 8FF8 9008 901C 909D 8FAB 903C 907F 9090`:
   **0** sword-breakable (`8E32`; its `next` chains to whatever it hides), **1**
-  touch-breakable, **2** flash, **3** treasure box (`8EF6`, prize by `phase & 0xF`),
+  touch-breakable, **2** flash, **3** treasure box (`8EF6`, prize by `(phase & 0xF) − 1`
+  over the **seven**-entry table at `8F33` — `8F41` 50 gold, `8F4D` 100, `8F59` "nothing
+  in the box", `8F5F` 500, `8F6B` 1000, `8F77` the **Glory Crest** (`[0x9B] = 0xFF`),
+  `8F83` the **Enchantment sword** (`[0x92] = 6` and a reload of the blade's cells);
+  digit **0** is not a prize at all — `8F01` falls through to `8F07`, which turns the
+  box into whatever its `next` hides.  `8EFC` asks for sound **0x14**; every pickup
+  that goes through `90D3` (keys, key items, the Hero's Crest, the message chest) asks
+  for **0x11**, and the two potions ask for none),
   **4/5** coins, **6** key, **7** lion key, **8** potion (+80 HP over 10 frames),
   **9** full potion, **A** the cavern's key item (`909D`→`90CA`/`90B8`), **B** a
   **coin** (it jumps to `8FAB`, the same handler as 4/5 — `8FC0` pays 100 **almas** for

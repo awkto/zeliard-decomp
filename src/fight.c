@@ -1311,18 +1311,22 @@ u8 damage_for_source(u8 src)
 bool hero_overlaps_item(struct obj *o);
 
 /* Item states (type 0x10..0x1F), table 8E14.  All use 9190 for the touch test. */
-void item_state_0x10(o) /* 8E32 */ { /* enemy corpse fading: after 4 half-speed phases -> next type (0 vanish, 0x10 item) */ }
+void item_state_0x10(o) /* 8E32 */ { /* breaks when the sword marks it (hit bit 5): sound 0x12, then four half-speed phases -> `next` */ }
 void item_state_0x11(o) /* 8E8D */ { /* touch-triggered: fires when the hero is exactly 3 rows below and within 2 cols */ }
 void item_state_0x12(o) /* 8EE9 */ { /* 3-frame flash then remove */ }
-void item_state_0x13(o) /* 8EF6 */ { /* treasure box: phase&0xF selects 50/100/-/500/1000 gold (8F33) or the drop table */ }
-void item_state_0x14_15(o) /* 8FAB */ { /* coin: class 4 -> 1 gold, 5 -> 10, else 100; sound 0x10 */ }
+void item_state_0x13(o) /* 8EF6 */ { /* treasure box, sound 0x14.  `phase & 0xF` == 0 -> 8F07 swaps in `next`;
+                                      * otherwise `(phase & 0xF) - 1` indexes the SEVEN-entry table at 8F33:
+                                      * 50 / 100 / "nothing in the box" / 500 / 1000 GOLD (916B), then
+                                      * 8F77 [0x9B] = 0xFF Glory Crest and 8F83 [0x92] = 6 Enchantment sword */ }
+void item_state_0x14_15_1B(o) /* 8FAB */ { /* coin: `type & 0x0F` 4 -> 1, 5 -> 10, else 100 -- ALMAS (917C), not gold; sound 0x10 */ }
 void item_state_0x16(o) /* 8FE8 */ { keys++;      /* "You get a Key." */ }
 void item_state_0x17(o) /* 8FF8 */ { lion_keys++; /* "Get the lion's head Key." */ }
-void item_state_0x18(o) /* 9008 */ { hp_regen_pending += 10;             /* "You have recovered." = +80 HP */ }
-void item_state_0x19(o) /* 901C */ { hp_regen_pending += max_hp / 8 + 1; /* "You have recovered full." */ }
-void item_state_0x1A(o) /* 909D */ { /* shoes by cavern: 4 -> Ruzeria(4), 5 -> Pirika(2), 6 -> Silkarn(3); table 90CA */ }
-void item_state_0x1B(o) /* 9090 */ { inventory_add(1); /* Feruza shoes */ }
-void item_state_0x1D(o) /* 903C */ { /* boss chest: shows the message from MAP_TEXTS[phase], sound 0x11 */ }
+void item_state_0x18(o) /* 9008 */ { hp_regen_pending += 10;             /* "You have recovered." = +80 HP; no sound */ }
+void item_state_0x19(o) /* 901C */ { hp_regen_pending += max_hp / 8 + 1; /* "You have recovered full."; no sound */ }
+void item_state_0x1A(o) /* 909D */ { /* the cavern's key item: 4 -> Ruzeria(4), 5 -> Pirika(2), 6 -> Silkarn(3); table 90CA */ }
+void item_state_0x1C(o) /* 903C */ { /* message chest: shows the string from the map's [C017] table indexed by `phase`, sound 0x11 */ }
+void item_state_0x1D(o) /* 907F */ { hero_crest = 0xFF; /* "You get the Hero's Crest." */ }
+void item_state_0x1E(o) /* 9090 */ { inventory_add(1); /* key item 1, the Feruza shoes */ }
 void item_state_0x1E(o) /* 907F */ { hero_crest = 0xFF; }
 
 /* ======================================================================== */

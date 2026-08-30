@@ -135,7 +135,7 @@ static void beast_update(Game *g, MapObj *e)
     if (!e->hp) e->hp = 8;
     if (e->hit & HIT_STUN) { enemy_take_damage(g, e); return; }
     if (!(e->next & 1)) {                                               /* A872 */
-        if (STEP(e, 6)) return;
+        if (!STEP(e, 6)) return;
         ai_hero_dir(g, e, 8, &facing);
         if (facing) { e->next = 1; e->link = 0; return; }               /* A8BA */
         unsigned t = (unsigned)e->phase + 0x80; e->phase = (uint8_t)t;
@@ -173,7 +173,7 @@ static void rock_update(Game *g, MapObj *e)
         return;
     }
     if (e->next & 1) {                                                  /* A98C */
-        if (STEP(e, 6)) return;
+        if (!STEP(e, 6)) return;
         e->next |= 2; e->phase = 1;
         if ((uint8_t)((e->row - (g->scroll_row - 1)) & 0x3F) < 0x13) g->sfx_request = 0x21;   /* A99C */
         return;

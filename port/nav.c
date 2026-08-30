@@ -739,7 +739,7 @@ static void reset(Nav *n, const Game *g)
 {
     if (n->map != g->map) { n->built = 0; n->map = g->map; }
     n->cur_macro = -1; n->cur_frame = 0; n->expect_node = -1; n->cur_edge = -1;
-    n->stall = 0; n->best_dist = NAV_INF; n->fixwait = 0;
+    n->stall = 0; n->best_dist = NAV_INF; n->fixwait = 0; n->shake = 0;
     memset(n->pen, 0, sizeof n->pen);
 }
 void nav_goal_cell(Nav *n, const Game *g, int col, int row)
@@ -981,10 +981,14 @@ void nav_step(Nav *n, Game *g)
      * range first and let the blade do the work from a cell away. */
     /* Rooted to the spot (an enemy under his feet, a platform that has moved
      * away, a probe that lied): shake it off with an arbitrary move.  Being
-     * carried does not count: the platform is doing the moving. */
+     * carried normally does not count -- the platform is doing the moving --
+     * but only while it actually moves: an elevator only rises when the three
+     * cells it is climbing into are clear (7FDC/8024/8074), so a live enemy
+     * parked in the shaft leaves the hero riding nothing at all.  Give a ride
+     * five times the patience of standing ground and then treat it as stuck. */
     int carried = hero_carried(g);
-    if (hc == n->last_col && hr == n->last_row && !carried && !n->fixwait) {
-        if (++n->same > 60) {
+    if (hc == n->last_col && hr == n->last_row && !n->fixwait) {
+        if (++n->same > (carried ? 300 : 60)) {
             n->same = 0;
             for (int c = hc - 1; c <= hc + 1; c++)
                 for (int r = hr - 1; r <= hr + 1; r++)
@@ -992,7 +996,15 @@ void nav_step(Nav *n, Game *g)
                         n->pen[c][r] = (uint8_t)(n->pen[c][r] + 8);
             build_field(n, g);
             n->best_dist = NAV_INF;
-            n->cur_macro = (int)((g->frame_no >> 3) % (unsigned)MACRO_MOVE_N);
+            /* Try the move macros **in turn**.  Deriving the shake from the
+             * frame counter looked random but is not: the shake fires on a
+             * fixed cadence, so `frame_no >> 3` advances by the same amount
+             * every time and the choice walks a short cycle that can miss the
+             * one macro that helps.  MP20's (154,43) is the case -- the ledge
+             * the elevator drops the hero on is not in the graph, and only the
+             * jump east onto (158,42) leaves it -- and which cycle that ledge
+             * got depended on the frame the hero happened to arrive. */
+            n->cur_macro = n->shake++ % MACRO_MOVE_N;
             n->cur_frame = 1; n->cur_edge = -1;
             nemit(n, g, macro_dir(&MACRO[n->cur_macro], 0), MACRO[n->cur_macro].btn);
             return;
@@ -1106,8 +1118,12 @@ void nav_step(Nav *n, Game *g)
     }
 
     /* Hurt and out of trouble: stand still and let the 719E regeneration run
-     * (2 HP every 16 frames) rather than walking into the next fight. */
-    if (g->hp * 3 < g->max_hp * 2 && ea > 8) {
+     * (2 HP every 16 frames) rather than walking into the next fight.  Never on
+     * a hazard tile, though: 7505 charges the cavern's rate every frame the
+     * hero overlaps one, which is far more than 719E gives back, so resting
+     * there is suicide -- MP30's (135,42) burned 560 LIFE off him in 180
+     * frames while the rule held him in place. */
+    if (g->hp * 3 < g->max_hp * 2 && ea > 8 && !g->on_hazard) {
         if (g->hp * 4 < g->max_hp * 3) { n->cur_macro = MACRO_WAIT; n->cur_frame = 1; n->cur_edge = -1; nemit(n, g, 0, 0); return; }
     }
 

@@ -44,7 +44,7 @@ static void walker_update(Game *g, MapObj *e)
     int facing; uint8_t dx;
     if (!e->hp) e->hp = 0x30;
     if (e->hit & HIT_STUN) { enemy_take_damage(g, e); return; }
-    if (STEP(e, 6)) return;                                             /* A498 */
+    if (!STEP(e, 6)) return;                                             /* A498 */
     if (!(e->next & 1)) {
         uint8_t f = ai_hero_dirx(g, e, 5, &facing, &dx);                /* A4A6 */
         e->next = (uint8_t)(facing ? 1 : 0);
@@ -70,7 +70,7 @@ static void gunner_update(Game *g, MapObj *e)
     int facing; uint8_t dx;
     if (!e->hp) e->hp = 0x40;
     if (e->hit & HIT_STUN) { enemy_take_damage(g, e); return; }
-    if (STEP(e, 6)) return;
+    if (!STEP(e, 6)) return;
     if (e->next & 4) {                                                  /* A620 */
         e->phase = 3;
         if (++e->link != 3) return;

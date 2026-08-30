@@ -61,6 +61,7 @@ typedef struct {
     long     start_gold;
     /* the report */
     unsigned bosses_killed, doors_taken, shops_visited, deaths;
+    int      entry_col, entry_scroll;   /* where the castle put the hero on frame 0 */
 } Play;
 
 /* run `route` to the end (or until the frame budget runs out).

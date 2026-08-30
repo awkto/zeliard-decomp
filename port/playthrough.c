@@ -258,6 +258,15 @@ int play_run(Play *p, const char *dir, const PStep *route, unsigned budget)
     player_page_push(g);
     /* the game starts in Felishika's Castle (cmap), as the intro leaves it */
     if (!shell_enter_town(g, 0, -1, 0)) { snprintf(p->msg, sizeof p->msg, "cannot enter the castle"); return -1; }
+    /* ...and GAME.BIN A1CB places the hero from the **page** -- [80] scroll_col
+     * and [83] hero_scr_col, which STDPLY.BIN sets to 30 / 10 -- not from the
+     * map's own C013 column, which is the *death* return (99F4).  main.c has
+     * entered towns that way since issue #38; the autopilot was still taking
+     * shell_enter_town's C013 fallback (issue #40). */
+    if ((g->page[0xC4] & 0x80) && (g->page[0xC4] & 0x7F) == 0)
+        town_page_pull(&p->sh.town);
+    p->entry_col = town_hero_col(&p->sh.town);
+    p->entry_scroll = p->sh.town.scroll_col;
     return play_loop(p);
 }
 

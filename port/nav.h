@@ -73,6 +73,7 @@ typedef struct Nav {
     int      cur_edge;              /* the edge the macro in flight came from */
     int      expect_node;
     int      stall, same, last_col, last_row;
+    int      shake;                 /* which move macro the next anti-stuck shake tries */
     int      fixwait;               /* frames spent waiting for a platform */
     uint16_t best_dist;
 

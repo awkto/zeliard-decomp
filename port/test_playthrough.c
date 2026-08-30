@@ -575,6 +575,12 @@ int main(int argc, char **argv)
         int rc = run(dir, PLAY_ROUTE_START, budget, "route 1 (the opening)", verbose);
         Game *g = &p.sh.g;
         ck(rc == 0, "route 1 ran to the end");
+        /* GAME.BIN A1CB places the hero in Felishika's Castle from the page,
+         * STDPLY.BIN's [80] = 30 / [83] = 10 -> column 44, not from the map's
+         * C013 death return (issue #40). */
+        ck(p.entry_scroll == 30 && p.entry_col == 44,
+           "route 1: the autopilot starts where the real game starts (scroll %d, column %d)",
+           p.entry_scroll, p.entry_col);
         ck(p.deaths == 0, "route 1: Garland never died");
         ck(p.shops_visited >= 4, "route 1: the King, the smith, the Sage and the church");
         ck((unsigned)g->gold >= 900, "route 1: the King's 1000 gold, less the shield");

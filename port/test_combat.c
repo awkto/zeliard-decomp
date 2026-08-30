@@ -267,13 +267,47 @@ static void t_items(void)
     CHECK(G.almas == almas0 + 10 && (unsigned)G.gold == gold0, "0x15: 10 almas, no gold (%u almas, %u gold)",
           G.almas, (unsigned)G.gold);
 
+    /* Every arm of the 8F33 table.  8F23 indexes it with `(phase & 0xF) - 1`,
+     * so the digit the map stores is one MORE than the table row, and rows 5
+     * and 6 -- the Glory Crest and the Enchantment sword -- exist at all
+     * (issue #39).  The box is also the one pickup that really pays gold:
+     * 8F4A/8F56/8F68/8F74 `jmp 0x916b` = `add [0x86],ax / adc byte [0x85],0`. */
+    static const struct { uint8_t digit; unsigned gold; uint8_t crest, sword; const char *msg; }
+    BOX[] = {
+        {1,   50, 0, 1, "You get 50 golds."},           /* 8F41 */
+        {2,  100, 0, 1, "You get 100 golds."},          /* 8F4D */
+        {3,    0, 0, 1, "Nothing in the box."},         /* 8F59 */
+        {4,  500, 0, 1, "You get 500 golds."},          /* 8F5F */
+        {5, 1000, 0, 1, "You get 1000 golds."},         /* 8F6B */
+        {6,    0, 0xFF, 1, "You get the Glory Crest."}, /* 8F77: [0x9B] = 0xFF */
+        {7,    0, 0, 6, "Get the Enchantment sword."},  /* 8F83: [0x92] = 6 */
+    };
+    for (unsigned k = 0; k < sizeof BOX / sizeof BOX[0]; k++) {
+        flat_map(); start(30, 10, 0);
+        o = put_enemy(31, 11, 0x73, 0);                 /* 0x13 treasure box */
+        o->home_col = 0xFFFF; o->phase = BOX[k].digit;
+        gold0 = (unsigned)G.gold; almas0 = G.almas;
+        G.page[0x9B] = 0; G.sword = 1;
+        for (int i = 0; i < 8 && (o->col >> 8) != 0xFF; i++) step(0, 0);
+        CHECK((unsigned)G.gold == gold0 + BOX[k].gold && G.almas == almas0
+              && G.page[0x9B] == BOX[k].crest && G.sword == BOX[k].sword
+              && !strcmp(G.message, BOX[k].msg),
+              "0x13 phase %u: +%u gold (want %u), almas %u, [9B] %02X, sword %u, \"%s\"",
+              BOX[k].digit, (unsigned)G.gold - gold0, BOX[k].gold, G.almas,
+              G.page[0x9B], G.sword, G.message);
+    }
+    G.page[0x9B] = 0; G.sword = 1;
+
+    /* digit 0 is not a prize: 8F01 falls through to 8F07, which turns the box
+     * into whatever its `next` hides -- here a Key (0x76). */
     flat_map(); start(30, 10, 0);
-    o = put_enemy(31, 11, 0x73, 0);                 /* 0x13 treasure box */
-    o->home_col = 0xFFFF; o->phase = 2;             /* 8F23: phase & 0xF picks the prize */
-    gold0 = (unsigned)G.gold; almas0 = G.almas;
-    for (int i = 0; i < 8 && (o->col >> 8) != 0xFF; i++) step(0, 0);
-    CHECK((unsigned)G.gold > gold0 && G.almas == almas0,
-          "0x13: the treasure box is the gold one (%u -> %u gold, almas %u)", gold0, (unsigned)G.gold, G.almas);
+    o = put_enemy(31, 11, 0x73, 0);
+    o->home_col = 0xFFFF; o->phase = 0; o->next = 0x76;
+    gold0 = (unsigned)G.gold;
+    step(0, 0);
+    CHECK(o->type == 0x76 && o->next == 0 && (unsigned)G.gold == gold0,
+          "0x13 phase 0: 8F07 swaps in `next` (type %02X, next %02X, gold +%u)",
+          o->type, o->next, (unsigned)G.gold - gold0);
 
     /* 917C saturates at 0xFFFF instead of wrapping (9180 `jnc` / 9182) */
     G.almas = 0xFFF0;

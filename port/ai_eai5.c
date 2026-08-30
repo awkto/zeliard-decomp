@@ -103,7 +103,7 @@ static void slime_update(Game *g, MapObj *e)
         return;
     }
     e->phase = (uint8_t)((e->phase + 1) & 0xF3);                        /* A797 */
-    if (STEP(e, 6)) return;
+    if (!STEP(e, 6)) return;
     e->phase = (uint8_t)(e->phase - 0x10);
     if (e->phase & 0xF0) return;                                        /* A7A9 */
     e->phase |= 0x40;
@@ -135,7 +135,7 @@ static void charger_update(Game *g, MapObj *e)
         }
     }
     if (!walk_step) {
-        if (STEP(e, 6)) return;                                         /* A835 */
+        if (!STEP(e, 6)) return;                                         /* A835 */
         if (e->next & 2) {                                              /* A843 */
             uint8_t f = (uint8_t)(e->phase & 7);
             if (f == 0) e->next &= (uint8_t)~1;

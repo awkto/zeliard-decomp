@@ -81,7 +81,19 @@ the bar, and at 0 sets `boss_cutscene`; a 40-frame death (`boss_dying`) ends wit
 
 Common prologue in every class: (cavern 1 only) killed outright on a hazard tile (vec 24 →
 vec 25, no EXP); `hp` initialised on the first update; a landed hit (`hit & 0x20`) goes to
-vec 26 instead of moving.  "Tall" enemies are two records (class n upper, n+1 lower, the
+vec 26 instead of moving; and then, in every ground class,
+
+```
+call [cs:0x6014]        ; vec 2 with AL = 6: step DOWN
+jc   <keep going>       ; CF=1 = refused -> it is standing on something
+ret                     ; CF=0 = it moved  -> it is falling; nothing else this frame
+```
+
+**The carry is the refusal, not the move** (`925D`/`9263`/`9269` all `stc` before their
+`ret`; the move at `92A4` ends in an `and`, which clears CF), so the C for it is
+`if (!ai_step(g, e, 6)) return;`.  Reading it the other way makes every ground enemy
+return before it does anything, which is how `port/` ran caverns 2-9 full of statues
+until it was fixed.  "Tall" enemies are two records (class n upper, n+1 lower, the
 lower's update is `ret`; the upper copies `phase`/facing into it).  Shots are fight.bin
 projectiles: `{cell, life (cells), dir, damage}`, 1 cell/frame.
 
