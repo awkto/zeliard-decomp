@@ -1356,6 +1356,7 @@ exits are cavern entries (`stmp` `[C007]`: flags 0x81 → cave record 0, flags
 | `boss_cangrejo.png` — MP1D, the Cangrejo fight | Satono, column 5 | tap Left: off the left edge → **MP10 (128,33)**, then walk right 13 columns to the unlocked boss door at (141,32) → MP1D |
 | `town_satono.png` — Satono Town, the ckpd underground backdrop | Satono, column 5 | the restore itself |
 | `restore_menu.png` — Felishika's Castle with the F7 name box | — | recipe A + F7 |
+| `cavern_sword.png` — **MP10's MURALLA door with Garland mid-swing** | — | recipe B, then `57:+space 57.08:-space` (Space is the sword underground) and a capture 0.15 s later — see "The sword was never drawn" |
 
 The scan into MP1D is the edge-stop-and-scan pattern again, but with **1.3 s
 between the pairs**: `Up` is *jump* in a cavern and a jump takes about ten
@@ -2682,3 +2683,151 @@ grounded frame left in it for the whole of a jump.  That is why a hero who jumps
 *up* a left-pushing scree slope — MP20 (189,0), MP21 (37,26) — gets his two rows
 of rise but no horizontal movement until the frame the rise ends, and so covers
 one column instead of three.
+
+## The sword was never drawn, and the coins were the wrong purse (issues #35, #36)
+
+Two bugs a human found by playing, both invisible to 186 pixel comparisons
+because every capture so far was an entry frame.
+
+### #35 — Garland fought bare-handed
+
+`port/combat.c` decoded `sword.grp`'s shapes for the *hit test* and nothing ever
+drew them.  The engine draws the blade from the same resource, but through a
+completely separate path:
+
+* Kernel **mode 4** (`0x0B6F`) copies one section of `sword.grp` (ZELRES2[26])
+  to `arena:B000` and relocates the first 15 words.  `sword_ptr_off[]`
+  (`0x0BA0`) picks the section by `[0x92]`, and the mapping is now certain:
+  **swords 1-3 use section 0, 4-5 section 1, 6 section 2** (`docs/FIGHT.md` §6
+  marks this *uncertain* and guesses "levels 2 and 3" — it should be corrected).
+* Every section has the same fixed layout after its `{u16 data_off, u16 ptr[14]}`
+  header.  The 14 pointers are the cell-step lists `6F07` walks for the hit
+  test; the art is at fixed offsets: `+01E` six slash frames facing right,
+  `+07E` four upward-slash frames, `+0BE` one down-thrust, `+0CE`/`+12E`/`+16E`
+  the same facing left, and `+17E`/`+18A`/`+192`/`+19E` their `{row, col}` cell
+  offsets from the hero's top-left.  Each frame is **16 bytes = a 4×4 block of
+  cell ids, column-major**, `0xFF` = empty (gfmcga `4013`/`4018`: the outer loop
+  is `add di,8`, the inner `add di,0xA00`).
+* A cell is 16 bytes: 8 rows of one big-endian 16-bit word = eight 2-bit pixels
+  (`4039 lodsw / xchg al,ah`).  `4092` paints value 0 transparent, 1 and 2 in
+  `[4FF5]` and 3 in `[4FF6]`, both from the six-word table at gfmcga `0x4086`
+  = `{0109 0424 031B 0109 0424 3606}` indexed by `[0x92] - 1`.
+* Draw order: gfmcga's row hook calls the hero at screen row `[84]-5` and the
+  blade at `[84]+5` with the counter rising (`3E1D` returns while it is below
+  `[84]-5`), so **the blade goes on top of the 3×3 fman frame**.
+* `[FF46]` is incremented by the *renderer* (`3E45`) and the swing ends at
+  `[FF46] >= 7` for a slash (6 drawn frames), `>= 5` for an upward slash (4),
+  and never for a down-thrust because `6E61` rewrites `[FF46]` to 2 every frame.
+  The port renders before `sword_apply` runs, so `attack_var` at draw time is
+  exactly the `[FF46]` the original draws with — no fudge needed.
+
+Half of the bug was in the *hero*, not the blade.  `7094`, immediately before
+`GF_DRAW_HERO`, sets `[FF40] = attacking || casting`, `[FF41] = attack_type`
+(1 for a cast) and `[FF3F] = [FF46]` / `[9F2B]`, and **both** overlay passes
+branch on `[FF40]` (`3ACF`, `3C36`): the sword arm is the overlay at the
+facing's own base +4 (slash) / +8 (up or cast) / +11 (thrust) plus
+`[FF3F] >> 1`, and the shield arm is frame **79** (right) or **67** (left) plus
+four per shield class plus the same variant.  The port had none of it, so
+Garland kept his idle arms through every swing.
+
+And a third thing fell out of it.  `draw_hero_frame` masked the frame byte with
+`0x7F` and treated bit 7 as a mirror flag.  gfmcga `3CE8` is `mov ch,0x20 /
+mul ch` — an 8-bit multiply of the **whole** byte, so it is a plain cell index
+0..229 and there is no flip.  Every frame the old verify boxes covered uses
+cells below 0x80, which is why it never showed; the frames that do use higher
+cells are exactly the ones nobody had rendered — the attack and cast overlays
+(35..42, 53..60, 67..90, cells `0x88`..`0xE5`), the crouching *shield* overlays
+(43/44/46/47, 61/62/64/65, cells `0xBC`..`0xDF`) and the door-entry frame 30.
+`fman.grp` also ends two bytes short of its last cell (`0x1FF0`, and cell
+`0xE5` — used by the no-shield attack overlay facing right — needs `0x1FF2`),
+so the loader now pads instead of dropping it; rounding down cost two pixels of
+Garland's sleeve on every swing.
+
+**Result:** `docs/screenshots/cavern_sword.png` (recipe B + one Space tap) is
+reproduced by `--map 0 --pos 61 7 --script "X8" --screenshot 5` at
+**32255/32256 pixels of the whole 320×200 screen**.  The one pixel that differs,
+`(159,109)`, is the tail of that truncated `fman.grp` cell: the real game reads
+three bytes of whatever was left in the arena past `0x7FF0`, so it is
+uninitialised memory and cannot be reproduced from the resource.  Ten boxes
+around it are 100%.
+
+Two captures taken 4.5 s apart (`57.15` and `61.65` in the run below) are
+byte-identical, which is what says the grab is not torn:
+
+```
+KEYS="<recipe B> 57:+space 57.08:-space 58.5:+space 58.58:-space \
+      60:+space 60.08:-space 61.5:+space 61.58:-space" \
+  tools/run_dosbox.sh /tmp/zdb 56 57.15 57.25 57.35 57.45 58.65 ... 61.95
+convert shot_57.15.png -sample 320x240 ../docs/screenshots/cavern_sword.png
+```
+
+Only the capture 0.15 s after each tap has a blade on it; the swing is six
+frames = 0.5 s and the harness spends ≈0.1 s per timeline event, so the later
+shots in each burst land after it is over.
+
+The twelve comparisons that go with it cover the whole screen bar `(159,109)`:
+
+```make
+	# --- the sword mid-swing (issue #35) -------------------------------
+	./zeliard --dir ../zeliard --map 0 --pos 61 7 --headless --frames 8 \
+		--script "X8" --screenshot 5 /tmp/zel_sword.png
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 160 94 32 24 --label "mid-swing: the blade (sword.grp section 0)"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 144 94 15 24 --label "mid-swing: Garland's sword-arm pose (fman 36/80)"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 48 94 96 24 --label "mid-swing: the playfield west of him"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 192 94 80 24 --label "mid-swing: the playfield east of the blade"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 48 14 224 80 --label "mid-swing: the band above Garland"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 48 118 224 40 --label "mid-swing: the band below Garland"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 159 94 1 15 --label "mid-swing: his last sprite column, above (159,109)"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 159 110 1 8 --label "mid-swing: his last sprite column, below (159,109)"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 0 158 320 42 --label "mid-swing: the HUD strip"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 0 0 48 158 --label "mid-swing: the left stone frame"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 272 0 48 158 --label "mid-swing: the right stone frame"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 48 0 224 14 --label "mid-swing: the strip above the playfield"
+```
+
+**Known deviation:** the port still runs a six-frame *upward* slash where `3E81`
+gives four.  Cutting it derails `make playthrough`'s route 2 (it runs out of
+frames in MP20), so `combat.c` keeps 6 for the hit test and `gfx.c`'s
+`SWORD_FRAMES` carries the real counts for the drawing.  Only the last two hit
+frames of an upward slash are extra.
+
+### #36 — the coins were paying gold
+
+The engine has two purse adders and they are not the same purse:
+
+```
+916B  add [0x86],ax / adc byte [0x85],0 / call [cs:0x2016]   -> GOLD  [85..87]
+917C  add [0x8b],ax / jnc / mov word [0x8b],0xffff
+                    / call [cs:0x2014]                       -> ALMAS [8B]
+```
+
+`[cs:2016]` is `vid_num_gold`, `[cs:2014]` is `vid_num_almas`.  Only the
+**treasure box** pays gold in a cavern (`8F4A`/`8F56`/`8F68`/`8F74` all
+`jmp 0x916b`, 50/100/500/1000).  Every **coin** — item states 0x14, 0x15 and
+0x1B, `8FCC`/`8FD9`/`8FE2` — and the **boss award** (`71F2`, `[[A002]+9]`)
+`call 0x917c` and pay 1 / 10 / 100 **almas**.  That is the whole economy: almas
+are what a cavern drops and what the town bank exchanges for gold at the town's
+own rate (`docs/TOWN.md` "Balance"), which is why `[8B]` is only halved on death
+while the gold is wiped.
+
+The port paid all of it into `[85..87]`, so the ALMAS counter never moved and
+the bank had nothing to exchange.  `combat.c` now has `almas_add` (917C,
+saturating at 0xFFFF like `9182`) next to `gold_add` (916B), and `enemy.c`'s
+coin arm calls it.  The HUD was never wrong: `render_hud` already reads
+`g->almas` for the `[2014]` digits at (152,187).
+
+`docs/FIGHT.md` §8 says "`8FC0` pays 100 **gold**" and `src/fight.c`'s
+`gold_add` comment says `917C` — both should say almas.
+

@@ -118,11 +118,102 @@ int gfx_load_hero(HeroGfx *h, const char *dir)
     uint8_t *d = sar_load(dir, 2, FMAN_RES, 1, &len);
     if (!d || len < 0x333) { free(d); return -1; }
     memcpy(h->frame, d, sizeof h->frame);
-    int n = (int)((len - 0x333) / 32);
+    /* fman.grp's last cell is two bytes short of a full 32-byte cell (the
+     * resource ends at 0x1FF0, and cell 0xE5 -- which frames 80..82, the
+     * no-shield attack overlay facing right, do use -- would need 0x1FF2).
+     * The game reads it out of the arena regardless, so pad instead of
+     * dropping it: rounding the count down cost two pixels of Garland's
+     * sleeve on every swing. */
+    int n = (int)((len - 0x333 + 31) / 32);
     if (n > 256) n = 256;
-    for (int i = 0; i < n; i++) gfx_decode32(d + 0x333 + i * 32, PAL2BPP[0], &h->cell[i]);
+    for (int i = 0; i < n; i++) {
+        uint8_t raw[32] = {0};
+        size_t off = 0x333 + (size_t)i * 32, avail = len > off ? len - off : 0;
+        memcpy(raw, d + off, avail < 32 ? avail : 32);
+        gfx_decode32(raw, PAL2BPP[0], &h->cell[i]);
+    }
     h->ncells = n;
     free(d);
+    /* The blade is part of the hero's frame: gfmcga's row hook draws the 3x3
+     * fman sprite and then composites the sword block over it, so the two banks
+     * are loaded together and a caller that has a HeroGfx has the sword too.
+     * A missing sword.grp is not fatal -- the hero simply swings empty-handed,
+     * which is what the port did before issue #35. */
+    if (gfx_load_sword(&h->sword, dir))
+        fprintf(stderr, "note: no sword.grp (the blade will not be drawn)\n");
+    return 0;
+}
+
+/* ------------------------------------------------------------------------ */
+/* sword.grp — the swing art (see gfx.h)                                     */
+/* ------------------------------------------------------------------------ */
+#define SWORD_RES 26                            /* ZELRES2[26] */
+#define GFMCGA_RES 6                            /* ZELRES2[6], loaded at BASE+0x2000:3000 */
+
+const int SWORD_FRAMES[3]  = {6, 4, 1};         /* slash, upward slash, down-thrust */
+const int SWORD_SECTION[6] = {0, 0, 0, 1, 1, 2};    /* kernel 0x0BA0, by sword 1..6 */
+
+/* the six group bases inside a section, in SWORD_GROUPS order */
+static const unsigned SWORD_BLOCK_OFF[SWORD_GROUPS] = {0x01E, 0x07E, 0x0BE, 0x0CE, 0x12E, 0x16E};
+/* their {row,col} offset tables; the two thrusts have none (gfmcga 3E63/3E76
+ * store the pair inline as 0xFF01 / 0x0001, i.e. row +1 col -1 / row +1 col 0) */
+static const unsigned SWORD_DELTA_OFF[SWORD_GROUPS] = {0x17E, 0x18A, 0, 0x192, 0x19E, 0};
+static const int8_t   SWORD_THRUST_DELTA[2][2] = {{1, 0}, {1, -1}};      /* right, left */
+
+int gfx_load_sword(SwordGfx *s, const char *dir)
+{
+    memset(s, 0, sizeof *s);
+    size_t len, glen;
+    uint8_t *d = sar_load(dir, 1, SWORD_RES, 1, &len);
+    if (!d || len < 6) { free(d); return -1; }
+    /* ARCHITECTURE.md "3-section shape containers": {u16 hdr_len, u16 off2, u16 off3} */
+    size_t bound[SWORD_SECTIONS + 1];
+    bound[0] = d[0] | d[1] << 8;
+    bound[1] = d[2] | d[3] << 8;
+    bound[2] = d[4] | d[5] << 8;
+    bound[3] = len;
+    for (int i = 0; i < SWORD_SECTIONS; i++)
+        if (bound[i + 1] <= bound[i] || bound[i + 1] > len) { free(d); return -1; }
+    for (int sec = 0; sec < SWORD_SECTIONS; sec++) {
+        const uint8_t *p = d + bound[sec];
+        size_t slen = bound[sec + 1] - bound[sec];
+        if (slen < 0x1A6) { free(d); return -1; }
+        size_t data_off = p[0] | p[1] << 8;      /* header word 0, +0xB000 in the game */
+        if (data_off >= slen) { free(d); return -1; }
+        int nc = (int)((slen - data_off) / 16);
+        if (nc > SWORD_CELLS) nc = SWORD_CELLS;
+        s->ncells[sec] = nc;
+        for (int c = 0; c < nc; c++) {
+            const uint8_t *cp = p + data_off + (size_t)c * 16;
+            for (int r = 0; r < 8; r++) {
+                unsigned w = (unsigned)cp[r * 2] << 8 | cp[r * 2 + 1];    /* 4039: xchg al,ah */
+                for (int k = 0; k < 8; k++)
+                    s->idx[sec][c][r][k] = (uint8_t)((w >> (14 - 2 * k)) & 3);  /* 4092 */
+            }
+        }
+        for (int gp = 0; gp < SWORD_GROUPS; gp++) {
+            int nf = SWORD_FRAMES[gp % 3];
+            memcpy(s->block[sec][gp], p + SWORD_BLOCK_OFF[gp], (size_t)nf * 16);
+            for (int f = 0; f < nf; f++) {
+                if (!SWORD_DELTA_OFF[gp]) {                              /* the thrusts */
+                    s->delta[sec][gp][f][0] = SWORD_THRUST_DELTA[gp / 3][0];
+                    s->delta[sec][gp][f][1] = SWORD_THRUST_DELTA[gp / 3][1];
+                } else {    /* 3ED9: bl (low byte) = cell rows, bh = cell columns */
+                    s->delta[sec][gp][f][0] = (int8_t)p[SWORD_DELTA_OFF[gp] + 2 * f];
+                    s->delta[sec][gp][f][1] = (int8_t)p[SWORD_DELTA_OFF[gp] + 2 * f + 1];
+                }
+            }
+        }
+    }
+    free(d);
+    /* gfmcga 0x4086: six words {[4FF5], [4FF6]} indexed by [0x92] - 1 */
+    uint8_t *gf = sar_load(dir, 1, GFMCGA_RES, 1, &glen);
+    if (gf && glen >= 0x4086 - 0x3000 + 12) memcpy(s->colour, gf + (0x4086 - 0x3000), 12);
+    else { static const uint8_t fallback[12] = {0x01,0x09, 0x04,0x24, 0x03,0x1B,
+                                                0x01,0x09, 0x04,0x24, 0x06,0x36};
+           memcpy(s->colour, fallback, 12); }
+    free(gf);
+    s->loaded = 1;
     return 0;
 }
 

@@ -191,11 +191,14 @@ static void t_drop(void)
     o->flags = (uint8_t)((o->flags & 0xF0) | 4);   /* drop id 4 = the 1 G coin */
     enemy_killed(&G, o);                          /* vec 25 */
     CHECK(o->type == 0x6A && o->phase == 0, "vec 25 sets type |= 0x68 (dying, immune, harmless): %02x", o->type);
-    unsigned gold0 = (unsigned)G.gold;
+    unsigned gold0 = (unsigned)G.gold, almas0 = G.almas;
     int became_item = 0;
     for (int i = 0; i < 8; i++) { step(0, 0); if (o->type == 0x74) became_item = 1; }
     CHECK(became_item, "the corpse becomes item type 0x74 after 6 dying frames");
-    CHECK((unsigned)G.gold == gold0 + 1, "walking into the coin adds 1 gold: %u -> %u", gold0, (unsigned)G.gold);
+    /* issue #36: 8FCC `call 0x917c` = `add [0x8b],ax` -- the coin is ALMAS, and
+     * the 24-bit GOLD at [85..87] must not move at all. */
+    CHECK(G.almas == almas0 + 1, "walking into the coin adds 1 alma: %u -> %u", almas0, G.almas);
+    CHECK((unsigned)G.gold == gold0, "and no gold: %u -> %u", gold0, (unsigned)G.gold);
     CHECK((o->col >> 8) == 0xFF, "and the object is removed");
 
     /* 97F2: a down-thrust kill always takes entry 0 of the drop list */
@@ -241,15 +244,42 @@ static void t_items(void)
     CHECK(took && G.hero_crest == 0xFF, "0x1D: and taking that sets [9C] = %02X", G.hero_crest);
     CHECK(G.page[0x12] == 0x08, "and 914C's event pair sets page[12] = %02X", G.page[0x12]);
 
-    /* 0x1B is a hundred gold, not a pair of boots */
+    /* 0x1B is a hundred coins, not a pair of boots -- and 8FE2's `call 0x917c`
+     * makes them ALMAS, not gold (issue #36). */
     flat_map(); start(30, 10, 0);
     o = put_enemy(31, 11, 0x7B, 0);
     o->home_col = 0xFFFF;
-    unsigned gold0 = (unsigned)G.gold;
+    unsigned gold0 = (unsigned)G.gold, almas0 = G.almas;
     uint8_t shoes0 = G.shoes;
     for (int i = 0; i < 8 && (o->col >> 8) != 0xFF; i++) step(0, 0);
-    CHECK((unsigned)G.gold == gold0 + 100, "0x1B: 100 gold (%u -> %u)", gold0, (unsigned)G.gold);
+    CHECK(G.almas == almas0 + 100, "0x1B: 100 almas (%u -> %u)", almas0, G.almas);
+    CHECK((unsigned)G.gold == gold0, "0x1B: and no gold (%u -> %u)", gold0, (unsigned)G.gold);
     CHECK(G.shoes == shoes0, "0x1B: and no shoes");
+
+    /* the ten-alma coin (0x15 -> 8FD9), and the treasure box, which is the one
+     * pickup that really is gold: 8F56 `jmp 0x916b` = `add [0x86],ax /
+     * adc byte [0x85],0`, redrawn through [cs:2016] vid_num_gold. */
+    flat_map(); start(30, 10, 0);
+    o = put_enemy(31, 11, 0x75, 0);
+    o->home_col = 0xFFFF;
+    gold0 = (unsigned)G.gold; almas0 = G.almas;
+    for (int i = 0; i < 8 && (o->col >> 8) != 0xFF; i++) step(0, 0);
+    CHECK(G.almas == almas0 + 10 && (unsigned)G.gold == gold0, "0x15: 10 almas, no gold (%u almas, %u gold)",
+          G.almas, (unsigned)G.gold);
+
+    flat_map(); start(30, 10, 0);
+    o = put_enemy(31, 11, 0x73, 0);                 /* 0x13 treasure box */
+    o->home_col = 0xFFFF; o->phase = 2;             /* 8F23: phase & 0xF picks the prize */
+    gold0 = (unsigned)G.gold; almas0 = G.almas;
+    for (int i = 0; i < 8 && (o->col >> 8) != 0xFF; i++) step(0, 0);
+    CHECK((unsigned)G.gold > gold0 && G.almas == almas0,
+          "0x13: the treasure box is the gold one (%u -> %u gold, almas %u)", gold0, (unsigned)G.gold, G.almas);
+
+    /* 917C saturates at 0xFFFF instead of wrapping (9180 `jnc` / 9182) */
+    G.almas = 0xFFF0;
+    almas_add(&G, 100);
+    CHECK(G.almas == 0xFFFF, "917C saturates ALMAS at FFFF (%u)", G.almas);
+    G.almas = 0;
 
     /* 0x1E is key item 1 */
     flat_map(); start(30, 10, 0);
@@ -343,6 +373,104 @@ static int render_frog_shot(const char *dir, const char *out, int phase)
     return png_write_rgb(out, rgb, FB_W, FB_H);
 }
 
+
+/* ------------------------------------------------- the sword is drawn (#35) */
+/* gfmcga 3E34/3FD0 composites the sword block over the 3x3 fman frame every
+ * frame of a swing, and 7094 hands the hero renderer [FF40]/[FF41]/[FF3F] so
+ * both overlay passes switch to the attack poses.  The port did neither, so
+ * Garland fought bare-handed; nothing caught it because every `make verify`
+ * capture is an entry frame.  Ground truth for the drawn frame is
+ * docs/screenshots/cavern_sword.png (see the Makefile). */
+static void t_sword_render(void)
+{
+    static Map m; static Tileset t; static HeroGfx hero;
+    static uint8_t fb[FB_W * FB_H], idle[FB_W * FB_H];
+    if (map_load_system(&m, G_DIR, 0) || gfx_load_tileset(&t, G_DIR, m.tileset)
+        || gfx_load_hero(&hero, G_DIR)) {
+        fprintf(stderr, "  (game files not in %s: skipping the sword render)\n", G_DIR);
+        return;
+    }
+    const SwordGfx *sg = &hero.sword;
+    CHECK(sg->loaded, "sword.grp (ZELRES2[26]) is loaded with fman.grp");
+    if (!sg->loaded) return;
+    /* kernel 0x0BA0 sword_ptr_off[]: swords 1-3 read section 0, 4-5 section 1,
+     * 6 section 2, and each section's cell bank runs to its own end. */
+    CHECK(SWORD_SECTION[0] == 0 && SWORD_SECTION[3] == 1 && SWORD_SECTION[5] == 2,
+          "the sword picks its section the way kernel mode 4 does");
+    CHECK(sg->ncells[0] == 72 && sg->ncells[1] == 111 && sg->ncells[2] == 118,
+          "the three sections hold 72/111/118 blade cells (%d/%d/%d)",
+          sg->ncells[0], sg->ncells[1], sg->ncells[2]);
+    /* gfmcga 0x4086, {[4FF5] for pixel values 1-2, [4FF6] for value 3} */
+    CHECK(sg->colour[0][0] == 0x01 && sg->colour[0][1] == 0x09 &&
+          sg->colour[5][0] == 0x06 && sg->colour[5][1] == 0x36,
+          "the per-sword colour pairs are 4086's (%02X/%02X .. %02X/%02X)",
+          sg->colour[0][0], sg->colour[0][1], sg->colour[5][0], sg->colour[5][1]);
+    /* the first right-facing slash frame, +0x01E: one cell in column 1 rows 1-2
+     * and one in column 2 row 2, two rows and two columns up from the hero */
+    static const uint8_t F0[16] = {0xFF,0xFF,0xFF,0xFF, 0xFF,0x00,0x01,0xFF,
+                                   0xFF,0xFF,0x02,0xFF, 0xFF,0xFF,0xFF,0xFF};
+    CHECK(!memcmp(sg->block[0][0][0], F0, 16), "section 0's slash frame 0 is the +0x01E block");
+    CHECK(sg->delta[0][0][0][0] == -2 && sg->delta[0][0][0][1] == -2 &&
+          sg->delta[0][0][3][0] == -2 && sg->delta[0][0][3][1] == 2,
+          "and +0x17E's {row,col} offsets are (-2,-2) then (-2,+2)");
+    /* 3E63/3E76 store the thrust's offset inline instead of reading a table */
+    CHECK(sg->delta[0][2][0][0] == 1 && sg->delta[0][2][0][1] == 0 &&
+          sg->delta[0][5][0][0] == 1 && sg->delta[0][5][0][1] == -1,
+          "the down-thrust hangs one row below the feet (right col 0, left col -1)");
+
+    game_init(&G, &m, &t);
+    G.present = present; G.ai = &ovl;
+    game_place(&G, 61, 7, 0);                       /* the MURALLA door, facing right */
+    G.nobj = 0;
+    game_first_frame(&G);
+    render_frame(idle, &G, &hero);
+    int hx = PF_X + G.hero_scr_col * 8, hy = PF_Y + G.hero_scr_row * 8;
+    G.sword = 1; G.attacking = 0xFF; G.attack_type = 0;
+    for (int f = 0; f < 6; f++) {
+        G.attack_var = (uint8_t)f;
+        render_frame(fb, &G, &hero);
+        int n = 0, bad = 0, blade = 0;
+        int x0 = hx + sg->delta[0][0][f][1] * 8, y0 = hy + sg->delta[0][0][f][0] * 8;
+        for (int y = PF_Y; y < PF_Y + PF_H; y++)
+            for (int x = PF_X; x < PF_X + PF_W; x++) {
+                if (fb[y * FB_W + x] == idle[y * FB_W + x]) continue;
+                n++;
+                if (x < x0 || x >= x0 + 32 || y < y0 || y >= y0 + 32) {
+                    /* the only pixels outside the 4x4 block are the hero's own
+                     * attack overlays, and they stay inside his 3x3 sprite */
+                    if (x < hx || x >= hx + 24 || y < hy || y >= hy + 24) bad++;
+                    continue;
+                }
+                if (x >= hx + 24) {                 /* clear of the sprite: blade only */
+                    blade++;
+                    if (fb[y * FB_W + x] != 0x01 && fb[y * FB_W + x] != 0x09) bad++;
+                }
+            }
+        CHECK(n > 0, "slash frame %d changes the picture (%d px)", f, n);
+        CHECK(!bad, "slash frame %d paints only blade colours outside the sprite (%d stray px)", f, bad);
+        if (f >= 3) CHECK(blade > 0, "slash frame %d reaches past the sprite (%d px)", f, blade);   /* frames 0-2 stay inside the 3x3 */
+    }
+    /* 3E6C `test [C2],1`: facing left the blade comes out of the other side */
+    G.hero_flags |= FACE_LEFT; G.attack_var = 3;
+    render_frame(fb, &G, &hero);
+    int west = 0, east = 0;
+    for (int y = PF_Y; y < PF_Y + PF_H; y++)
+        for (int x = PF_X; x < PF_X + PF_W; x++) {
+            if (fb[y * FB_W + x] == idle[y * FB_W + x]) continue;
+            if (x < hx) west++; else if (x >= hx + 24) east++;
+        }
+    CHECK(west > 0 && east == 0, "facing left the blade is west of the sprite (%d west, %d east)", west, east);
+    /* the up-slash and the down-thrust have their own blocks */
+    G.hero_flags &= (uint8_t)~FACE_LEFT;
+    for (int kind = 1; kind <= 2; kind++) {
+        G.attack_type = (uint8_t)kind; G.attack_var = (uint8_t)(kind == 2 ? 2 : 1);
+        render_frame(fb, &G, &hero);
+        int n = 0;
+        for (int i = 0; i < FB_W * FB_H; i++) if (fb[i] != idle[i]) n++;
+        CHECK(n > 0, "attack type %d draws too (%d px)", kind, n);
+    }
+    G.attacking = 0; G.attack_type = 0; G.attack_var = 0;
+}
 
 /* ================================================================ shots */
 /* docs/FIGHT.md §6 "Enemy projectiles": 1 cell per frame in one of 8
@@ -633,6 +761,39 @@ static void t_hud(void)
     render_hud(fb, &G, NULL, have_font ? &tf : NULL, NULL);
     /* the strip starts at y 158 and nothing above it is touched */
     CHECK(fb[157 * FB_W + 100] == 0xEE, "render_hud leaves the playfield alone");
+    /* issue #36: the [2016] GOLD digits at (76,187) read [85..87] and the
+     * [2014] ALMAS digits at (152,187) read [8B] -- two independent counters,
+     * six and five digits wide (docs/VIDEO_DRIVERS.md §1).  With a DigitFont
+     * the glyphs are real; without one hud_digits draws a box outline, which
+     * is enough to see that each field moves on its own. */
+    {
+        static uint8_t g0[FB_W * FB_H], g1[FB_W * FB_H];
+        DigitFont df;
+        const DigitFont *dfp = gfx_load_digits(&df, G_DIR) == 0 ? &df : NULL;
+        Game h = G;
+        h.gold = 0; h.almas = 0;
+        render_hud(g0, &h, dfp, NULL, NULL);
+        h.almas = 12345;
+        render_hud(g1, &h, dfp, NULL, NULL);
+        int in_almas = 0, in_gold = 0;
+        for (int y = 187; y < 195; y++)
+            for (int x = 0; x < FB_W; x++)
+                if (g0[y * FB_W + x] != g1[y * FB_W + x]) {
+                    if (x >= 152 && x < 182) in_almas++; else if (x >= 76 && x < 112) in_gold++;
+                }
+        CHECK(in_almas > 0, "crediting ALMAS [8B] redraws the [2014] digits at (152,187): %d px", in_almas);
+        CHECK(in_gold == 0, "and leaves the [2016] GOLD digits alone: %d px", in_gold);
+        h.almas = 0; h.gold = 12345;
+        render_hud(g1, &h, dfp, NULL, NULL);
+        in_almas = in_gold = 0;
+        for (int y = 187; y < 195; y++)
+            for (int x = 0; x < FB_W; x++)
+                if (g0[y * FB_W + x] != g1[y * FB_W + x]) {
+                    if (x >= 152 && x < 182) in_almas++; else if (x >= 76 && x < 112) in_gold++;
+                }
+        CHECK(in_gold > 0 && in_almas == 0, "and GOLD moves only the GOLD digits (%d gold, %d almas px)",
+              in_gold, in_almas);
+    }
     /* the four troughs: row 0 black, rows 1..8 dark blue 0x05, row 9 the
      * bright blue lip 0x2D, starting one column right of 48 + bh */
     static const struct { int bh, bl, w; const char *what; } BAR[4] = {
@@ -695,7 +856,7 @@ int main(int argc, char **argv)
     }
     struct { const char *name; void (*fn)(void); } tests[] = {
         {"eai1 tables", t_tables}, {"damage", t_damage}, {"contact", t_contact},
-        {"sword", t_sword}, {"drops", t_drop}, {"items", t_items}, {"bat wake", t_bat_wake}, {"frog hop", t_frog_hop},
+        {"sword", t_sword}, {"sword render", t_sword_render}, {"drops", t_drop}, {"items", t_items}, {"bat wake", t_bat_wake}, {"frog hop", t_frog_hop},
         {"shots", t_shots}, {"magic", t_magic}, {"orbs", t_orbs}, {"sound", t_sound},
         {"eai tables", t_overlays}, {"eai run", t_overlay_run}, {"tall spawn", t_tall_spawn},
         {"hud", t_hud},

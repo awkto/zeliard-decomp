@@ -28,32 +28,35 @@ static void blit8t(uint8_t *fb, const Cell8 *c, int x, int y)
     }
 }
 
-static void blit2(uint8_t *fb, const Cell2 *c, int x, int y, int flip)
+static void blit2(uint8_t *fb, const Cell2 *c, int x, int y)
 {
     for (int r = 0; r < 8; r++) {
         int yy = y + r;
         if (yy < PF_Y || yy >= PF_Y + PF_H) continue;
         for (int k = 0; k < 8; k++) {
-            int sx = flip ? 7 - k : k;
-            if (!c->mask[r][sx]) continue;
+            if (!c->mask[r][k]) continue;
             int xx = x + k;
             if (xx < PF_X || xx >= PF_X + PF_W) continue;
-            fb[yy * FB_W + xx] = c->px[r][sx];
+            fb[yy * FB_W + xx] = c->px[r][k];
         }
     }
 }
 
-/* gfmcga @3CDC: draw `count` cells of frame map `fr` into 3x3 slots from `slot0` */
+/* gfmcga @3CDC: draw `count` cells of frame map `fr` into 3x3 slots from `slot0`.
+ * 3CE8 is `mov ch,0x20 / mul ch`, an 8-bit multiply of the *whole* frame byte,
+ * so the byte is a plain cell index 0..229 -- bit 7 is not a mirror flag.  The
+ * port used to mask it off and flip, which was invisible for every frame the
+ * verify boxes covered (the walk and idle maps all use cells < 0x80) and wrong
+ * for exactly the ones that do not: the attack and cast overlays (35..42,
+ * 53..60, cells 0x88..0x9F) and the door-entry frame 30. */
 static void draw_hero_frame(uint8_t *fb, const HeroGfx *h, int fr, int count, int slot0, int hx, int hy)
 {
     if (fr < 0 || fr >= HERO_FRAMES) return;
     for (int i = 0; i < count; i++) {
-        uint8_t b = h->frame[fr][i];
-        if (!b) continue;
-        int cell = b & 0x7F;
-        if (cell >= h->ncells) continue;
+        int cell = h->frame[fr][i];                     /* 3CDD/3CE0: 0 = empty slot */
+        if (!cell || cell >= h->ncells) continue;
         int slot = slot0 + i;
-        blit2(fb, &h->cell[cell], hx + (slot % 3) * 8, hy + (slot / 3) * 8, b & 0x80);
+        blit2(fb, &h->cell[cell], hx + (slot % 3) * 8, hy + (slot / 3) * 8);
     }
 }
 
@@ -62,6 +65,36 @@ static int shield_class(const Game *g)                  /* gfmcga @3D22 */
     if (!g->shield) return 0;
     return g->shield < 4 ? 1 : 2;
 }
+
+/* fight.bin 7094, immediately before GF_DRAW_HERO: the renderer is handed
+ *   [FF40] anim_flag = attacking || casting
+ *   [FF41] anim_kind = attack_type while attacking (0 slash, 1 up, 2 thrust),
+ *                      1 while casting
+ *   [FF3F] anim_arg  = [FF46] attack_var / [9F2B] cast_timer
+ * and both overlay passes take a different branch when [FF40] is set (3ACF and
+ * 3C36).  `anim_arg >> 1` is the overlay variant, so a six-frame slash cycles
+ * three poses.  The port never set any of this, so Garland kept his idle arms
+ * through every swing -- half of issue #35, the other half being the blade. */
+static int hero_anim_flag(const Game *g) { return g->attacking || g->casting; }
+static int hero_anim_kind(const Game *g) { return g->attacking ? (g->attack_type <= 2 ? g->attack_type : 0) : 1; }
+static int hero_anim_var(const Game *g)  { return (g->attacking ? g->attack_var : g->cast_timer) >> 1; }
+
+/* The sword-arm overlay, from the facing's own overlay base (31 right / 49
+ * left): +4 slash (3B00/3C64 `add ax,0x24`), +8 upward slash or cast
+ * (3B08/3C6F `add ax,0x24` again) and +11 for the down-thrust, which has no
+ * variant (3B11/3C78 `mov ax,0x63`).  All three offsets are exact multiples of
+ * the 9-byte frame map. */
+static int hero_blade_frame(const Game *g, int base)
+{
+    int kind = hero_anim_kind(g);
+    if (kind == 2) return base + 11;
+    return base + (kind == 1 ? 8 : 4) + hero_anim_var(g);
+}
+
+/* The shield-arm overlay while attacking: frame 79 facing right (3AEE
+ * `add si,0x62C7`) and 67 facing left (3C55 `add si,0x625B`), each plus four
+ * frames per shield class and the same variant. */
+static int hero_guard_frame(const Game *g, int base) { return base + shield_class(g) * 4 + hero_anim_var(g); }
 
 /* gfmcga @3A95: three passes — overlay behind, body, overlay in front */
 static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
@@ -75,7 +108,12 @@ static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
     /* pass 1 (3ABE): behind the body */
     if (!(g->hero_dead || g->on_ladder || g->hero_entering)) {
         int sh = shield_class(g);
-        if (sh && !left) {                              /* 3B18..3B3F: shield behind when facing right */
+        if (hero_anim_flag(g)) {                        /* 3ACF: the attack/cast overlays */
+            /* facing right the shield arm is the far one and goes behind
+             * (3ADA); facing left it is the sword arm (3AF4). */
+            int fr = left ? hero_blade_frame(g, 49) : hero_guard_frame(g, 79);
+            draw_hero_frame(fb, h, fr, crouch_n, crouch_s, hx, hy);
+        } else if (sh && !left) {                       /* 3B18..3B3F: shield behind when facing right */
             int fr = ovl + 12 + (g->crouching ? 1 : 0) + (sh - 1 ? 3 : 0);
             draw_hero_frame(fb, h, fr, crouch_n, crouch_s, hx, hy);
         } else if (!sh || left) {                       /* 3B43 */
@@ -112,10 +150,60 @@ static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
         return;
     }
     int sh = shield_class(g);
-    if (left && sh) fr = ovl + 12 + (g->crouching ? 1 : 0) + (sh - 1 ? 3 : 0);     /* 3C86 */
+    if (hero_anim_flag(g))                                                          /* 3C36 */
+        fr = left ? hero_guard_frame(g, 67) : hero_blade_frame(g, 31);
+    else if (left && sh) fr = ovl + 12 + (g->crouching ? 1 : 0) + (sh - 1 ? 3 : 0); /* 3C86 */
     else if (g->crouching || g->hero_anim == 0x80) fr = ovl + 3;                    /* 3CA5 */
     else fr = ovl + (g->hero_anim & 3);
     draw_hero_frame(fb, h, fr, crouch_n, crouch_s, hx, hy);
+}
+
+/* gfmcga 3FD0: the sword block.  The blade is a 4x4-cell (32x32 px) sprite
+ * whose origin is the hero's top-left plus the frame's own {row, col} cell
+ * offset (3ED9/3EEE, one cell row lower while crouching, `test [FF38]` at
+ * 3EF4).  The 16 cell ids run column-major (the outer loop at 4013 is the four
+ * columns, `add di,8`; the inner one the four rows, `add di,0xA00`), 0xFF is an
+ * empty cell, and 4092 paints pixel value 0 transparent, 1 and 2 in `[4FF5]`
+ * and 3 in `[4FF6]`.
+ *
+ * Draw order: gfmcga's row hook calls 40F0 (the hero) at screen row [84]-5 and
+ * 3FD0 (the sword) at [84]+5 with the row counter *rising* (3E1D returns while
+ * cl < [84]-5), so the blade goes on top of the 3x3 fman frame -- which is why
+ * a wind-up frame's cells over the body are visible at all.  Nothing in the
+ * port drew this: `sword_apply` used the shapes for the hit test only, so
+ * Garland fought bare-handed (issue #35). */
+static void draw_sword(uint8_t *fb, const Game *g, const HeroGfx *h)
+{
+    if (!g->attacking || g->hero_hidden || g->hero_dead) return;         /* 3FD0: test [FF43] */
+    const SwordGfx *sg = &h->sword;
+    if (!sg->loaded || !g->sword) return;                                /* [92] = 0: no blade */
+    int sw = g->sword > 6 ? 6 : g->sword;
+    int sec = SWORD_SECTION[sw - 1];                                     /* kernel mode 4 */
+    int kind = g->attack_type <= 2 ? g->attack_type : 0;                 /* [FF45] */
+    int grp = kind + ((g->hero_flags & FACE_LEFT) ? 3 : 0);              /* 3E6C: test [C2],1 */
+    int f = g->attack_var;                                               /* [FF46] - 1 */
+    if (f >= SWORD_FRAMES[kind]) f = SWORD_FRAMES[kind] - 1;
+    if (f < 0) f = 0;
+    const uint8_t *blk = sg->block[sec][grp][f];
+    int x0 = PF_X + g->hero_scr_col * 8 + sg->delta[sec][grp][f][1] * 8;
+    int y0 = PF_Y + (g->hero_scr_row + sg->delta[sec][grp][f][0] + (g->crouching ? 1 : 0)) * 8;
+    uint8_t c12 = sg->colour[sw - 1][0], c3 = sg->colour[sw - 1][1];
+    for (int cc = 0; cc < 4; cc++)
+        for (int cr = 0; cr < 4; cr++) {
+            uint8_t cell = blk[cc * 4 + cr];
+            if (cell == 0xFF || cell >= sg->ncells[sec]) continue;        /* 401A: 0xFF skips */
+            for (int r = 0; r < 8; r++) {
+                int yy = y0 + cr * 8 + r;
+                if (yy < PF_Y || yy >= PF_Y + PF_H) continue;
+                for (int k = 0; k < 8; k++) {
+                    unsigned v = sg->idx[sec][cell][r][k];
+                    if (!v) continue;                                     /* 40A0: transparent */
+                    int xx = x0 + cc * 8 + k;
+                    if (xx < PF_X || xx >= PF_X + PF_W) continue;
+                    fb[yy * FB_W + xx] = v == 3 ? c3 : c12;               /* 40AB / 40CB */
+                }
+            }
+        }
 }
 
 /* gfmcga 3599/366E: one 2-bpp cell through the frame's 16-entry colour table */
@@ -258,7 +346,7 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
     draw_enemies(fb, g);
     draw_shots(fb, g);
     draw_magic(fb, g);
-    if (h) draw_hero(fb, g, h);
+    if (h) { draw_hero(fb, g, h); draw_sword(fb, g, h); }
 }
 
 /* ------------------------------------------------------------------- HUD */

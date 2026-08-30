@@ -65,7 +65,8 @@ void hero_knockback(Game *g);                           /* 6412 */
 void hero_damage(Game *g, unsigned dmg);                /* 7685 */
 void hero_damage_shielded(Game *g, unsigned dmg);       /* 75E2 */
 void hero_die(Game *g);                                 /* 718C / 98FC */
-void gold_add(Game *g, unsigned n);                     /* 917C */
+void gold_add(Game *g, unsigned n);                     /* 916B: the 24-bit GOLD [85..87] */
+void almas_add(Game *g, unsigned n);                    /* 917C: the 16-bit ALMAS [8B] */
 void exp_add(Game *g, unsigned n);                      /* 9715 */
 
 /* --------------------------------------- projectiles / magic (shots.c) */

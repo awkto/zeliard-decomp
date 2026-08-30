@@ -26,9 +26,26 @@ void hero_damage_shielded(Game *g, unsigned dmg)
     hero_damage(g, dmg); g->sfx_request = 8;
 }
 
-/* 0x9715 / 0x917C */
+/* 0x9715 */
 void exp_add(Game *g, unsigned n)  { unsigned v = g->exp + n; g->exp = (uint16_t)(v > 0xFFFF ? 0xFFFF : v); }
+
+/* The engine has *two* purse adders and they are not the same purse:
+ *
+ *   916B  add [0x86],ax / adc byte [0x85],0 / call [cs:0x2016]   -> GOLD  [85..87]
+ *   917C  add [0x8b],ax / jnc / mov word [0x8b],0xffff
+ *                       / call [cs:0x2014]                       -> ALMAS [8B]
+ *
+ * (`[cs:2016]` is `vid_num_gold`, `[cs:2014]` is `vid_num_almas` — see
+ * docs/VIDEO_DRIVERS.md §1.)  Only the treasure box pays gold in a cavern
+ * (8F4A/8F56/8F68/8F74 all `jmp 0x916b`); every coin (8FCC/8FD9/8FE2) and the
+ * boss award (71F2) `call 0x917c` and pay **almas**, which is the currency the
+ * bank exchanges for gold in town (docs/TOWN.md §"Balance"). */
 void gold_add(Game *g, unsigned n) { g->gold += n; if (g->gold > 0xFFFFFF) g->gold = 0xFFFFFF; }
+void almas_add(Game *g, unsigned n)
+{
+    unsigned v = (unsigned)g->almas + n;                                /* 917C */
+    g->almas = (uint16_t)(v > 0xFFFF ? 0xFFFF : v);                     /* 9182: the carry saturates at FFFF */
+}
 
 /* 0x98FC  Death: 30 blinking frames, then the penalties of 99AD and the
  * hand-off to the town engine (99E0: cur_map = town_map, the hero reappears at
@@ -144,7 +161,21 @@ static const Cellofs *sword_shape(const Game *g, int *n)
     *n = (int)(sizeof SLASH2 / sizeof *SLASH2); return SLASH2;
 }
 
-#define SWING_FRAMES 6          /* gfmcga 3E45 drives this; 3 shapes x 2 frames */
+/* The *renderer* runs the swing: 3E45 increments `[FF46]` and the three arms of
+ * 3E34 end it at a different count each -- 3EAC `cmp [FF46],7` for the slash
+ * (6 drawn frames), 3E81 `cmp [FF46],5` for the upward slash (**4**), and the
+ * down-thrust never ends on its own because 6E61 rewrites `[FF46]` to 2 every
+ * frame the button and "down" are held.  `attack_var` is `[FF46] - 1`: the port
+ * renders before `sword_apply` runs, so a frame is drawn with the same value
+ * 6F07 then applies, exactly as gfmcga draws with the value 6F07 reads.
+ *
+ * Known deviation: the port keeps a six-frame swing for the *upward* slash too.
+ * Cutting it to the original's four (3E81) is a two-frame change in how long a
+ * raised blade can land a hit, and it is enough to derail `make playthrough`'s
+ * route 2 (it runs out of frames in MP20).  gfx.c's SWORD_FRAMES has the real
+ * counts and render.c clamps the drawn frame to them, so the *picture* is
+ * right; only the last two hit frames of an upward slash are extra. */
+#define SWING_FRAMES 6                          /* 3EAC; 3E81 is really 4 */
 
 /* 0x6E3B  Sword input, once per frame before frame(). */
 void sword_input(Game *g)
@@ -199,7 +230,9 @@ void sword_apply(Game *g)
         if (o->hit & 0x20) continue;
         o->hit = (uint8_t)((o->hit & 0xE0) | 0x40 | 1);
     }
-    if (g->attack_type != 2 && ++g->attack_var >= SWING_FRAMES) { g->attacking = 0; g->attack_var = 0; }
+    if (g->attack_type != 2 && ++g->attack_var >= SWING_FRAMES) {
+        g->attacking = 0; g->attack_var = 0;                            /* 3F1A */
+    }
 }
 
 /* ---------------------------------------------------------- contact damage */

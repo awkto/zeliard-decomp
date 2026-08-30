@@ -716,6 +716,33 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# and the gd decoders themselves against tools/grp2png.py's, the reference
 	# implementation that produced docs/screenshots/intro_art.png
 	python3 tools/compare_gdart.py ../zeliard
+	# --- the sword mid-swing (issue #35) -------------------------------
+	./zeliard --dir ../zeliard --map 0 --pos 61 7 --headless --frames 8 \
+		--script "X8" --screenshot 5 /tmp/zel_sword.png
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 160 94 32 24 --label "mid-swing: the blade (sword.grp section 0)"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 144 94 15 24 --label "mid-swing: Garland's sword-arm pose (fman 36/80)"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 48 94 96 24 --label "mid-swing: the playfield west of him"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 192 94 80 24 --label "mid-swing: the playfield east of the blade"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 48 14 224 80 --label "mid-swing: the band above Garland"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 48 118 224 40 --label "mid-swing: the band below Garland"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 159 94 1 15 --label "mid-swing: his last sprite column, above (159,109)"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 159 110 1 8 --label "mid-swing: his last sprite column, below (159,109)"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 0 158 320 42 --label "mid-swing: the HUD strip"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 0 0 48 158 --label "mid-swing: the left stone frame"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 272 0 48 158 --label "mid-swing: the right stone frame"
+	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
+		--box 48 0 224 14 --label "mid-swing: the strip above the playfield"
 
 clean:
 	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video

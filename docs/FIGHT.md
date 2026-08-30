@@ -209,6 +209,18 @@ The sprite is 3×3 cells but the **solid body is the middle column only**
 
 ## 6. Combat
 
+### The two purses (`916B` gold, `917C` almas)
+
+```
+916B  add [0x86],ax / adc byte [0x85],0 / call [cs:0x2016]   -> GOLD  [85..87]
+917C  add [0x8b],ax / jnc / mov word [0x8b],0xffff
+                    / call [cs:0x2014]                       -> ALMAS [8B] (saturates)
+```
+Only the **treasure box** pays gold (`8F4A/8F56/8F68/8F74` all `jmp 916B`).  Every
+**coin** — item states 0x14/0x15/0x1B at `8FCC/8FD9/8FE2` — and the **boss award**
+(`71F2`, from `[[A002]+9]`) call `917C` and pay 1/10/100 **almas**.  That is the game's
+economy: caverns drop almas and the town bank exchanges them for gold (docs/TOWN.md).
+
 ### Sword input (`6E3B`, needs `[0x92] != 0`)
 * Button-1 edge, not already attacking/casting → `attacking = 0xFF`
   (`6F01`), `attack_type` = **1 (upward slash)** if "up" is held or, outside
@@ -240,8 +252,9 @@ up    f0-1: (-2,-1..1) (-1,-2..1) (0,-2..2)
 up    f2-3: (-2,1..3) (-1,1..4) (0,1..4) (1,1..4) (2,1..4) (3,2..3)
 thrust    : (0,1..2) (1,0..2) (2,0..2) (3,0..2)                                              1 row below the feet
 ```
-Sections 1 and 2 (assumed sword levels 2 and 3, *uncertain* which kernel
-block holds levels 4-6) extend the slash to col +5 and the thrust to row +4/+5;
+The section-to-sword mapping is **certain** — kernel `0x0BA0` maps sword `[0x92]`
+1-3 → section 0, 4-5 → section 1, 6 → section 2.  Sections 1 and 2 extend the slash
+to col +5 and the thrust to row +4/+5;
 left-facing shapes are mirrored about the body column (col +1). Every sprite
 marker on a shape cell whose object `type` lacks bit 5 and whose `hit` byte
 lacks bit 5 gets `hit = (hit & 0xE0) | 0x40 | 1` (`6F8D`): hit pending,
@@ -378,7 +391,7 @@ standing on a hazard tile are killed outright (`A26A`).
   touch-breakable, **2** flash, **3** treasure box (`8EF6`, prize by `phase & 0xF`),
   **4/5** coins, **6** key, **7** lion key, **8** potion (+80 HP over 10 frames),
   **9** full potion, **A** the cavern's key item (`909D`→`90CA`/`90B8`), **B** a
-  **coin** (it jumps to `8FAB`, the same handler as 4/5 — `8FC0` pays 100 gold for
+  **coin** (it jumps to `8FAB`, the same handler as 4/5 — `8FC0` pays 100 **almas** for
   any `type & 0x0F` other than 4/5), **C** the message chest, **D** the **Hero's
   Crest** (`907F`), **E** key item 1.  (An earlier revision of this list had A/B as
   shoes and put the crest at E; the jump table above is the authority.) Touch test `9190`: item top-left within

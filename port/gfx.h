@@ -31,14 +31,52 @@ typedef struct {
 } Tileset;
 int gfx_load_tileset(Tileset *t, const char *dir, int mpp_index);
 
+/* sword.grp (ZELRES2[26]) — the swing art gfmcga 3E34/3FD0 composites over the
+ * hero, i.e. the "sword block" kernel mode 4 (0x0B6F) installs at arena:B000.
+ * The container is the usual three-section shape container; `sword_ptr_off[]`
+ * (kernel 0x0BA0) picks the section by `[0x92]`: swords 1-3 use section 0,
+ * 4-5 section 1, 6 section 2.  Each section is {u16 data_off, u16 ptr[14]}
+ * followed by a fixed layout of 4x4-cell swing frames (16 cell ids, 0xFF =
+ * empty, stored column-major) and their {row, col} cell offsets:
+ *
+ *   +0x01E  6 slash frames, facing right     +0x17E  their 6 {row,col} offsets
+ *   +0x07E  4 upward-slash frames, right     +0x18A  their 4 offsets
+ *   +0x0BE  1 down-thrust frame, right       (offset hard-coded: row +1, col 0)
+ *   +0x0CE  6 slash frames, facing left      +0x192  their 6 offsets
+ *   +0x12E  4 upward-slash frames, left      +0x19E  their 4 offsets
+ *   +0x16E  1 down-thrust frame, left        (hard-coded: row +1, col -1)
+ *
+ * `data_off` starts a bank of 16-byte cells: 8 rows of one big-endian 16-bit
+ * word = eight 2-bit pixels.  gfmcga 0x4092 maps 0 to transparent, 1 and 2 to
+ * `[4FF5]` and 3 to `[4FF6]`, both taken from the per-sword table at gfmcga
+ * 0x4086 = {0109 0424 031B 0109 0424 3606}.  The 14 header pointers are the
+ * *hit* shapes fight.bin 6F07 walks, not art; port/combat.c has those. */
+#define SWORD_SECTIONS 3
+#define SWORD_CELLS    128
+#define SWORD_GROUPS   6                      /* {slash, up, thrust} x {right, left} */
+typedef struct {
+    uint8_t idx[SWORD_SECTIONS][SWORD_CELLS][8][8];   /* raw 2-bit pixel values */
+    int     ncells[SWORD_SECTIONS];
+    uint8_t block[SWORD_SECTIONS][SWORD_GROUPS][6][16];  /* cell ids, column-major */
+    int8_t  delta[SWORD_SECTIONS][SWORD_GROUPS][6][2];   /* {row, col} cells from the hero */
+    uint8_t colour[6][2];                     /* per sword 1..6: {values 1-2, value 3} */
+    int     loaded;
+} SwordGfx;
+/* frames per group, gfmcga 3EAC (`cmp [FF46],7`), 3E81 and 3E54 (`cmp .,5`) */
+extern const int SWORD_FRAMES[3];
+/* kernel 0x0BA0 sword_ptr_off[] as a section index, by sword 1..6 */
+extern const int SWORD_SECTION[6];
+
 /* fman.grp: 91 frame maps x 9 bytes, then the 2bpp bank at 0x333. */
 #define HERO_FRAMES 91
 typedef struct {
     uint8_t frame[HERO_FRAMES][9];            /* 1-based cell index, bit7 = flip, 0 = empty */
     Cell2   cell[256];
     int     ncells;
+    SwordGfx sword;                           /* loaded with the hero: the blade art */
 } HeroGfx;
 int gfx_load_hero(HeroGfx *h, const char *dir);
+int gfx_load_sword(SwordGfx *s, const char *dir);
 
 /* enp1..8.grp: a plain cells32 bank (arena:4000), 32 bytes per cell, cell 0 blank.
  * `enp_index` is the level record's byte +4 (0 = ENP1 = cavern 1). */

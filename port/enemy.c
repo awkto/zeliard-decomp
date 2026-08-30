@@ -158,9 +158,9 @@ static void item_break_step(Game *g, MapObj *o)
  *   10 8E32  break when the sword marks it      18 9008  +80 LIFE
  *   11 8E8D  break when the hero walks into it  19 901C  full heal
  *   12 8EE9  three-frame flash                  1A 909D  the cavern's key item
- *   13 8EF6  treasure box                       1B 8FAB  100 gold
- *   14 8FAB  1 gold                             1C 903C  a chest with a message
- *   15 8FAB  10 gold                            1D 907F  the Hero's Crest
+ *   13 8EF6  treasure box                       1B 8FAB  100 almas
+ *   14 8FAB  1 alma                             1C 903C  a chest with a message
+ *   15 8FAB  10 almas                           1D 907F  the Hero's Crest
  *   16 8FE8  Key       17 8FF8  Lion Key         1E 9090  key item 1
  *
  * Three of those were wrong here, and all three mattered: 0x10 was modelled as
@@ -168,8 +168,12 @@ static void item_break_step(Game *g, MapObj *o)
  * itself the moment it came on screen and fired the `[C00C]` story flag its own
  * record carries -- MP30's crest tree at (166,54) handed Garland the Hero's
  * Crest for walking past it; the crest is 0x1D, not 0x1E; and 0x1B is a hundred
- * gold, not a pair of shoes (8FAB decides the amount from `type & 0x0F`: 4 -> 1,
- * 5 -> 10, anything else -> 100). */
+ * coins, not a pair of shoes (8FAB decides the amount from `type & 0x0F`: 4 -> 1,
+ * 5 -> 10, anything else -> 100).  A fourth was wrong too (issue #36): those
+ * three coin amounts are **almas**, not gold -- 8FAB's three arms all
+ * `call 0x917c` (`add [0x8b],ax`, redrawn by `[cs:2014]` vid_num_almas), while
+ * only the treasure box `jmp 0x916b` (`add [0x86],ax / adc byte [0x85],0`,
+ * `[cs:2016]` vid_num_gold) pays the 24-bit GOLD. */
 void item_update(Game *g, MapObj *o)
 {
     int st = o->type & 0x1F;                                            /* 8E14 index */
@@ -223,10 +227,18 @@ void item_update(Game *g, MapObj *o)
         enemy_remove(g, o);
         return; }
     case 0x14: case 0x15: case 0x1B: {                                   /* 8FAB coins */
+        /* 8FC0 picks the amount from `type & 0x0F` (4 -> 1, 5 -> 10, else 100)
+         * and every one of the three arms `call 0x917c` -- `add [0x8b],ax`,
+         * i.e. **ALMAS**, redrawn through `[cs:2014]` vid_num_almas.  Only the
+         * treasure box (8F4A..8F74 `jmp 0x916b`) pays the 24-bit gold, so a
+         * cavern's loose change is what the town bank exchanges for gold.
+         * The port paid all of it into `[85..87]` and the ALMAS counter never
+         * moved (issue #36).  8FAB prints no message; the string here is a log
+         * line, not a message box (msg_box is left clear). */
         int lo = o->type & 0x0F;                                        /* 8FC0 */
         unsigned n = lo == 4 ? 1u : lo == 5 ? 10u : 100u;
-        gold_add(g, n); g->sfx_request = 0x10;
-        snprintf(g->message, sizeof g->message, "%u G", n);
+        almas_add(g, n); g->sfx_request = 0x10;                         /* 8FCC/8FD9/8FE2 -> 917C */
+        snprintf(g->message, sizeof g->message, "%u A", n);
         enemy_remove(g, o);
         return; }
     case 0x16: g->keys++;      g->sfx_request = 0x14; game_message(g, fight_message(MSG_KEY)); enemy_remove(g, o); return;

@@ -217,7 +217,7 @@ void boss_rewards(Game *g)
 {
     if (!(g->boss_map && g->boss_defeated && g->boss_state == 0xFF)) return;
     exp_add(g, g->boss.exp);                                        /* 71E8 -> 9715 */
-    gold_add(g, g->boss.gold);                                      /* 71F1 -> 917C */
+    almas_add(g, g->boss.gold);   /* 71F1 -> 917C: the boss award is ALMAS, not gold */
     g->post_boss_pending = 0xFF;                                    /* 9F1E */
 }
 

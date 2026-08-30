@@ -1300,7 +1300,9 @@ u8 damage_for_source(u8 src)
 }
 
 /* 0x9715 */ void exp_add(u16 n)  { exp  = sat_add(exp, n); }
-/* 0x917C */ void gold_add(u16 n) { gold = sat_add(gold, n); VID_GOLD_DISPLAY(); }
+/* 0x917C  This is the ALMAS adder ([8B]; `gold` here is the older, wrong name for that
+ * field - see docs/STATE_PAGE.md).  The gold adder is 916B, over [85..87]. */
+/* 0x917C */ void almas_add(u16 n) { almas = sat_add(almas, n); VID_ALMAS_DISPLAY(); }
 
 /* 0x9190  Pickup overlap test: CF=0 when the hero's top row is within rows
  * home-2..home+1 of the object and the hero's ring column within rcol-2..rcol+1
