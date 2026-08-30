@@ -51,11 +51,158 @@ typedef struct {
     Cutscene cs;
 #ifdef HAVE_SDL
     SDL_Window *win; SDL_Renderer *ren; SDL_Texture *tex;
+    SDL_GameController *pad;            /* controller 0, opened on the fly */
+    int      fullscreen;
+    int      paused;                    /* Esc: the original pauses, it does not quit */
+    int      esc_edge;                  /* Esc was pressed; what that means is the caller's */
+    char     title_base[900];           /* the engine's own title, re-applied when pause flips */
 #endif
 } App;
 
 #ifdef HAVE_SDL
 static int f1_was, f2_was, music_on = 1, sfx_on = 1;   /* the F1 / F2 hotkeys */
+
+static void dump_png(App *a, Game *g);
+static void title_apply(App *a);
+
+/* ------------------------------------------------------------ the shell */
+/* The cavern and the town each ran their own copy of this; they now share it,
+ * so a feature added here reaches both.  Nothing below touches the engine --
+ * `make test` and `make verify` never enter this file. */
+
+static void toggle_fullscreen(App *a)
+{
+    a->fullscreen = !a->fullscreen;
+    if (SDL_SetWindowFullscreen(a->win, a->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) != 0)
+        fprintf(stderr, "[video] fullscreen: %s\n", SDL_GetError());
+    else if (a->verbose)
+        fprintf(stderr, "[video] %s\n", a->fullscreen ? "fullscreen" : "windowed");
+}
+
+static void pad_open(App *a, int which)
+{
+    if (a->pad || !SDL_IsGameController(which)) return;
+    a->pad = SDL_GameControllerOpen(which);
+    if (a->pad) fprintf(stderr, "[input] controller: %s\n", SDL_GameControllerName(a->pad));
+}
+
+static void pad_closed(App *a, SDL_JoystickID id)
+{
+    if (!a->pad) return;
+    SDL_Joystick *j = SDL_GameControllerGetJoystick(a->pad);
+    if (j && SDL_JoystickInstanceID(j) == id) { SDL_GameControllerClose(a->pad); a->pad = NULL; }
+}
+
+/* One event pump for both engines.  Returns with a->quit set if the window was
+ * closed or the pause screen was answered "quit". */
+static void pump_events(App *a, Game *g)
+{
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+        switch (e.type) {
+        case SDL_QUIT: a->quit = 1; break;
+        case SDL_CONTROLLERDEVICEADDED:   pad_open(a, e.cdevice.which); break;
+        case SDL_CONTROLLERDEVICEREMOVED: pad_closed(a, e.cdevice.which); break;
+        case SDL_CONTROLLERBUTTONDOWN:
+            if (e.cbutton.button == SDL_CONTROLLER_BUTTON_BACK) { a->paused = !a->paused; title_apply(a); }
+            break;
+        case SDL_KEYDOWN:
+            switch (e.key.keysym.sym) {
+            /* Esc used to quit outright, with no confirmation -- one reflex
+             * keypress and the session was gone, which is neither what the
+             * original does nor what anyone expects.  What it *should* do
+             * differs by screen, so record the press and let the caller say:
+             * the engines pause, a cutscene skips. */
+            case SDLK_ESCAPE: a->esc_edge = 1; break;
+            case SDLK_q:      if (a->paused) a->quit = 1; break;
+            case SDLK_F11:    toggle_fullscreen(a); break;
+            case SDLK_RETURN: case SDLK_KP_ENTER:
+                if (e.key.keysym.mod & KMOD_ALT) toggle_fullscreen(a);   /* Alt+Enter */
+                else if (a->paused) { a->paused = 0; title_apply(a); }
+                break;
+            case SDLK_F12:    if (a->shot_path && g) dump_png(a, g); break;
+            default: break;
+            }
+            break;
+        default: break;
+        }
+    }
+}
+
+/* The window title's pause hint, so the state is discoverable without a font:
+ * the engines own the framebuffer and this file must not draw into it.  The
+ * base title is kept because pause flips *inside* frame_wait, long after the
+ * engine set it -- without this the hint never actually appeared. */
+static void title_apply(App *a)
+{
+    char t[960];
+    snprintf(t, sizeof t, "%s%s", a->paused ? "[PAUSED - Esc/Enter resume, Q quit]  " : "", a->title_base);
+    SDL_SetWindowTitle(a->win, t);
+}
+static void title_paused(App *a, const char *base)
+{
+    snprintf(a->title_base, sizeof a->title_base, "%s", base);
+    title_apply(a);
+}
+
+/* Wait out one frame, pumping events; while paused, keep pumping and hold the
+ * frame clock so resuming does not fast-forward. */
+static void frame_wait(App *a, Game *g, Uint64 *next)
+{
+    Uint64 freq = SDL_GetPerformanceFrequency(), now = SDL_GetPerformanceCounter();
+    if (*next == 0 || now > *next + freq) *next = now;
+    *next += (Uint64)(a->frame_ms / 1000.0 * (double)freq);
+    for (;;) {
+        pump_events(a, g);
+        if (a->esc_edge) { a->esc_edge = 0; a->paused = !a->paused; title_apply(a); }
+        if (a->quit) break;
+        if (a->paused) { SDL_Delay(16); *next = SDL_GetPerformanceCounter(); continue; }
+        now = SDL_GetPerformanceCounter();
+        if (now >= *next) break;
+        Uint64 rem = (*next - now) * 1000 / freq;
+        SDL_Delay(rem > 2 ? 1 : 0);
+    }
+}
+
+/* The analogue stick counts as a direction past half deflection. */
+#define PAD_DEAD 16000
+static uint8_t pad_dirs(App *a)
+{
+    if (!a->pad) return 0;
+    SDL_GameController *c = a->pad;
+    uint8_t d = 0;
+    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_UP)    ||
+        SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_A)          ||   /* A jumps */
+        SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY) < -PAD_DEAD) d |= DIR_UP;
+    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_DOWN)  ||
+        SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY) >  PAD_DEAD) d |= DIR_DOWN;
+    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_LEFT)  ||
+        SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX) < -PAD_DEAD) d |= DIR_LEFT;
+    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) ||
+        SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX) >  PAD_DEAD) d |= DIR_RIGHT;
+    return d;
+}
+static uint8_t pad_btns(App *a)
+{
+    if (!a->pad) return 0;
+    uint8_t b = 0;
+    if (SDL_GameControllerGetButton(a->pad, SDL_CONTROLLER_BUTTON_X)) b |= 1;   /* sword */
+    if (SDL_GameControllerGetButton(a->pad, SDL_CONTROLLER_BUTTON_Y)) b |= 2;   /* magic */
+    return b;
+}
+static int pad_menu(App *a)
+{
+    return a->pad && SDL_GameControllerGetButton(a->pad, SDL_CONTROLLER_BUTTON_START);
+}
+
+/* F1 / F2, STICK.BIN's own music and sound-effect hotkeys */
+static void audio_hotkeys(const Uint8 *k)
+{
+    int f1 = k[SDL_SCANCODE_F1], f2 = k[SDL_SCANCODE_F2];
+    if (f1 && !f1_was) { music_on = !music_on; audio_music_enable(music_on); }
+    if (f2 && !f2_was) { sfx_on = !sfx_on; audio_sfx_enable(sfx_on); }
+    f1_was = f1; f2_was = f2;
+}
 #endif
 
 /* the engines carry the Shell in ->user; the front end hangs off shell->user */
@@ -76,7 +223,7 @@ static void usage(void)
 {
     fprintf(stderr,
         "usage: zeliard [--dir GAMEDIR] [--map N] [--pos COL ROW] [--town N] [--headless]\n"
-        "               [--screenshot N out.png] [--script SCRIPT] [--scale N] [--aspect A] [--speed N]\n"
+        "               [--screenshot N out.png] [--script SCRIPT] [--scale N] [--aspect A] [--fullscreen] [--speed N]\n"
         "               [--frames N] [--sound] [--verbose]\n"
         "               [--no-music] [--speaker] [--music N] [--dump-audio FILE.wav]\n"
         "  --dir       directory holding ZELRES1-3.SAR (default: zeliard/, ../zeliard/)\n"
@@ -93,6 +240,7 @@ static void usage(void)
         "  --speed N   FF33 speed (frame = 4*N ticks; default 5 = 84.5 ms)\n"
         "  --scale N   window scale (default 3)\n"
         "  --aspect A  4:3 (default: the shape the driver's monitor had) or 1:1\n"
+        "  --fullscreen  start full-screen (F11 or Alt+Enter toggles; Esc pauses, Q quits)\n"
         "  --video M   render through one of the five original drivers:\n"
         "              mcga (default) cga cga2 ega hgc tandy — the RESOURCE.CFG\n"
         "              `videoDrv` set, at each driver's own screen size\n"
@@ -206,13 +354,14 @@ static void cutscene_present(Cutscene *c)
     if (next == 0 || now > next + freq) next = now;
     next += (Uint64)(CS_FRAME_MS / 1000.0 * (double)freq);
     for (;;) {
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) { a->quit = 1; c->quit = 1; }
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) { a->quit = 1; c->quit = 1; }
-        }
+        pump_events(a, NULL);
+        /* Esc skips the rest of the cutscene; it used to quit the game, which
+         * is a harsh answer to "I have seen the intro".  Closing the window
+         * still quits.  Space / Return skip a single act, as opdemo does. */
+        if (a->esc_edge) { a->esc_edge = 0; c->quit = 1; }
+        if (a->quit) c->quit = 1;
         now = SDL_GetPerformanceCounter();
-        if (now >= next || a->quit) break;
+        if (now >= next || a->quit || c->quit) break;
         Uint64 rem = (next - now) * 1000 / freq;
         SDL_Delay(rem > 2 ? 1 : 0);
     }
@@ -290,44 +439,29 @@ static void present(Game *g)
     SDL_RenderCopy(a->ren, a->tex, NULL, NULL);
     SDL_RenderPresent(a->ren);
     char title[256];
-    snprintf(title, sizeof title, "Zeliard — %s  (%d,%d)  LIFE %u/%u  EXP %u  GOLD %u  %s", g->map->name,
+    snprintf(title, sizeof title, "Zeliard - %s  (%d,%d)  LIFE %u/%u  EXP %u  GOLD %u  %s", g->map->name,
              game_hero_map_col(g), game_hero_map_row(g), g->hp, g->max_hp, g->exp, (unsigned)g->gold, g->message);
-    SDL_SetWindowTitle(a->win, title);
+    title_paused(a, title);
 
     /* wait out the frame (4*speed ticks), pumping events */
     static Uint64 next = 0;
-    Uint64 now = SDL_GetPerformanceCounter(), freq = SDL_GetPerformanceFrequency();
-    if (next == 0 || now > next + freq) next = now;
-    next += (Uint64)(a->frame_ms / 1000.0 * (double)freq);
-    for (;;) {
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) a->quit = 1;
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) a->quit = 1;
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F12 && a->shot_path) dump_png(a, g);
-        }
-        now = SDL_GetPerformanceCounter();
-        if (now >= next || a->quit) break;
-        Uint64 rem = (next - now) * 1000 / freq;
-        SDL_Delay(rem > 2 ? 1 : 0);
-    }
+    frame_wait(a, g, &next);
     const Uint8 *k = SDL_GetKeyboardState(NULL);
-    /* STICK's F1 / F2 hotkeys: music and sound-effect toggles */
-    int f1 = k[SDL_SCANCODE_F1], f2 = k[SDL_SCANCODE_F2];
-    if (f1 && !f1_was) { music_on = !music_on; audio_music_enable(music_on); }
-    if (f2 && !f2_was) { sfx_on = !sfx_on; audio_sfx_enable(sfx_on); }
-    f1_was = f1; f2_was = f2;
-    uint8_t d = 0;
+    audio_hotkeys(k);
+    /* Paused: hand the engine a frame of nothing rather than the keys the
+     * player is using to talk to the pause screen. */
+    if (a->paused) { g->dirs = 0; set_buttons(g, 0); g->menu_key = 0; return; }
+    uint8_t d = pad_dirs(a);
     if (k[SDL_SCANCODE_UP] || k[SDL_SCANCODE_W] || k[SDL_SCANCODE_Z] || k[SDL_SCANCODE_SPACE]) d |= DIR_UP;
     if (k[SDL_SCANCODE_DOWN] || k[SDL_SCANCODE_S]) d |= DIR_DOWN;
     if (k[SDL_SCANCODE_LEFT] || k[SDL_SCANCODE_A]) d |= DIR_LEFT;
     if (k[SDL_SCANCODE_RIGHT] || k[SDL_SCANCODE_D]) d |= DIR_RIGHT;
     g->dirs = d;
-    uint8_t b = 0;
+    uint8_t b = pad_btns(a);
     if (k[SDL_SCANCODE_X] || k[SDL_SCANCODE_LCTRL] || k[SDL_SCANCODE_RCTRL]) b |= 1;
     if (k[SDL_SCANCODE_C] || k[SDL_SCANCODE_LALT]) b |= 2;
     set_buttons(g, b);
-    g->menu_key = (uint8_t)(k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]);   /* FF18 bit0 */
+    g->menu_key = (uint8_t)(k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER] || pad_menu(a));   /* FF18 bit0 */
 #endif
 }
 
@@ -386,41 +520,25 @@ static void town_present(Town *t)
     char title[768];
     snprintf(title, sizeof title, "Zeliard - %s  col %d  LIFE %u/%u  GOLD %u  %.400s", t->map->label,
              town_hero_col(t), t->g->hp, t->g->max_hp, (unsigned)t->g->gold, t->message);
-    SDL_SetWindowTitle(a->win, title);
+    title_paused(a, title);
     static Uint64 next = 0;
-    Uint64 now = SDL_GetPerformanceCounter(), freq = SDL_GetPerformanceFrequency();
-    if (next == 0 || now > next + freq) next = now;
-    next += (Uint64)(a->frame_ms / 1000.0 * (double)freq);
-    for (;;) {
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) a->quit = 1;
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) a->quit = 1;
-        }
-        now = SDL_GetPerformanceCounter();
-        if (now >= next || a->quit) break;
-        Uint64 rem = (next - now) * 1000 / freq;
-        SDL_Delay(rem > 2 ? 1 : 0);
-    }
+    frame_wait(a, NULL, &next);
     const Uint8 *k = SDL_GetKeyboardState(NULL);
-    /* STICK's F1 / F2 hotkeys: music and sound-effect toggles */
-    int f1 = k[SDL_SCANCODE_F1], f2 = k[SDL_SCANCODE_F2];
-    if (f1 && !f1_was) { music_on = !music_on; audio_music_enable(music_on); }
-    if (f2 && !f2_was) { sfx_on = !sfx_on; audio_sfx_enable(sfx_on); }
-    f1_was = f1; f2_was = f2;
-    uint8_t d = 0;
+    audio_hotkeys(k);
+    if (a->paused) { t->dirs = 0; t->buttons = 0; t->menu_key = 0; return; }
+    uint8_t d = pad_dirs(a);
     if (k[SDL_SCANCODE_UP] || k[SDL_SCANCODE_W] || k[SDL_SCANCODE_Z]) d |= DIR_UP;
     if (k[SDL_SCANCODE_DOWN] || k[SDL_SCANCODE_S]) d |= DIR_DOWN;
     if (k[SDL_SCANCODE_LEFT] || k[SDL_SCANCODE_A]) d |= DIR_LEFT;
     if (k[SDL_SCANCODE_RIGHT] || k[SDL_SCANCODE_D]) d |= DIR_RIGHT;
     t->dirs = d;
-    uint8_t b = 0;
+    uint8_t b = pad_btns(a);
     if (k[SDL_SCANCODE_SPACE] || k[SDL_SCANCODE_X]) b |= 1;
     if (k[SDL_SCANCODE_C] || k[SDL_SCANCODE_LALT] || k[SDL_SCANCODE_RALT] || k[SDL_SCANCODE_BACKSPACE]) b |= 2;
     if ((b & 1) && !(t->buttons & 1)) t->btn1_edge = 0xFF;
     if ((b & 2) && !(t->buttons & 2)) t->btn2_edge = 0xFF;
     t->buttons = b;
-    t->menu_key = (uint8_t)(k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]);   /* FF18 bit0 */
+    t->menu_key = (uint8_t)(k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER] || pad_menu(a));   /* FF18 bit0 */
 #endif
 }
 
@@ -451,6 +569,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--screenshot") && i + 2 < argc) { a.shot_frame = (unsigned)atoi(argv[++i]); a.shot_path = argv[++i]; a.headless = 1; explicit_start = 1; }
         else if (!strcmp(argv[i], "--script") && i + 1 < argc) { a.script = argv[++i]; explicit_start = 1; }
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) a.scale = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--fullscreen")) a.fullscreen = 1;
         /* the drivers all drew for a 4:3 monitor, so their pixels are not
          * square; --aspect 1:1 turns the correction off for pixel-peeping
          * against docs/screenshots/, which are native framebuffer grabs */
@@ -622,6 +741,10 @@ int main(int argc, char **argv)
 #ifdef HAVE_SDL
     if (!a.headless) {
         if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 1; }
+        /* a controller is a nicety, not a requirement: if the subsystem will
+         * not start, the keyboard path is untouched */
+        if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) == 0)
+            for (int j = 0; j < SDL_NumJoysticks(); j++) pad_open(&a, j);
         int vw, vh, vscale = a.scale;
         video_size(a.video, &vw, &vh);
         /* the 640- and 720-px-wide modes are already twice as wide as MCGA, so
@@ -637,8 +760,10 @@ int main(int argc, char **argv)
          * reaches this path. */
         int lw = vw, lh = vh;
         if (!a.square) video_display_size(a.video, &lw, &lh);
+        Uint32 wflags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
+        if (a.fullscreen) wflags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
         a.win = SDL_CreateWindow("Zeliard port", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                 lw * vscale, lh * vscale, SDL_WINDOW_SHOWN);
+                                 lw * vscale, lh * vscale, wflags);
         a.ren = SDL_CreateRenderer(a.win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
         if (!a.ren) a.ren = SDL_CreateRenderer(a.win, -1, 0);
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
