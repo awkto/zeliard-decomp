@@ -51,8 +51,10 @@ Method per overlay: run ghidra_dump_c.py, then rename functions/globals against 
 ## Phase 4 — polish/stretch
 
 - ~~Save-game compatibility with the DOS version.~~ DONE: `NAME.USR` is a raw 256-byte image of BASE:0000 (kenjpro `A862`), and a save written by `port/` **loads in the real game** under DOSBox via F7 Restore — see docs/DOSBOX_RECIPE.md §9.
-- EGA/CGA/HGC/Tandy render modes in the port (all five drivers are documented in docs/VIDEO_DRIVERS.md, including what each one's `[0x2044]` does to the 48-byte cells).
-- CI: GitHub Actions building the port; asset pipeline gated on a user-supplied game copy.
+- ~~EGA/CGA/HGC/Tandy render modes in the port.~~ DONE (#32): `--video`, each mode a pure function of the engine's PC-88 pair buffer; ten per-mode DOSBox captures, every cavern box pixel-exact in all five modes.
+- ~~CI.~~ DONE (#33): `.github/workflows/ci.yml` builds both flavours and runs `make test` (which no longer needs game files); data-dependent targets are gated.
+
+**All four phases are complete.** Remaining known gaps are tracked in their own issue: the town's per-driver 2 bpp colour tables (`gt*.bin`), the MT-32 and Tandy audio back ends, `ttl2.grp`'s ornament assembly, and ground truth for the caverns and bosses no town door reaches.
 
 ## Sub-issue index
 
