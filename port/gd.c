@@ -26,8 +26,13 @@ size_t gd_unpack_mask(const uint8_t *src, size_t len, uint8_t *dst, size_t cap, 
 {                                                                   /* 6D5E */
     if (len < 2) return 0;
     size_t n = (size_t)src[0] | ((size_t)src[1] << 8);              /* 6D63 */
+    /* a corrupt count larger than the buffer would walk the mask read off the
+     * end (the original reads whatever the arena holds there); clamp it to
+     * the mask bytes actually present -- identical for well-formed input,
+     * where the payload always follows a complete mask (found by fuzz_grp) */
+    if (n > len - 2) n = len - 2;
     const uint8_t *mask = src + 2, *data = mask + n;
-    size_t o = 0, di = 0, avail = len > 2 + n ? len - 2 - n : 0;
+    size_t o = 0, di = 0, avail = len - 2 - n;
     for (size_t i = 0; i < n; i++) {
         uint8_t m = mask[i];
         for (int b = 0; b < 8; b++) {

@@ -7,6 +7,15 @@
 #define BASE 0xC000
 static uint16_t u16(const uint8_t *d, size_t o) { return (uint16_t)(d[o] | d[o + 1] << 8); }
 
+/* A BASE-relative file pointer as an offset into the image, clamped to `len`.
+ * The shipped files always point at or above BASE and inside the image, but a
+ * corrupted one can point below BASE: `ptr - BASE` then wraps size_t, and an
+ * `o + n <= len` guard downstream wraps right back into range and reads far
+ * outside the buffer (found by fuzz_map/fuzz_grp).  Clamping to `len` makes
+ * every such guard fail cleanly and changes nothing for valid pointers. */
+static size_t off_in(uint16_t ptr, size_t len)
+{ return ptr >= BASE && (size_t)(ptr - BASE) <= len ? (size_t)(ptr - BASE) : len; }
+
 /* STICK.BIN @0F68: 11-byte {archive, res# (1-based), name} records */
 static const struct { uint8_t archive, res; const char *name; } SYSMAP[] = {
     {2, 21, "MP10"}, {2, 22, "MP1D"}, {2, 23, "MP20"}, {2, 24, "MP21"}, {2, 25, "MP2D"}, {2, 26, "MP30"},
@@ -35,7 +44,7 @@ int map_parse(Map *m, const uint8_t *d, size_t len)
     if (len < 0x1B) return -1;
     m->width = u16(d, 2);
     if (m->width < 1 || m->width > MAP_MAX_WIDTH) return -1;
-    size_t lv = u16(d, 0) - BASE;
+    size_t lv = off_in(u16(d, 0), len);
     if (lv + 5 <= len) {
         m->lvl_flags = d[lv]; m->tileset = d[lv + 2]; m->ai = d[lv + 3]; m->enemies = d[lv + 4];
         m->lvl_off = lv;
@@ -63,7 +72,7 @@ int map_parse(Map *m, const uint8_t *d, size_t len)
     /* fixture lists A (C004) / B (C006) / C (C008) — see struct Fixture */
     const struct { int ptr_off, size, cell; } FL[3] = {{4, 3, 0x40}, {6, 3, 0x43}, {8, 7, 0x46}};
     for (int k = 0; k < 3; k++) {
-        size_t o = u16(d, FL[k].ptr_off) - BASE;
+        size_t o = off_in(u16(d, FL[k].ptr_off), len);
         while (o + (size_t)FL[k].size <= len && u16(d, o) != 0xFFFF && m->nfix < 256) {
             Fixture *f = &m->fix[m->nfix++];
             f->col = u16(d, o) & 0x3FFF; f->row = d[o + 2] & 0x3F; f->cell = (uint8_t)FL[k].cell;
@@ -79,7 +88,7 @@ int map_parse(Map *m, const uint8_t *d, size_t len)
     m->patches = u16(d, 0xC);
     m->vidinit = u16(d, 0xE);
     /* doors */
-    size_t o = u16(d, 0xA) - BASE;
+    size_t o = off_in(u16(d, 0xA), len);
     while (o + 12 <= len && u16(d, o) != 0xFFFF && m->ndoors < 64) {
         Door *dr = &m->doors[m->ndoors++];
         dr->col = u16(d, o); dr->row = d[o + 2]; dr->letter = d[o + 3]; dr->dest_map = d[o + 4];
@@ -88,7 +97,7 @@ int map_parse(Map *m, const uint8_t *d, size_t len)
         o += 12;
     }
     /* objects */
-    o = u16(d, 0x10) - BASE;
+    o = off_in(u16(d, 0x10), len);
     while (o + 16 <= len && u16(d, o) != 0xFFFF && m->nobj < 256) {
         MapObj *ob = &m->objs[m->nobj++];
         ob->col = u16(d, o); ob->row = d[o + 2]; ob->rcol = 0xFF; ob->type = d[o + 4]; ob->hit = d[o + 5];
@@ -140,7 +149,7 @@ int map_apply_patches(Map *m, const uint8_t page[256])
     if (!m->raw || !m->patches) return 0;
     uint8_t *d = m->raw;
     size_t len = m->rawlen;
-    size_t o = (size_t)(m->patches - BASE);
+    size_t o = off_in(m->patches, len);
     int applied = 0, guard = 0;
     while (o + 3 <= len && ++guard < 256) {
         uint16_t fp = u16(d, o);

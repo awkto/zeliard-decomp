@@ -11,3 +11,15 @@ test_playthrough
 test_audio
 test_cutscene
 test_video
+# fuzzing: build products, harness binaries, and the corpus (game-derived,
+# never committed) plus libFuzzer's crash artifacts
+fuzz/obj/
+fuzz/fuzz_sar
+fuzz/fuzz_map
+fuzz/fuzz_grp
+fuzz/fuzz_seed
+fuzz/corpus/
+crash-*
+leak-*
+oom-*
+timeout-*

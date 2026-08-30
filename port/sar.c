@@ -145,15 +145,24 @@ uint8_t *sar_read_raw(const char *dir, int archive, int index, size_t *out_len)
     FILE *f = game_fopen(dir, name);
     if (!f) { fprintf(stderr, "sar: cannot open %s/%s\n", dir, name); return NULL; }
     uint8_t hdr[4];
+    /* the file size bounds every offset and length in the header: a corrupt
+     * archive otherwise asks malloc for whatever 32-bit number it carries
+     * (found by fuzz_grp; a real entry always lies inside the file) */
+    long fsz = 0;
+    if (fseek(f, 0, SEEK_END) == 0) fsz = ftell(f);
+    if (fsz < 8) { fclose(f); return NULL; }
+    fseek(f, 0, SEEK_SET);
     if (fread(hdr, 1, 4, f) != 4) { fclose(f); return NULL; }
     uint32_t count = rd32(hdr) / 4;
     if ((uint32_t)index >= count) { fprintf(stderr, "sar: index %d out of range (%u)\n", index, count); fclose(f); return NULL; }
     fseek(f, (long)index * 4, SEEK_SET);
     if (fread(hdr, 1, 4, f) != 4) { fclose(f); return NULL; }
     uint32_t off = rd32(hdr);
+    if (off > (uint32_t)fsz - 4) { fclose(f); return NULL; }
     fseek(f, (long)off, SEEK_SET);
     if (fread(hdr, 1, 4, f) != 4) { fclose(f); return NULL; }
     uint32_t len = rd32(hdr);
+    if (len > (uint32_t)fsz - 4 - off) { fclose(f); return NULL; }
     uint8_t *buf = malloc(len ? len : 1);
     if (!buf) { fclose(f); return NULL; }
     if (fread(buf, 1, len, f) != len) { free(buf); fclose(f); return NULL; }

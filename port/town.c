@@ -15,6 +15,12 @@
 #define BASE 0xC000
 static uint16_t u16(const uint8_t *d, size_t o) { return (uint16_t)(d[o] | d[o + 1] << 8); }
 
+/* A BASE-relative file pointer as an offset into the image, clamped to `len`
+ * -- same guard as map.c's: a pointer below BASE wraps size_t and walks the
+ * `o + n <= len` guards back into range (found by fuzz_grp). */
+static size_t off_in(uint16_t ptr, size_t len)
+{ return ptr >= BASE && (size_t)(ptr - BASE) <= len ? (size_t)(ptr - BASE) : len; }
+
 /* ------------------------------------------------------------------- map */
 /* docs/TOWN.md §3.  The ten town maps are ZELRES2[36..45] (kernel table
  * records 32..41, AH = 0x80 | index). */
@@ -23,15 +29,16 @@ static int town_parse_raw(TownMap *m, uint8_t *d, size_t len, int index)
 {
     memset(m, 0, sizeof *m);
     m->raw = d; m->rawlen = len; m->index = index;
+    if (len < 0x17) return -1;          /* the fixed header, read below (fuzz_grp) */
     m->width = u16(d, 2);
     if (m->width < 0x24 || m->width > TOWN_MAX_W) return -1;
     if ((size_t)(0x17 + m->width * TOWN_ROWS) > len) return -1;
-    size_t lv = u16(d, 0) - BASE;
+    size_t lv = off_in(u16(d, 0), len);
     if (lv + 5 <= len) {
         m->music = (uint8_t)((d[lv] >> 1) & 0xF); m->gfx = d[lv + 1];
         m->town_flags = d[lv + 3]; m->tileset = d[lv + 4];
     }
-    size_t lab = u16(d, 4) - BASE;
+    size_t lab = off_in(u16(d, 4), len);
     m->label_ptr = u16(d, 4);
     if (lab + 4 < len) {
         int n = d[lab + 3];
@@ -45,13 +52,13 @@ static int town_parse_raw(TownMap *m, uint8_t *d, size_t len, int index)
         memcpy(m->grid[c], d + 0x17 + c * TOWN_ROWS, TOWN_ROWS);
 
     /* C009 doors (3 bytes, FFFF ends) */
-    size_t o = u16(d, 9) - BASE;
+    size_t o = off_in(u16(d, 9), len);
     while (o + 3 <= len && u16(d, o) != 0xFFFF && m->ndoors < 16) {
         m->doors[m->ndoors].col = u16(d, o); m->doors[m->ndoors].dest = d[o + 2];
         m->ndoors++; o += 3;
     }
     /* C007 exits: no terminator — the records run up to the door list */
-    size_t eo = u16(d, 7) - BASE, edn = u16(d, 9) - BASE;
+    size_t eo = off_in(u16(d, 7), len), edn = off_in(u16(d, 9), len);
     for (int i = 0; eo + 4 * i + 4 <= edn && i < 8; i++) {
         m->exits[i].flags = d[eo + 4 * i]; m->exits[i].dest = d[eo + 4 * i + 1];
         m->exits[i].gfx = d[eo + 4 * i + 2]; m->exits[i].tileset = d[eo + 4 * i + 3];
@@ -66,7 +73,7 @@ static int town_parse_raw(TownMap *m, uint8_t *d, size_t len, int index)
         for (int i = 0; i < m->nexits; i++)
             if ((m->exits[i].flags & 0xFE) && m->exits[i].dest + 1 > n) n = m->exits[i].dest + 1;
         if (n > 8) n = 8;
-        size_t co = cp - BASE;
+        size_t co = off_in(cp, len);
         for (int i = 0; i < n && co + 5 * i + 5 <= len; i++) {
             m->caves[i].col = u16(d, co + 5 * i); m->caves[i].row = d[co + 5 * i + 2];
             m->caves[i].side = d[co + 5 * i + 3]; m->caves[i].map = d[co + 5 * i + 4];
@@ -74,7 +81,7 @@ static int town_parse_raw(TownMap *m, uint8_t *d, size_t len, int index)
         }
     }
     /* C00F NPCs (8 bytes, FFFF ends) */
-    o = u16(d, 0xF) - BASE;
+    o = off_in(u16(d, 0xF), len);
     while (o + 8 <= len && u16(d, o) != 0xFFFF && m->nnpcs < 32) {
         TownNpc *n = &m->npcs[m->nnpcs++];
         n->col = u16(d, o); n->sprite = d[o + 2]; n->saved = d[o + 3]; n->anim = d[o + 4];
@@ -82,12 +89,12 @@ static int town_parse_raw(TownMap *m, uint8_t *d, size_t len, int index)
         o += 8;
     }
     /* C011 walker range */
-    o = u16(d, 0x11) - BASE;
+    o = off_in(u16(d, 0x11), len);
     if (o + 4 <= len) { m->range_min = u16(d, o); m->range_max = u16(d, o + 2); }
     /* C00D dialogue: a pointer table with no count — stop at the first pointer
      * that does not land inside the image (mdt2png.py uses the same rule) */
-    o = u16(d, 0xD) - BASE;
-    while (m->ndlg < 48 && o + 2 <= len) {
+    o = off_in(u16(d, 0xD), len);
+    while (m->ndlg < 48 && o + 2 * (size_t)m->ndlg + 2 <= len) {
         uint16_t p = u16(d, o + 2 * m->ndlg);
         if (p < BASE + 0x17 || (size_t)(p - BASE) >= len) break;
         m->dlg_ptr[m->ndlg++] = p;
@@ -333,7 +340,7 @@ int town_apply_patches(TownMap *m, const uint8_t page[256])
 {
     if (!m->raw || !m->patches) return 0;
     uint8_t *d = m->raw;
-    size_t len = m->rawlen, o = (size_t)(m->patches - BASE);
+    size_t len = m->rawlen, o = off_in(m->patches, len);
     int applied = 0, guard = 0;
     while (o + 3 <= len && ++guard < 256) {
         uint16_t fp = u16(d, o);

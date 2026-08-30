@@ -782,7 +782,55 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
 		--box 48 0 224 14 --label "mid-swing: the strip above the playfield"
 
+# --------------------------------------------------------------- fuzzing ---
+# `make fuzz` builds the libFuzzer harnesses in fuzz/ (needs clang; gcc has no
+# libFuzzer).  They fuzz the resource parsers -- sar_decompress, map_parse and
+# the .grp section walkers / file-driven loaders -- because those follow
+# file-internal offsets, and a web build (#44) turns "a user's own game dump"
+# into "files dropped onto a page".
+#
+# `make fuzz-corpus` seeds FUZZ_CORPUS (default fuzz/corpus) from ../zeliard.
+# The seeds are byte ranges of the copyrighted game files, so the corpus is
+# gitignored and must NEVER be committed; without game files the step skips
+# and the fuzzers start from an empty corpus, which is what CI's smoke run
+# does.  `make fuzz-smoke` runs each harness for FUZZ_TIME seconds (default 30)
+# and fails on any crash/overflow/leak.  For a real session run the binaries
+# by hand:  ./fuzz/fuzz_grp -close_fd_mask=3 fuzz/corpus/grp
+FUZZ_CC     ?= clang
+FUZZ_CFLAGS ?= -std=c11 -O1 -g -Wall -Wextra -Wno-unused-parameter -fno-omit-frame-pointer
+FUZZ_SAN     = -fsanitize=address,undefined -fno-sanitize-recover=all
+FUZZ_CORPUS ?= fuzz/corpus
+FUZZ_TIME   ?= 30
+FUZZ_OBJ     = $(CORE:%.o=fuzz/obj/%.o)
+
+fuzz/obj/%.o: %.c
+	@mkdir -p fuzz/obj
+	$(FUZZ_CC) $(FUZZ_CFLAGS) $(FUZZ_SAN) -fsanitize=fuzzer-no-link -c -o $@ $<
+
+fuzz/fuzz_%: fuzz/fuzz_%.c $(FUZZ_OBJ)
+	$(FUZZ_CC) $(FUZZ_CFLAGS) $(FUZZ_SAN) -fsanitize=fuzzer -o $@ $^ -lm
+
+fuzz/fuzz_seed: fuzz/fuzz_seed.c fuzz/obj/sar.o
+	$(FUZZ_CC) $(FUZZ_CFLAGS) $(FUZZ_SAN) -o $@ $^
+
+fuzz: fuzz/fuzz_sar fuzz/fuzz_map fuzz/fuzz_grp
+
+fuzz-corpus: fuzz/fuzz_seed
+	@if [ -f ../zeliard/ZELRES1.SAR ] || [ -f ../zeliard/zelres1.sar ]; then \
+	  ./fuzz/fuzz_seed ../zeliard $(FUZZ_CORPUS); \
+	else \
+	  echo "SKIP: fuzz-corpus needs the original game files in zeliard/;"; \
+	  echo "      the fuzzers will start from an empty corpus."; \
+	fi
+
+fuzz-smoke: fuzz fuzz-corpus
+	mkdir -p $(FUZZ_CORPUS)/sar $(FUZZ_CORPUS)/map $(FUZZ_CORPUS)/grp
+	./fuzz/fuzz_sar -max_total_time=$(FUZZ_TIME) -close_fd_mask=1 $(FUZZ_CORPUS)/sar
+	./fuzz/fuzz_map -max_total_time=$(FUZZ_TIME) -close_fd_mask=1 $(FUZZ_CORPUS)/map
+	./fuzz/fuzz_grp -max_total_time=$(FUZZ_TIME) -close_fd_mask=3 $(FUZZ_CORPUS)/grp
+
 clean:
 	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video
+	rm -rf fuzz/obj fuzz/fuzz_sar fuzz/fuzz_map fuzz/fuzz_grp fuzz/fuzz_seed
 
-.PHONY: all test verify playthrough clean
+.PHONY: all test verify playthrough clean fuzz fuzz-corpus fuzz-smoke
