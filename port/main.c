@@ -49,10 +49,12 @@ typedef struct {
     int      video;                     /* --video: which of the five drivers renders */
     unsigned cs_frames;
     Cutscene cs;
+    /* set by --fullscreen in the arg parser, which is compiled either way;
+     * only the SDL window path reads it (a headless build has no window) */
+    int      fullscreen;
 #ifdef HAVE_SDL
     SDL_Window *win; SDL_Renderer *ren; SDL_Texture *tex;
     SDL_GameController *pad;            /* controller 0, opened on the fly */
-    int      fullscreen;
     int      paused;                    /* Esc: the original pauses, it does not quit */
     int      esc_edge;                  /* Esc was pressed; what that means is the caller's */
     char     title_base[900];           /* the engine's own title, re-applied when pause flips */
