@@ -47,7 +47,7 @@ static void ride_cb(Game *g) { g->nobj = 0; nav_step(&rnav, g); }
 
 static int ride(const char *dir, int sc, int sr, int gc, int gr, int budget)
 {
-    memset(&rsh, 0, sizeof rsh);
+    shell_free(&rsh); memset(&rsh, 0, sizeof rsh);
     memset(&rnav, 0, sizeof rnav);
     rsh.quiet = 1;
     if (shell_init(&rsh, dir, 0)) return -1;
@@ -67,7 +67,7 @@ static int ride(const char *dir, int sc, int sr, int gc, int gr, int budget)
 
 static void fixture_rides(const char *dir, int verbose)
 {
-    memset(&rsh, 0, sizeof rsh);
+    shell_free(&rsh); memset(&rsh, 0, sizeof rsh);
     memset(&rnav, 0, sizeof rnav);
     rsh.quiet = 1;
     if (shell_init(&rsh, dir, 0)) { ck(0, "fixture rides: cannot load MP10"); return; }
@@ -136,7 +136,7 @@ static Shell csh;
 static Nav   cnav;
 static int survey(const char *dir, int map_idx, int col, int row)
 {
-    memset(&csh, 0, sizeof csh);
+    shell_free(&csh); memset(&csh, 0, sizeof csh);
     memset(&cnav, 0, sizeof cnav);
     csh.quiet = 1;
     if (shell_init(&csh, dir, map_idx)) return -1;
@@ -421,7 +421,7 @@ static void cavern_routes(const char *dir, int verbose)
      * proper has row_bias 10 and the two agree; every boss room has 12, and
      * the one cave record in the game that names a boss room is Llama Town's
      * (27,13) for MP73 -- 13 - 10 + 12 = 15, the room's floor. */
-    memset(&csh, 0, sizeof csh);
+    shell_free(&csh); memset(&csh, 0, sizeof csh);
     csh.quiet = 1;
     if (shell_init(&csh, dir, 0) == 0) {
         csh.g.present = NULL;
@@ -525,6 +525,7 @@ static void cavern_progression(const char *dir, int verbose)
         ck(t.ncaves == 2 && t.caves[0].map == 5 && t.caves[1].map == 6,
            "Bosque's cave table is MP30 and MP31");
         ck(t.nexits == 0, "and it has no edge exits at all -- nothing walks into Bosque");
+        town_free_map(&t);
     }
 
     /* the header start record is the boss door */
@@ -571,7 +572,7 @@ int main(int argc, char **argv)
     }
 
     if (only != 2) {
-        memset(&p, 0, sizeof p);
+        shell_free(&p.sh); memset(&p, 0, sizeof p);
         int rc = run(dir, PLAY_ROUTE_START, budget, "route 1 (the opening)", verbose);
         Game *g = &p.sh.g;
         ck(rc == 0, "route 1 ran to the end");
@@ -613,7 +614,7 @@ int main(int argc, char **argv)
          * And level 6 is not enough anyway: with 320 LIFE (`A380`'s table) and
          * the best sword and shield Satono sells, Garland reaches MP2D and dies
          * to Pulpo.  So the record stays, and it stays documented. */
-        memset(&p, 0, sizeof p);
+        shell_free(&p.sh); memset(&p, 0, sizeof p);
         p.verbose = verbose;
         p.start_level = 16; p.start_sword = 4; p.start_shield = 4;
         p.start_life = 800; p.start_gold = 20000;
@@ -646,6 +647,12 @@ int main(int argc, char **argv)
     fixture_rides(dir, verbose);
     cavern_routes(dir, verbose);
     cavern_progression(dir, verbose);
+
+    /* teardown, so `make SAN=1 test` proves the load-once allocations all
+     * have an owner and a shell_free that reaches them */
+    shell_free(&p.sh);
+    shell_free(&rsh);
+    shell_free(&csh);
 
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;

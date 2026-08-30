@@ -235,6 +235,7 @@ static int play_loop(Play *p)
 int play_run(Play *p, const char *dir, const PStep *route, unsigned budget)
 {
     Play save = *p;                                     /* keep the caller's setup */
+    shell_free(&p->sh);                                 /* a re-run reuses the Play */
     memset(p, 0, sizeof *p);
     p->verbose = save.verbose;
     p->start_level = save.start_level; p->start_sword = save.start_sword;

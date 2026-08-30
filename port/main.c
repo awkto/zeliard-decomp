@@ -780,7 +780,7 @@ int main(int argc, char **argv)
      * opdemo, which reloads GAME.BIN when it is done (opdemo 6A41). */
     if (a.intro && !save_now) {
         run_cutscenes(&a, sh->dir);
-        if (a.intro_only) { audio_shutdown();
+        if (a.intro_only) { audio_shutdown(); shell_free(sh);
 #ifdef HAVE_SDL
             if (a.tex) SDL_DestroyTexture(a.tex);
             if (a.ren) SDL_DestroyRenderer(a.ren);
@@ -839,6 +839,7 @@ int main(int argc, char **argv)
                 sh->dir, save_now, g->page[0xC4], sh->in_town ? town_hero_col(&sh->town) : -1,
                 g->hp, g->max_hp, g->level, g->exp, (unsigned)g->gold);
         audio_shutdown();
+        shell_free(sh);
         return 0;
     }
     while (!a.quit) shell_frame(sh);
@@ -847,6 +848,7 @@ int main(int argc, char **argv)
             g->frame_no, game_hero_map_col(g), game_hero_map_row(g), g->hp, g->max_hp, g->exp, (unsigned)g->gold,
             g->hazard_frames, g->deaths);
     audio_shutdown();
+    shell_free(sh);
 #ifdef HAVE_SDL
     if (a.tex) SDL_DestroyTexture(a.tex);
     if (a.ren) SDL_DestroyRenderer(a.ren);

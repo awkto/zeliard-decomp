@@ -242,6 +242,21 @@ int shell_init(Shell *s, const char *dir_hint, int map_idx)
     return 0;
 }
 
+/* Release everything shell_init and the map/town/AI/bank loads acquired.  The
+ * original never needs this — DOS exits and the arena is gone — but the port
+ * outlives a game (#44: Emscripten and Android do not simply exit the
+ * process), and the tests re-init the same Shell dozens of times.  Everything
+ * else in the struct is embedded arrays; these four are the only owners of
+ * heap memory.  Safe on a zeroed Shell and idempotent. */
+void shell_free(Shell *s)
+{
+    map_free(&s->maps[0]);
+    map_free(&s->maps[1]);
+    town_free_map(&s->tmap);
+    ai_unload(&s->ai);
+    itemp_free(&s->pics);
+}
+
 /* town.bin 61FC: run one town frame and act on what it asked for. */
 static void town_frame(Shell *s)
 {

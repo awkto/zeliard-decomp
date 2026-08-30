@@ -449,6 +449,7 @@ int audio_sfx_load(const char *dir, int backend)
 
 int audio_init(const char *dir, int backend, int want_sdl)
 {
+    audio_shutdown();                   /* a re-init must not orphan A.sfx.drv / A.score */
     memset(&A, 0, sizeof A);
     A.dir = dir; A.backend = backend; A.rate = 44100; A.music_idx = -1; A.div2 = 1;
     if (sfx_load(&A.sfx, dir, backend == AUDIO_ADLIB) != 0)
@@ -484,7 +485,8 @@ int audio_init(const char *dir, int backend, int want_sdl)
 
 void audio_shutdown(void)
 {
-    if (!A.on) return;
+    /* no early-out on !A.on: audio_sfx_load() fills A.sfx without audio_init()
+     * (the tests do exactly that), and those buffers still need releasing */
     audio_dump_close();
 #ifdef HAVE_SDL
     if (A.dev_open) { SDL_CloseAudioDevice(A.dev); A.dev_open = 0; }

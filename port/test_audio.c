@@ -630,6 +630,7 @@ int main(int argc, char **argv)
         tests[i].fn();
         fprintf(stderr, "%-16s %s\n", tests[i].name, fails == before ? "ok" : "FAILED");
     }
+    audio_shutdown();                   /* the t_sfx SND*.DRV buffer */
     fprintf(stderr, "%d checks, %d failures\n", checks, fails);
     return fails ? 1 : 0;
 }

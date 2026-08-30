@@ -58,6 +58,9 @@ const char *shell_find_dir(const char *hint);
 /* load system map `map_idx` into slot 0, the fonts, the hero and item art, and
  * game_init() the player record (STDPLY.BIN).  Returns 0 on success. */
 int  shell_init(Shell *s, const char *dir_hint, int map_idx);
+/* free everything shell_init and the later map/town/AI/bank loads acquired;
+ * safe on a zeroed Shell, and before a re-init of the same Shell */
+void shell_free(Shell *s);
 /* the two hand-offs; both are what the engines call through g.on_town / on_door */
 int  shell_enter_town(Game *g, int town_index, int col, int died);
 /* `from_cave_record` = 1 for town.bin 6FF8's own MAP_CAVES arithmetic (the
