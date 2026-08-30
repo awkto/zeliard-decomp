@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 extern uint8_t PAL_RGB[64][3];            /* VGA index (left*8+right) -> 8-bit RGB */
+void gfx_pal_init(void);                  /* fill PAL_RGB (GAME.BIN @A41B); idempotent */
 extern const uint8_t PAL2BPP[5][16];          /* gfmcga @4F98.. sprite colour tables */
 
 typedef struct { uint8_t px[8][8]; } Cell8;   /* VGA indices, 0 = black/transparent */

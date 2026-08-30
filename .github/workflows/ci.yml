@@ -1,0 +1,193 @@
+# CI for decomp-zel.  Everything here runs on a clean checkout with **no game
+# files**: `zeliard/`, `extracted/` and `disasm/` are gitignored on purpose
+# (the original game is copyrighted and is not redistributable).
+#
+# So each job splits in two:
+#   * the part that needs nothing but this repository — always run;
+#   * the part that needs `zeliard/` — run only when the directory is actually
+#     there, and otherwise *skipped with a message*, never failed.
+#
+# A fork or a self-hosted runner that does have a copy of the game can make
+# `make verify` / `make playthrough` and the full Python pipeline run simply by
+# materialising `zeliard/` before the gated step (a self-hosted runner with the
+# files on disk, or a checkout step that unpacks them from a secret).
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------- port/ ---
+  # The Makefile finds SDL2 through pkg-config/sdl2-config and compiles
+  # -DHAVE_SDL when it does; with no SDL headers at all it falls back to a
+  # headless binary (--screenshot/--script still work).  Both are supported
+  # configurations, so CI builds both and runs the tests in both.
+  port:
+    name: port/ (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: SDL2
+            sdl: true
+          - name: headless
+            sdl: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install libsdl2-dev
+        if: matrix.sdl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev
+
+      # The headless build has to be proven with *no* SDL headers in the
+      # picture, so it forces the two Makefile knobs empty rather than trusting
+      # that the runner image happens not to ship SDL.
+      - name: Configure the build flavour
+        run: |
+          if [ "${{ matrix.sdl }}" = "true" ]; then
+            pkg-config --exists sdl2 || { echo "libsdl2-dev did not register with pkg-config"; exit 1; }
+            echo "MAKEFLAGS_EXTRA=" >> "$GITHUB_ENV"
+          else
+            echo 'MAKEFLAGS_EXTRA=SDL_CFLAGS= SDL_LIBS=' >> "$GITHUB_ENV"
+          fi
+
+      - name: Build
+        working-directory: port
+        run: make -j"$(nproc)" $MAKEFLAGS_EXTRA
+
+      # -DHAVE_SDL is the whole difference between the two flavours; assert it
+      # landed the way the job intends, or the matrix is testing one thing twice.
+      - name: Check the build flavour is the one asked for
+        working-directory: port
+        run: |
+          if [ "${{ matrix.sdl }}" = "true" ]; then
+            ldd ./zeliard | grep -q libSDL2 || { echo "SDL2 build is not linked against libSDL2"; exit 1; }
+            echo "linked against libSDL2 as expected"
+          else
+            ! ldd ./zeliard | grep -q libSDL2 || { echo "headless build pulled in libSDL2"; exit 1; }
+            echo "no libSDL2 in the headless build, as expected"
+          fi
+
+      # 1885 assertions in 10 binaries.  Six of them always skipped their
+      # data-dependent half; test_playthrough and test_cutscene learned to do
+      # the same, so the whole target is green without `zeliard/`.
+      - name: make test
+        working-directory: port
+        run: make test $MAKEFLAGS_EXTRA
+
+      - name: make verify (needs the original game files)
+        working-directory: port
+        run: |
+          if [ -d ../zeliard ] && [ -f ../zeliard/ZELRES1.SAR ]; then
+            python3 -m pip install --quiet pillow \
+              || python3 -m pip install --quiet --break-system-packages pillow
+            make verify $MAKEFLAGS_EXTRA
+          else
+            echo "SKIP: make verify needs the original game files in zeliard/,"
+            echo "      which are copyrighted and deliberately not in this repository."
+          fi
+
+      - name: make playthrough (needs the original game files)
+        working-directory: port
+        run: |
+          if [ -d ../zeliard ] && [ -f ../zeliard/ZELRES1.SAR ]; then
+            make playthrough $MAKEFLAGS_EXTRA
+          else
+            echo "SKIP: make playthrough needs the original game files in zeliard/."
+          fi
+
+  # ---------------------------------------------------------------- tools/ ---
+  tools:
+    name: python tools
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Pillow
+        # the fallback is for a distro Python marked externally-managed (PEP 668);
+        # actions/setup-python's is not, so the first form is what CI uses
+        run: python3 -m pip install --quiet pillow
+             || python3 -m pip install --quiet --break-system-packages pillow
+
+      # Every tool at least has to parse, including the Ghidra-side script that
+      # cannot be imported outside Ghidra.
+      - name: Byte-compile every tool
+        run: python3 -m compileall -q tools port/tools
+
+      # The tools that are pure code with no game data behind them.
+      - name: tools/palette.py (the 64-entry MCGA blend DAC)
+        run: |
+          python3 tools/palette.py | tee /tmp/pal.txt
+          test "$(wc -l < /tmp/pal.txt)" -eq 64
+          grep -q '^ 9 (L1 R1) #fbfbfb' /tmp/pal.txt
+          python3 tools/palette.py --gpl /tmp/zel.gpl
+          head -1 /tmp/zel.gpl | grep -q 'GIMP Palette'
+
+      - name: tools/msd2mid.py argument handling
+        run: |
+          python3 tools/msd2mid.py --help > /dev/null
+          # no arguments: argparse usage, exit 2, no traceback
+          out=$(python3 tools/msd2mid.py 2>&1) && rc=0 || rc=$?
+          test "$rc" -eq 2
+          echo "$out" | grep -q 'usage: msd2mid.py'
+          ! echo "$out" | grep -q 'Traceback' || { echo "msd2mid.py traced back"; exit 1; }
+
+      # The archive readers are the ones that must not explode when there is
+      # nothing to read: they are what a fresh clone runs first.
+      - name: The .SAR readers survive an empty directory
+        run: |
+          mkdir -p /tmp/nodata && cd /tmp/nodata
+          python3 "$GITHUB_WORKSPACE/tools/sarex.py" out
+          python3 "$GITHUB_WORKSPACE/tools/sardec.py"
+
+      # compare_shot.py is the thing every `make verify` box goes through, so
+      # smoke it against a synthetic pair of images rather than a capture.
+      - name: port/tools/compare_shot.py on a synthetic pair
+        run: |
+          python3 - <<'PY'
+          from PIL import Image
+          import random
+          random.seed(1)
+          px = [tuple(random.randrange(256) for _ in range(3)) for _ in range(320 * 200)]
+          a = Image.new("RGB", (320, 200)); a.putdata(px)
+          a.save("/tmp/a.png")
+          b = a.copy()
+          # inside the default playfield box (48,14 224x144) that compare_shot
+          # uses when no --box is given, or the difference would not be looked at
+          b.putpixel((100, 100), (0, 0, 0) if px[100 * 320 + 100] != (0, 0, 0) else (255, 255, 255))
+          b.save("/tmp/b.png")
+          PY
+          python3 port/tools/compare_shot.py /tmp/a.png /tmp/a.png --no-mask | tee /tmp/same.txt
+          grep -q '32256/32256 = 100.00%' /tmp/same.txt
+          python3 port/tools/compare_shot.py /tmp/a.png /tmp/b.png --no-mask > /tmp/diff.txt && rc=0 || rc=$?
+          cat /tmp/diff.txt
+          test "$rc" -ne 0 || { echo "compare_shot.py did not fail on a differing image"; exit 1; }
+
+      - name: The full extraction pipeline (needs the original game files)
+        run: |
+          if [ -d zeliard ] && [ -f zeliard/ZELRES1.SAR ]; then
+            python3 tools/sarex.py extracted
+            python3 tools/sardec.py
+            python3 tools/resnames.py
+            python3 tools/grp2png.py --all /tmp/grp
+          else
+            echo "SKIP: the extraction pipeline needs the original game files in"
+            echo "      zeliard/ (ZELRES1-3.SAR, GAME.BIN, ...), which are"
+            echo "      copyrighted and deliberately not in this repository."
+          fi

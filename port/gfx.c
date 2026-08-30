@@ -13,7 +13,10 @@ static uint8_t dac_to_8(int v) { return (uint8_t)((v * 255 + 31) / 63); }   /* r
 
 /* built at load time from BASE8 (GAME.BIN @A41B: DAC[l*8+r] = BASE[l] + BASE[r]) */
 uint8_t PAL_RGB[64][3];
-static void pal_init(void)
+/* The DAC GAME.BIN @A41B builds is only needed once; every loader calls this,
+ * and so does the MCGA output stage, so a caller that renders without loading
+ * anything (test_video) still gets the real palette. */
+void gfx_pal_init(void)
 {
     static int done = 0;
     if (done) return;
@@ -86,7 +89,7 @@ static const int MPP_RES[11] = {74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84};
 
 int gfx_load_tileset(Tileset *t, const char *dir, int mpp_index)
 {
-    pal_init();
+    gfx_pal_init();
     memset(t, 0, sizeof *t);
     if (mpp_index < 0 || mpp_index > 10) return -1;
     size_t len;
@@ -109,7 +112,7 @@ int gfx_load_tileset(Tileset *t, const char *dir, int mpp_index)
 
 int gfx_load_hero(HeroGfx *h, const char *dir)
 {
-    pal_init();
+    gfx_pal_init();
     memset(h, 0, sizeof *h);
     size_t len;
     uint8_t *d = sar_load(dir, 2, FMAN_RES, 1, &len);
@@ -131,7 +134,7 @@ static const int ENP_RES[18] = {56, 64, 57, 65, 58, 66, 59, 67, 60, 68, 61, 69, 
 
 int gfx_load_enemy_cells(EnemyGfx *e, const char *dir, int enp_index)
 {
-    pal_init();
+    gfx_pal_init();
     memset(e, 0, sizeof *e);
     if (enp_index < 0 || enp_index > 17) return -1;
     size_t len;

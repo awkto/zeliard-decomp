@@ -8,6 +8,7 @@
 #include "map.h"
 #include "physics.h"
 #include "render.h"
+#include "video.h"
 #include "png.h"
 #include "enemy.h"
 #include "boss.h"
@@ -44,6 +45,7 @@ typedef struct {
     /* the cutscenes (opdemo / enddemo).  `intro` = -1 auto (a plain interactive
      * launch), 0 never, 1 always; `intro_act` runs one act on its own. */
     int      intro, intro_act, ending, intro_only;
+    int      video;                     /* --video: which of the five drivers renders */
     unsigned cs_frames;
     Cutscene cs;
 #ifdef HAVE_SDL
@@ -57,6 +59,17 @@ static int f1_was, f2_was, music_on = 1, sfx_on = 1;   /* the F1 / F2 hotkeys */
 
 /* the engines carry the Shell in ->user; the front end hangs off shell->user */
 static App *app_of(const void *shell_user) { return ((const Shell *)shell_user)->user; }
+
+/* Run the 320x200 pair buffer through the selected video driver.  Every mode
+ * but MCGA has a screen of its own size (640x200 on EGA/cga2, 720x348 on
+ * Hercules), so the caller has to take the geometry from here too. */
+static const uint8_t *video_out(App *a, int *w, int *h)
+{
+    static uint8_t rgb[VIDEO_MAX_W * VIDEO_MAX_H * 3];
+    video_size(a->video, w, h);
+    video_to_rgb(a->video, a->fb, rgb);
+    return rgb;
+}
 
 static void usage(void)
 {
@@ -78,6 +91,9 @@ static void usage(void)
         "              separated by spaces/commas\n"
         "  --speed N   FF33 speed (frame = 4*N ticks; default 5 = 84.5 ms)\n"
         "  --scale N   window scale (default 3)\n"
+        "  --video M   render through one of the five original drivers:\n"
+        "              mcga (default) cga cga2 ega hgc tandy — the RESOURCE.CFG\n"
+        "              `videoDrv` set, at each driver's own screen size\n"
         "  --frames N  quit after N rendered frames (SDL and headless)\n"
         "  --sound     log every FF75 sound request the engine produces\n"
         "  --sword N --shield N --level N --life N --gold N\n"
@@ -131,15 +147,15 @@ static int script_next(App *a)
 
 static void dump_png(App *a, Game *g)
 {
-    static uint8_t rgb[FB_W * FB_H * 3];
     if (g->status) memcpy(a->fb, status_framebuffer(g->status), FB_W * FB_H);
     else if (g->tear) memcpy(a->fb, tear_framebuffer(g->tear), FB_W * FB_H);
     else render_frame(a->fb, g, &a->sh.hero);
     render_hud(a->fb, g, &a->sh.font, &a->sh.tfont, map_place_record(g->map));
     itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, g);
     if (!g->tear) tear_draw_slots(a->fb, g, &a->sh.tear_art);   /* GAME.BIN A18E -> A3A5 */
-    render_to_rgb(a->fb, rgb);
-    if (png_write_rgb(a->shot_path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", a->shot_path);
+    int vw, vh;
+    const uint8_t *rgb = video_out(a, &vw, &vh);
+    if (png_write_rgb(a->shot_path, rgb, vw, vh)) fprintf(stderr, "cannot write %s\n", a->shot_path);
     else fprintf(stderr, "wrote %s (frame %u, hero map (%d,%d) scr (%d,%d) scroll (%d,%d))\n", a->shot_path,
                  g->frame_no, game_hero_map_col(g), game_hero_map_row(g), g->hero_scr_col, g->hero_scr_row,
                  g->scroll_col, g->scroll_row);
@@ -259,15 +275,15 @@ static void present(Game *g)
         return;
     }
 #ifdef HAVE_SDL
-    static uint8_t rgb[FB_W * FB_H * 3];
     if (g->status) memcpy(a->fb, status_framebuffer(g->status), FB_W * FB_H);
     else if (g->tear) memcpy(a->fb, tear_framebuffer(g->tear), FB_W * FB_H);
     else render_frame(a->fb, g, &a->sh.hero);
     render_hud(a->fb, g, &a->sh.font, &a->sh.tfont, map_place_record(g->map));
     itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, g);
     if (!g->tear) tear_draw_slots(a->fb, g, &a->sh.tear_art);   /* GAME.BIN A18E -> A3A5 */
-    render_to_rgb(a->fb, rgb);
-    SDL_UpdateTexture(a->tex, NULL, rgb, FB_W * 3);
+    int vw, vh;
+    const uint8_t *rgb = video_out(a, &vw, &vh);
+    SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
     SDL_RenderClear(a->ren);
     SDL_RenderCopy(a->ren, a->tex, NULL, NULL);
     SDL_RenderPresent(a->ren);
@@ -327,15 +343,15 @@ static void town_present(Town *t)
     if (a->quit) t->quit = 1;
     if (a->headless) {
         if (a->shot_path && t->frame_no == a->shot_frame) {
-            static uint8_t rgb[FB_W * FB_H * 3];
             if (t->status) memcpy(a->fb, status_framebuffer(t->status), FB_W * FB_H);
             else if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
             else town_render(a->fb, t);
             render_hud(a->fb, t->g, &a->sh.font, &a->sh.tfont, town_place_record(t->map));
             itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, t->g);
             tear_draw_slots(a->fb, t->g, &a->sh.tear_art);
-            render_to_rgb(a->fb, rgb);
-            if (png_write_rgb(a->shot_path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", a->shot_path);
+            int vw, vh;
+            const uint8_t *rgb = video_out(a, &vw, &vh);
+            if (png_write_rgb(a->shot_path, rgb, vw, vh)) fprintf(stderr, "cannot write %s\n", a->shot_path);
             else fprintf(stderr, "wrote %s (town frame %u, hero col %d)\n", a->shot_path, t->frame_no, town_hero_col(t));
         }
         if (!script_next(a)) {
@@ -353,15 +369,15 @@ static void town_present(Town *t)
         return;
     }
 #ifdef HAVE_SDL
-    static uint8_t rgb[FB_W * FB_H * 3];
     if (t->status) memcpy(a->fb, status_framebuffer(t->status), FB_W * FB_H);
     else if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
     else town_render(a->fb, t);
     render_hud(a->fb, t->g, &a->sh.font, &a->sh.tfont, town_place_record(t->map));
     itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, t->g);
     tear_draw_slots(a->fb, t->g, &a->sh.tear_art);
-    render_to_rgb(a->fb, rgb);
-    SDL_UpdateTexture(a->tex, NULL, rgb, FB_W * 3);
+    int vw, vh;
+    const uint8_t *rgb = video_out(a, &vw, &vh);
+    SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
     SDL_RenderClear(a->ren);
     SDL_RenderCopy(a->ren, a->tex, NULL, NULL);
     SDL_RenderPresent(a->ren);
@@ -409,7 +425,7 @@ static void town_present(Town *t)
 int main(int argc, char **argv)
 {
     static App a; memset(&a, 0, sizeof a);
-    a.frame_ms = FRAME_MS_DEFAULT; a.scale = 3;
+    a.frame_ms = FRAME_MS_DEFAULT; a.scale = 3; a.video = VID_MCGA;
     Shell *sh = &a.sh;
     const char *dir = NULL;
     int map_idx = 0, pos_col = -1, pos_row = -1, start_in_town = -1, town_col = -1, town_scr = -1, town_anim = -1, town_face = 0, npc_i = -1, npc_f = 0;
@@ -433,6 +449,10 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--screenshot") && i + 2 < argc) { a.shot_frame = (unsigned)atoi(argv[++i]); a.shot_path = argv[++i]; a.headless = 1; explicit_start = 1; }
         else if (!strcmp(argv[i], "--script") && i + 1 < argc) { a.script = argv[++i]; explicit_start = 1; }
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) a.scale = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--video") && i + 1 < argc) {
+            a.video = video_mode_by_name(argv[++i]);
+            if (a.video < 0) { fprintf(stderr, "unknown --video %s (mcga cga cga2 ega hgc tandy)\n", argv[i]); return 2; }
+        }
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) { a.max_frames = (unsigned)atoi(argv[++i]); explicit_start = 1; }
         else if (!strcmp(argv[i], "--speed") && i + 1 < argc) a.frame_ms = FRAME_MS_DEFAULT * atoi(argv[++i]) / 5.0;
         else if (!strcmp(argv[i], "--town") && i + 1 < argc) { start_in_town = (int)strtol(argv[++i], NULL, 0); explicit_start = 1; }
@@ -584,12 +604,18 @@ int main(int argc, char **argv)
 #ifdef HAVE_SDL
     if (!a.headless) {
         if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 1; }
-        a.win = SDL_CreateWindow("Zeliard port", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, FB_W * a.scale, FB_H * a.scale, SDL_WINDOW_SHOWN);
+        int vw, vh, vscale = a.scale;
+        video_size(a.video, &vw, &vh);
+        /* the 640- and 720-px-wide modes are already twice as wide as MCGA, so
+         * --scale keeps meaning "how big is a game pixel", not "how big is the
+         * window": halve it for them so the default 3 is not a 2160-px window */
+        if (vw > FB_W && vscale > 1) vscale = (vscale + 1) / 2;
+        a.win = SDL_CreateWindow("Zeliard port", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, vw * vscale, vh * vscale, SDL_WINDOW_SHOWN);
         a.ren = SDL_CreateRenderer(a.win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
         if (!a.ren) a.ren = SDL_CreateRenderer(a.win, -1, 0);
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
         SDL_RenderSetLogicalSize(a.ren, FB_W, FB_H);
-        a.tex = SDL_CreateTexture(a.ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, FB_W, FB_H);
+        a.tex = SDL_CreateTexture(a.ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, vw, vh);
     }
 #else
     if (!a.headless) { fprintf(stderr, "built without SDL2: running headless (use --screenshot / --script)\n"); a.headless = 1; }

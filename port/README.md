@@ -50,10 +50,12 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 
 ```
 cd port
-make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 9 test binaries
+make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 10 test binaries
 make test            # physics (143) + combat/AI (179) + town (146) + boss (627) + shop (183)
-                     #   + status (87) + playthrough (88) + audio (305) + cutscene (46) = 1804 assertions
-make verify          # 149 headless renders diffed against the DOSBox captures in docs/screenshots/,
+                     #   + status (87) + playthrough (117) + audio (305) + cutscene (46)
+                     #   + video (52) = 1885 assertions.  Needs no game files: every
+                     #   binary skips its data half when zeliard/ is not there.
+make verify          # 186 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
 make playthrough     # the same two routes as test_playthrough, with the step-by-step log
 ./zeliard            # the real boot: the opening demo, then Felishika's Castle
@@ -68,6 +70,8 @@ make playthrough     # the same two routes as test_playthrough, with the step-by
 ./zeliard --town 2 --town-col 210 --gold 20000 --level 12 --save ZCAV2   # write ZCAV2.usr
 ./zeliard --load ZCAV2                             # ... and resume exactly there
 ./zeliard --map 22 --level 20 --life 900           # the Dragon (mp7d); 28 = Alguien, 30 = Jashiin
+./zeliard --video cga     # ... or cga2 / ega / hgc / tandy: the game through any of the
+                          # five original drivers, at that driver's own screen size
 ```
 
 SDL2 is optional at build time.  Without the dev package the same binary is built
@@ -1111,6 +1115,168 @@ navigator is debugged.  A route entry is
 `y`/`n` answers a Yes/No, `c` cancels (which every shop reads as "Go outside").  So
 Muralla's `"30yc"` is *Buy shield → the first shield → Yes → leave*.
 
+## The five video drivers (`--video`)
+
+`--video mcga|cga|cga2|ega|hgc|tandy` renders through any of the five original
+drivers, at that driver's own screen size, and defaults to `mcga`.  The names are
+the `videoDrv` set of `RESOURCE.CFG`, so `--video hgc` is the game running exactly
+as `videoDrv:HGC` makes it run:
+
+| `--video` | `videoDrv` | driver | screen | one 8×8 game cell |
+|---|---|---|---|---|
+| `mcga` | `MCGA` | GMMCGA.BIN | 320×200×256 | 8 px |
+| `cga` | `CGA` | GMCGA.BIN, INT 10h mode 5 | 320×200×4, burst off | 8 px |
+| `cga2` | `CGA2` | the same file, mode 6 | 640×200 mono | 16 px |
+| `ega` | `EGA` | GMEGA.BIN | 640×200×16 | 16 px |
+| `hgc` | `HGC` | GMHGC.BIN | 720×348 mono | 16 px |
+| `tandy` | `TGA` | GMTGA.BIN | 320×200×16 | 8 px |
+
+### Why one framebuffer is enough
+
+The engine has always rendered into a single 320×200 byte-per-pixel buffer whose
+values are **PC-88 colour pairs**, `left*8 + right`.  That is not a port
+convention: it is literally what GMMCGA.BIN writes into A000, because GAME.BIN
+`@A41B` builds the DAC as `DAC[l*8+r] = BASE[l] + BASE[r]`, so an MCGA pixel *is*
+the pair (docs/VIDEO_DRIVERS.md §2.1).
+
+Every driver's `[0x2044]` reads the *same* 48-byte PC-88 cells and differs only in
+what it packs the pair into — the CGA table `@290B`, Hercules's byte-identical
+`@2994`, Tandy's `@2999`, and, on EGA, nothing at all (`[0x2044]` @2E92 is a bare
+`ret`, so the pair's two halves stay two separate 640-wide pixels).  So a mode is a
+pure function of the pair buffer, and `port/video_*.c` is one file per driver
+holding its colour tables and its screen geometry — no second copy of the engine,
+and `--video` costs nothing until a frame is presented.
+
+The three tables and the EGA palette block are re-read out of `GM{CGA,HGC,TGA}.BIN`
+and `GAME.BIN` by `test_video` on every `make test`, so they cannot drift from the
+originals.
+
+### The parts that needed a capture to settle
+
+* **CGA mode 5 is the *bright* burst-off palette.**  The driver never touches 3D9,
+  and the BIOS mode set leaves the intensity bit on, so the four colours are CGA 0,
+  11, 12 and 15 — light cyan and light red, not 3/4/7.
+* **EGA shows sixteen colours, not sixty-four.**  GAME.BIN `@A3FE` programs the
+  palette registers in PC-88 order from the block at `@A409`
+  (`00 3F 24 12 1B 09 36 2D | …`), but a 200-line mode drives a CGA-class Color
+  Display: R, G and B come from bits 2‑0 and the intensity line from the
+  **secondary green** bit 4, so register `v` shows as 16-colour entry
+  `(v & 7) | ((v & 0x10) >> 1)`.  The game's eight land on black, white, *dark* red,
+  light green, light cyan, *dark* blue, yellow and *dark* magenta — the lopsided
+  look the capture has.  (`machine=ega` and `machine=vgaonly` agree on this in
+  DOSBox; `vgaonly` only differs in drawing into a 16-bit surface, which would make
+  a capture RGB565-truncated, so `capture_video_mode.sh` uses `machine=ega`.)
+* **Hercules lights a pixel at 0xAA, not white.**  Graphics mode has no bright bit;
+  that exists only for text attributes.
+* **Hercules geometry.**  The row helper `@2E11` is
+  `line = 4*((y+28)/3) + (y+28)%3`, so game row 0 is line 37 and 200 rows cover
+  lines 37..303.  The formula never yields bank 3 — the routines that step row by
+  row notice they have walked past 0x5FFF, write the row *again* on that line and
+  wrap to bank 0 of the next group, which is how three game rows come to occupy
+  four Hercules lines.  The `+5` bytes of the helper are the 40 px left margin, so
+  the 640-px game area sits at x = 40..679 of the 720-px screen.
+
+### Ground truth per mode
+
+`port/tools/capture_video_mode.sh MODE OUTDIR [seconds…]` is the harness: it copies
+`zeliard/` per run (as `tools/run_dosbox.sh` does), rewrites `videoDrv` in the
+copy, picks the DOSBox `machine=` the mode needs (`cga`, `ega`, `hercules`,
+`tandy`), sets `scaler=none` and grabs the DOSBox window by its own id — so every
+capture is at the driver's **native** resolution and nothing is ever rescaled into
+a comparison.  `KEYS=` uses `tools/run_dosbox.sh`'s syntax.  The five captures in
+`docs/screenshots/cavern_{cga,cga2,ega,hgc,tandy}.png` are the same MP10 entry
+frame as `cavern.png`, taken with docs/DOSBOX_RECIPE.md recipe B.
+
+Against them, `make verify` has **21 boxes**, and in every mode the box that
+matters is the same one: **the whole 28×18-cell playfield, pixel for pixel**.
+
+| mode | MP10 playfield | MP10 whole screen |
+|---|---|---|
+| `mcga` | 100 % | **100 %** |
+| `cga` | 100 % | 98.20 % |
+| `cga2` | 100 % | 99.09 % |
+| `ega` | 100 % (hero aside, below) | 98.02 % |
+| `hgc` | 100 % | 99.40 % |
+| `tandy` | 100 % | 98.27 % |
+
+The **town** was captured the same way, at the state `town.png` already pins
+(Muralla at the map's right edge, scroll 179, Garland on column 209, walk frame
+3 — the same `KEYS` minus the door taps, shot at 56 s), and it splits the modes
+in two:
+
+| mode | Muralla playfield | HUD bar + digits |
+|---|---|---|
+| `mcga` | **100 %** | 100 % |
+| `ega` | **99.93 %** — 43 px of sprite outline | 100 % |
+| `cga2` | 84.34 % | 100 % |
+| `hgc` | 84.19 % | 100 % |
+| `cga` | 79.32 % | 100 % |
+| `tandy` | 76.05 % | LIFE bar 90 %, digits 100 % |
+
+EGA comes out whole for the same reason it needs no table at all, and the other
+three are all one cause — the next section.  `make verify` has **16 more boxes**
+for the town: EGA's playfield in four pieces around the two sprites, and every
+mode's LIFE bar and digit runs.
+
+### What the pair buffer cannot reach
+
+The whole-screen figures are short of 100 % for two reasons, and both are real
+driver behaviour rather than an approximation:
+
+* **mole.bin and the HUD's own colours.**  mole.bin is loaded raw and far-called
+  once at boot *with the video mode in AL* (docs/ARCHITECTURE.md), so the two 48×200
+  stone side frames, the 224×13 strip and the grey HUD panel are drawn by
+  mode-specific code, not from cells; on Tandy, for instance, the pair `grn+grn`
+  that MCGA blends to 0x1B comes out of the frames as colour E where the `@2999`
+  table would give A.  The HUD's labels and place name are the same story: each
+  driver writes them with a colour *constant*, and the constants disagree.  MCGA
+  puts "GOLD"/"PLACE" in green 0x1B over a red 0x12 shadow; CGA uses the dither
+  patterns 0x55/0xAA, so its label text is **cyan** where the pair table would say
+  white; Tandy's 0xAA/0x44 agrees with the table on the green text but not on the
+  shadow (nibble 4, not the C the table gives); its digit-box trough is colour 1
+  where the pair is plain black; and the place name's blue shadow 0x2D becomes
+  black on CGA and colour 8 on Tandy rather than the blue a pair lookup gives.
+  (Every one of those is what docs/VIDEO_DRIVERS.md §2 already records the drivers
+  doing — the capture only confirms it.)  None of it is derivable from a pair, so
+  those pixels differ.  The HUD parts that *are* pairs — the LIFE bar and the
+  GOLD/ALMAS digit runs — are 100 % in every mode and are in `make verify` (Tandy's
+  LIFE bar is the one exception: `and 0x77 / or 0x11 / 0x99` nibble masks compose
+  it, so it is not a pair lookup either).
+* **EGA outlines a sprite in 640ths.**  gfega draws a 2 bpp sprite at the full
+  640-px width, so its `vec_20` outline can put a lit pixel on one half of a pair;
+  gfmcga can only dilate by whole 320-px pixels.  On the MP10 entry frame that is
+  **twelve pixels** of Garland's own edge, all inside x 306..321 (and 43 px around
+  the two sprites in the town) — which is why the EGA playfield is covered by
+  boxes around the sprites rather than one box.
+* **The town's 2 bpp art has a colour table per driver.**  This is the one real
+  gap.  The town is drawn by `gt*.bin`, a renderer per mode, and its art is 2 bpp:
+  a pixel is a 0..15 index into a 16-entry colour table, which gfmcga/gtmcga
+  resolve to a *pair* (`PAL2BPP` in `gfx.c`, from gfmcga `@4F98`).  Those tables
+  are what the pair buffer stores, and the other drivers' 16-entry tables are not
+  the pair table's image of gtmcga's — so a 2 bpp town pixel converts to the wrong
+  colour.  Measured on the Muralla capture, every mismatching pixel's pair is an
+  entry of one of the five `PAL2BPP` rows and none is a cell pixel: e.g. the sky's
+  `blu+blu` (0x2D) is CGA 1 through `@290B` and CGA **2** on the real screen.  The
+  geometry is identical to the pixel — the mismatching rows have exactly the same
+  run lengths — so this is a palette gap and nothing else, and it is why EGA, the
+  one driver with no table, is at 99.93 % there.  Closing it means carrying the
+  2 bpp *index* alongside the pair rather than only the pair, plus reading the
+  16-entry tables out of gtcga/gtega/gthgc/gttga; neither is in this change.
+
+  The cavern is unaffected: the hero and the enemies are 2 bpp too, but gfcga's,
+  gfhgc's and gftga's tables *do* agree with the pair table's image of gfmcga's —
+  every cavern sprite is exact in every mode.
+
+None of this affects a cell, a tile or a scroll offset, which is why the cavern
+playfield is exact everywhere.
+
+### What `--video` does not cover
+
+The cutscenes (`--intro`, `--ending`, the Tear scene) still render MCGA-only: they
+do not go through the pair buffer at all but through `gd.c`'s own 256-entry DAC out
+of `gdmcga.bin`, and each mode has its own `gd*.bin` with its own palette records
+(`gdcga.bin` is ZELRES1[2], `gdega.bin` [3] …).  Porting those is a separate job.
+
 ## Design notes
 
 * **Direct SAR reading.**  Both the archive format and the RLE engine are ~150
@@ -1136,9 +1302,10 @@ Muralla's `"30yc"` is *Buy shield → the first shield → Yes → leave*.
 
 ## Ground truth
 
-`make verify` compares 99 boxes of headless renders against the DOSBox captures
-in `docs/screenshots/`; all of them are at 100 %, and **eight** of them are the
-whole 320×200 screen — including all five intro captures (`intro_prologue`,
+`make verify` compares 186 boxes of headless renders against the DOSBox captures
+in `docs/screenshots/`; all of them are at 100 % — `tools/compare_shot.py` exits
+non-zero on anything less, so the target fails on the first regression — and
+**eight** of them are the whole 320×200 screen — including all five intro captures (`intro_prologue`,
 `intro_demon`, `title`, `demo_balcony` and `demo_dialogue`), which the port
 reproduces pixel for pixel, frame and all.  It then runs
 `tools/compare_gdart.py`, which diffs the port's own gd decoders against

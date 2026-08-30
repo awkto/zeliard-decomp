@@ -1,6 +1,16 @@
 # decomp-zel — Zeliard (DOS, 1990) decompilation
 
+[![CI](https://github.com/awkto/zeliard-decomp/actions/workflows/ci.yml/badge.svg)](https://github.com/awkto/zeliard-decomp/actions/workflows/ci.yml)
+
 Reverse engineering of **Zeliard** v1.208 (Game Arts / Sierra On-Line).
+
+CI (`.github/workflows/ci.yml`) builds `port/` twice on every push — once
+against `libsdl2-dev` and once as the headless fallback with no SDL headers at
+all — runs `make test` in both, byte-compiles every Python tool and smoke-tests
+the ones that need no game data.  `make verify`, `make playthrough` and the
+extraction pipeline need `zeliard/`, which is copyrighted and not in this
+repository, so they print a SKIP line instead of failing; a runner that does
+have a copy of the game runs them for real.
 
 - `zeliard/` — original game files (not committed; supply your own copy)
 - `tools/sarex.py` — .SAR resource archive extractor (format fully verified)
@@ -9,10 +19,10 @@ Reverse engineering of **Zeliard** v1.208 (Game Arts / Sierra On-Line).
 - `tools/resnames.py` — recovers original resource filenames → `docs/RESOURCES.md`
 - `tools/ghidra.sh` — headless Ghidra decompile of any binary/overlay to C (uses `tools/ghidra_dump_c.py`)
 - `tools/run_dosbox.sh` — ground-truth harness: runs the real game in Xvfb+DOSBox, captures screenshots
-- `port/` — the SDL2 source port (Phase 3): `make && ./zeliard` plays the cavern-1 + town loop with the original collision rules; `make test` (875 checks in 6 binaries), `make verify` (16 pixel comparisons, all 100%); enemies + AI, combat, the eight shops, the status/inventory screen and the town dialogue box are implemented
+- `port/` — the SDL2 source port: `make && ./zeliard` boots the intro, plays the game and reaches the ending; `make test` (1885 assertions in 10 binaries, none of which need the game files), `make verify` (186 pixel comparisons at 100% against DOSBox captures), `make playthrough` (two autonomous routes).  `--video mcga|cga|cga2|ega|hgc|tandy` renders through any of the five original video drivers
 - `docs/ROADMAP.md` — phased plan, mirrors the tracking epic
 - `tools/grp2png.py` — renders .grp graphics (tiles, enemies, hero frames, portraits, font) to PNG; `tools/palette.py` = the MCGA palette
-- `src/kernel.c`, `src/video_mcga.c` — hand-cleaned C of the STICK.BIN kernel and the MCGA video driver (original addresses in comments)
+- `src/kernel.c`, `src/video_mcga.c` — hand-cleaned C of the STICK.BIN kernel and the MCGA video driver (original addresses in comments); `port/video_*.c` are the same five drivers as output stages of the port
 - `src/fight.c`, `docs/FIGHT.md`, `docs/STATE_PAGE.md` — the cavern game loop: physics, collision, combat, enemy records, AI-overlay interface, FF00 state page
 - `src/town.c`, `src/shops.c`, `src/select.c`, `docs/TOWN.md` — town walk/dialogue engine, all 8 shops (prices, effects), the status/inventory screen and the potion effects, save-file format, town map format
 - `src/ai/`, `docs/ENEMIES.md` — all 8 cavern enemy AIs + 11 bosses: stats tables, movement/attack patterns, AI-overlay ABI

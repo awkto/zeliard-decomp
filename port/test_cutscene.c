@@ -23,6 +23,10 @@ static void check(int ok, const char *what)
 #define CHECK(c, w) check((c) != 0, w)
 
 static const char *G_DIR = "../zeliard";
+/* 0 when the (non-redistributable) game files are absent — a clean checkout or
+ * CI.  The synthetic format checks still run; everything that needs a .SAR
+ * says SKIP instead of failing. */
+static int have_data = 1;
 static const char *SHOT = NULL;   /* argv[2]: dump the Tear scene mid-flight */
 
 /* the front end the acts drive: count frames and stop after `cap` of them */
@@ -33,24 +37,27 @@ static void test_format(void)
 {
     printf("gd format       ");
     size_t len = 0;
-    uint8_t *ame = sar_load(G_DIR, 0, 13, 1, &len);            /* ame.grp */
-    CHECK(ame != NULL, "ame.grp loads");
     static uint8_t buf[0x30000];
-    size_t n = ame ? gd_unpack_mask(ame, len, buf, sizeof buf, 1) : 0;
-    /* 72 plane bytes x 104 rows x 3 planes = 22464, rounded up to nmask*8 */
-    CHECK(n == 22528, "mask+delta unpacks ame.grp to nmask*8 = 22528 bytes");
-    CHECK(n >= (size_t)72 * 104 * 3, "ame.grp is at least 72x104x3");
-    free(ame);
+    size_t n = 0;
+    if (have_data) {
+        uint8_t *ame = sar_load(G_DIR, 0, 13, 1, &len);            /* ame.grp */
+        CHECK(ame != NULL, "ame.grp loads");
+        n = ame ? gd_unpack_mask(ame, len, buf, sizeof buf, 1) : 0;
+        /* 72 plane bytes x 104 rows x 3 planes = 22464, rounded up to nmask*8 */
+        CHECK(n == 22528, "mask+delta unpacks ame.grp to nmask*8 = 22528 bytes");
+        CHECK(n >= (size_t)72 * 104 * 3, "ame.grp is at least 72x104x3");
+        free(ame);
 
-    uint8_t *ttl3 = sar_load(G_DIR, 0, 31, 1, &len);           /* ttl3.grp */
-    n = ttl3 ? gd_unpack_rle(ttl3, len, buf, sizeof buf) : 0;
-    CHECK(n >= (size_t)65 * 112 * 2, "the 6/14-bit RLE unpacks ttl3.grp (65x112x2)");
-    free(ttl3);
+        uint8_t *ttl3 = sar_load(G_DIR, 0, 31, 1, &len);           /* ttl3.grp */
+        n = ttl3 ? gd_unpack_rle(ttl3, len, buf, sizeof buf) : 0;
+        CHECK(n >= (size_t)65 * 112 * 2, "the 6/14-bit RLE unpacks ttl3.grp (65x112x2)");
+        free(ttl3);
 
-    uint8_t *ttl2 = sar_load(G_DIR, 0, 30, 1, &len);           /* ttl2.grp */
-    n = ttl2 ? gd_unpack_rle(ttl2, len, buf, sizeof buf) : 0;
-    CHECK(n == 0xC80, "ttl2.grp is a 40x40 two-plane tile bank (0xC80 bytes)");
-    free(ttl2);
+        uint8_t *ttl2 = sar_load(G_DIR, 0, 30, 1, &len);           /* ttl2.grp */
+        n = ttl2 ? gd_unpack_rle(ttl2, len, buf, sizeof buf) : 0;
+        CHECK(n == 0xC80, "ttl2.grp is a 40x40 two-plane tile bank (0xC80 bytes)");
+        free(ttl2);
+    }
 
     /* the lag-2 XOR delta: 00 00 ... must stay 00, and one 2-bit field must
      * propagate to every later field of the same parity */
@@ -69,7 +76,7 @@ static void test_palette(void)
     static uint8_t fb[GD_W * GD_H];
     static uint8_t scratch[GD_SCRATCH];
     Gd g;
-    if (gd_init(&g, G_DIR, fb, scratch, NULL)) { CHECK(0, "gdmcga.bin loads"); printf("SKIP\n"); return; }
+    if (gd_init(&g, G_DIR, fb, scratch, NULL)) { if (have_data) CHECK(0, "gdmcga.bin loads"); printf("SKIP\n"); return; }
     CHECK(1, "gdmcga.bin (ZELRES1[5]) loads");
     /* 4289 record 0, entry 1 = (00,0F,0F); record 4 entry 6 = (1F,1F,00) */
     CHECK(g.base[0][1][0] == 0x00 && g.base[0][1][1] == 0x0F && g.base[0][1][2] == 0x0F,
@@ -92,7 +99,7 @@ static void test_intro(void)
 {
     printf("opdemo          ");
     static Cutscene c;
-    if (cutscene_init(&c, G_DIR, NULL)) { CHECK(0, "cutscene_init"); printf("SKIP\n"); return; }
+    if (cutscene_init(&c, G_DIR, NULL)) { if (have_data) CHECK(0, "cutscene_init"); printf("SKIP\n"); return; }
     size_t len = 0;
     c.img = sar_load(G_DIR, 0, 0, 1, &len);
     c.imglen = len;
@@ -201,7 +208,7 @@ static void test_tear(void)
 {
     printf("rokademo        ");
     static Shell s;
-    if (shell_init(&s, G_DIR, 1)) { CHECK(0, "shell_init(MP1D)"); printf("SKIP\n"); return; }
+    if (shell_init(&s, G_DIR, 1)) { if (have_data) CHECK(0, "shell_init(MP1D)"); printf("SKIP\n"); return; }
     s.quiet = 1;
     s.present = tear_present;
     Game *g = &s.g;
@@ -251,6 +258,15 @@ int main(int argc, char **argv)
 {
     if (argc > 1) G_DIR = argv[1];
     if (argc > 2) SHOT = argv[2];
+    {   /* the original game files are not redistributable, so a clean checkout
+         * (and CI) has none: run the synthetic format checks and skip the rest */
+        size_t probe_len = 0;
+        uint8_t *probe = sar_load(G_DIR, 0, 0, 1, &probe_len);
+        have_data = probe != NULL;
+        free(probe);
+        if (!have_data)
+            fprintf(stderr, "  (ZELRES1.SAR not available in %s: only the synthetic gd checks run)\n", G_DIR);
+    }
     test_format();   printf("ok\n");
     test_palette();  printf("ok\n");
     test_intro();    printf("ok\n");

@@ -7,7 +7,7 @@ Exactly one driver is loaded raw at `BASE:2000` by ZELIARD.EXE according to the
 | `[FF14]` | RESOURCE.CFG | file | INT 10h mode set by ZELIARD.EXE (jump table @0x588) | framebuffer |
 |---|---|---|---|---|
 | 0 | `ega`  | GMEGA.BIN  (3736 b) | `AX=000Eh` @0x594 — 640×200×16 planar | A000, 80 b/row, 4 planes |
-| 1 | `cga`  | GMCGA.BIN  (3565 b) | `AX=0005h` @0x59A — 320×200×4 (burst off → cyan/red/white on RGB) | B800, 80 b/row, 2 bpp, odd rows at +0x2000 |
+| 1 | `cga`  | GMCGA.BIN  (3565 b) | `AX=0005h` @0x59A — 320×200×4, burst off; the BIOS leaves 3D9's intensity bit set, so it is the **bright** set: CGA 0/11/12/15 (verified against a mode-5 capture) | B800, 80 b/row, 2 bpp, odd rows at +0x2000 |
 | 2 | `cga2` | GMCGA.BIN (same file) | `AX=0006h` @0x5A0 — 640×200×2 | B800; the 2-bpp driver output shows as 2-px mono dither (uncertain: inferred, not seen in DOSBox) |
 | 3 | `hgc`  | GMHGC.BIN  (3723 b) | @0x5B2: `3BF←1`, CRTC 3B4 regs 0–11 ← `35 2D 2E 07 5B 02 57 57 02 03 00 00`, `3B8←2Ah`, clears B000 32 KB | B000, 90 b/row, 1 bpp, 4 banks of 0x2000 |
 | 4 | `mcga` | GMMCGA.BIN (3273 b) | `AX=0013h` @0x5A6 — 320×200×256 | A000, 320 b/row, 8 bpp |
@@ -161,8 +161,9 @@ caller.)*
 
 * B800, 2 bpp, 80 bytes/row, rows interleaved: `addr = (y>>1)*0x50 + (y&1)*0x2000 + x/4`
   (helper inline everywhere; row step = `+0x2000`, wrap `-0x1FB0` past 0x3FFF).
-  Hardware palette = whatever mode 5 gives (black/cyan/red/white on RGB);
-  the driver never touches 3D9.
+  Hardware palette = whatever mode 5 gives, and the driver never touches 3D9 —
+  so it is the **bright** burst-off set, CGA colours 0, 11, 12, 15, not the dark
+  3/4/7 (settled by capturing the mode; `docs/screenshots/cavern_cga.png`).
 * `[0x2044]` @2D99: same staging copy; each row's three words are read
   **without byte swap** and the 6-bit pair `(l<<3|r)` is looked up in the 64-entry
   table @290B to a 2-bit CGA colour; 8 pairs → one 16-bit word per row, stored
@@ -188,6 +189,12 @@ caller.)*
 
 ### 2.3 EGA — GMEGA.BIN
 
+* **At 200 lines an EGA card drives a CGA-class display**, so a six-bit palette
+  register collapses to `(v & 7) | ((v & 0x10) >> 1)` of the 16 RGBI colours (RGB
+  from bits 2-0, intensity from secondary green).  The game's eight `@A409` entries
+  therefore show as black, white, **dark** red, light green, light cyan, **dark**
+  blue, yellow, **dark** magenta — not eight saturated colours
+  (`docs/screenshots/cavern_ega.png`).
 * A000, 640×200 planar, 80 bytes/row. Register use: Sequencer 3C4 idx 2 (map
   mask: 0x0F all, 0x07 planes 0-2, 0x01/0x02/0x04/0x08 single), Graphics
   Controller 3CE idx 3 (function select: 0x00 replace, 0x08 AND, 0x10 OR),
@@ -214,6 +221,8 @@ caller.)*
 
 ### 2.4 Hercules — GMHGC.BIN
 
+* A lit graphics-mode pixel reads as **0xAA**, not white — Hercules graphics mode
+  has no bright bit (`docs/screenshots/cavern_hgc.png`).
 * B000, 720×348 mono, 90 bytes/row, four 8 KB banks (`line % 4`). Row mapping
   helper @2E11: `g = (y+28)/3`, `b = (y+28)%3`, `addr = g*0x5A + b*0x2000 + x8*2 + 5`;
   when a routine steps to the next row and lands in bank 3 (`> 0x5FFF`) it writes
@@ -254,6 +263,16 @@ caller.)*
   Save buffer `w8*4` bytes per row; icons @2CB7 `{16-bit masks, 8-byte rows}`.
 
 ## 3. Differences between the drivers
+
+**The drivers agree; the renderers above them do not.**  All 35 driver slots produce the
+same visible result in every mode, but the *renderer* overlays each carry their own
+16-entry 2 bpp colour table: `gf*.bin`'s tables are the pair table's image of `gfmcga`'s
+(so every cavern sprite is exact in every mode), while **`gt*.bin`'s are not** — which is
+the whole of the town's per-mode colour difference, and why EGA, the one driver with no
+`[0x2044]` conversion at all, is the closest match there.  A port that works from the
+engine's PC-88 pair buffer reproduces the caverns exactly in all five modes but needs the
+2 bpp index carried alongside the pair to get the towns right (see `port/README.md`,
+"What the pair buffer cannot reach").
 
 | Aspect | MCGA | CGA | EGA | HGC | Tandy |
 |---|---|---|---|---|---|

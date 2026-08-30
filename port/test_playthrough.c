@@ -6,6 +6,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <stdlib.h>
+#include "sar.h"
 #include "playthrough.h"
 #include "player.h"
 #include "town.h"
@@ -548,6 +549,20 @@ int main(int argc, char **argv)
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
     int verbose = 1, only = 0;
     unsigned budget = 900000;
+
+    /* Every check below walks a real map out of the original game files, which
+     * are not redistributable and so are absent from a clean checkout (and from
+     * CI).  Probe for them once and skip cleanly rather than reporting 34
+     * failures that only mean "no game data here". */
+    {
+        size_t probe_len = 0;
+        uint8_t *probe = sar_load(dir, 0, 0, 1, &probe_len);
+        if (!probe) {
+            fprintf(stderr, "  (ZELRES1.SAR not available in %s: skipping the playthrough routes)\n", dir);
+            return 0;
+        }
+        free(probe);
+    }
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "-v")) verbose = 2;
         else if (!strcmp(argv[i], "--quiet")) verbose = 0;

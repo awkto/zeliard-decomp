@@ -28,6 +28,17 @@ def main():
         mask = False
     label = sys.argv[sys.argv.index("--label") + 1] if "--label" in sys.argv else None
     oy = 20 if b.height == 240 else 0
+    # port/tools/capture_video_mode.sh grabs the DOSBox window at whatever size
+    # the mode makes it, and DOSBox draws the 200-line modes double height (and
+    # the 320-wide ones double width on some machine types): a 640x200 EGA
+    # screen comes out 640x400.  When the capture is an exact integer multiple
+    # of the port image, sample it straight back down -- nearest neighbour only,
+    # since any interpolation would destroy an exact-pixel comparison.
+    if oy == 0 and b.size != a.size:
+        sx, sy = b.width // a.width, b.height // a.height
+        if sx >= 1 and sy >= 1 and (sx, sy) != (1, 1) \
+           and sx * a.width == b.width and sy * a.height == b.height:
+            b = b.resize(a.size, Image.NEAREST)
     A, B = a.load(), b.load()
     x0, y0, w, h = box if box else (48, 14, 224, 144)
     hero = (48 + 12 * 8, 14 + 10 * 8, 24, 24)
@@ -60,6 +71,10 @@ def main():
     if diff:
         diff.save(diff_out)
         print("diff (port pixels where they differ) written to", diff_out)
+    # Every box in `make verify` is expected to be a 100% match, so a mismatch
+    # is a build failure and not just a line of output: exit non-zero and let
+    # make stop on it.
+    return 0 if same == tot else 1
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
