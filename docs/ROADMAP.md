@@ -42,14 +42,17 @@ Method per overlay: run ghidra_dump_c.py, then rename functions/globals against 
 ## Phase 3 — SDL port scaffold
 
 1. ~~\`port/\` C project.~~ DONE (#23): C11 + SDL2 (headless fallback), reads ZELRES*.SAR directly (sar.c ports sarex/sardec), `make` / `make test` (103 physics checks) / `make verify` (100% playfield match vs docs/screenshots/cavern.png). See port/README.md.
-2. Implement in order: map render + scroll → player movement vs map collision (from fight.bin decomp) → sprites/animation → combat → shops/save → music (from .msd converter).
-3. Milestone gates: ~~(a) walk around cavern 1 with correct collision~~ DONE (#23); ~~(b) kill one enemy with correct damage tables~~ DONE (#24); (c) full cavern 1 + town loop; (d) all 9 caverns; ~~(e) audio~~ DONE (#27): own OPL2 core + MSC/SND driver ports in `port/`; all 51 score streams match tools/msd2mid.py.
+2. ~~Implement in order: map render + scroll → movement/collision → sprites → combat → shops/save → music.~~ ALL DONE.
+3. Milestone gates: ~~(a) walk cavern 1 with correct collision~~ (#23); ~~(b) kill an enemy with correct damage~~ (#24); ~~(c) full cavern 1 + town loop~~ (#25); ~~(d) caverns + bosses~~ (#26: all 11 boss overlays, 8 shops, status screen, saves); ~~(e) audio~~ (#27: own OPL2 core; all 51 score streams match tools/msd2mid.py).
+4. Also done beyond the original plan: the intro/title/ending cutscenes (#30), so `./zeliard` boots like the real game; and an autonomous playthrough (`make playthrough`) that walks caverns 1-3 and their bosses with no assisted legs (#28, #31).
+
+**Where the port stands:** `make test` = 1833 assertions in 9 binaries; `make verify` = 149 pixel comparisons against 48 DOSBox captures, **all at 100%**, eight of them whole-screen 320×200; `make playthrough` = two autonomous routes.
 
 ## Phase 4 — polish/stretch
 
-- Save-game compatibility with DOS version (USER file format — kernel res#=0 path).
-- EGA/CGA render modes (formats already understood at plane level).
-- CI: GitHub Actions building the port; asset pipeline gated on user-supplied game copy.
+- ~~Save-game compatibility with the DOS version.~~ DONE: `NAME.USR` is a raw 256-byte image of BASE:0000 (kenjpro `A862`), and a save written by `port/` **loads in the real game** under DOSBox via F7 Restore — see docs/DOSBOX_RECIPE.md §9.
+- EGA/CGA/HGC/Tandy render modes in the port (all five drivers are documented in docs/VIDEO_DRIVERS.md, including what each one's `[0x2044]` does to the 48-byte cells).
+- CI: GitHub Actions building the port; asset pipeline gated on a user-supplied game copy.
 
 ## Sub-issue index
 
