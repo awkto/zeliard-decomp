@@ -121,17 +121,29 @@ fail:
     return NULL;
 }
 
-uint8_t *sar_read_raw(const char *dir, int archive, int index, size_t *out_len)
+FILE *game_fopen(const char *dir, const char *name)
 {
     char path[1024];
-    snprintf(path, sizeof path, "%s/ZELRES%d.SAR", dir, archive + 1);
+    snprintf(path, sizeof path, "%s/%s", dir, name);
     FILE *f = fopen(path, "rb");
-    if (!f) {
-        /* the game files are upper-case on disk; try lower-case too */
-        snprintf(path, sizeof path, "%s/zelres%d.sar", dir, archive + 1);
-        f = fopen(path, "rb");
-        if (!f) { fprintf(stderr, "sar: cannot open %s\n", path); return NULL; }
-    }
+    if (f) return f;
+    /* the game files are upper-case on the DOS media; try lower-case too */
+    size_t n = strlen(name);
+    if (n >= sizeof path) return NULL;
+    char lower[256];
+    if (n >= sizeof lower) return NULL;
+    for (size_t i = 0; i <= n; i++)
+        lower[i] = (name[i] >= 'A' && name[i] <= 'Z') ? (char)(name[i] - 'A' + 'a') : name[i];
+    snprintf(path, sizeof path, "%s/%s", dir, lower);
+    return fopen(path, "rb");
+}
+
+uint8_t *sar_read_raw(const char *dir, int archive, int index, size_t *out_len)
+{
+    char name[32];
+    snprintf(name, sizeof name, "ZELRES%d.SAR", archive + 1);
+    FILE *f = game_fopen(dir, name);
+    if (!f) { fprintf(stderr, "sar: cannot open %s/%s\n", dir, name); return NULL; }
     uint8_t hdr[4];
     if (fread(hdr, 1, 4, f) != 4) { fclose(f); return NULL; }
     uint32_t count = rd32(hdr) / 4;

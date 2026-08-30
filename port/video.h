@@ -35,7 +35,11 @@ enum { VID_MCGA = 0, VID_CGA, VID_CGA2, VID_EGA, VID_HGC, VID_TANDY, VID_COUNT }
 int         video_mode_by_name(const char *name);
 const char *video_mode_name(int mode);              /* the --video spelling */
 const char *video_mode_cfg(int mode);               /* the RESOURCE.CFG spelling */
-void        video_size(int mode, int *w, int *h);
+void        video_size(int mode, int *w, int *h);         /* the driver's framebuffer */
+/* The aspect-corrected presentation size: the shape this driver's picture had
+ * on the 4:3 monitor it was designed for.  The framebuffer is unchanged --
+ * this is presentation only, and `make verify` never goes through it. */
+void        video_display_size(int mode, int *w, int *h);
 
 /* Convert the 320x200 pair buffer to this mode's screen.  `rgb` holds w*h*3. */
 void video_to_rgb(int mode, const uint8_t *fb, uint8_t *rgb);

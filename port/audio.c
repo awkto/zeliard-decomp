@@ -313,9 +313,7 @@ static void sfx_tick(Sfx *s, int *request)
 
 static int sfx_load(Sfx *s, const char *dir, int adlib)
 {
-    char path[1024];
-    snprintf(path, sizeof path, "%s/%s", dir, adlib ? "SNDADLIB.DRV" : "SNDSTD.DRV");
-    FILE *f = fopen(path, "rb");
+    FILE *f = game_fopen(dir, adlib ? "SNDADLIB.DRV" : "SNDSTD.DRV");
     if (!f) return -1;
     fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
     if (n <= 0x600) { fclose(f); return -1; }

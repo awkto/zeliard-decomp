@@ -32,10 +32,7 @@ int itemp_load(ItemPics *p, const char *dir)
     }
     p->raw = d; p->len = len; p->loaded = 1;
     /* the driver's built-in empty slot (GMMCGA.BIN @2658, origin 0x2000) */
-    char path[512];
-    snprintf(path, sizeof path, "%s/GMMCGA.BIN", dir);
-    FILE *f = fopen(path, "rb");
-    if (!f) { snprintf(path, sizeof path, "%s/gmmcga.bin", dir); f = fopen(path, "rb"); }
+    FILE *f = game_fopen(dir, "GMMCGA.BIN");
     if (f) {
         if (fseek(f, 0x2658 - 0x2000, SEEK_SET) == 0 &&
             fread(p->blank, 1, sizeof p->blank, f) == sizeof p->blank) p->have_blank = 1;

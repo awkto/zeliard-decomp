@@ -5,6 +5,15 @@
 #define ZEL_SAR_H
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
+
+/* Open a game file for reading, trying `name` as given and then all-lower-case.
+ * The originals are upper-case on the DOS media, but a dump made on a
+ * case-sensitive filesystem is very often lower-cased throughout, and every
+ * loader that open-coded this dance and forgot the second half lost its file
+ * silently: `SNDADLIB.DRV` took every sound effect with it, and shell.c's
+ * game-directory probe failed to find a lower-case dump at all. */
+FILE *game_fopen(const char *dir, const char *name);
 
 /* Read entry `index` (0-based) of ZELRES{archive+1}.SAR in `dir`, parse the
  * kernel AL=2 container and decompress it.  Returns a malloc'd buffer (caller

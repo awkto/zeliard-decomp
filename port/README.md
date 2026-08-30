@@ -1,4 +1,4 @@
-# Zeliard SDL2 port (Phase 3, milestone e)
+# Zeliard SDL2 port
 
 A from-scratch C11 re-implementation of the Zeliard engines that reads the
 original game files directly.  Status: **caverns 1-3 and their bosses are playable
@@ -51,11 +51,11 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 10 test binaries
-make test            # physics (143) + combat/AI (179) + town (146) + boss (627) + shop (183)
-                     #   + status (87) + playthrough (117) + audio (305) + cutscene (46)
-                     #   + video (52) = 1885 assertions.  Needs no game files: every
+make test            # physics (143) + combat/AI (219) + town (160) + boss (628) + shop (183)
+                     #   + status (87) + playthrough (118) + audio (315) + cutscene (46)
+                     #   + video (70) = 1969 assertions.  Needs no game files: every
                      #   binary skips its data half when zeliard/ is not there.
-make verify          # 186 headless renders diffed against the DOSBox captures in docs/screenshots/,
+make verify          # 208 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
 make playthrough     # the same two routes as test_playthrough, with the step-by-step log
 ./zeliard            # the real boot: the opening demo, then Felishika's Castle

@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "sar.h"
 #include "shell.h"
 #include "render.h"
 #include "player.h"
@@ -16,11 +17,9 @@
 const char *shell_find_dir(const char *hint)
 {
     static const char *cands[] = {"zeliard", "../zeliard", "./", NULL};
-    char path[1024];
     if (hint) return hint;
     for (int i = 0; cands[i]; i++) {
-        snprintf(path, sizeof path, "%s/ZELRES1.SAR", cands[i]);
-        FILE *f = fopen(path, "rb");
+        FILE *f = game_fopen(cands[i], "ZELRES1.SAR");
         if (f) { fclose(f); return cands[i]; }
     }
     return "zeliard";

@@ -19,14 +19,33 @@ static int ieq(const char *a, const char *b)
     return *a == *b;
 }
 
-static const struct { const char *name, *cfg; int w, h; } MODES[VID_COUNT] = {
-    [VID_MCGA]  = { "mcga",  "MCGA", 320, 200 },
-    [VID_CGA]   = { "cga",   "CGA",  320, 200 },
-    [VID_CGA2]  = { "cga2",  "CGA2", 640, 200 },
-    [VID_EGA]   = { "ega",   "EGA",  640, 200 },
-    [VID_HGC]   = { "hgc",   "HGC",  720, 348 },
-    [VID_TANDY] = { "tandy", "TGA",  320, 200 },
+/* `w`/`h` are the driver's own framebuffer, which is what video_to_rgb emits
+ * and what `make verify` compares; `dar_w`/`dar_h` are the shape the picture
+ * occupied on the **display** it was designed for.  Every one of the six is a
+ * 4:3 monitor, so none of these framebuffers is made of square pixels: MCGA's
+ * 320x200 was shown 1:1.2 (taller than wide), EGA's 640x200 1:2.4, and
+ * Hercules' 720x348 1:1.55.  Presenting a framebuffer 1:1 on a modern
+ * square-pixel display is therefore ~20% too wide in the 320x200 modes. */
+static const struct { const char *name, *cfg; int w, h, dar_w, dar_h; } MODES[VID_COUNT] = {
+    [VID_MCGA]  = { "mcga",  "MCGA", 320, 200, 4, 3 },
+    [VID_CGA]   = { "cga",   "CGA",  320, 200, 4, 3 },
+    [VID_CGA2]  = { "cga2",  "CGA2", 640, 200, 4, 3 },
+    [VID_EGA]   = { "ega",   "EGA",  640, 200, 4, 3 },
+    [VID_HGC]   = { "hgc",   "HGC",  720, 348, 4, 3 },
+    [VID_TANDY] = { "tandy", "TGA",  320, 200, 4, 3 },
 };
+
+/* The size to hand SDL_RenderSetLogicalSize: the framebuffer's own width, and
+ * the height that makes the result the display aspect the driver was drawn for.
+ * Widening rather than shortening keeps every source pixel represented. */
+void video_display_size(int mode, int *w, int *h)
+{
+    int fw, fh;
+    video_size(mode, &fw, &fh);
+    if (mode < 0 || mode >= VID_COUNT) { if (w) *w = fw; if (h) *h = fh; return; }
+    if (w) *w = fw;
+    if (h) *h = fw * MODES[mode].dar_h / MODES[mode].dar_w;
+}
 
 int video_mode_by_name(const char *name)
 {

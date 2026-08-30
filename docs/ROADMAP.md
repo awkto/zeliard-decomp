@@ -46,7 +46,7 @@ Method per overlay: run ghidra_dump_c.py, then rename functions/globals against 
 3. Milestone gates: ~~(a) walk cavern 1 with correct collision~~ (#23); ~~(b) kill an enemy with correct damage~~ (#24); ~~(c) full cavern 1 + town loop~~ (#25); ~~(d) caverns + bosses~~ (#26: all 11 boss overlays, 8 shops, status screen, saves); ~~(e) audio~~ (#27: own OPL2 core; all 51 score streams match tools/msd2mid.py).
 4. Also done beyond the original plan: the intro/title/ending cutscenes (#30), so `./zeliard` boots like the real game; and an autonomous playthrough (`make playthrough`) that walks caverns 1-3 and their bosses with no assisted legs (#28, #31).
 
-**Where the port stands:** `make test` = 1951 assertions in 10 binaries; `make verify` = 208 pixel comparisons against the DOSBox captures, **all at 100%**, eight of them whole-screen 320×200; `make playthrough` = two autonomous routes.
+**Where the port stands:** `make test` = 1969 assertions in 10 binaries; `make verify` = 208 pixel comparisons against the DOSBox captures, **all at 100%**, eight of them whole-screen 320×200; `make playthrough` = two autonomous routes.
 
 Play-test fixes since the roadmap closed: #35 (the sword was never drawn), #36 (cavern coins paid gold, not almas), #37 (music started before the intro), #38 (a town lost its backdrop at an edge exit), #39 (the treasure-box prize was one place out and two of its seven outcomes unreachable), #40 (the autopilot entered the castle at the death return), and #41 — **`ai_step`'s carry is the refusal, not the move**, so every ground enemy from cavern 2 on returned before acting and the caverns were full of statues.
 
@@ -56,7 +56,40 @@ Play-test fixes since the roadmap closed: #35 (the sword was never drawn), #36 (
 - ~~EGA/CGA/HGC/Tandy render modes in the port.~~ DONE (#32): `--video`, each mode a pure function of the engine's PC-88 pair buffer; ten per-mode DOSBox captures, every cavern box pixel-exact in all five modes.
 - ~~CI.~~ DONE (#33): `.github/workflows/ci.yml` builds both flavours and runs `make test` (which no longer needs game files); data-dependent targets are gated.
 
-**All four phases are complete.** Remaining known gaps are tracked in their own issue: the town's per-driver 2 bpp colour tables (`gt*.bin`), the MT-32 and Tandy audio back ends, `ttl2.grp`'s ornament assembly, and ground truth for the caverns and bosses no town door reaches.
+**All four phases are complete.** The engine is finished; what is left is fidelity gaps and the things that stand between a finished engine and a game somebody else can run.
+
+## Phase 5 — from finished engine to shippable game
+
+Four workstreams, filed after a review of the completed roadmap (#42-#45).  None of them
+touch the verified renderer: `make verify` renders headlessly through `video_to_rgb` and
+never goes near the SDL presentation path, so presentation work cannot cost fidelity.
+
+- **#34 — fidelity gaps.** The town's per-driver 2 bpp colour tables (`gt*.bin`), the MT-32
+  and Tandy audio back ends, `ttl2.grp`'s ornament assembly, the cutscenes in the non-MCGA
+  video modes, and ground truth for the caverns and bosses no town door reaches.  The
+  largest item, and the only one that needs more work on the *original*.
+- **#42 — the player-facing shell.** No fullscreen or window resizing, no gamepad, keys are
+  hard-coded, **Esc quits outright where the original pauses**, F7 restore exists only as a
+  command-line flag, and there is no config file or first-run story.  This is what separates
+  "runs" from "ships".
+- **#43 — presentation.** ~~Every mode was shown square-pixel at 16:10~~ DONE: `video.c`
+  carries a per-mode display aspect (all six drivers drew for a 4:3 monitor, so none of
+  these framebuffers is square-pixel), `main.c` presents at it, `--aspect 1:1` opts out for
+  pixel-peeping, and `test_video.c` asserts the six shapes.  Sharp-bilinear scaling is left
+  until fullscreen lands with #42.
+- **#44 — other platforms.** The C itself is portable — no POSIX headers in shipping code,
+  binary `fopen` modes, byte-wise little-endian reads, no packed structs or struct-punning,
+  no VLAs or GNU extensions.  The work is shells and build scaffolding: Windows/mingw, macOS
+  (incl. Apple Silicon) and Steam Deck are roughly a day each; MSVC wants CMake; Emscripten
+  needs ASYNCIFY or an inverted frame loop; Android is 2-4 weeks reusing the Gradle/NDK
+  scaffold that already exists in the `zeliard-android` sibling.  Note that neither
+  `zeliard-wasm` nor `zeliard-android` contains any of this port today — both wrap the
+  **original DOS binaries** (js-dos and DOSBox-X respectively).
+- **#45 — hardening and housekeeping.** The repository has **no LICENSE file**, which makes
+  everything above legally moot for anyone but its author; then a sanitizer CI job and
+  libFuzzer harnesses for the resource parsers, which matter exactly as much as the attack
+  surface does — "a user's own game dump" today, "files dropped onto a page" the moment a
+  web build exists.
 
 ## Sub-issue index
 

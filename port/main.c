@@ -39,6 +39,7 @@ typedef struct {
     uint8_t  script_dirs, script_btns;
     double   frame_ms;
     int      scale;
+    int      square;                /* --aspect 1:1: present the framebuffer unscaled in shape */
     int      quit;
     int      verbose;
     int      dump_audio;
@@ -75,7 +76,7 @@ static void usage(void)
 {
     fprintf(stderr,
         "usage: zeliard [--dir GAMEDIR] [--map N] [--pos COL ROW] [--town N] [--headless]\n"
-        "               [--screenshot N out.png] [--script SCRIPT] [--scale N] [--speed N]\n"
+        "               [--screenshot N out.png] [--script SCRIPT] [--scale N] [--aspect A] [--speed N]\n"
         "               [--frames N] [--sound] [--verbose]\n"
         "               [--no-music] [--speaker] [--music N] [--dump-audio FILE.wav]\n"
         "  --dir       directory holding ZELRES1-3.SAR (default: zeliard/, ../zeliard/)\n"
@@ -91,6 +92,7 @@ static void usage(void)
         "              separated by spaces/commas\n"
         "  --speed N   FF33 speed (frame = 4*N ticks; default 5 = 84.5 ms)\n"
         "  --scale N   window scale (default 3)\n"
+        "  --aspect A  4:3 (default: the shape the driver's monitor had) or 1:1\n"
         "  --video M   render through one of the five original drivers:\n"
         "              mcga (default) cga cga2 ega hgc tandy — the RESOURCE.CFG\n"
         "              `videoDrv` set, at each driver's own screen size\n"
@@ -449,6 +451,15 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--screenshot") && i + 2 < argc) { a.shot_frame = (unsigned)atoi(argv[++i]); a.shot_path = argv[++i]; a.headless = 1; explicit_start = 1; }
         else if (!strcmp(argv[i], "--script") && i + 1 < argc) { a.script = argv[++i]; explicit_start = 1; }
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) a.scale = atoi(argv[++i]);
+        /* the drivers all drew for a 4:3 monitor, so their pixels are not
+         * square; --aspect 1:1 turns the correction off for pixel-peeping
+         * against docs/screenshots/, which are native framebuffer grabs */
+        else if (!strcmp(argv[i], "--aspect") && i + 1 < argc) {
+            const char *v = argv[++i];
+            if (!strcmp(v, "1:1") || !strcmp(v, "square")) a.square = 1;
+            else if (!strcmp(v, "4:3") || !strcmp(v, "crt")) a.square = 0;
+            else { fprintf(stderr, "--aspect: expected 4:3 or 1:1\n"); return 1; }
+        }
         else if (!strcmp(argv[i], "--video") && i + 1 < argc) {
             a.video = video_mode_by_name(argv[++i]);
             if (a.video < 0) { fprintf(stderr, "unknown --video %s (mcga cga cga2 ega hgc tandy)\n", argv[i]); return 2; }
@@ -617,11 +628,21 @@ int main(int argc, char **argv)
          * --scale keeps meaning "how big is a game pixel", not "how big is the
          * window": halve it for them so the default 3 is not a 2160-px window */
         if (vw > FB_W && vscale > 1) vscale = (vscale + 1) / 2;
-        a.win = SDL_CreateWindow("Zeliard port", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, vw * vscale, vh * vscale, SDL_WINDOW_SHOWN);
+        /* Present at the shape the driver's monitor had, not at the shape of
+         * its framebuffer.  320x200 on a 4:3 screen was 1:1.2 pixels, so a 1:1
+         * blit -- which is what this did until now, and for every mode at
+         * 320x200's logical size at that -- is about 20% too wide.  SDL
+         * letterboxes the difference itself.  The framebuffer is untouched:
+         * `make verify` renders headlessly through video_to_rgb and never
+         * reaches this path. */
+        int lw = vw, lh = vh;
+        if (!a.square) video_display_size(a.video, &lw, &lh);
+        a.win = SDL_CreateWindow("Zeliard port", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                 lw * vscale, lh * vscale, SDL_WINDOW_SHOWN);
         a.ren = SDL_CreateRenderer(a.win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
         if (!a.ren) a.ren = SDL_CreateRenderer(a.win, -1, 0);
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
-        SDL_RenderSetLogicalSize(a.ren, FB_W, FB_H);
+        SDL_RenderSetLogicalSize(a.ren, lw, lh);
         a.tex = SDL_CreateTexture(a.ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, vw, vh);
     }
 #else

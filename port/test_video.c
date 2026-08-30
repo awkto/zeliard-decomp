@@ -247,6 +247,32 @@ static void t_tables(const char *dir)
     if (!any) printf("(GM*.BIN not available in %s: skipping the table check) ", dir);
 }
 
+
+/* The drivers all drew for a 4:3 monitor, so the presentation shape is not the
+ * framebuffer shape (issue #43).  This is the only place the distinction is
+ * asserted -- `make verify` deliberately never goes through it. */
+static void t_display_aspect(void)
+{
+    printf("display aspect  ");
+    static const struct { int mode; int fw, fh, dw, dh; } CASES[] = {
+        {VID_MCGA,  320, 200, 320, 240},
+        {VID_CGA,   320, 200, 320, 240},
+        {VID_TANDY, 320, 200, 320, 240},
+        {VID_CGA2,  640, 200, 640, 480},
+        {VID_EGA,   640, 200, 640, 480},
+        {VID_HGC,   720, 348, 720, 540},
+    };
+    for (unsigned i = 0; i < sizeof CASES / sizeof CASES[0]; i++) {
+        int fw = 0, fh = 0, dw = 0, dh = 0;
+        video_size(CASES[i].mode, &fw, &fh);
+        video_display_size(CASES[i].mode, &dw, &dh);
+        ck(fw == CASES[i].fw && fh == CASES[i].fh, "%s framebuffer %dx%d", video_mode_name(CASES[i].mode), fw, fh);
+        ck(dw == CASES[i].dw && dh == CASES[i].dh, "%s presents at %dx%d (want %dx%d, 4:3)",
+              video_mode_name(CASES[i].mode), dw, dh, CASES[i].dw, CASES[i].dh);
+        ck(dw * 3 == dh * 4, "%s presentation is 4:3", video_mode_name(CASES[i].mode));
+    }
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -256,6 +282,7 @@ int main(int argc, char **argv)
     t_ega();     printf("ok\n");
     t_hgc();     printf("ok\n");
     t_tandy();   printf("ok\n");
+    t_display_aspect(); printf("ok\n");
     t_tables(dir); printf("ok\n");
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;

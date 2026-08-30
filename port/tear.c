@@ -75,10 +75,7 @@ int tear_art_load(TearArt *a, const char *dir)
     free(gf);
 
     /* GMMCGA.BIN @2A5D: two 16x13 byte-per-pixel icons, 0x80 = transparent */
-    char path[512];
-    snprintf(path, sizeof path, "%s/GMMCGA.BIN", dir);
-    FILE *f = fopen(path, "rb");
-    if (!f) { snprintf(path, sizeof path, "%s/gmmcga.bin", dir); f = fopen(path, "rb"); }
+    FILE *f = game_fopen(dir, "GMMCGA.BIN");
     if (f) {
         for (int i = 0; i < 2; i++) {
             long off = (i ? 0x2B31 : 0x2A61) - 0x2000;
@@ -95,9 +92,7 @@ int tear_art_load(TearArt *a, const char *dir)
     free(rk);
 
     /* GAME.BIN A3D3: nine {u8 x4, u8 y=0} slot positions */
-    snprintf(path, sizeof path, "%s/GAME.BIN", dir);
-    f = fopen(path, "rb");
-    if (!f) { snprintf(path, sizeof path, "%s/game.bin", dir); f = fopen(path, "rb"); }
+    f = game_fopen(dir, "GAME.BIN");
     if (f) {
         uint8_t buf[18];
         if (fseek(f, 0xA3D3 - 0xA000, SEEK_SET) == 0 && fread(buf, 1, 18, f) == 18)

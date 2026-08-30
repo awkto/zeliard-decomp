@@ -1,5 +1,6 @@
 /* player.c — STDPLY.BIN, the page <-> Game mapping and the NAME.USR save file
  * (docs/TOWN.md §8, docs/STATE_PAGE.md). */
+#include "sar.h"
 #include "player.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,13 +48,7 @@ void player_page_pull(Game *g)
 
 int player_load_stdply(Game *g, const char *dir)
 {
-    char path[1024];
-    static const char *names[] = {"STDPLY.BIN", "stdply.bin"};
-    FILE *f = NULL;
-    for (unsigned i = 0; i < 2 && !f; i++) {
-        snprintf(path, sizeof path, "%s/%s", dir, names[i]);
-        f = fopen(path, "rb");
-    }
+    FILE *f = game_fopen(dir, "STDPLY.BIN");
     if (!f) return -1;
     uint8_t buf[256];
     memset(buf, 0, sizeof buf);
