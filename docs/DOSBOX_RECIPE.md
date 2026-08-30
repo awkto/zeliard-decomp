@@ -233,3 +233,17 @@ The port reproduces it at 99.50% with the hero masked (only the two enemies besi
 differ) and 100% in six boxes clear of them — which also confirms the ring's row wrap in the
 original, the parallax at a *scrolled* offset, and the 84.5 ms frame under `cycles=3000`.
 The full timeline is in `port/README.md` under "Walking cavern 2 under DOSBox".
+
+### 9.6 Walking between towns (no save file needed)
+
+Unlike §9.5, this needs no `.usr`: Recipe A plus a held Right walks Felishika's Castle into
+Muralla, and the deterministic stops are each town's right edge.
+
+    KEYS="6:Return 9:Return 16:Return 20:+Right 45:-Right"   # capture 19.5 s -> town_castle.png
+    KEYS="6:Return 9:Return 16:Return 20:+Right 45:-Right"   # capture 27 s   -> town_edge_walkin.png
+    KEYS="6:Return 9:Return 16:Return 20:+Right 30:-Right"   # capture 33 s   -> town_edge_walked.png
+
+`town_castle.png` is the castle entry frame (scroll_col 30, Garland on map column 44, strip
+phase 0), `town_edge_walkin.png` is Muralla the moment after the edge exit (scroll_col 0,
+phase 8 — cmap's, carried), and `town_edge_walked.png` is Muralla 22 columns in.  Eleven
+frames of this one walk are what pinned the parallax phase rule in docs/TOWN.md §4.3.

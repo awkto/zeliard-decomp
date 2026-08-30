@@ -68,7 +68,7 @@ int boss_init(Game *g)
     b->cam_col   = boss_info_u8(g, 7);
     b->knock_left= boss_info_u8(g, 8);
     b->name_ptr  = boss_info_u16(g, 9);
-    b->gold      = boss_info_u16(g, 0xB);
+    b->almas     = boss_info_u16(g, 0xB);
     /* The name record is a positioned label {u8 x4, u8 y, u8 xoff_px, u8 len,
      * chars} exactly like every other video [2010] argument (docs/
      * VIDEO_DRIVERS.md §1.1) — docs/ENEMIES.md §1 and src/ai/ai_common.h call
@@ -212,12 +212,12 @@ void boss_update(Game *g)
     }
 }
 
-/* 0x71CC  EXP + gold once the death animation has finished. */
+/* 0x71CC  EXP + almas once the death animation has finished (71F2 -> 917C). */
 void boss_rewards(Game *g)
 {
     if (!(g->boss_map && g->boss_defeated && g->boss_state == 0xFF)) return;
     exp_add(g, g->boss.exp);                                        /* 71E8 -> 9715 */
-    almas_add(g, g->boss.gold);   /* 71F1 -> 917C: the boss award is ALMAS, not gold */
+    almas_add(g, g->boss.almas);  /* 71F2 -> 917C: the award is ALMAS, not gold */
     g->post_boss_pending = 0xFF;                                    /* 9F1E */
 }
 

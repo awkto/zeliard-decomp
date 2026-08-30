@@ -2,10 +2,10 @@
  *
  * Every constant checked here comes from docs/ENEMIES.md §3 (the table of the
  * eleven bosses) and from the `[A002]` info block inside the overlay image
- * itself, so the two have to agree: HP, EXP, gold, the camera column, the
+ * itself, so the two have to agree: HP, EXP, almas, the camera column, the
  * knock-left flag, the start cell and the name record.  On top of that the
  * protocol is exercised end to end on the real mp1d: the crab's pose matrix,
- * the x4 / x8 damage rule, the 40-frame death, the EXP/gold award and
+ * the x4 / x8 damage rule, the 40-frame death, the EXP/almas award and
  * post_boss_transition's pokes (the exit door and the reward item). */
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,10 +29,11 @@ static Game G;
 static void present(Game *g) { (void)g; }
 
 /* ------------------------------------------------------------- info blocks */
-/* docs/ENEMIES.md §3: overlay, map, name, start (col,row), HP, EXP, gold,
+/* docs/ENEMIES.md §3: overlay, map, name, start (col,row), HP, EXP, almas ([A002]+B
+ * feeds 917C, the almas adder),
  * camera column, knock-left. */
 static const struct {
-    int idx; const char *name; int col, row; unsigned hp, exp, gold; int cam, knock; int contact0;
+    int idx; const char *name; int col, row; unsigned hp, exp, almas; int cam, knock; int contact0;
 } BOSS_TABLE[] = {
     { BOSS_CRAB, "Cangrejo", 0x2B, 0x0C, 150,   120,  150, 12, 0,   6 },
     { BOSS_TAKO, "Pulpo",    0x24, 0x10, 250,   200,  200,  7, 1,  10 },
@@ -60,8 +61,8 @@ static void t_info(void)
               BOSS_TABLE[i].name, boss_info_u16(&G, 3), BOSS_TABLE[i].hp);
         CHECK(boss_info_u16(&G, 5) == BOSS_TABLE[i].exp, "%s EXP = %u (want %u)",
               BOSS_TABLE[i].name, boss_info_u16(&G, 5), BOSS_TABLE[i].exp);
-        CHECK(boss_info_u16(&G, 0xB) == BOSS_TABLE[i].gold, "%s gold = %u (want %u)",
-              BOSS_TABLE[i].name, boss_info_u16(&G, 0xB), BOSS_TABLE[i].gold);
+        CHECK(boss_info_u16(&G, 0xB) == BOSS_TABLE[i].almas, "%s almas = %u (want %u)",
+              BOSS_TABLE[i].name, boss_info_u16(&G, 0xB), BOSS_TABLE[i].almas);
         CHECK(boss_info_u8(&G, 7) == BOSS_TABLE[i].cam, "%s camera column = %u (want %d)",
               BOSS_TABLE[i].name, boss_info_u8(&G, 7), BOSS_TABLE[i].cam);
         CHECK((boss_info_u8(&G, 8) != 0) == BOSS_TABLE[i].knock, "%s knock-left = %u (want %d)",
@@ -308,15 +309,16 @@ static void t_death(void)
     CHECK(dying == 0x28, "the death animation is %d frames (want 40)", dying);
     CHECK(G.nobj == 0, "the last frame removes every part");
 
-    G.exp = 0; G.gold = 0;
+    G.exp = 0; G.almas = 0; G.gold = 0;
     boss_rewards(&G);
     CHECK(G.exp == 120, "EXP awarded = %u (want [A002]+5 = 120)", G.exp);
-    CHECK(G.gold == 150, "gold awarded = %u (want [A002]+B = 150)", (unsigned)G.gold);
+    CHECK(G.almas == 150, "almas awarded = %u (want [A002]+B = 150)", (unsigned)G.almas);
+    CHECK(G.gold == 0, "the boss award is almas, not gold (71F2 -> 917C)");
     CHECK(G.post_boss_pending == 0xFF, "9F1E set: the next frame runs 72F1");
     /* 71DA gates on EDA0; 71C2 runs 72F1 before 71CC can pay a second time */
     G.boss_state = 0;
     boss_rewards(&G);
-    CHECK(G.exp == 120 && G.gold == 150, "with EDA0 clear the reward is not paid again");
+    CHECK(G.exp == 120 && G.almas == 150, "with EDA0 clear the reward is not paid again");
 }
 
 /* 72F1: the level record's pokes give mp1d its exit door and its reward item */
@@ -478,12 +480,12 @@ static void run_overlay(int ai_index, int sysmap, const char *name)
     int n = 0, dying = 0;
     while (!G.boss_defeated && n < 80) { G.boss_dying = 0; boss_update(&G); if (G.boss_dying) dying++; n++; }
     CHECK(dying == 0x28, "%s death animation is %d frames (want 40)", name, dying);
-    G.exp = 0; G.gold = 0; G.boss_state = 0xFF;
+    G.exp = 0; G.almas = 0; G.boss_state = 0xFF;
     boss_rewards(&G);
     if (G.boss_map)
-        CHECK(G.exp == G.boss.exp && G.gold == G.boss.gold, "%s pays %u EXP / %u gold", name, G.exp, (unsigned)G.gold);
+        CHECK(G.exp == G.boss.exp && G.almas == G.boss.almas, "%s pays %u EXP / %u almas", name, G.exp, (unsigned)G.almas);
     else                                        /* 71CC gates on FF34: an [E6] boss room pays nothing */
-        CHECK(G.exp == 0 && G.gold == 0, "%s is an [E6] boss room: no reward (docs/ENEMIES.md MAO1)", name);
+        CHECK(G.exp == 0 && G.almas == 0, "%s is an [E6] boss room: no reward (docs/ENEMIES.md MAO1)", name);
     ai_unload(&o);
     map_free(&m);
 }

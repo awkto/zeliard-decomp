@@ -716,6 +716,33 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# and the gd decoders themselves against tools/grp2png.py's, the reference
 	# implementation that produced docs/screenshots/intro_art.png
 	python3 tools/compare_gdart.py ../zeliard
+	# The town captures above are all entry frames, which is how #37/#38 got
+	# through 186 comparisons.  These three are the walk a player actually takes.
+	./zeliard --dir ../zeliard --town 0 --screenshot 1 /tmp/zel_castle.png --frames 1
+	python3 tools/compare_shot.py /tmp/zel_castle.png ../docs/screenshots/town_castle.png \
+		--box 48 14 224 104 --label "castle: ympd panorama + map rows 0-3"
+	python3 tools/compare_shot.py /tmp/zel_castle.png ../docs/screenshots/town_castle.png \
+		--box 48 102 80 40 --label "castle: the tiles left of Garland"
+	python3 tools/compare_shot.py /tmp/zel_castle.png ../docs/screenshots/town_castle.png \
+		--box 48 142 224 16 --label "castle: the near ground strips (phase 0, just painted)"
+	python3 tools/compare_shot.py /tmp/zel_castle.png ../docs/screenshots/town_castle.png \
+		--box 48 158 224 42 --label "castle: the HUD"
+	./zeliard --dir ../zeliard --town 0 --script "R400" --frames 401 \
+		--screenshot 5 /tmp/zel_walkin.png
+	python3 tools/compare_shot.py /tmp/zel_walkin.png ../docs/screenshots/town_edge_walkin.png \
+		--box 48 14 224 88 --label "Muralla walk-in: the mountains survive the edge exit"
+	python3 tools/compare_shot.py /tmp/zel_walkin.png ../docs/screenshots/town_edge_walkin.png \
+		--box 48 142 224 16 --label "Muralla walk-in: cmap's parallax phase carried over"
+	python3 tools/compare_shot.py /tmp/zel_walkin.png ../docs/screenshots/town_edge_walkin.png \
+		--box 48 158 224 42 --label "Muralla walk-in: the HUD"
+	./zeliard --dir ../zeliard --town 0 --script "R400" --frames 401 \
+		--screenshot 39 /tmp/zel_walked.png
+	python3 tools/compare_shot.py /tmp/zel_walked.png ../docs/screenshots/town_edge_walked.png \
+		--box 48 14 224 104 --label "Muralla 22 columns in: panorama + map rows 0-3"
+	python3 tools/compare_shot.py /tmp/zel_walked.png ../docs/screenshots/town_edge_walked.png \
+		--box 48 142 224 16 --label "Muralla 22 columns in: the near ground strips"
+	python3 tools/compare_shot.py /tmp/zel_walked.png ../docs/screenshots/town_edge_walked.png \
+		--box 48 158 224 42 --label "Muralla 22 columns in: the HUD"
 	# --- the sword mid-swing (issue #35) -------------------------------
 	./zeliard --dir ../zeliard --map 0 --pos 61 7 --headless --frames 8 \
 		--script "X8" --screenshot 5 /tmp/zel_sword.png

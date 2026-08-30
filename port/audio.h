@@ -32,6 +32,11 @@ void audio_music(int music_idx);
 /* force one score and ignore later level changes (--music N, for listening
  * tests and --dump-audio verification) */
 void audio_music_force(int music_idx);
+/* GAME.BIN A080: the boot path runs opdemo before any level record is read, so
+ * hold the level score (audio_music) while the port builds its scaffold Game
+ * and the intro runs.  audio_music_play_res(), the cutscenes' own INT 60h
+ * AX=0, is never held.  audio_music_force() clears the hold. */
+void audio_music_hold(int on);
 void audio_music_stop(void);          /* INT 60h AX=1 */
 /* the cutscenes play scores that are not in the 9E53 table (zopn/zend/mfan):
  * load ZELRES{archive+1}[index] and start it, exactly as INT 60h AX=0 does. */

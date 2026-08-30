@@ -349,7 +349,7 @@ typedef struct Audio {
     MsdPlayer music;
     Sfx      sfx;
     uint8_t *score;                  /* the resource the player is reading */
-    int      music_idx, music_locked;
+    int      music_idx, music_locked, music_hold;
     int      sfx_request;
     double   tick_acc;
     int      div2;
@@ -556,7 +556,7 @@ void audio_advance_ms(double ms)
 /* ------------------------------------------------------------- control */
 void audio_music(int idx)
 {
-    if (!A.on || A.music_locked || idx < 0 || idx >= 14) return;
+    if (!A.on || A.music_locked || A.music_hold || idx < 0 || idx >= 14) return;
     if (idx == A.music_idx && !A.music.stopped) return;
     size_t len;
     uint8_t *res = sar_load(A.dir, MUSIC[idx].archive, MUSIC[idx].index, 1, &len);
@@ -574,9 +574,22 @@ void audio_music(int idx)
     audio_unlock();
 }
 
+/* GAME.BIN A080: with no command-line argument the boot path jumps straight
+ * into opdemo, *before* any level record is read, so nothing sounds until the
+ * demo starts its own score (zopn at opdemo 6223).  The port has to build its
+ * scaffold Game first, and fight.bin 7E93's level-record score would then play
+ * over the silent prologue (#37) -- hold it until the demo has handed back.
+ * Only the 9E53 table path is held: audio_music_play_res(), which is how the
+ * cutscene overlays call INT 60h AX=0, is not. */
+void audio_music_hold(int on)
+{
+    A.music_hold = on ? 1 : 0;
+}
+
 void audio_music_force(int idx)
 {
     A.music_locked = 0;
+    A.music_hold = 0;                 /* --music N is an explicit override */
     if (idx < 0) audio_music_stop();
     else audio_music(idx);
     A.music_locked = 1;

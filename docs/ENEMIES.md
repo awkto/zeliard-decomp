@@ -30,7 +30,7 @@ Raw image loaded to `BASE:A000` (fight.bin `7EBB`), CS = DS = BASE.
 | Address | Content |
 |---|---|
 | `[A000]` | entry.  eai*: called by `8DF7` for every live enemy inside the ring with **SI = record, DI = ring cell of its previous position (marker already removed), `[FF4A]` = index**; returns with `ret`.  Boss maps (`FF34` or `[E6]`): called **once per frame** (`8D1D`) with no registers set up, and once right after loading (`7C27`) |
-| `[A002]` | boss info (0 in eai*): +0 u16 start col, +2 u8 start row, **+3 u16 HP** (also the initial HP-bar value handed to video `[200A]/[200C]` in BX), +5 u16 EXP, +7 u8 hero screen column (camera), +8 u8 knockback-always-left (→ `9F01`), +9 u16 → name record `{u8 x, u16 y, u8 len, chars}` for video `[2010]`, **+B u16 gold**, +D… private.  FIGHT.md §7 puts "video init" at +3 and gold at +9: both wrong (verified at `6150/6162/71E8/71F1`) |
+| `[A002]` | boss info (0 in eai*): +0 u16 start col, +2 u8 start row, **+3 u16 HP** (also the initial HP-bar value handed to video `[200A]/[200C]` in BX), +5 u16 EXP, +7 u8 hero screen column (camera), +8 u8 knockback-always-left (→ `9F01`), +9 u16 → name record `{u8 x, u16 y, u8 len, chars}` for video `[2010]`, **+B u16 almas** (71F2 calls 917C, the almas adder, not the 916B gold one), +D… private.  FIGHT.md §7 puts "video init" at +3 and gold at +9: both wrong (verified at `6150/6162/71E8/71F1`) |
 | `[A004]` | unused (0) |
 | `[A006]` | → u16[8] per class → u8[4] drop ids, index `KRN_RANDOM()&3` (0 for a down-thrust kill).  ids: 0 corpse/nothing, 1 vanish, 4 coin 1 G, 5 coin 10 G, 9 full potion, 0xB the 100 G/shoes item class (`fight.bin 90E6`: object becomes item `0x70|id`) |
 | `A008` | u8[8] EXP per class (`96C1`) |

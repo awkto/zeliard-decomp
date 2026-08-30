@@ -549,6 +549,13 @@ int main(int argc, char **argv)
             fprintf(stderr, "[audio] %s -> %s (%.1f ms per frame)\n", audio_backend_name(), wav_path, a.frame_ms);
         }
     }
+    /* GAME.BIN A080: given no command-line argument the boot path jumps
+     * straight into opdemo, *before* it reads any level record, which is why
+     * the prologue is silent until the title starts zopn.msd (docs/CUTSCENES.md
+     * §2).  The port has to build its scaffold Game first, and the map record's
+     * score (shell_load_enemy_banks -> fight.bin 7E93) would then play over the
+     * demo (#37) -- hold it until the real level entry below. */
+    audio_music_hold(1);
     if (shell_init(sh, dir, map_idx)) return 1;
     Game *g = &sh->g;
 
@@ -638,18 +645,37 @@ int main(int argc, char **argv)
         a.quit = 0; a.shot_path = a.intro_act ? a.shot_path : NULL;
     }
 
+    /* the demo has handed back (opdemo 6A41): from here on a level entry may
+     * start its score, exactly as fight.bin 6085/60D8 and town.bin 60A9 do. */
+    audio_music_hold(0);
+
     if (start_in_town >= 0) {
-        if (!shell_enter_town(g, start_in_town, town_col, 0)) return 1;
+        if (!shell_enter_town(g, start_in_town, town_col, 0)) return 1;   /* -> audio_music */
         if (town_scr >= 0) {                       /* exact scroll/hero placement for make verify */
             sh->town.scroll_col = town_scr;
-            /* the captures --town-scr reproduces were reached by *walking*
-             * east from the map's left edge, so the backdrop strips have been
-             * rotated once per column since they were painted */
-            sh->town.back_steps = town_scr;
+            /* the Muralla captures --town-scr reproduces were all reached by
+             * holding Right from Felishika's Castle, and the backdrop painter
+             * last ran there, at the castle's own entry scroll of 30 (STDPLY
+             * [80]).  So the strips have been rotated once per column for the
+             * 48 columns of cmap left of its right edge (114 - 0x24 - 30) plus
+             * `town_scr` columns of Muralla -- town.c's blit_strip. */
+            sh->town.back_steps = 48 + town_scr;
             if (town_col >= 0) sh->town.hero_scr_col = town_col - 4 - town_scr;
             town_npc_markers_reset(&sh->town);
         }
-        if (restored_town >= 0 && town_col < 0 && town_scr < 0) town_page_pull(&sh->town);
+        /* GAME.BIN A1CB jumps into town.bin at 601E with the page already
+         * holding the hero's town position -- [80] scroll_col, [83]
+         * hero_scr_col -- which is STDPLY.BIN's 30 / 10 on a new game and the
+         * saved pair after an F7 restore.  The map's own C013 start column is
+         * the *death* return (99F4), not this one.  The page only speaks for
+         * the town its [C4] names (0x80 = Felishika's Castle in STDPLY), so
+         * `--town N` for any other town still uses that map's C013. */
+        if (town_col < 0 && town_scr < 0 && (g->page[0xC4] & 0x80)
+            && (g->page[0xC4] & 0x7F) == start_in_town) {
+            town_page_pull(&sh->town);
+            fprintf(stderr, "[town] the page places the hero at column %d (scroll %d)\n",
+                    town_hero_col(&sh->town), sh->town.scroll_col);
+        }
         if (town_anim >= 0) { sh->town.hero_anim = (uint8_t)town_anim; sh->town.hero_flags = (uint8_t)town_face; }
         if (npc_i >= 0 && npc_i < sh->tmap.nnpcs) {
             sh->tmap.npcs[npc_i].anim = (uint8_t)(npc_f & 3);
@@ -657,6 +683,7 @@ int main(int argc, char **argv)
             sh->tmap.npcs[npc_i].type = 7;
         }
     } else {
+        audio_music((sh->maps[0].lvl_flags >> 1) & 0x0F);        /* fight.bin 7E93 */
         game_first_frame(g);
     }
     if (save_now) {                     /* kenjpro A862 without walking to a Sage */

@@ -12,11 +12,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <unistd.h>
 #include "sar.h"
 #include "msd.h"
 #include "opl2.h"
 #include "audio.h"
 #include "enemy.h"
+#include "cutscene.h"
 
 static int fails = 0, checks = 0;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { fails++; fprintf(stderr, "  FAIL %s:%d: ", __FILE__, __LINE__); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
@@ -518,6 +520,94 @@ static void t_silence(void)
     remove(pa); remove(pb);
 }
 
+/* ======== 9. #37: the opening demo is silent until the title act ========= */
+/* GAME.BIN A080 hands a no-argument boot straight to opdemo, *before* it reads
+ * any level record, so the prologue plays over silence and the first score in
+ * the game is zopn.msd at the title (opdemo 622E, docs/CUTSCENES.md §2).  The
+ * port has to build its scaffold Game first, and that map's level-record score
+ * (fight.bin 7E93 -> the 9E53 table) used to start at boot and play through the
+ * whole prologue.  audio_music_hold() is what keeps the two apart: it gates the
+ * table path only, never audio_music_play_res(), which is how the cutscene
+ * overlays call INT 60h AX=0.                                               */
+#define ZOPN_RES  0x27                 /* ZELRES1[0x27]: cutscene.c R_ZOPN - 1 */
+static int intro_first_music;
+static void intro_present(Cutscene *c)
+{
+    if (intro_first_music < 0 && !audio_music_stopped()) intro_first_music = (int)c->frames;
+    c->key = 0;
+}
+static void t_intro_silence(void)
+{
+    static Cutscene c;
+    if (audio_init(G_DIR, AUDIO_ADLIB, 0)) { CHECK(0, "audio_init"); return; }
+    /* exactly what main.c does between audio_init() and run_cutscenes() */
+    audio_music_hold(1);
+    audio_music(4);                            /* shell_load_enemy_banks: MP10's mus1 */
+    CHECK(audio_music_stopped(), "the boot map's score does not start before the demo");
+    audio_music(0);                            /* and neither does a town's mgt1 */
+    CHECK(audio_music_stopped(), "nor a town record's score");
+    /* the demo's own INT 60h AX=0 is never held */
+    audio_music_play_res(0, ZOPN_RES);
+    CHECK(!audio_music_stopped(), "zopn.msd still plays while the level score is held");
+    audio_music_stop();
+
+    if (cutscene_init(&c, G_DIR, NULL)) { CHECK(0, "cutscene_init"); audio_shutdown(); return; }
+    size_t len = 0;
+    c.img = sar_load(G_DIR, 0, 0, 1, &len); c.imglen = len;
+    if (!c.img) { CHECK(0, "opdemo (ZELRES1[0])"); cutscene_free(&c); audio_shutdown(); return; }
+    c.present = intro_present;
+    c.max_frames = 6600;                       /* act 1 is 6465 frames (test_cutscene) */
+    intro_first_music = -1;
+    cutscene_act1(&c);
+    CHECK(intro_first_music >= 0, "act 1 starts a score at all (the title)");
+    /* frame 4000 is still the demon's warning ("Beware, for I shall wake..."),
+     * 4085 is 622E, the first frame of the title block */
+    CHECK(intro_first_music > 4000,
+          "the prologue, the storm and the demon are silent (first score at frame %d)",
+          intro_first_music);
+    CHECK(intro_first_music == 4085,
+          "and zopn.msd starts with the title screen at 622E (frame %d)", intro_first_music);
+    cutscene_free(&c);
+
+    /* ...and the same thing end to end, through main.c's own boot order, which
+     * is where the bug actually was: `zeliard --intro-act 1` opens the audio,
+     * builds the scaffold Game (map 0 = MP10, score mus1) and then runs the
+     * demo, so the first 200 frames of the prologue have to render bit-silent. */
+    if (access("./zeliard", X_OK) == 0) {
+        const char *wav = "/tmp/zel_intro_silence.wav";
+        char cmd[512];
+        remove(wav);
+        snprintf(cmd, sizeof cmd,
+                 "./zeliard --dir %s --intro-act 1 --cutscene-frames 200 "
+                 "--screenshot 1 /dev/null --dump-audio %s >/dev/null 2>&1", G_DIR, wav);
+        if (system(cmd) == 0) {
+            FILE *f = fopen(wav, "rb");
+            CHECK(f != NULL, "the intro dump %s was written", wav);
+            if (f) {
+                fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 44, SEEK_SET);
+                long loud = 0, samples = (n - 44) / 2;
+                for (long i = 0; i < samples; i++) {
+                    unsigned char b[2];
+                    if (fread(b, 1, 2, f) != 2) break;
+                    if ((int16_t)(b[0] | b[1] << 8)) loud++;
+                }
+                fclose(f);
+                CHECK(samples > 8000, "3.4 s of the prologue was rendered (%ld samples)", samples);
+                CHECK(loud == 0, "and it is bit-silent: no level score plays over the "
+                                 "opening demo (%ld non-zero samples)", loud);
+            }
+            remove(wav);
+        }
+    }
+
+    /* opdemo 6A41 hands back: from here a level entry may start its score */
+    audio_music_stop();
+    audio_music_hold(0);
+    audio_music(0);                            /* shell_enter_town -> town.bin 60A9 */
+    CHECK(!audio_music_stopped(), "the town score starts once the demo is over");
+    audio_shutdown();
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -533,7 +623,7 @@ int main(int argc, char **argv)
         {"music table", t_music_table}, {"tick/tempo", t_tempo},
         {"score parser", t_parser}, {"volume clamp", t_volume_clamp},
         {"FF75 effects", t_sfx}, {"OPL2 core", t_opl}, {"note pitch", t_pitch},
-        {"silence/dump", t_silence},
+        {"silence/dump", t_silence}, {"intro silence", t_intro_silence},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = fails;

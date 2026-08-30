@@ -14,7 +14,8 @@
  *      the bar through video [200C];
  *   3. moves, and rebuilds the whole record list from its part buffer.
  * At HP 0 it sets boss_cutscene, runs a 40-frame death (boss_dying) and then
- * boss_defeated, whereupon fight.bin awards [A002]+5 EXP and +B gold and runs
+ * boss_defeated, whereupon fight.bin awards [A002]+5 EXP and +B ALMAS (71F2 calls
+ * 917C, the almas adder - NOT gold; see docs/FIGHT.md "The two purses") and runs
  * post_boss_transition(). */
 #ifndef ZEL_BOSS_H
 #define ZEL_BOSS_H
@@ -34,7 +35,7 @@ const char *boss_overlay_name(int ai_index);
 int  boss_init(Game *g);
 /* 8D1D: one call per frame, replacing the whole enemy pass. */
 void boss_update(Game *g);
-/* 71CC: EXP + gold once boss_defeated and boss_state == 0xFF. */
+/* 71CC: EXP + almas once boss_defeated and boss_state == 0xFF. */
 void boss_rewards(Game *g);
 /* 72F1: swap in the post-boss AI/enemy banks, clear FF34, apply the level
  * record's pokes and move the exit door to the hero's column.  The port asks

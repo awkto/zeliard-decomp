@@ -8,6 +8,8 @@
 #include "town.h"
 #include "player.h"
 #include "enemy.h"
+#include "shell.h"
+#include "render.h"
 
 static int fails = 0, checks = 0;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { fails++; fprintf(stderr, "  FAIL %s:%d: ", __FILE__, __LINE__); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
@@ -431,6 +433,90 @@ static void t_capture_routes(const char *dir)
     }
 }
 
+/* ------------------------------------------------- the edge-exit hand-off */
+/* #38: walking off Felishika's Castle's right edge into Muralla is town.bin
+ * 6CF5 -> change_town_map (6D30) -> the re-entry at 60B7, which does *not*
+ * repaint the backdrop -- the ympd panorama and the near strips stay on screen
+ * exactly as GT_CAPTURE_BACKDROP left them.  The port has to re-point the Town
+ * at the shell's TownBackdrop after town_init() memsets it, or rows 14..101
+ * come out as flat sky and the mountains vanish.  Everything below is driven
+ * through the real shell, so it is the code path the game takes.            */
+static uint8_t EFB[FB_W * FB_H];
+static uint8_t edge_dirs;
+static void edge_present(Town *t) { t->dirs = edge_dirs; t->btn1_edge = t->btn2_edge = 0; }
+static void edge_game_present(Game *g) { (void)g; }
+
+static void t_edge_backdrop(const char *dir)
+{
+    static Shell s;
+    memset(&s, 0, sizeof s);
+    s.quiet = 1;
+    if (shell_init(&s, dir, 0)) { fprintf(stderr, "  (no resources)\n"); return; }
+    s.present = edge_game_present; s.town_present = edge_present;
+    if (!shell_enter_town(&s.g, 0, -1, 0)) { CHECK(0, "shell_enter_town(cmap)"); return; }
+    CHECK(s.town.back == &s.tback && s.tback.loaded, "entering a town points it at the ympd panorama");
+    /* GAME.BIN A1CB -> town.bin 601E: the boot reads the hero's town position
+     * out of the page, which on a new game is STDPLY.BIN's [80]/[83] */
+    town_page_pull(&s.town);
+    CHECK(s.town.scroll_col == 30 && s.town.hero_scr_col == 10,
+          "the castle boots at STDPLY's scroll 30 / screen column 10, got %d / %d",
+          s.town.scroll_col, s.town.hero_scr_col);
+    unsigned tr = s.transitions;
+    edge_dirs = DIR_RIGHT;
+    int steps = 0;
+    while (s.transitions == tr && steps < 4000) { shell_frame(&s); steps++; }
+    CHECK(s.transitions > tr, "walking right leaves cmap for the next town (%d frames)", steps);
+    CHECK(s.tmap.width == 215 && s.town.map == &s.tmap, "and lands in Muralla (215 columns), got %d", s.tmap.width);
+    /* 6D22: off the right edge -> the left end of the new map, phase 0 */
+    CHECK(s.town.scroll_col == 0 && s.town.hero_scr_col == 0,
+          "at its left end (scroll %d, scr %d)", s.town.scroll_col, s.town.hero_scr_col);
+    /* 60B7 does not repaint: the strip phase carries over from cmap, where the
+     * hero scrolled (114 - 0x24) - 30 = 48 columns since the painter ran */
+    CHECK(s.town.back_steps == 48, "carrying cmap's 48 columns of parallax phase (%d)", s.town.back_steps);
+    /* the bug: town_init() memsets ->back and the hand-off never restored it */
+    CHECK(s.town.back == &s.tback, "the new town still has the backdrop (#38)");
+    town_render(EFB, &s.town);
+    int flat = 0, nz = 0;
+    for (int y = 14; y < 78; y++)
+        for (int x = 48; x < 272; x++) {
+            uint8_t v = EFB[y * FB_W + x];
+            if (v == 0x2C) flat++;
+            if (v && v != 0x2C) nz++;   /* the flat fallback is 0x2C everywhere */
+        }
+    CHECK(flat < 14336, "the sky band is not the flat 0x2C fallback (%d/%d px)", flat, 64 * 224);
+    CHECK(nz > 6000, "the mountains are painted after the edge exit (%d lit px)", nz);
+    /* and keep walking to the far end: the whole of Muralla scrolls under the
+     * same panorama, which is what docs/screenshots/town.png captures */
+    while (s.town.scroll_col < s.tmap.width - 0x24 && steps < 8000) { shell_frame(&s); steps++; }
+    CHECK(s.town.scroll_col == s.tmap.width - 0x24, "the hero reaches Muralla's right end");
+    CHECK(s.town.back_steps == 48 + s.town.scroll_col,
+          "the strips have rotated once per scrolled column, cmap's 48 included (%d vs %d)",
+          s.town.back_steps, s.town.scroll_col);
+    town_render(EFB, &s.town);
+    nz = 0;
+    for (int y = 14; y < 78; y++) for (int x = 48; x < 272; x++)
+        { uint8_t v = EFB[y * FB_W + x]; nz += (v && v != 0x2C); }
+    CHECK(nz > 6000, "and the panorama is still there at the far end (%d lit px)", nz);
+    /* GT_SCROLL_NEAR_RIGHT slides the strips the same way the map goes -- one
+     * more scrolled column moves the y142 strip 8 px *left*, the y150 strip 16
+     * (town.c blit_strip; measured against the town_castle / town_edge_*
+     * captures).  The port used to rotate them the other way. */
+    {
+        static uint8_t FB2[FB_W * FB_H];
+        int s0 = s.town.back_steps;
+        s.town.back_steps = s0 + 1;
+        town_render(FB2, &s.town);
+        s.town.back_steps = s0;
+        int ok142 = 1, ok150 = 1;
+        for (int x = 48; x + 16 < 272; x++) {
+            if (FB2[142 * FB_W + x] != EFB[142 * FB_W + x + 8]) ok142 = 0;
+            if (FB2[150 * FB_W + x] != EFB[150 * FB_W + x + 16]) ok150 = 0;
+        }
+        CHECK(ok142, "a scrolled column slides the y142 strip 8 px left");
+        CHECK(ok150, "and the y150 strip 16 px left");
+    }
+}
+
 /* The static screen art nothing in fight.bin or town.bin owns: mole.bin's
  * frame + HUD panel (GAME.BIN A185) and the two backdrop painters. */
 static void t_art(const char *dir)
@@ -536,6 +622,7 @@ int main(int argc, char **argv)
         {"edges", t_edges}, {"npcs", t_npcs}, {"sentry", t_sentry}, {"hand-off", t_handoff},
         {"dialogue menu", t_dialogue_menu},
         {"save file", t_save}, {"capture routes", t_capture_routes},
+        {"edge backdrop", t_edge_backdrop},
         {"screen art", t_art},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {

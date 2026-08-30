@@ -929,11 +929,21 @@ static void blit_cell8(uint8_t *fb, const Cell8 *c, const uint8_t sky[8][8],
 /* GT_SCROLL_FAR_* / GT_SCROLL_NEAR_* (gtmcga 3677/3628): a walking step that
  * scrolls the map slides the y14 strip 4 px, the y142 strip 8 and the y150
  * strip 16, all three 112 px wide and repeated once.  The vectors rotate the
- * pixels where they lie, so the phase is `back_steps * step` modulo 112 --
- * steps taken since the backdrop painter last drew the strips, not
- * `scroll_col * step`.  The two agree everywhere the hero walked in from an
- * edge (Muralla at scroll_col 179 is 88 px / 64 px along) and differ after an
- * F7 restore into a scrolled town, which is how it was measured. */
+ * pixels where they lie, so the phase is the number of scrolled columns since
+ * the backdrop painter last drew the strips (`back_steps`), not `scroll_col`.
+ *
+ * The strips slide the *same way the map does* -- left when the hero walks
+ * right -- so the phase is **-back_steps** x {4,8,16} modulo 112.  Measured
+ * against eleven DOSBox frames of one continuous walk from Felishika's Castle
+ * into Muralla (docs/screenshots/town_castle.png,
+ * town_edge_walkin.png, town_edge_walked.png; port/README.md "The town
+ * parallax phase"): in each town the strip phase index fits
+ * `(entry_scroll_col - scroll_col) mod 14` exactly -- cmap 30 -> 0, 36 -> 8,
+ * 49 -> 9, 61 -> 11, 74 -> 12, 78 -> 8; mrmp 0 -> 8, 15 -> 7, 22 -> 0,
+ * 40 -> 10, 179 -> 11.  `docs/screenshots/town.png` alone cannot see the sign:
+ * 179 and -(48+179) are both 11 mod 14.  ckpd's far strip has the same
+ * sign by construction; every underground capture is an entry frame, so
+ * its phase is 0 and nothing measures it. */
 static void blit_strip(uint8_t *fb, const uint8_t strip[][112], int rows, int y, int shift)
 {
     shift = ((shift % 112) + 112) % 112;
@@ -966,10 +976,10 @@ void town_render(uint8_t *fb, const Town *t)
     if (bd) {
         for (int y = bd->back_y0; y < bd->back_y1 && y < TOWN_Y; y++)
             memcpy(fb + y * FB_W + 48, bd->back + y * FB_W + 48, 224);
-        if (bd->has_far) blit_strip(fb, bd->far14, 16, 14, t->back_steps * 4);
+        if (bd->has_far) blit_strip(fb, bd->far14, 16, 14, -t->back_steps * 4);
         else for (int y = 14; y < bd->back_y0; y++) memset(fb + y * FB_W + 48, 0, 224);
-        blit_strip(fb, bd->near142, 8, 142, t->back_steps * 8);
-        blit_strip(fb, bd->near150, 8, 150, t->back_steps * 16);
+        blit_strip(fb, bd->near142, 8, 142, -t->back_steps * 8);
+        blit_strip(fb, bd->near150, 8, 150, -t->back_steps * 16);
     } else {
         for (int y = 14; y < TOWN_Y; y++) memset(fb + y * FB_W + 48, SKY_IDX, 224);
     }

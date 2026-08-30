@@ -110,9 +110,9 @@ void shell_load_enemy_banks(Shell *s, const Map *m)
     g->boss_room = (uint8_t)((m->lvl_flags & 0x40) ? 0xFF : 0);         /* -> [E6] */
     if (g->boss_map || g->boss_room) {
         if (boss_init(g) == 0)
-            LOG(s, "[boss] %s \"%s\": HP %u, EXP %u, gold %u, camera column %u%s\n",
+            LOG(s, "[boss] %s \"%s\": HP %u, EXP %u, almas %u, camera column %u%s\n",
                 boss_overlay_name(m->ai), g->boss.name, g->boss.hp0, g->boss.exp,
-                g->boss.gold, g->boss.cam_col, g->boss.knock_left ? ", knocks left" : "");
+                g->boss.almas, g->boss.cam_col, g->boss.knock_left ? ", knocks left" : "");
         else fprintf(stderr, "[boss] overlay %d has no [A002] block\n", m->ai);
     } else {
         g->boss.active = 0; g->boss_knock_left = 0; g->encounter_frames = 0;
@@ -265,9 +265,17 @@ static void town_frame(Shell *s)
         town_apply_patches(&s->tmap, g->page);
         if (town_load_banks(s)) break;
         audio_music(s->tmap.music);
+        /* 6CE1/6D1F -> change_town_map (6D30) re-enters town.bin at 60B7, not
+         * at 601E, so load_backdrop_module / GT_CAPTURE_BACKDROP never run: the
+         * ympd panorama and the parallax strips stay on screen exactly as the
+         * old map left them.  The phase therefore *carries over* (measured:
+         * Muralla's entry frame is 8 columns along, which is cmap's 78-30). */
+        int carried_steps = t->back_steps;
         town_init(t, &s->tmap, &s->ttiles, &s->tspr, &s->thero, g);
+        t->back_steps = carried_steps;
         t->user = s; t->present = s->town_present;
         t->font = &s->tfont; t->dir = s->dir; t->pics = &s->pics;
+        t->back = &s->tback;                                            /* still painted: #38 */
         /* 6CE4 / 6D22: reappear at the far end of the new map */
         t->scroll_col = left ? s->tmap.width - 0x24 : 0;
         t->hero_scr_col = left ? 0x1A : 0;

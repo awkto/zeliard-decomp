@@ -2831,3 +2831,34 @@ coin arm calls it.  The HUD was never wrong: `render_hud` already reads
 `docs/FIGHT.md` §8 says "`8FC0` pays 100 **gold**" and `src/fight.c`'s
 `gold_add` comment says `917C` — both should say almas.
 
+### The intro must be silent (#37)
+
+`GAME.BIN A080` reads `[FF77]` and, with no command-line argument, jumps into opdemo
+*before* it has read any level record; the first score the game plays is `zopn.msd` at the
+title (opdemo `622E`).  The port has to build its scaffold `Game` first, and
+`shell_load_enemy_banks` ends with the level record's `audio_music()` (fight.bin `7E93`),
+so MP10's **mus1** used to start at frame 0 and play over the whole prologue.
+`audio_music_hold()` gates the 9E53-table path only — `audio_music_play_res()`, which is how
+opdemo/enddemo/rokademo call INT 60h AX=0, is never held — and `main.c` holds it from before
+`shell_init` until the demo hands back at `6A41`.  `--music N` clears the hold.
+
+### The edge exit keeps the backdrop (#38)
+
+`check_edge_exit` (`6CB5`/`6CF5`) reaches `change_town_map` (`6D30`) and re-enters town.bin at
+**`60B7`**, not `601E`.  Everything above `60B7` — `load_backdrop_module` (`6AAF`),
+`load_tileset_and_paint_backdrop` (`6AA2`), `GT_CAPTURE_BACKDROP` — is skipped, so the ympd
+panorama, the captured y78..101 strip and the parallax strips stay on screen exactly as the
+previous map left them.  The port's `TOWN_TO_TOWN` hand-off calls `town_init()`, which
+`memset`s the `Town`, and it restored `user`/`present`/`font`/`dir`/`pics` but **not `back`**:
+walking from the castle into Muralla left `t->back` NULL, so `town_render` painted rows 14..77
+flat `SKY_IDX` and the mountains vanished.  One line missing since Sprint 17.
+
+### The town parallax phase, and where the hero starts
+
+The strips slide the same way the map does, so the phase is `-back_steps * {4, 8, 16}` mod 112,
+not `+`.  Eleven DOSBox frames of one held-Right walk fit `(entry_scroll_col - scroll_col) mod 14`
+exactly in both towns.  `town.png` alone is blind to the sign (179 and -(48+179) are both 11 mod
+14), which is why the EGA strip box passed either way.  Separately, `GAME.BIN A1CB` enters town.bin
+with the page holding `[80]`/`[83]` — STDPLY.BIN's scroll 30 / column 10 — while the map's `C013`
+is the *death* return; the port was booting the castle at scroll 17 / column 34.
+`playthrough.c` still uses `C013` for its castle entry: same bug, tracked separately.

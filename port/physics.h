@@ -76,7 +76,7 @@ typedef struct Boss {
     uint8_t  knock_left;            /* +8  -> 9F01 */
     uint16_t name_ptr;              /* +9  -> {u8 x4, u8 y, u8 xoff, u8 len, chars} */
     uint8_t  name_x4, name_y, name_xoff;   /* that record's own position (6162) */
-    uint16_t gold;                  /* +B */
+    uint16_t almas;                 /* +B  the award feeds 917C, the almas adder */
     char     name[24];
     /* live state */
     uint16_t col; uint8_t row;      /* the boss's top-left map cell */

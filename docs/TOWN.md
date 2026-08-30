@@ -186,6 +186,16 @@ and derives the transparency mask from the *original* colour: colour 0 = transpa
 the hero frame tables are in town.bin (6A3B left / 6A59 right, 0-based, 5 frames: 4 walk + back
 view).  NPC frame = `arena:4000 + sprite*48 + ((anim&3) + 4*facing_right)*6` (34EC).
 
+### 4.2a Where the hero starts in a town
+
+`GAME.BIN A1CB` enters town.bin at `601E` with the page already holding the hero's town
+position — `[80]` scroll_col and `[83]` hero_scr_col — which on a new game is **STDPLY.BIN's
+`1E 00` / `0A` = scroll 30, screen column 10, map column 44** in Felishika's Castle, and after
+an F7 restore is the saved pair.  The map's own `[C013]` start column is **only the death
+return** (`99F4`).  An edge exit uses neither: `change_town_map` (`6D30`) re-enters at `60B7`,
+below the backdrop painter, so the panorama, the captured y78..101 strip and the parallax
+strips all carry over from the previous map exactly as it left them.
+
 ### 4.3 Screen layout and parallax
 
 | y | content |
@@ -193,7 +203,7 @@ view).  NPC frame = `arena:4000 + sprite*48 + ((anim&3) + 4*facing_right)*6` (34
 | 14..29 | far backdrop strip, scrolled 4 px per step — **underground (`ckpd`) only**.  Above ground `ympd` paints a single 224×88 panorama at (48,14), so these rows are part of it and never scroll |
 | 30..77 | backdrop painted by ympd/ckpd (mountains / cave ceiling), static.  Both painters actually reach **y 101**, not 77 — rows 78..101 are the strip `GT_CAPTURE_BACKDROP` grabs |
 | 78..141 | the 8 map rows (28 × 8 px cells at x = 48 + col*8); rows 0-2 show the strip captured from y 78..101 behind masked pixels |
-| 142..149 / 150..157 | near ground strips scrolled 8 / 16 px per step (`GT_SCROLL_NEAR_*`).  gtmcga rotates the strips **in place**, so the phase is (steps walked since the backdrop painter last ran) × `{4, 8, 16}` modulo their own 112 px width — equal to `scroll_col × {4,8,16}` only when the hero walked in from an edge (as in `town.png` at `scroll_col` 179 = 88 px / 64 px along), and **0 after an F7 restore into a scrolled town** (measured against DOSBox restoring into Helada at column 86: a `scroll_col`-derived phase is 52/104/96 px out) |
+| 142..149 / 150..157 | near ground strips scrolled 8 / 16 px per step (`GT_SCROLL_NEAR_*`).  gtmcga rotates the strips **in place** and they slide the *same way the map does*, so the phase is **−(steps scrolled since the backdrop painter last ran) × `{4, 8, 16}`** modulo their own 112 px width.  `town.png` alone is blind to the sign (Muralla at `scroll_col` 179: 179 and −(48+179) are both 11 mod 14), but eleven frames of one continuous held-Right walk from Felishika's Castle into Muralla fit `(entry_scroll_col − scroll_col) mod 14` exactly in both towns — cmap 30→0, 36→8, 49→9, 61→11, 74→12, 78→8; mrmp 0→8, 15→7, 22→0, 40→10, 179→11.  It is **0 after an F7 restore** (a restore is a full `town_entry`, so the painter runs) but is **not** reset by an edge exit, because `change_town_map` re-enters at `60B7`, below the painter |
 | 158.. | HUD (LIFE bar, PLACE, GOLD `[85..87]`, ALMAS `[8B]`, sword/item/magic icons) |
 
 Hero: screen column `hero_scr_col` (0..0x1B), rows 5-7; NPCs on row 5-7 too.  Dialogue boxes:
