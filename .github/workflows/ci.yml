@@ -80,9 +80,11 @@ jobs:
             echo "no libSDL2 in the headless build, as expected"
           fi
 
-      # 1885 assertions in 10 binaries.  Six of them always skipped their
+      # The whole suite, 10 binaries.  Six of them always skipped their
       # data-dependent half; test_playthrough and test_cutscene learned to do
-      # the same, so the whole target is green without `zeliard/`.
+      # the same, so the whole target is green without `zeliard/`.  (The
+      # assertion totals live in port/README.md and are checked by the target
+      # itself -- tools/check_counts.sh -- so they are not repeated here.)
       - name: make test
         working-directory: port
         run: make test $MAKEFLAGS_EXTRA
@@ -107,6 +109,32 @@ jobs:
           else
             echo "SKIP: make playthrough needs the original game files in zeliard/."
           fi
+
+  # ---------------------------------------------------------- sanitizers ---
+  # The same suite under AddressSanitizer + UBSan (gcc), leak check included:
+  # `make SAN=1 test` is leak-clean since #45 and must stay that way.  Then a
+  # short libFuzzer smoke run over the resource-parser harnesses (clang).
+  # Both halves run with no game files: the tests skip their data half, and
+  # the fuzzers start from an empty corpus -- the seed corpus is carved out of
+  # the copyrighted game files, so `make fuzz-corpus` skips loudly here and
+  # only a runner that materialises `zeliard/` gets seeded runs.
+  sanitizers:
+    name: sanitizers + fuzz smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: make SAN=1 test (ASan + UBSan + LeakSanitizer)
+        working-directory: port
+        run: |
+          make -j"$(nproc)" SAN=1 SDL_CFLAGS= SDL_LIBS=
+          make SAN=1 test SDL_CFLAGS= SDL_LIBS=
+
+      - name: fuzz smoke (libFuzzer, 30 s per harness)
+        working-directory: port
+        run: |
+          clang --version
+          make fuzz-smoke FUZZ_TIME=30
 
   # ---------------------------------------------------------------- tools/ ---
   tools:
