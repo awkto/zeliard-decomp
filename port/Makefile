@@ -23,6 +23,17 @@ ifneq ($(strip $(SDL_LIBS)),)
 endif
 LIBS += -lm
 
+# `make SAN=1 test` builds and links everything with AddressSanitizer and
+# UndefinedBehaviorSanitizer.  The flags have to reach the *link* too, which is
+# why this is a switch rather than something to pass in CFLAGS by hand.  -O1
+# keeps the stack traces readable; the tests run 200k+ simulated frames, so the
+# slowdown is worth measuring before wiring it into a tight loop.
+ifeq ($(SAN),1)
+  CFLAGS := $(filter-out -O2,$(CFLAGS)) -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all
+  LIBS   += -fsanitize=address,undefined
+endif
+
 all: zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video
 
 zeliard: main.o $(CORE)

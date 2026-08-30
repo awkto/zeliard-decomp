@@ -96,6 +96,11 @@ static void t_info(void)
 /* ------------------------------------------------------------ the real mp1d */
 static int load_boss_map(void)
 {
+    /* Callable more than once -- t_boss_reward reloads for a pristine map --
+     * and `ai_load` memsets the overlay before it loads, so without releasing
+     * what we hold the first image is orphaned.  `make SAN=1 test` found it. */
+    ai_unload(&ovl);
+    map_free(&bmap);
     if (map_load_system(&bmap, G_DIR, 1)) return -1;                /* system map 1 = MP1D */
     if (gfx_load_tileset(&btiles, G_DIR, bmap.tileset)) return -1;
     if (ai_load(&ovl, G_DIR, bmap.ai)) return -1;
@@ -347,8 +352,7 @@ static void t_post_boss(void)
         CHECK((bmap.objs[0].flags & 0x20) != 0, "it is an event object (flags %02X)", bmap.objs[0].flags);
     }
     CHECK(G.page[0] == 0xFF && G.page[1] == 0xFF, "the [0000] poke set the story flag pair");
-    /* re-load so a later run sees the pristine map */
-    map_free(&bmap);
+    /* re-load so a later run sees the pristine map (load_boss_map frees) */
     load_boss_map();
 }
 
@@ -808,5 +812,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "%-14s %s\n", tests[i].name, fails == before ? "ok" : "FAILED");
     }
     fprintf(stderr, "%d checks, %d failures\n", checks, fails);
+    /* load_boss_map's overlay is the one allocation in the suite that outlived
+     * its test; every other ai_load here is paired.  Freeing it lets `make
+     * SAN=1 test` finish leak-clean, so any future leak is a real signal. */
+    ai_unload(&ovl);
+    map_free(&bmap);
     return fails ? 1 : 0;
 }
