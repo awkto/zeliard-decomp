@@ -85,11 +85,14 @@ never goes near the SDL presentation path, so presentation work cannot cost fide
   scaffold that already exists in the `zeliard-android` sibling.  Note that neither
   `zeliard-wasm` nor `zeliard-android` contains any of this port today — both wrap the
   **original DOS binaries** (js-dos and DOSBox-X respectively).
-- **#45 — hardening and housekeeping.** The repository has **no LICENSE file**, which makes
-  everything above legally moot for anyone but its author; then a sanitizer CI job and
-  libFuzzer harnesses for the resource parsers, which matter exactly as much as the attack
-  surface does — "a user's own game dump" today, "files dropped onto a page" the moment a
-  web build exists.
+- **#45 — hardening and housekeeping.** DONE: an MIT LICENSE + NOTICE (the game data stays
+  user-supplied); `make SAN=1 test` runs the whole suite under ASan+UBSan **leak-clean**
+  (`shell_free()` tears down what `shell_init` and the bank loads acquire — Emscripten and
+  Android, #44, do not just exit); libFuzzer harnesses (`make fuzz`) cover `sar_decompress`,
+  `map_parse` and the `.grp`/loader walkers, and the three out-of-bounds walks they found
+  are fixed; CI runs the sanitizer suite and a fuzz smoke; and the assertion counts below
+  are now checked by `make test` itself (tools/check_counts.sh), so they cannot silently
+  drift again.
 
 ## Sub-issue index
 

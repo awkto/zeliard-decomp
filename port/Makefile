@@ -72,17 +72,27 @@ test_video: test_video.o $(CORE)
 %.o: %.c sar.h gfx.h map.h physics.h render.h video.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h nav.h playthrough.h opl2.h msd.h audio.h gd.h cutscene.h tear.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# Every binary's "N checks" line is collected so the last step can compare the
+# totals against the counts port/README.md and docs/ROADMAP.md quote -- they
+# drifted once (#45), and now `make test` itself goes red when they do again.
+# bash + pipefail so a failing binary is not masked by its tee.
+COUNTS = /tmp/zel_test_counts.txt
+
+test: SHELL := /bin/bash
+test: .SHELLFLAGS := -o pipefail -c
 test: test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video
-	./test_physics
-	./test_combat
-	./test_town
-	./test_boss
-	./test_shop
-	./test_status
-	./test_playthrough ../zeliard --quiet
-	./test_audio ../zeliard
-	./test_cutscene ../zeliard
-	./test_video ../zeliard
+	@rm -f $(COUNTS)
+	./test_physics 2>&1 | tee -a $(COUNTS)
+	./test_combat 2>&1 | tee -a $(COUNTS)
+	./test_town 2>&1 | tee -a $(COUNTS)
+	./test_boss 2>&1 | tee -a $(COUNTS)
+	./test_shop 2>&1 | tee -a $(COUNTS)
+	./test_status 2>&1 | tee -a $(COUNTS)
+	./test_playthrough ../zeliard --quiet 2>&1 | tee -a $(COUNTS)
+	./test_audio ../zeliard 2>&1 | tee -a $(COUNTS)
+	./test_cutscene ../zeliard 2>&1 | tee -a $(COUNTS)
+	./test_video ../zeliard 2>&1 | tee -a $(COUNTS)
+	tools/check_counts.sh $(COUNTS)
 
 # the same two routes with the step-by-step log (issue #26's acceptance run)
 playthrough: test_playthrough

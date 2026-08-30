@@ -598,14 +598,14 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   not scripted at all.  Shops are answered frame by frame: the driver pages the text
   with the select button and walks the cursor to the row the route names, using the
   `in_menu` / `menu_row` that `menu_select` now publishes.
-* `test_physics.c` — 139 assertions (idle, walk, walls, jumps, ceilings, gaps, edge
+* `test_physics.c` — 143 assertions (idle, walk, walls, jumps, ceilings, gaps, edge
   fall, ladders, conveyor, hazard, MP10 door/platform, elevators and the fixture-C
   patrol, locked doors + keys + the message-box lifetime, the C00C patch list, the
   26-frame walk-in, **and the ring/`[80]` alignment after scrolling both ways** —
   the last one walks MP10's entrance shelf 40 columns east and back and checks that
   ring column *i* is still map column `scroll_col + i` on every step, which is the
   regression guard for the `scroll_right` bug below).
-* `test_combat.c` — 149 assertions: the eai1 tables, the damage formulas, contact and
+* `test_combat.c` — 219 assertions: the eai1 tables, the damage formulas, contact and
   knockback, sword kills, EXP, drops, the bat wake window, the frog hop, **the eight
   projectile directions, the 31-shot cap, life/wall death, shot damage and the
   shield block; the cast state machine, the magic damage table, bolt speed, hit
@@ -613,7 +613,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   the sound stub; every eai overlay's A008/A010 tables and a 200-frame run of each
   cavern's AI; the tall (2×4) spawn**.  It also renders the DOSBox capture's scene
   for `make verify`.
-* `test_boss.c` — 594 assertions: the `[A002]` block of **all eleven** boss
+* `test_boss.c` — 628 assertions: the `[A002]` block of **all eleven** boss
   overlays against docs/ENEMIES.md §3 (HP, EXP, gold, camera column, knock-left,
   start cell, contact damage, the name record); mp1d's level record (boss bit 7,
   AI 1 = CRAB, bank +5, post-boss banks +6/+7, an *empty* C010 list and no door);
@@ -630,7 +630,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   boss takes no damage that frame, that the flag clears again the next frame and the
   blade lands, and that ZELA — one of the three overlays whose image has no
   `or byte [si+5],0x20` — never sets it while still taking the hit.
-* `test_shop.c` — 118 assertions: the font metrics and `format_number`; the
+* `test_shop.c` — 183 assertions: the font metrics and `format_number`; the
   STDPLY record and the page <-> Game mapping; the NAME.USR round trip (exactly
   256 bytes); **all nine rows of both the armour and the drug price tables**
   read out of the overlays and compared with docs/TOWN.md §7; the shield
@@ -645,7 +645,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   (level 0 + 120 EXP -> level 1, 120/120 LIFE, 70 EXP left) and the one-level
   clamp; and the first-visit spell + `[E5]` bit (Yasmin teaches spell 1, Marid
   teaches none).
-* `test_town.c` — 138 assertions: the mrmp header, doors, cave record, exits, NPCs,
+* `test_town.c` — 160 assertions: the mrmp header, doors, cave record, exits, NPCs,
   walker range and dialogue; the mpat block list; the walk/scroll model and the block
   list; the door ±1 window; the edge exit; NPC markers, the type-1 walker's 2-frame
   cadence and the type-3 facing rule; Space dialogue in and out of range; the
@@ -672,7 +672,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   `menu_result = 8`; selecting a spell into `[9D]` and wearing an item into
   `[9E]` through the real cursor; the row change; the Enter debounce; and the
   window frames and header colours in the rendered framebuffer.
-* `test_playthrough.c` — 38 assertions over two autopilot runs, two fixture
+* `test_playthrough.c` — 118 assertions over two autopilot runs, two fixture
   crossings and a survey of cavern 1's topology (`make playthrough` prints the
   routes step by step):
   * **route 1, the opening**, played end to end with nobody at the keyboard: the
@@ -728,7 +728,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     floorless gaps with the planner driving, westward over fix[2] (67 frames) and
     over fix[3] at row 53 (638 frames — the platform has to come back for him
     now that the executor waits for it instead of walking off its front).
-* `test_audio.c` — 305 assertions over the sound back end:
+* `test_audio.c` — 315 assertions over the sound back end:
   * **the score parser against `tools/msd2mid.py`**: all 17 scores in all three
     blob-B arrangements (AdLib, Tandy, PC speaker) are run through `msd.c`, and the
     decoded event stream — note on/off with velocity and the legato flag, drum hits,
