@@ -59,10 +59,10 @@ index e31e63f..b521035 100644
 +libmisc_a_SOURCES = clipboard.cpp cross.cpp ethernet.cpp ethernet_pcap.cpp ethernet_slirp.cpp ethernet_ethnet.cpp ethernet_nothing.cpp messages.cpp programs.cpp setup.cpp support.cpp regionalloctracking.cpp savestates.cpp shiftjis.cpp iconvpp.cpp mkdir_p.cpp zel_oracle.cpp
 diff --git a/src/misc/zel_oracle.cpp b/src/misc/zel_oracle.cpp
 new file mode 100644
-index 0000000..f7ecc93
+index 0000000..41af0a4
 --- /dev/null
 +++ b/src/misc/zel_oracle.cpp
-@@ -0,0 +1,343 @@
+@@ -0,0 +1,420 @@
 +/*
 + * zel_oracle.cpp -- Zeliard differential-test oracle (decomp-zel docs/HARNESS.md).
 + *
@@ -81,7 +81,9 @@ index 0000000..f7ecc93
 + *   ORACLE_PNG_EVERY  K: write frame_NNNNN.png every K trace frames (0 = never)
 + *   ORACLE_SETTLE     town boundaries to wait after the intro before F7 (default 20)
 + *   ORACLE_MAX_MS     emulated-ms watchdog for the whole run (default 600000)
-+ *   ORACLE_STALL_MS   while tracing, give up after this many emulated ms without a boundary (default 30000)
++ *   ORACLE_STALL_MS   while tracing, give up after this many emulated ms without any boundary (default 120000)
++ *   ORACLE_MENU_TICKS wait-loop boundaries: kernel ticks (FF1B) between two boundaries in a menu
++ *                     (default 4*[FF33], the frame length: 20 at speed 5)
 + *   ORACLE_DEBUG_MS   during boot, write boot_<ms>.png every N emulated ms (debugging)
 + */
 +#include <stdio.h>
@@ -122,7 +124,11 @@ index 0000000..f7ecc93
 +unsigned script_left = 0;
 +uint8_t script_dirs = 0, script_btns = 0;
 +unsigned png_every = 0, settle = 20;
-+unsigned long max_ms = 600000, debug_ms = 0, stall_ms = 30000, last_boundary_ms = 0;
++unsigned long max_ms = 600000, debug_ms = 0, stall_ms = 120000, last_boundary_ms = 0;
++unsigned menu_ticks = 0;             /* wait-loop boundaries: one per this many kernel ticks (0 = 4*[FF33]) */
++uint16_t last_tick = 0;              /* FF1B (free-running 236.7 Hz tick) at the last boundary */
++bool armed = false;                  /* a wait loop was just entered: its first poll is a boundary */
++unsigned long menu_boundaries = 0;
 +bool do_load = false;
 +unsigned long ms = 0;                /* emulated ms since start */
 +unsigned long phase_ms = 0;          /* ms at which the current boot phase started */
@@ -179,7 +185,8 @@ index 0000000..f7ecc93
 +}
 +
 +void finish(int code, const char *why) {
-+    logf("finish: %s (frames=%lu, harness rng calls=%lu, BASE:0918 entries=%lu)", why, frame, rng_total, dbg_0918);
++    logf("finish: %s (frames=%lu, wait-loop boundaries=%lu, harness rng calls=%lu, BASE:0918 entries=%lu, at %04X:%04X)",
++         why, frame, menu_boundaries, rng_total, dbg_0918, SegValue(cs), (unsigned)(uint16_t)reg_eip);
 +    if (f_jsonl) fclose(f_jsonl);
 +    if (f_base) fclose(f_base);
 +    if (state != ST_TRACE || code) write_png(outdir + "/final.png");
@@ -205,6 +212,7 @@ index 0000000..f7ecc93
 +    if ((s = getenv("ORACLE_SETTLE"))) settle = (unsigned)atoi(s);
 +    if ((s = getenv("ORACLE_MAX_MS"))) max_ms = strtoul(s, nullptr, 10);
 +    if ((s = getenv("ORACLE_STALL_MS"))) stall_ms = strtoul(s, nullptr, 10);
++    if ((s = getenv("ORACLE_MENU_TICKS"))) menu_ticks = (unsigned)atoi(s);
 +    if ((s = getenv("ORACLE_DEBUG_MS"))) debug_ms = strtoul(s, nullptr, 10);
 +    if ((s = getenv("ORACLE_LOAD"))) do_load = atoi(s) != 0;
 +    unknown = new std::map<uint16_t, unsigned long>();
@@ -279,7 +287,9 @@ index 0000000..f7ecc93
 +
 +void key(KBD_KEYS k, bool down) { KEYBOARD_AddKey(k, down); }
 +
-+void on_boundary(uint16_t site) {
++/* site: 0x717F / 0x68ED (the frame loops, name = the hex address), or a wait-loop
++ * site (name given, ip = where the CPU actually was; written as an extra "ip" key) */
++void on_boundary(uint16_t site, const char *name = nullptr, uint16_t ip = 0) {
 +    if (site == 0x68ED) town_boundaries++;
 +    if (state == ST_RESTORE_KEYS && restored && site == 0x68ED)
 +        logf("warning: town frame before the restore key sequence ended; not frame 0");
@@ -293,8 +303,15 @@ index 0000000..f7ecc93
 +    }
 +    if (state != ST_TRACE) return;
 +    last_boundary_ms = ms;
-+    fprintf(f_jsonl, "{\"f\":%lu,\"site\":\"%04X\",\"base\":\"0x%04X\",\"rng_calls\":%u,\"input\":\"%s\"}\n",
-+            frame, site, oracle_base_seg, rng_calls, cur_input.c_str());
++    last_tick = (uint16_t)(base_ptr(0)[0xFF1B] | (base_ptr(0)[0xFF1C] << 8));
++    armed = false;
++    if (name) {
++        menu_boundaries++;
++        fprintf(f_jsonl, "{\"f\":%lu,\"site\":\"%s\",\"base\":\"0x%04X\",\"rng_calls\":%u,\"input\":\"%s\",\"ip\":\"%04X\"}\n",
++                frame, name, oracle_base_seg, rng_calls, cur_input.c_str(), ip);
++    } else
++        fprintf(f_jsonl, "{\"f\":%lu,\"site\":\"%04X\",\"base\":\"0x%04X\",\"rng_calls\":%u,\"input\":\"%s\"}\n",
++                frame, site, oracle_base_seg, rng_calls, cur_input.c_str());
 +    fwrite(base_ptr(0), 1, 65536, f_base);
 +    if (png_every && frame % png_every == 0) {
 +        char name[64]; snprintf(name, sizeof name, "/frame_%05lu.png", frame);
@@ -307,6 +324,65 @@ index 0000000..f7ecc93
 +    frame++;
 +}
 +
++/* ---------------------------------------------------------------- wait loops
++ * The shops, the status screen, the sage and the yes/no widget have no frame: they
++ * spin on idle_poll / int 61h until a key arrives (docs/HARNESS.md §1, §6).  Their
++ * boundary is the loop's poll instruction, taken (a) on the first poll after the
++ * loop's entry ("armed") and (b) after that whenever >= menu_ticks kernel ticks
++ * (FF1B) have passed since the previous boundary of any kind.  Every site is
++ * recognised by its own code bytes, so a different overlay at the same IP cannot
++ * fire it. */
++const uint8_t SIG_WAITKEY[] = {0xC6,0x06,0x1D,0xFF,0x00,0xC6,0x06,0x1E,0xFF,0x00,0xE8,0x56,0xFE,0xA0,0x1D,0xFF}; /* town 71DF */
++const uint8_t SIG_MENUSEL[] = {0xC6,0x06,0x1D,0xFF,0x00,0xC6,0x06,0x1E,0xFF,0x00,0x53,0xE8,0x17,0x01,0x5B,0x53,
++                               0xE8,0xEB,0xFC,0x5B,0xC6,0x06,0x1A,0xFF,0x00};                                   /* town 7344 */
++const uint8_t SIG_SELECT[]  = {0x2E,0xFF,0x16,0x10,0x01,0x2E,0xFF,0x16,0x12,0x01,0x2E,0xFF,0x16,0x14,0x01,0x2E,0xFF,
++                               0x16,0x16,0x01,0x2E,0xFF,0x16,0x18,0x01,0xF6,0x06,0x01,0xAE,0xFF};               /* select AA58 */
++const uint8_t SIG_SEL_OPEN[] = {0xE8,0xD1,0x09,0x1A,0xC0,0xA2,0x01,0xAE,0x32,0xC9};                            /* select A084 */
++const uint8_t SIG_SEL_DISP[] = {0x8A,0x1E,0xF9,0xAD,0x32,0xFF,0x03,0xDB,0xFF,0xA7,0xC4,0xA0};                  /* select A0B8 */
++const uint8_t SIG_OMOY[]    = {0xC6,0x06,0x1D,0xFF,0x00,0x2E,0xFF,0x16,0x16,0x60,0xF6,0x06,0x1D,0xFF,0xFF,0x74,0xF4}; /* omoypro A044 */
++const uint8_t SIG_KENJ_ARM[] = {0xC6,0x06,0x1D,0xFF,0x00,0xC6,0x06,0x1E,0xFF,0x00,0xC6,0x06,0x56,0xFF,0x00,0xC6,0x06,0x24,0xBB,0x00}; /* kenjpro A568 */
++const uint8_t SIG_KENJ[]    = {0x2E,0xFF,0x16,0x16,0x60,0xC6,0x06,0x1A,0xFF,0x00,0xF6,0x06,0x1E,0xFF,0xFF,0xF9}; /* kenjpro A592 */
++const uint8_t SIG_BANK_ARM[] = {0xC6,0x06,0x29,0xAD,0x00,0xC7,0x06,0x2A,0xAD,0x00,0x00};                       /* bankpro A295 */
++const uint8_t SIG_BANK[]    = {0xCD,0x61,0xE8,0x4F,0x03,0xF6,0xC4,0x01};                                        /* bankpro A2D8 */
++#define MATCH(off, sig) match(off, sig, sizeof sig)
++
++inline bool select_loaded() { return MATCH(0xAA58, SIG_SELECT) && MATCH(0xA084, SIG_SEL_OPEN); }
++
++void menu_poll(const char *name, uint16_t ip) {
++    uint16_t now = (uint16_t)(base_ptr(0)[0xFF1B] | (base_ptr(0)[0xFF1C] << 8));
++    unsigned n = menu_ticks;
++    if (!n) { uint8_t sp = base_ptr(0)[0xFF33]; n = (sp >= 1 && sp <= 9) ? 4u * sp : 20u; }
++    if (!armed && (uint16_t)(now - last_tick) < n) return;
++    on_boundary(0, name, ip);
++}
++
++/* arm points (a wait loop's entry) and poll sites; called for every instruction in BASE while tracing */
++void menu_check(uint16_t ip, const uint8_t *p) {
++    switch (ip) {
++    case 0x71DF: if (MATCH(0x71DF, SIG_WAITKEY)) armed = true; return;          /* town wait_key */
++    case 0x71EC: if (MATCH(0x71DF, SIG_WAITKEY)) menu_poll("71EC", ip); return;  /*   its test of FF1D|FF1E */
++    case 0x7344: if (MATCH(0x7344, SIG_MENUSEL)) armed = true; return;          /* town menu_select (+ yes_no) */
++    case 0x7358: if (MATCH(0x7344, SIG_MENUSEL)) menu_poll("7358", ip); return;  /*   its poll, before the tests */
++    case 0xA044: if (MATCH(0xA044, SIG_OMOY)) armed = true; return;             /* omoypro: wait for Space */
++    case 0xA04E: if (MATCH(0xA044, SIG_OMOY)) menu_poll("omoy:A04E", ip); return;
++    case 0xA568: if (MATCH(0xA568, SIG_KENJ_ARM) && MATCH(0xA592, SIG_KENJ)) armed = true; return;  /* kenjpro name entry */
++    case 0xA597: if (MATCH(0xA592, SIG_KENJ)) menu_poll("kenj:A597", ip); return;
++    case 0xA295: if (MATCH(0xA295, SIG_BANK_ARM) && MATCH(0xA2D8, SIG_BANK)) armed = true; return;  /* bankpro amount entry */
++    case 0xA2D8: if (MATCH(0xA2D8, SIG_BANK) && MATCH(0xA295, SIG_BANK_ARM)) menu_poll("bank:A2D8", ip); return;
++    case 0xA08C: case 0xA0B8:                                                   /* select: opened / pane dispatch */
++        if (select_loaded() && (ip == 0xA08C || MATCH(0xA0B8, SIG_SEL_DISP))) armed = true;
++        return;
++    case 0xAA58:                                                                /* select idle_poll, not the A084 probe */
++        if (select_loaded() && mem_readw(SegPhys(ss) + (uint16_t)reg_esp) != 0xA087) menu_poll("select:AA58", ip);
++        return;
++    default:
++        /* select's release waits (A0D2 A174 A1C3 A25F A2C1 A373 ...) spin on int 61h alone */
++        if (ip >= 0xA000 && ip < 0xB000 && p[0] == 0xCD && p[1] == 0x61 && select_loaded())
++            menu_poll("select:AA58", ip);
++        return;
++    }
++}
++
 +} // namespace
 +
 +/* Called by the normal core before each instruction while CS == BASE. */
@@ -314,10 +390,11 @@ index 0000000..f7ecc93
 +    if (cpu.pmode) return;
 +    uint16_t ip = (uint16_t)reg_eip;
 +    uint8_t *p = base_ptr(ip);
++    if (state == ST_TRACE && ip >= 0x7000) menu_check(ip, p);
 +    if (p[0] == 0xC6 && memcmp(p, BOUNDARY, 5) == 0) {
 +        if (ip == 0x717F || ip == 0x68ED) {
 +            on_boundary(ip);
-+        } else if (state == ST_TRACE) {
++        } else if (state == ST_TRACE && ip != 0x7358 && ip != 0xA597) {
 +            unsigned long &n = (*unknown)[ip];
 +            if (n++ == 0) logf("unknown boundary site %04X at frame %lu", ip, frame);
 +        }
@@ -400,7 +477,7 @@ index 0000000..f7ecc93
 +        if (t > 60000) finish(5, "no town boundary after restore");
 +        break;
 +    case ST_TRACE:
-+        if (ms - last_boundary_ms > stall_ms) finish(6, "stalled: no town/fight frame boundary for ORACLE_STALL_MS (menu, shop or cutscene?)");
++        if (ms - last_boundary_ms > stall_ms) finish(6, "stalled: no boundary for ORACLE_STALL_MS (an input loop the oracle has no site for?)");
 +        break;
 +    default:
 +        break;

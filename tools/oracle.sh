@@ -6,9 +6,11 @@
 #            without it the trace starts at the first town frame after the intro
 #   --out    output directory: frames.jsonl, base.bin, frame_NNNNN.png, oracle.log
 # env: ORACLE_DOSBOX (binary; default $ORACLE_BUILD/src/dosbox-x, see
-#      tools/harness/build-oracle.sh), ORACLE_MAX_MS, ORACLE_STALL_MS, ORACLE_DEBUG_MS.
-# Exit status: 0 = script consumed; 3 watchdog; 4/5 restore failed; 6 stalled
-# (left the town/fight loops: menu, shop, cutscene).  See docs/HARNESS.md §6.
+#      tools/harness/build-oracle.sh), ORACLE_MAX_MS, ORACLE_STALL_MS, ORACLE_MENU_TICKS,
+#      ORACLE_DEBUG_MS.
+# Exit status: 0 = script consumed; 3 watchdog; 4/5 restore failed; 6 stalled (no
+# boundary of any kind for ORACLE_STALL_MS: an input loop with no site, e.g. text
+# entry).  See docs/HARNESS.md §1 and §6.
 set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SCRIPT=; LOAD=; OUT=; PNG=0
@@ -17,7 +19,7 @@ while [ $# -gt 0 ]; do
     --load) LOAD=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;;
     --png-every) PNG=$2; shift 2 ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) [ -z "$SCRIPT" ] || { echo "oracle.sh: extra argument $1" >&2; exit 2; }; SCRIPT=$1; shift ;;
   esac
 done
