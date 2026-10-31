@@ -327,3 +327,90 @@ It builds nothing: run it on the droplet after building the port.
 Every scenario must be clean. The ones that die stop on their last dying `717F`
 frame, because the port does not yet emit the Sage text's `71EC` wait-loop
 boundaries (§6 "What the port must emit", #64).
+
+## 8. Triage runbook (for agents) (#51)
+
+Instructions to a Claude session starting cold. Goal: find divergences between the original
+(oracle) and `port/`, classify each one by looking at it, and file or fix it with evidence. No
+human playtesting. The user's rules apply throughout: never `git commit` unless told to.
+
+### 8.1 Preconditions
+1. **Do not run heavy work on pro** (the user's main workstation; check `free -m`). Oracle runs, scenario
+   batches and monkey soaks run on a `claude-test` droplet (`doctl --context teamadf`, at most 2, tag `claude-test`).
+   Only single scenarios on pro, under `nice -n 19 ionice -c3`.
+2. Is a droplet up? `doctl --context teamadf compute droplet list --tag-name claude-test --format ID,Name,PublicIPv4,Status`.
+   Another session may be using it: reuse it, don't touch droplets without that tag. If none, ask the user before
+   creating one (`INSTALL_DEPS=1 tools/harness/build-oracle.sh` provisions a fresh Debian one).
+   **Destroy it when the pass is done** (`doctl --context teamadf compute droplet delete ID`) and confirm the list is empty.
+3. Oracle present? `ssh root@HOST ls /root/dosbox-x/src/dosbox-x`. If not (or `tools/harness/oracle-dosbox-x.patch`
+   changed): `cd /root/decomp-zel && INSTALL_DEPS=1 tools/harness/build-oracle.sh /root/dosbox-x` (~7 min), then
+   `export ORACLE_DOSBOX=/root/dosbox-x/src/dosbox-x`.
+4. Sync and build (the game data `zeliard/` already lives on the droplet; other agents edit `port/` concurrently):
+
+       rsync -az --exclude '*.o' --exclude local.mk --exclude port/zeliard ~/git/decomp-zel/port ~/git/decomp-zel/tools ~/git/decomp-zel/tests root@HOST:/root/decomp-zel/
+       ssh root@HOST 'cd /root/decomp-zel/port && rm -f local.mk && make -j8 zeliard'
+
+### 8.2 Run
+    ssh root@HOST 'cd /root/decomp-zel && export ORACLE_DOSBOX=/root/dosbox-x/src/dosbox-x && tools/harness/run_scenarios.sh -j 4 --png --out /root/triage/sc'
+    ssh root@HOST 'cd /root/decomp-zel/port && make monkey N=200 FRAMES=600 SEED=7 OUT=/root/triage/monkey'   # ASan/UBSan soak, port only
+
+`run_scenarios.sh` prints one row per scenario (`clean` / `DIVERGES  frame N: field` / `ERROR`) and leaves
+`/root/triage/sc/NAME/{o,p,diff.txt,oracle.out,port.out}`. `--png` makes every frame's PNG (needed in 8.3).
+`monkey` writes `report.md` (grouped by failure, each with a minimal repro command). Use a new `SEED` each pass.
+Monkey finds crashes/hangs/sanitizer hits only; it does not compare against the oracle. To oracle-check a monkey repro,
+put its script in a scenario file (`tests/scenarios/NAME.zs`, §7) and run it as above.
+
+### 8.3 For each failure
+- `ERROR`: read `oracle.out` / `o/oracle.log` (exit codes in §6) or `port.out`. A stalled/timed-out oracle or a port
+  crash is a finding too, but first check it is not an environment problem (droplet out of memory, save missing).
+- `DIVERGES`: render the sheet at the first diverging frame N (from `diff.txt`), **then open the PNG and look at it**
+  (copy it to pro with `scp root@HOST:/root/triage/sc/NAME/sheet.png /tmp/` and Read it):
+
+      python3 tools/harness/contact_sheet.py /root/triage/sc/NAME/o /root/triage/sc/NAME/p --frame N --span 2 --out /root/triage/sc/NAME/sheet.png
+
+  Rows are frames N-2..N+2; columns oracle | port | diff (red = changed pixels); captions list the differing field
+  names (if the PNGs are missing it prints the commands to rerun). The sheet shows effect, `diff.txt` shows cause: the
+  first differing field usually is the cause, later ones follow from it (`tracediff.py ... --show 80` for all). Also
+  compare the sites: `oracle 717F / port 68ED` means a desync (a transition one side took and the other did not), not a rendering bug.
+- Classify:
+  1. **Real port bug**: the original's behaviour is visible in the oracle column and the port differs. Confirm in the
+     disassembly (`disasm/`, `docs/`): name the routine and address. This is the default for any state-field divergence.
+  2. **Oracle or harness flaw**: wrong schema address/size in `fields.tsv`, field the port should not model, port trace
+     emitted at the wrong boundary, input applied a frame off, oracle timing or RNG hook. Evidence: the field's
+     address in the original is not what the schema says, or the oracle value is not plausible game state (the
+     picture agrees with the port). Fix the harness (`fields.tsv`, `oracle-dosbox-x.patch`, `trace.c`) and say which.
+  3. **Acceptable / unobservable**: only for scratch bytes, timer phase and similar that no code path can read.
+     Add one commented line to `tools/harness/allow.tsv` with the **address and the reason** (who writes it, why
+     nothing reads it). "Looks harmless in the picture" is not enough; no address-level justification means it is not allowed.
+
+### 8.4 Issues (`github/zeliard-decomp`)
+1. Search first: `glab issue list -R github/zeliard-decomp --all --search "KEYWORD or FIELD"` (also closed ones; a
+   regression of a closed issue gets a note on it, or a new issue linking it, not a silent duplicate).
+2. New issue, title `BUG: ...` (port deviates from the original) or `Harness: ...` (tooling), assignee altanc:
+
+       glab issue create -R github/zeliard-decomp -a altanc -t "BUG: <what, where>" -d "$(cat body.md)" --no-editor -y
+
+   Body (see #60, #63 for the tone): one paragraph of what is wrong; the **first diverging frame** with the field
+   names and both values (paste `tracediff` lines); the **exact repro** (the `# start`/`# make` lines and script from
+   the `.zs`, the `port/zeliard ... --script` line, and `tools/oracle.sh ... --png-every 1` for the oracle side);
+   the classification and the address evidence; the contact sheet.
+3. Contact sheet: glab has no `--attach`. Upload it and paste the returned markdown:
+
+       glab api projects/:id/uploads --form file=@sheet.png     # run inside a clone of the repo; else use the URL-encoded path github%2Fzeliard-decomp
+       # JSON reply has "markdown": "![sheet](/uploads/<hash>/sheet.png)"; put that line in the description or in
+       glab issue note IID -R github/zeliard-decomp -m "![sheet](/uploads/<hash>/sheet.png) first diverging frame N ..."
+
+   Fetch the PNG from the droplet first (`scp`). If the upload fails, put the droplet path in the issue and keep the
+   droplet files until the issue is closed.
+
+### 8.5 Fixing
+- Faithful to the disassembly, not to what looks right: cite the original's address (`seg:offset` / `disasm/` file)
+  in the code comment and in the issue note. Do not tune the port to match the oracle's numbers without finding the
+  routine that produces them.
+- The scenario that caught it stays in `tests/scenarios/` (add one if the catch came from monkey or by hand: `.zs`
+  with `# start`, `# make`, `# what`, script) and must go `clean` on the droplet.
+- `cd port && make test && make verify` must stay green, and a full `run_scenarios.sh` must show every other scenario still clean.
+- Close with `glab issue close IID -R github/zeliard-decomp` after a note giving: what changed (file/function), the
+  address evidence, the scenario name and the clean result. Reference the issue (`#N`) in the commit message when the
+  user asks for a commit.
+- Clean pass (everything `clean`, monkey 0 failures): note it on the open #51/#46 tracking issue with the seed, counts and port revision.

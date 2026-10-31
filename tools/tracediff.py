@@ -87,7 +87,10 @@ def hex_detail(name, ov, pv, limit=6):
     """for a long hex field: where the bytes differ"""
     if not (isinstance(ov, str) and isinstance(pv, str) and len(ov) == len(pv)):
         return ""
-    ob, pb = bytes.fromhex(ov), bytes.fromhex(pv)
+    try:
+        ob, pb = bytes.fromhex(ov), bytes.fromhex(pv)
+    except ValueError:                      # '<absent>', site names: not a hex blob
+        return ""
     offs = [i for i in range(len(ob)) if ob[i] != pb[i]]
     if not offs:
         return ""
