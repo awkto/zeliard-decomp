@@ -389,9 +389,11 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# Llama Town -- the whole 320x200 screen, restored straight in front of the
 	# town door at column 222 -- and the room behind that door: MP73, cavern 7's
 	# boss "Paguro", the first capture of a boss the port had never been checked
-	# against.
+	# against.  Frame 3: frames 1-2 are the entry frame (61B1) and the first
+	# 61FC frame, both still with [E7] = 0 from 6050; the capture shows the idle
+	# pose 6234's `or [E7],1` sets once the keys are first read.
 	./zeliard --dir ../zeliard --town 7 --town-col 222 --level 34 --life 1800 --sword 6 \
-		--shield 6 --gold 60000 --headless --frames 2 --screenshot 1 /tmp/zel_llama.png
+		--shield 6 --gold 60000 --headless --frames 4 --screenshot 3 /tmp/zel_llama.png
 	python3 tools/compare_shot.py /tmp/zel_llama.png ../docs/screenshots/town_llama.png \
 		--label "Llama Town: the whole screen after an F7 restore (hero masked)"
 	python3 tools/compare_shot.py /tmp/zel_llama.png ../docs/screenshots/town_llama.png \
@@ -455,6 +457,8 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	python3 tools/compare_shot.py /tmp/zel_cav8b.png ../docs/screenshots/cavern8b.png \
 		--box 51 174 136 10 --label "MP81 HUD PLACE box + \"Cavern of Milagro\""
 	# --- the shopkeepers' [A002] idle hooks (issue #28) -----------------
+	# (frame numbers +2 since the town entry frame 61B1 and the door's 68AF
+	# tail frame 6E69 are presented, #48)
 	# Every overlay but omoypro hangs a portrait animation off town.bin's
 	# idle_poll, clocked by [FF50].  Each shop below was captured under DOSBox
 	# through an F7 restore that puts Garland on the door's own column
@@ -466,7 +470,7 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# eyes open.  Measured period 1.00-1.01 s over five blinks; A90F predicts
 	# 4 phases x 0x1E steps x 2 ticks = 240 ticks = 1.014 s.
 	./zeliard --dir ../zeliard --town 1 --town-col 40 --headless --frames 400 \
-		--script "U2 .200" --screenshot 34 /tmp/zel_shop_blink.png
+		--script "U2 .200" --screenshot 36 /tmp/zel_shop_blink.png
 	python3 tools/compare_shot.py /tmp/zel_shop_blink.png ../docs/screenshots/shop_armour.png \
 		--box 128 79 16 8 --label "armrpro A90F: the smith mid-blink (AAD0 pair 3)"
 	python3 tools/compare_shot.py /tmp/zel_shop_blink.png ../docs/screenshots/shop_armour.png \
@@ -481,13 +485,13 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# is column 59.
 	./zeliard --dir ../zeliard --town 1 --town-col 59 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 30 /tmp/zel_church0.png
+		--screenshot 32 /tmp/zel_church0.png
 	./zeliard --dir ../zeliard --town 1 --town-col 59 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 32 /tmp/zel_church1.png
+		--screenshot 34 /tmp/zel_church1.png
 	./zeliard --dir ../zeliard --town 1 --town-col 59 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 33 /tmp/zel_church2.png
+		--screenshot 35 /tmp/zel_church2.png
 	python3 tools/compare_shot.py /tmp/zel_church0.png ../docs/screenshots/shop_church.png \
 		--box 128 55 24 16 --label "churpro A1FA phase 0 (the altar candles)"
 	python3 tools/compare_shot.py /tmp/zel_church0.png ../docs/screenshots/shop_church.png \
@@ -506,13 +510,13 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# A5E4 has A69C's first row in it.  Muralla's drug door is column 111.
 	./zeliard --dir ../zeliard --town 1 --town-col 111 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 24 /tmp/zel_drug0.png
+		--screenshot 26 /tmp/zel_drug0.png
 	./zeliard --dir ../zeliard --town 1 --town-col 111 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 25 /tmp/zel_drug1.png
+		--screenshot 27 /tmp/zel_drug1.png
 	./zeliard --dir ../zeliard --town 1 --town-col 111 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 27 /tmp/zel_drug2.png
+		--screenshot 29 /tmp/zel_drug2.png
 	python3 tools/compare_shot.py /tmp/zel_drug0.png ../docs/screenshots/shop_drug.png \
 		--box 48 14 224 144 --label "drug shop phase 0: the WHOLE playfield"
 	python3 tools/compare_shot.py /tmp/zel_drug1.png ../docs/screenshots/shop_drug2.png \
@@ -532,16 +536,16 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# Muralla's bank door is column 138.
 	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 20 /tmp/zel_bank0.png
+		--screenshot 22 /tmp/zel_bank0.png
 	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 21 /tmp/zel_bank1.png
+		--screenshot 23 /tmp/zel_bank1.png
 	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 32 /tmp/zel_bank2.png
+		--screenshot 34 /tmp/zel_bank2.png
 	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 36 /tmp/zel_bank3.png
+		--screenshot 38 /tmp/zel_bank3.png
 	python3 tools/compare_shot.py /tmp/zel_bank0.png ../docs/screenshots/shop_bank.png \
 		--box 72 31 64 40 --label "bankpro A728 idle, map A773 phase 0"
 	python3 tools/compare_shot.py /tmp/zel_bank1.png ../docs/screenshots/shop_bank2.png \
@@ -556,10 +560,10 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# both frames do, pixel for pixel.  Satono's inn door is column 128.
 	./zeliard --dir ../zeliard --town 2 --town-col 128 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 23 /tmp/zel_inn0.png
+		--screenshot 25 /tmp/zel_inn0.png
 	./zeliard --dir ../zeliard --town 2 --town-col 128 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 25 /tmp/zel_inn1.png
+		--screenshot 27 /tmp/zel_inn1.png
 	python3 tools/compare_shot.py /tmp/zel_inn0.png ../docs/screenshots/shop_inn.png \
 		--box 64 39 16 16 --label "innapro A22F: the innkeeper's eyes open"
 	python3 tools/compare_shot.py /tmp/zel_inn0.png ../docs/screenshots/shop_inn.png \
@@ -570,10 +574,10 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# toggled every 0x14 steps of 2 ticks.  Muralla's sage door is column 172.
 	./zeliard --dir ../zeliard --town 1 --town-col 172 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 23 /tmp/zel_sage0.png
+		--screenshot 25 /tmp/zel_sage0.png
 	./zeliard --dir ../zeliard --town 1 --town-col 172 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 25 /tmp/zel_sage1.png
+		--screenshot 27 /tmp/zel_sage1.png
 	python3 tools/compare_shot.py /tmp/zel_sage0.png ../docs/screenshots/shop_sage.png \
 		--box 112 47 8 8 --label "kenjpro AB47: the sage's eye, ABFB[0]"
 	python3 tools/compare_shot.py /tmp/zel_sage1.png ../docs/screenshots/shop_sage2.png \
@@ -584,13 +588,13 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# door is column 52 of Felishika's Castle.
 	./zeliard --dir ../zeliard --town 0 --town-col 52 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 27 /tmp/zel_king0.png
+		--screenshot 29 /tmp/zel_king0.png
 	./zeliard --dir ../zeliard --town 0 --town-col 52 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 28 /tmp/zel_king1.png
+		--screenshot 30 /tmp/zel_king1.png
 	./zeliard --dir ../zeliard --town 0 --town-col 52 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 31 /tmp/zel_king2.png
+		--screenshot 33 /tmp/zel_king2.png
 	python3 tools/compare_shot.py /tmp/zel_king0.png ../docs/screenshots/shop_king.png \
 		--box 136 63 40 16 --label "kingpro A3A6: the mouth shut"
 	python3 tools/compare_shot.py /tmp/zel_king1.png ../docs/screenshots/shop_king2.png \
@@ -763,7 +767,7 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	python3 tools/compare_shot.py /tmp/zel_walkin.png ../docs/screenshots/town_edge_walkin.png \
 		--box 48 158 224 42 --label "Muralla walk-in: the HUD"
 	./zeliard --dir ../zeliard --town 0 --script "R400" --frames 401 \
-		--screenshot 39 /tmp/zel_walked.png
+		--screenshot 40 /tmp/zel_walked.png
 	python3 tools/compare_shot.py /tmp/zel_walked.png ../docs/screenshots/town_edge_walked.png \
 		--box 48 14 224 104 --label "Muralla 22 columns in: panorama + map rows 0-3"
 	python3 tools/compare_shot.py /tmp/zel_walked.png ../docs/screenshots/town_edge_walked.png \
@@ -771,8 +775,10 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	python3 tools/compare_shot.py /tmp/zel_walked.png ../docs/screenshots/town_edge_walked.png \
 		--box 48 158 224 42 --label "Muralla 22 columns in: the HUD"
 	# --- the sword mid-swing (issue #35) -------------------------------
+	# a slash is three game frames ([3006] runs at 7047 and 7147): frame 3 is
+	# its last, blade frame [FF46]-1 = 5
 	./zeliard --dir ../zeliard --map 0 --pos 61 7 --headless --frames 8 \
-		--script "X8" --screenshot 5 /tmp/zel_sword.png
+		--script "X8" --screenshot 3 /tmp/zel_sword.png
 	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \
 		--box 160 94 32 24 --label "mid-swing: the blade (sword.grp section 0)"
 	python3 tools/compare_shot.py /tmp/zel_sword.png ../docs/screenshots/cavern_sword.png \

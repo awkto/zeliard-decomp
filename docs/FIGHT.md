@@ -205,6 +205,15 @@ The sprite is 3×3 cells but the **solid body is the middle column only**
   is pressed with no ladder below (`6AE7`), or when hit (`6488`).
 * **Wall unstick** (`63DA`, the frame after landing): if both head-row
   cells are solid, push the hero right if (row+1,col+2) is open, else left.
+* **Fixture order per frame**: `7016` 81AE walks list C (`[C008]`, platforms,
+  cells 0x46-0x48) erasing, moving and drawing one record at a time; the erase
+  (`831F` on the *rightmost* cell) also clears a platform hanging over a ring
+  edge and writes 0, not the map cell. `7019` 7FB1 (A, `[C004]`) and `701C` 8163
+  (B, `[C006]`) only draw (fully on the ring, `82F8`); a move erases its old row.
+* **Doors** (`7A83`→`7B25`): before the next map loads, shots are dropped (`83DB`),
+  the hero state reset (`7E5B`) and **one more cavern frame** is run (`7B41 call
+  708F`, the frame tail: draw, 717F boundary); `[C3]` = letter & 0x40 (`7B64`)
+  then picks the walk-in side, for a town too (`7C6E`: set → `[C2] |= 1`).
 * **Elevators** (fixture list A, DCHR cells 0x40-0x42): "down" while standing
   on one moves the platform and the hero one row down if the 3 cells under it
   are empty (`7FDC/8024`); "up" moves it up (`8074`); standing on it follows
@@ -231,8 +240,10 @@ economy: caverns drop almas and the town bank exchanges them for gold (docs/TOWN
   (`6EA0..6ED4`); otherwise **0 (slash)**. Sound 3.  The hittable test is
   `spr && !(type & 0x60) && !(flags & 0x10)` (`6EB4..6EC3`) — i.e. not
   sword-immune, not harmless, and not the second record of a tall enemy; note
-  it does **not** exclude items (`type & 0x10`).  `port/combat.c` approximates
-  it as `!(type & 0x70)`, which also skips items — a deviation worth checking.
+  it does **not** exclude items (`type & 0x10`) (port/combat.c had
+  `!(type & 0x70)`; fixed).  Both swing kinds end at `6EF7`, which clears **both**
+  edges `FF1D` and `FF1E`; a new swing also waits while `[FF3C]` (casting) is set
+  (`6E91`).
 * Button-1 **held** + "down" while airborne and not on a conveyor →
   `attack_type = 2` (down-thrust), sound 4 once (`6E5C`).
 * The renderer runs the swing: it increments `FF46` each frame and clears
@@ -243,7 +254,8 @@ Origin = 4 rows above the hero's top-left (3 when crouching). The shape is a
 list of cell steps from the current sword block (kernel mode-4 block
 `#sword` relocated to arena:B000; word index `((attack_var | facing<<4) +
 {0,6,10}) & 0xFE`), i.e. per facing: pointers 0-2 = slash frames (0-1, 2-3,
-4), 3-5 = upward slash frames, 5 = thrust; left-facing uses pointers 8-13.
+4), 3-4 = upward slash frames, 5 = thrust; left-facing uses pointers 8-13
+(their own lists, see below).
 Decoded from `sword.grp` (ZELRES2[26]) section 0, cells relative to the hero's
 top-left (row, col), facing right:
 
@@ -258,7 +270,17 @@ thrust    : (0,1..2) (1,0..2) (2,0..2) (3,0..2)                                 
 The section-to-sword mapping is **certain** — kernel `0x0BA0` maps sword `[0x92]`
 1-3 → section 0, 4-5 → section 1, 6 → section 2.  Sections 1 and 2 extend the slash
 to col +5 and the thrust to row +4/+5;
-left-facing shapes are mirrored about the body column (col +1). Every sprite
+**the left-facing lists are not mirrors** of the right ones (they were
+assumed to be, until the oracle disagreed): e.g. section 0 facing left,
+
+```
+slash f0-1: (-2,2..3) (-1,1..3) (0,0..3) (1,0..3)
+slash f2-3: rows 0..1 × cols -3..+2          slash f4: rows 0..1 × cols -3..0
+up    f0-1: (-2,0..2) (-1,-1..2) (0,-1..3)
+up    f2-3: (-2,-2..0) (-1,-3..0) (0,-3..0) (1,-3..0) (2,-3..0) (3,-2..-1)
+thrust    : (0,-1..0) (1,-1..0) (2,-1..1) (3,-1..1)
+```
+port/combat.c `SWORD_SHAPE` holds all 3 sections × 12 lists as decoded. Every sprite
 marker on a shape cell whose object `type` lacks bit 5 and whose `hit` byte
 lacks bit 5 gets `hit = (hit & 0xE0) | 0x40 | 1` (`6F8D`): hit pending,
 source 1. The enemy update converts pending→"hit this frame" (bit 5) unless
@@ -286,8 +308,11 @@ again until its AI clears the bit.
 ### Damage to the hero
 * **Contact** (`751F`, every frame): scan 4 columns (ring col −1..+2) × rows
   −1..+1 (rows 0..+1 when crouching) for sprite markers whose `type` lacks bit
-  6; each adds the AI table `[A010 + (type & 0xF)]` (eai1: 5,5,15,8,…) to a
-  running total and flags its column. The total is applied once per flagged
+  6; **the two middle columns also look one row further down** when that finds
+  nothing (`7568`/`7580` `call 765E`: the feet row). A column stops at its first
+  damaging sprite (`7675` adds `[A010 + (type & 0xF)]` (eai1: 5,5,15,8,…) to a
+  running total, `stc; ret`): one damage per column however many sprites it
+  holds; harmless ones are skipped. Each hit column is flagged. The total is applied once per flagged
   column, through the shield only on the facing side (left columns when facing
   left, `75BA`; right columns when facing right, `75CE`).
 * **Shield** (`75E2`): `dmg = (dmg/2) >> ((shield+1)/2)` (shield 1-2: ÷4,
@@ -311,7 +336,14 @@ again until its AI clears the bit.
   15 HP every 64 frames unless shoes 5 (`704F`).
 * **Regeneration:** +2 HP every 16 frames of no action (`719E`, `regen_tick`
   reset by jump/walk/down); potions add to `hp_regen_pending`, +8 HP per
-  frame (`70E0`). Death at HP 0 (`718C`, unless `[0x7F]`): 3-frame animation,
+  frame (`70E0`). Death at HP 0 (`718C`, unless `[0x7F]`), checked right after
+  the frame's 717F boundary: `jmp 98FC`, the rest of that main-loop pass never
+  runs. 98FC's own loop then runs whole frames (`6F9B`, which returns right after
+  717F while `[E8]` is set): `9929` one frame, plus one per row while the body
+  falls (695A's falling/landing exits `pop` their return and land back on 9929);
+  `9948` 32 frames (pose `[E7]` 0→1→2 every 8, then 16 with `FF37` set on the odd
+  ones); `9993` 30 frames blinking. **63 `717F` frames on flat ground** (oracle,
+  tests/scenarios/death_anim.zs); then `99A3`:
   `exp += 127 − 2*level`, **the 24-bit GOLD `[85..87]` is cleared and ALMAS `[8B]` is
   halved** (`98FC`/`99AD`; see docs/TOWN.md §10 for the register names), HP restored,
   back to town.
@@ -352,7 +384,7 @@ Object table at `[C010]`, 16-byte records, 0xFFFF-terminated (`struct obj` in
 | +B | u16 home col | 0xFFFF never respawns (event objects: flag pointer) |
 | +D | u8 home row | (event objects: flag mask) |
 | +E | u8 home type | |
-| +F | u8 timer | respawn timer, spawn attempt on wrap (`8D96`); pickup counter |
+| +F | u8 timer | respawn timer: counts up and **sticks at FF**, from then on a spawn attempt every frame (`8D96..8DA2`); pickup counter |
 
 Per-frame enemy pass (`8D19`): for each active object inside the ring, restore
 the cell under its marker, expose the hit bit, call the AI (or the built-in

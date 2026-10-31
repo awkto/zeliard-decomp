@@ -133,16 +133,25 @@ def compare_frame(sch, rules, od, pd, base, members):
             diffs.append((k, od.get(k), pd.get(k)))
     ofields = sch.decode(base, mode) if base is not None else od.get("fields", {})
     pfields = pd.get("fields", {})
-    names = set(n for n in pfields if sch.mode_of(n) in ("any", mode))
-    # a list the port models is compared record by record, both ways
-    for lname in set(Schema.list_of(n) for n in names if Schema.list_of(n) in sch.lists):
-        for n in ofields:
-            if Schema.list_of(n) != lname:
-                continue
-            m = re.fullmatch(r"\w+\[\d+\]\.(\w+)", n)
-            if m is None or m.group(1) in members.get(lname, ()):
-                names.add(n)
-    for n in sorted(names, key=natkey):
+    names = [n for n in pfields if sch.mode_of(n) in ("any", mode) and Schema.list_of(n) not in sch.lists]
+    # Record lists the port models: the count and (dead= lists) each record's
+    # liveness are compared; a record's members only while it is live on BOTH
+    # sides.  A dead or past-the-end record holds whatever the last occupant
+    # left (or memory never written), which is not state -- and a count or
+    # liveness mismatch is already reported by .n / .live.
+    for lname, L in sch.lists.items():
+        if not L.applies(mode) or (lname + ".n") not in pfields:
+            continue
+        names.append(lname + ".n")
+        on, pn = ofields.get(lname + ".n", 0), pfields.get(lname + ".n", 0)
+        for i in range(min(on, pn)):
+            pre = "%s[%d]." % (lname, i)
+            if L.dead is not None:
+                names.append(pre + "live")
+                if not (ofields.get(pre + "live") and pfields.get(pre + "live", 1)):
+                    continue
+            names.extend(pre + m for m in sorted(members.get(lname, ())) if m != "live")
+    for n in sorted(set(names), key=natkey):
         if allowed(rules, n, mode):
             continue
         ov, pv = ofields.get(n, ABSENT), pfields.get(n, ABSENT)

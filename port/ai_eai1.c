@@ -88,9 +88,10 @@ void eai1_bat_retreat(Game *g, MapObj *e)
         return;
     }
     bat_anim(e);                                                        /* A389 */
-    if (e->hit & FACING_RIGHT) { if (STEP_RU(e)) return; e->hit &= (uint8_t)~FACING_RIGHT; }   /* A392 */
-    else                       { if (STEP_LU(e)) return; e->hit |= FACING_RIGHT; }             /* A3A0 */
-    if (STEP_U(e)) return;                                              /* A3AC */
+    /* jc = refused: a step that is taken ends the frame (ai_step returns 1 when refused) */
+    if (e->hit & FACING_RIGHT) { if (!STEP_RU(e)) return; e->hit &= (uint8_t)~FACING_RIGHT; }  /* A392 */
+    else                       { if (!STEP_LU(e)) return; e->hit |= FACING_RIGHT; }            /* A3A0 */
+    if (!STEP_U(e)) return;                                             /* A3AC */
     e->next |= 0x20; e->phase = 2;                                      /* A3B4 */
 }
 
@@ -101,7 +102,7 @@ static void bat_update(Game *g, MapObj *e)
     if (!e->hp) e->hp = 2;                                              /* A276 */
     if (e->hit & HIT_STUN) { enemy_take_damage(g, e); return; }         /* A280 */
     switch ((e->next >> 6) & 3) {                                       /* A28B, table A29D */
-    case 0: eai1_bat_idle(g, e); break;
+    case 0: STEP_U(e); eai1_bat_idle(g, e); break;                     /* A2A5: call [600C], cling up */
     case 1: eai1_bat_wake(g, e); break;
     case 2: eai1_bat_chase(g, e); break;
     default: eai1_bat_retreat(g, e); break;
@@ -119,8 +120,9 @@ static void snail_update(Game *g, MapObj *e)
     if (!STEP_D(e)) return;                                             /* A408: falling */
     e->phase = (uint8_t)((e->phase + 0x41) & 0xC3);                     /* A410 */
     if (e->phase & 0xF0) return;                                        /* A418 */
-    if (e->rcol < 0x11) { if (STEP_R(e)) e->hit |= FACING_RIGHT; }      /* A41F */
-    else                { if (STEP_L(e)) e->hit &= (uint8_t)~FACING_RIGHT; }   /* A432 */
+    /* A425/A432: jnc -- the facing follows a step that was TAKEN (ai_step returns 1 when refused) */
+    if (e->rcol < 0x11) { if (!STEP_R(e)) e->hit |= FACING_RIGHT; }     /* A41F */
+    else                { if (!STEP_L(e)) e->hit &= (uint8_t)~FACING_RIGHT; }  /* A432 */
 }
 
 /* ==================================================================== frog */
@@ -160,9 +162,16 @@ static void frog_update(Game *g, MapObj *e)
     if (!facing) {
         if (e->phase & 0xE0) return;                                    /* A47B */
         f = hero_dir(g, e, 8, &facing);                                 /* A483 */
-        if (f != 0xFF) e->hit = (uint8_t)((e->hit & 0x7F) | f);         /* A48A */
+        if (f != 0xFF) {                                                /* A486 */
+            e->hit = (uint8_t)((e->hit & 0x7F) | f);                    /* A48A: turn to him */
+            e->phase = 2; e->next |= 8;                                 /* A491: hop next frame */
+            return;
+        }
     }
-    e->phase = 2; e->next |= 8;                                         /* A491 / A49A */
+    /* A49A: facing him (A479) or no direction (A488): the hop starts and its
+     * first step is taken this frame -- A49A..A49E fall through into A4A2 */
+    e->phase = 2; e->next |= 8;
+    frog_hop(g, e);
 }
 
 /* =============================================================== hedgehog */

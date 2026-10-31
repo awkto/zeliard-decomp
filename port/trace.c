@@ -38,6 +38,16 @@ static uint32_t f_keys_fight(const Game *g, const Town *t)
 { (void)t; return (g->menu_key ? 1u : 0u) | ((g->buttons & 4) ? 0x0286u : 0u); }
 static uint32_t f_keys_town(const Game *g, const Town *t)
 { (void)g; return (t->menu_key ? 1u : 0u) | ((t->buttons & 4) ? 0x0286u : 0u); }
+/* FF37: fight.bin 708F clears it before the draw, and gfmcga's flush sets it
+ * again when it draws the hero (40F0/40F8, reached from 3E14/3E27), so at
+ * 717F it reads 0xFF whenever the hero was drawn.  The port's renderer keeps
+ * no such latch.  While dying, 7081 skips the clear and 98FC's loops write
+ * it *after* each frame (994B / 9984 / 9998): 0 = the flush draws the hero
+ * and sets it, FF = not drawn, already FF -- so it is FF at every boundary
+ * then too (oracle: FF on all 63 dying frames).  It is 0 only when the hero
+ * was not drawn although not hidden, which the port does not model. */
+static uint32_t f_hero_hidden(const Game *g, const Town *t)
+{ (void)g; (void)t; return 0xFF; }
 
 #define G(n, a, s, m)  {n, a, s, M_FIGHT, S_GAME, offsetof(Game, m), sizeof(((Game *)0)->m), NULL}
 #define T(n, a, s, m)  {n, a, s, M_TOWN,  S_TOWN, offsetof(Town, m), sizeof(((Town *)0)->m), NULL}
@@ -63,7 +73,7 @@ static const TField FIELDS[] = {
     G("boss_map",       0xFF34, 1, boss_map),
     G("hero_map_row",   0xFF35, 1, hero_map_row),
     G("hero_hit_flash", 0xFF36, 1, hero_hit_flash),
-    G("hero_hidden",    0xFF37, 1, hero_hidden),
+    F("hero_hidden",    0xFF37, 1, M_FIGHT, f_hero_hidden),
     G("crouching",      0xFF38, 1, crouching),
     G("on_ladder",      0xFF39, 1, on_ladder),
     G("hero_entering",  0xFF3A, 1, hero_entering),
@@ -111,6 +121,7 @@ static const TField FIELDS[] = {
     G("heat_timer",        0x9F25, 1, heat_timer),
     G("boss_intro",        0x9F26, 1, boss_intro),
     G("death_anim_a",      0x9F28, 1, death_anim),
+    G("death_anim_b",      0x9F29, 1, death_anim_b),
     G("magic_hit_any",     0x9F2A, 1, magic_hit_any),
     G("cast_timer",        0x9F2B, 1, cast_timer),
     /* ---- work areas */
@@ -193,7 +204,7 @@ static void build_page(Game *g, const Town *t, uint8_t img[256])
         img[0x83] = (uint8_t)t->hero_scr_col;
         img[0xC2] = t->hero_flags;
         img[0xE7] = t->hero_anim;
-        img[0xC4] = img[0xC5] = (uint8_t)(0x80 | t->map->index);
+        img[0xC4] = (uint8_t)(0x80 | t->map->index);                  /* [C5] stays g->town_map */
     }
 }
 
@@ -259,12 +270,17 @@ static void emit_lists(Out *o, const Game *g)
         SH("last_col", s->last_col); SH("last_row", s->last_row);
 #undef SH
     }
-    /* EB15 magic sprites, 4 x 16 bytes; retired = col high byte 0xFF */
-    emit_int(o, "magic.n", 4);
-    for (int i = 0; i < 4; i++) {
+    /* EB15 magic sprites: up to 4 x 16 bytes, a list ended by col == 0xFFFF
+     * (6061/7E87 empty it; 884D writes the terminator after a bolt).  A spell
+     * that ends marks record 0 (8BB5) and the 896E walker, which runs before
+     * 717F in the same frame, turns that into the terminator: at the boundary
+     * the list is exactly the port's leading live records. */
+    int nm_live = 0;
+    while (nm_live < 4 && g->magic[nm_live].live) nm_live++;
+    emit_int(o, "magic.n", (uint32_t)nm_live);
+    for (int i = 0; i < nm_live; i++) {
         const Magic *m = &g->magic[i];
-        snprintf(nm, sizeof nm, "magic[%d].live", i); emit_int(o, nm, m->live ? 1 : 0);
-        if (!m->live) continue;
+        snprintf(nm, sizeof nm, "magic[%d].live", i); emit_int(o, nm, 1);
 #define MG(fld, v) do { snprintf(nm, sizeof nm, "magic[%d]." fld, i); emit_int(o, nm, (uint32_t)(v)); } while (0)
         MG("col", m->col); MG("row", m->row); MG("dir", m->dir); MG("age", m->age);
         MG("anim", m->anim); MG("rcol", m->rcol); MG("srow", m->srow);
@@ -318,6 +334,17 @@ void trace_write_frame(FILE *f, unsigned n, unsigned rng_calls, const char *inpu
         }
     }
     if (!t) emit_lists(&o, g);
+    else {                                      /* [C00F] town NPCs, 8-byte records */
+        char nm2[32];
+        emit_int(&o, "npc.n", (uint32_t)t->map->nnpcs);
+        for (int i = 0; i < t->map->nnpcs; i++) {
+            const TownNpc *n = &t->map->npcs[i];
+#define NP(fld, v) do { snprintf(nm2, sizeof nm2, "npc[%d]." fld, i); emit_int(&o, nm2, (uint32_t)(v)); } while (0)
+            NP("col", n->col); NP("sprite", n->sprite); NP("saved", n->saved); NP("anim", n->anim);
+            NP("type", n->type); NP("flags", n->flags); NP("script", n->script);
+#undef NP
+        }
+    }
     fputs("}}\n", f);
 }
 
@@ -337,6 +364,8 @@ void trace_list_fields(FILE *f)
         "shot[].flags", "shot[].damage", "shot[].last_col", "shot[].last_row",
         "magic.n", "magic[].live", "magic[].col", "magic[].row", "magic[].dir", "magic[].age",
         "magic[].anim", "magic[].rcol", "magic[].srow",
-        "orb.n", "orb[].live", "orb[].phase", "orb[].speed", "orb[].hits", NULL};
+        "orb.n", "orb[].live", "orb[].phase", "orb[].speed", "orb[].hits",
+        "npc.n", "npc[].col", "npc[].sprite", "npc[].saved", "npc[].anim", "npc[].type",
+        "npc[].flags", "npc[].script", NULL};
     for (int i = 0; lists[i]; i++) fprintf(f, "%s\n", lists[i]);
 }

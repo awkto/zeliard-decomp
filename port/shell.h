@@ -41,6 +41,9 @@ typedef struct Shell {
     ItemPics    pics;
     TearArt     tear_art;               /* rokademo + GAME.BIN A3A5 art */
     int      in_town;                   /* 0 = fight.bin, 1 = town.bin */
+    /* the frame a town entry runs before the 61FC loop: 1 = 61B1 (68AC),
+     * 2 = the death return's 6EE6 (68AF) after kenjpro's [A004] */
+    int      town_entry;
     int      town_tiles_idx, town_spr_idx;
     int      ai_index, enp_index;
     Game     g;

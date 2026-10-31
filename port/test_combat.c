@@ -24,7 +24,8 @@ static Map tmap;
 static Tileset ttiles;
 static AiOverlay ovl;
 static Game G;
-static void present(Game *g) { (void)g; }
+static unsigned presents;
+static void present(Game *g) { (void)g; presents++; }
 
 /* same synthetic tileset/map as test_physics.c */
 static void test_tiles(void)
@@ -131,7 +132,9 @@ static void t_damage(void)
 static void t_contact(void)
 {
     flat_map(); start(30, 10, 0);
-    MapObj *o = put_enemy(31, 11, 2, 0);         /* frog, top-left one column right of the hero */
+    /* frog, top-left one column right of the hero, facing away from him: a
+     * frog facing the hero hops at once (EAI1 A479 -> A49A falls into A4A2) */
+    MapObj *o = put_enemy(31, 11, 2, 1);
     o->hp = 1;
     unsigned hp0 = G.hp;
     step(0, 0);
@@ -152,6 +155,50 @@ static void t_contact(void)
     CHECK(G.hp == hp0 - 5, "bat contact costs 5: %u -> %u", hp0, G.hp);
 }
 
+/* 751F's scan, checked directly on hand-placed markers (no enemy pass): the
+ * middle two columns look one row further down (7568/7580 `call 765E`), and
+ * a column stops at its first damaging sprite (7675 stc). */
+static void t_contact_scan(void)
+{
+    flat_map(); start(30, 10, 0);
+    MapObj *o = put_enemy(31, 12, 2, 0);                 /* a frog: contact 15 */
+    int hc = game_hero_cell(&G);
+    int feet_mid = game_ring_add(hc, 2 * RING_W + 1), feet_out = game_ring_add(hc, 2 * RING_W - 1);
+    unsigned hp0 = G.hp;
+    G.ring[feet_mid] = 0x80;
+    hero_enemy_contact(&G);
+    CHECK(G.hit_side[2] == 0xFF && G.contact_damage == 15 && G.hp == hp0 - 15,
+          "a sprite at row +2 under a middle column hits (hit_side %02x, damage %u)", G.hit_side[2], G.contact_damage);
+    G.ring[feet_mid] = 0; G.hp = hp0;
+    G.ring[feet_out] = 0x80;
+    hero_enemy_contact(&G);
+    CHECK(!G.hero_hit && G.hp == hp0, "row +2 of an outer column is not scanned");
+    G.ring[feet_out] = 0;
+    /* two sprites in one column: one damage (the scan stops at the first) */
+    G.obj[1] = *o; G.nobj = 2;
+    G.ring[game_ring_add(hc, -RING_W + 2)] = 0x80;
+    G.ring[game_ring_add(hc, 2)] = 0x81;
+    hero_enemy_contact(&G);
+    CHECK(G.contact_damage == 15 && G.hit_side[3] == 0xFF, "two frogs in one column cost 15, not 30 (got %u)", G.contact_damage);
+}
+
+/* 98FC: LIFE 0 is noticed after the frame's own boundary; then 1 (9938) + 32
+ * (9948) + 30 (9993) dying frames on flat ground before 99A3 (hero_die).  The
+ * oracle measured the same 63 (tests/scenarios/death_anim.zs). */
+static void t_death_frames(void)
+{
+    flat_map(); start(30, 10, 0);
+    G.hp = 0;
+    step(0, 0);
+    CHECK(G.hero_dead == 0xFF, "LIFE 0 starts the death at 718C");
+    presents = 0;
+    int n = 0, pose2 = 0;
+    while (G.hero_dead && n < 200) { step(0x08, 1); n++; if (G.hero_anim == 2) pose2 = 1; }
+    CHECK(n == 63 && presents == 63, "the death runs 63 frames on flat ground (got %d steps, %u frames)", n, presents);
+    CHECK(pose2, "the dying pose [E7] reaches 2");
+    CHECK(G.hp == G.max_hp && hcol() == 30, "then 99A3: LIFE restored, back at the entry (no town hooked up)");
+}
+
 /* ------------------------------------------------------------- the sword */
 static void t_sword(void)
 {
@@ -167,18 +214,33 @@ static void t_sword(void)
     for (int i = 0; i < 10; i++) step(0, 0);
     CHECK((o->type & 0x10) || (o->col >> 8) == 0xFF, "the corpse turned into an item or vanished: type %02x col %04x", o->type, o->col);
 
-    /* the bat needs two hits */
+    /* the snail needs two hits (an idle bat climbs out of reach first, A2A5) */
     flat_map(); start(30, 10, 0);
-    o = put_enemy(32, 11, 0, 0); o->hp = 2; G.sword = 1; G.exp = 0;
+    o = put_enemy(32, 11, 1, 0); o->hp = 2; G.sword = 1; G.exp = 0;
     killed = 0;
-    for (int i = 0; i < 12 && !killed; i++) { step(0, 1); killed = (o->type & 0x08) != 0; }
-    CHECK(killed && G.exp == 3, "the bat dies after two sword hits and awards 3 EXP (exp %u)", G.exp);
+    for (int i = 0; i < 16 && !killed; i++) { step(0, (i & 3) == 0); killed = (o->type & 0x08) != 0; }   /* a swing is 3 frames: press again */
+    CHECK(killed && G.exp == 2, "the snail dies after two sword hits and awards 2 EXP (exp %u)", G.exp);
 
     /* a sword-immune object (type bit 5) is never flagged */
     flat_map(); start(30, 10, 0);
     o = put_enemy(32, 11, 2, 0); o->hp = 1; o->type |= 0x20; G.exp = 0;
     for (int i = 0; i < 8; i++) step(0, 1);
     CHECK(!(o->type & 0x08) && G.exp == 0, "type & 0x20 is immune to the sword");
+
+    /* sword.grp's left-facing lists are their own data, not a mirror: on row
+     * -1 the upward slash's first frame facing left covers cols -1..+2; the
+     * mirror of the right list reached +3 and hit a frog the original did
+     * not (oracle, tests/scenarios/frogs_left.zs f74). */
+    flat_map(); start(30, 10, 1);
+    o = put_enemy(0, 0, 2, 0); o->hp = 1;
+    G.ring[game_ring_add(game_hero_cell(&G), -RING_W + 3)] = 0x80;
+    G.attacking = 0xFF; G.attack_type = 1; G.attack_var = 1;
+    sword_apply(&G);
+    CHECK(!(o->hit & 0x40), "facing left, upward slash frame 0 does not reach row -1 col +3");
+    G.ring[game_ring_add(game_hero_cell(&G), -RING_W + 3)] = 0;
+    G.ring[game_ring_add(game_hero_cell(&G), -RING_W + 2)] = 0x80;
+    sword_apply(&G);
+    CHECK(o->hit & 0x40, "but it does reach row -1 col +2 (hit %02x)", o->hit);
 }
 
 /* ------------------------------------------------------ drops and pickups */
@@ -622,7 +684,7 @@ static void t_magic(void)
     /* 8C4F: the bolt's 3x3 block marks the enemy hit with source magic_sel+1 */
     start(40, 12, 0);
     G.magic_sel = 2; G.magic_count[1] = 1;
-    MapObj *e = put_enemy(46, 11, 0, 0);
+    MapObj *e = put_enemy(46, 11, 1, 0);                 /* a snail: it stays put on the floor (a bat climbs, A2A5) */
     e->hp = 40;
     game_first_frame(&G);                                /* 8D19 places the sprite marker */
     G.btn2_edge = 0xFF;
@@ -889,7 +951,7 @@ int main(int argc, char **argv)
         return 0;
     }
     struct { const char *name; void (*fn)(void); } tests[] = {
-        {"eai1 tables", t_tables}, {"damage", t_damage}, {"contact", t_contact},
+        {"eai1 tables", t_tables}, {"damage", t_damage}, {"contact", t_contact}, {"contact scan", t_contact_scan}, {"death frames", t_death_frames},
         {"sword", t_sword}, {"sword render", t_sword_render}, {"drops", t_drop}, {"items", t_items}, {"bat wake", t_bat_wake}, {"frog hop", t_frog_hop},
         {"shots", t_shots}, {"magic", t_magic}, {"orbs", t_orbs}, {"sound", t_sound},
         {"eai tables", t_overlays}, {"eai run", t_overlay_run}, {"tall spawn", t_tall_spawn},

@@ -181,7 +181,9 @@ static void draw_sword(uint8_t *fb, const Game *g, const HeroGfx *h)
     int sec = SWORD_SECTION[sw - 1];                                     /* kernel mode 4 */
     int kind = g->attack_type <= 2 ? g->attack_type : 0;                 /* [FF45] */
     int grp = kind + ((g->hero_flags & FACE_LEFT) ? 3 : 0);              /* 3E6C: test [C2],1 */
-    int f = g->attack_var;                                               /* [FF46] - 1 */
+    /* 3EB7 draws frame [FF46] - 1 at each [3006]; the screen the 717F boundary
+     * leaves is 7147's, [FF46] + 1 - 1 with attack_var the post-7047 value */
+    int f = g->attack_var;
     if (f >= SWORD_FRAMES[kind]) f = SWORD_FRAMES[kind] - 1;
     if (f < 0) f = 0;
     const uint8_t *blk = sg->block[sec][grp][f];

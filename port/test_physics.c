@@ -213,7 +213,7 @@ static void t_ladder(void)
     presented = 0; step(DIR_UP); CHECK(hrow() == 5 && presented == 3, "climb 2 rows in 2 frames: row %d frames %u", hrow(), presented);
     presented = 0; step(DIR_UP); CHECK(hrow() == 4 && presented == 2, "top reached: row %d frames %u", hrow(), presented);
     step(DIR_UP); CHECK(hrow() == 4, "top of the ladder: row %d", hrow());
-    CHECK(G.scroll_row == (uint8_t)((4 - 10) & 63) && G.hero_scr_row == 10, "climbing scrolls the world: scroll_row %d scr_row %d", G.scroll_row, G.hero_scr_row);
+    CHECK((G.scroll_row & 63) == ((4 - 10) & 63) && G.hero_scr_row == 10, "climbing scrolls the world (the [82] byte is not masked, 6621): scroll_row %d scr_row %d", G.scroll_row, G.hero_scr_row);
     /* descend: Down climbs back, 1 row per rendered frame */
     presented = 0; step(DIR_DOWN); CHECK(hrow() == 4 + (int)presented - 1 && presented >= 2, "descend: row %d frames %u", hrow(), presented);
     int r0 = hrow(); presented = 0; step(DIR_DOWN); CHECK(hrow() == r0 + (int)presented - 1 && presented >= 2, "descend: row %d frames %u", hrow(), presented);

@@ -132,6 +132,21 @@ static int hero_overlaps_item(const Game *g, const MapObj *o)
     return dc >= 0 && dc <= 3;
 }
 
+/* 0x9190  the touch test every pickable state runs: no pickup while [E8]
+ * (dead); the hero's map row within rows -1..+2 of the item and his body column
+ * ([83]+4) within ring columns -2..+1 of it, else the latch (flags bit 7) is
+ * cleared and nothing happens.  A latched item -- every drop, which 913C
+ * creates with the latch set and timer = 4 -- only answers when its timer,
+ * stepped here once more on top of 8D90's, reaches a multiple of 8.  So a
+ * fresh drop the hero stands on is collected four frames later, not at once. */
+static int item_touch(Game *g, MapObj *o)
+{
+    if (g->hero_dead) return 0;                                         /* 9190 */
+    if (!hero_overlaps_item(g, o)) { o->flags &= 0x7F; return 0; }      /* 91AF / 91CB */
+    if (!(o->flags & 0x80)) return 1;                                   /* 91D1 */
+    return (++o->timer & 7) == 0;                                       /* 91D9 */
+}
+
 /* 0x8E54  the break animation both 8E32 and 8E8D run once something has set
  * the record's `link` bit 0: the phase advances every other frame, and on the
  * fourth the object becomes whatever `next` (+9) names -- or, when `next` is 0,
@@ -212,6 +227,14 @@ void item_update(Game *g, MapObj *o)
      * that keep *data* in it -- the treasure box's prize index (8F23) and the
      * message chest's [C017] string index (905D) -- so a box paid whatever the
      * frame counter happened to be sitting on (issue #39). */
+    /* 9255 (step down, vector [6014]) comes first for everything that can be
+     * picked up off the floor: the coins (8FAB), 901C, and the keys, crest and
+     * key items through 90D3.  The treasure box (8EF6), 9008 and 903C stay put.
+     * The port had no gravity for items at all, so a drop that appeared in
+     * mid-air hung there (and was collected a row too high). */
+    if (st == 0x14 || st == 0x15 || st == 0x1B || st == 0x16 || st == 0x17 ||
+        st == 0x19 || st == 0x1A || st == 0x1D || st == 0x1E)
+        ai_step(g, o, 6);
     if (st == 0x14 || st == 0x15 || st == 0x1B)                         /* 8FAE */
         o->phase = (uint8_t)((o->phase + 1) & 3);
 
@@ -219,10 +242,9 @@ void item_update(Game *g, MapObj *o)
         if (++o->phase >= 3) enemy_remove(g, o);
         return;
     }
-    if (!hero_overlaps_item(g, o)) { o->flags &= (uint8_t)~0x80; return; }
-    o->flags |= 0x80;       /* 9190's "already overlapping" latch; the original's
-                             * 8-frame repeat rule only matters for repeatable
-                             * pickups, which caverns 1-3 have none of */
+    if (st == 0x1C) {                       /* 903C keeps its own latch below */
+        if (!hero_overlaps_item(g, o)) { o->flags &= (uint8_t)~0x80; return; }
+    } else if (!item_touch(g, o)) return;
     switch (st) {
     case 0x13: {                                                        /* 8EF6 treasure box */
         /* 8F23: `bl = (phase & 0xF); dec bl; add bl,bl` -- the prize index is
@@ -423,6 +445,14 @@ void enemies_update(Game *g)
                 }
             }
         }
-        if (!(o->flags & 0x20)) { if (++o->timer == 0) enemy_spawn(g, o); }   /* 8D90 */
+        /* 8D90..8DA2: the respawn timer counts up and *sticks* at FF (8D9B
+         * `jz` skips the store), and from then on 94FF is called every frame
+         * until it spawns -- the port wrapped it to 0 and tried once per 256
+         * frames (t_right f258: every timer FF in the original, 0 here). */
+        if (!(o->flags & 0x20)) {
+            if (o->timer == 0xFF) enemy_spawn(g, o);
+            else o->timer++;
+        }
     }
+    g->obj_index = (uint8_t)g->nobj;    /* 8DA5 counts every record, so the loop leaves FF4A = the count */
 }

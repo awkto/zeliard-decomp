@@ -168,6 +168,12 @@ void town_init(Town *t, TownMap *m, TownTiles *ti, TownSprites *s, TownHero *h, 
 void town_place(Town *t, int col, int face_left);
 /* one iteration of the 61FC main loop; sets t->action when it wants to leave */
 void town_step(Town *t);
+/* 61B1: the entry frame (68AC) every town entry runs before the 61FC loop */
+void town_entry_frame(Town *t);
+/* 68AF: a frame without the NPC update and without waiting (FF1A preset to
+ * 0x28): the "tail" frames after a door, an edge exit, the status screen and
+ * a shop (6EE6) */
+void town_tail_frame(Town *t);
 int  town_hero_col(const Town *t);                  /* scroll_col + hero_scr_col + 4 */
 /* the town position inside the save page ([80]/[83]/[C2]/[E7]/[C4]): pushed
  * before kenjpro A862 writes NAME.USR, pulled after town.bin 7592 reads one */

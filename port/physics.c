@@ -5,6 +5,7 @@
 #include "boss.h"
 #include "enemy.h"
 #include "status.h"
+#include "audio.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -113,11 +114,17 @@ static void scroll_right(Game *g)                                               
     ring_put_column(g, 0x23, c);
     shots_shift(g, 0);                                                  /* 8639 */
 }
-static void scroll_up(Game *g)   { g->scroll_row = (uint8_t)((g->scroll_row - 1) & 0x3F); }             /* 6621 */
-static void scroll_down(Game *g) { g->scroll_row = (uint8_t)((g->scroll_row + 1) & 0x3F); }             /* 6B2E */
+/* 6621 `dec byte [0x82]` / 6B2E `inc byte [0x82]`: the byte is never masked --
+ * every reader takes `& 0x3F` -- so it runs on past 63 (seen as 0x40 by the
+ * oracle after a fall through the ring's bottom row) */
+static void scroll_up(Game *g)   { g->scroll_row = (uint8_t)(g->scroll_row - 1); }                      /* 6621 */
+static void scroll_down(Game *g) { g->scroll_row = (uint8_t)(g->scroll_row + 1); }                      /* 6B2E */
 
 /* ---------------------------------------------------------- forward decls */
 static void frame(Game *g);
+static void frame_tail(Game *g);
+static void frame_7094(Game *g);
+static void death_begin(Game *g);
 static void walk_left(Game *g);
 static void walk_right(Game *g);
 static int  try_move_left(Game *g);
@@ -267,6 +274,7 @@ static void ladder_mount(Game *g)
             g->hero_anim--;
             if (!is_ladder(g->ring[s])) { g->hero_anim |= 1; return; }
             scroll_up(g); frame(g);
+            if (g->hero_dead) return;                                   /* 718C jumped to 98FC */
             if (g->hero_anim & 1) return;
         }
     }
@@ -319,6 +327,20 @@ static int door_check(Game *g)
             d->col, d->row, d->letter, d->dest_row == 0xFF ? "TOWN" : "cavern", d->dest_map,
             d->dest_col, d->dest_row, d->dflags, d->flag_ptr != 0xFFFF ? " (sets a story flag)" : "");
     if (d->flag_ptr != 0xFFFF) g->page[d->flag_ptr & 0xFF] |= d->flag_mask;   /* 7B25 */
+    /* 7B33..7B41: before the next map is loaded the cavern runs one more
+     * frame: shots dropped (83DB), the tile cache invalidated (73B3; the port
+     * redraws everything anyway), the hero's state reset (7E5B), then `call
+     * 708F` -- the frame tail with its draw and a 717F boundary.  The oracle
+     * shows it: Up at the town gate is still a cavern frame, the town's first
+     * 68ED is the next one (jumps f44). */
+    shots_clear(g);                                                     /* 83DB */
+    g->attacking = 0; g->casting = 0; g->vstate = V_GROUND;             /* 7E5D..7E66 [FF43] [FF3C] [FF3D] */
+    g->crouching = 0; g->hero_hit_flash = 0; g->msg_box = 0;            /* 7E69..7E6F [FF38] [FF36] [9EEF] */
+    g->magic_active = 0; g->menu_result = 0; g->hero_anim = 0;          /* 7E72..7E7B [FF3E] [FF4B] [E7] */
+    g->boss_state = 0xFF; g->hero_entering = 0xFF; g->menu_debounce = 0xFF;   /* 7E84 / 7E8A / 7E8D */
+    frame_tail(g);                                                      /* 7B41 */
+    if (g->hero_dead) return 1;                                         /* 718C jumped to 98FC */
+    g->page[0xC3] = (uint8_t)(d->letter & 0x40);                        /* 7B5F..7B64 */
     if (g->on_door) g->on_door(g, d);
     return 1;
 }
@@ -348,6 +370,7 @@ static void down_pressed(Game *g)
             g->hero_anim++;
             if (!passable_wall(g->ring[s])) { g->hero_anim |= 1; return; }
             scroll_down(g); frame(g);
+            if (g->hero_dead) return;                                   /* 718C jumped to 98FC */
             if (g->hero_anim & 1) return;
         }
     }
@@ -648,15 +671,45 @@ static void fixtures_load(Game *g)
     g->fixture_anim = 0;
 }
 
+/* 0x81BE..0x8208  erase a C platform where it stands, before it moves.  831F
+ * takes its *rightmost* cell's ring column d = (col+2 - [80]) mod width, off
+ * the ring when d > 0x25; so unlike the draw (82F8, fully on the ring) it also
+ * clears a platform hanging over either edge: d 0/1 -> d+1 cells from ring
+ * column 0 (81CE), leftmost 0x22/0x23 -> the 2/1 cells up to 0x23 (81DA).
+ * It writes 0 (8202 `xor dl,dl` -> 8352, under a sprite marker too), not the
+ * map cell.  The port used to erase only fully visible platforms, so one that
+ * scrolled half off the left edge left its cells in the ring (crouch f55). */
+static void fixture_c_erase(Game *g, Fixture *f)
+{
+    int w = g->map->width;
+    int r = (int)f->col + 2; if (r >= w) r -= w;                        /* 831F..832B */
+    int d = r - g->scroll_col; if (d < 0) d += w;                       /* 832D..834B */
+    if (d > 0x25) return;
+    int left = d - 2, c0 = left, n = 3;
+    if (left < 0) { c0 = 0; n = d + 1; }                                /* 81CA..81D8 */
+    else if (left >= 0x22) n = 2 - (left - 0x22);                       /* 81DA..81F4 */
+    for (int k = 0; k < n; k++)
+        fixture_put(g, game_ring_index(g, f->row, (uint8_t)(c0 + k)), 0);
+    f->drawn = 0;
+}
+
+/* 7016 0x81AE (list [C008], the C platforms: erase, move, draw, one record at
+ * a time), then 7019 0x7FB1 ([C004], A elevators) and 701C 0x8163 ([C006], B
+ * gates): those two are only *drawn* here (82F8 visible -> cells 40/43..),
+ * never erased -- a move (8024/80AF) erases its own old row. */
 static void fixtures_draw(Game *g)
 {
     g->fixture_anim++;                                                  /* 81AE */
-    for (int i = 0; i < g->nfix; i++) fixture_erase(g, &g->fix[i]);
     for (int i = 0; i < g->nfix; i++) {
         Fixture *f = &g->fix[i];
-        if (f->kind == 2) fixture_c_move(g, f);
-        fixture_draw_one(g, f);
+        if (f->kind != 2) continue;
+        fixture_c_erase(g, f);
+        fixture_c_move(g, f);                                           /* 8220 */
+        fixture_draw_one(g, f);                                         /* 8224 */
     }
+    for (int kind = 0; kind < 2; kind++)
+        for (int i = 0; i < g->nfix; i++)
+            if (g->fix[i].kind == kind) fixture_draw_one(g, &g->fix[i]);
 }
 
 /* 0x814C  which of the three cells of a `first`-based fixture is `v`?
@@ -800,34 +853,55 @@ static void frame(Game *g)
     hero_enemy_contact(g);                                              /* 751F */
     shots_update(g);                                                    /* 8422 */
     orbs_update(g);                                                     /* 86FC */
+    sword_advance(g);                                                   /* 7047: [3006], first swing step */
     hazard_check(g);
     if (g->map->cavern == 7 && g->shoes != 5 && ((++g->heat_timer & 0x3F) == 0)) {   /* 704F */
         g->hero_hit_flash = 0xFF; g->sfx_request = 9; hero_damage(g, 0x0F);
         game_message(g, fight_message(MSG_TOO_HOT));                    /* 9BB9 */
     }
     message_tick(g);                                                    /* 7210 */
-    if (g->hero_dead) g->hero_hit_flash = 0; else g->hero_hidden = 0;
+    if (g->hero_dead) { g->hero_hit_flash = 0; frame_7094(g); }          /* 7081..708D */
+    else frame_tail(g);                                                 /* 708F */
+}
+
+/* 0x7094..0x7202  the second half of 6F9B: draw, wait, the 717F boundary and
+ * the per-frame bookkeeping after it. */
+static void frame_7094(Game *g)
+{
     g->frame_no++;
     if (!g->harness_rng) g->rng += 20;                                  /* FF1B: ticks per frame at speed 5 */
     sound_request(g);                                                   /* FF75 -> the sound stub */
     if (g->present) g->present(g);                                      /* draw + wait 4*speed ticks + poll input */
+    /* 70D9: the potion's +8 LIFE a frame, right after the 70D4 draw and before
+     * the 717F boundary (it used to run after it, one frame late: #63) */
+    if (!g->hero_dead && g->hp_regen_pending) {
+        g->hp_regen_pending--; g->hp += 8;                              /* 70E7 / 70EB */
+        if (g->hp > g->max_hp) { g->hp = g->max_hp; g->hp_regen_pending = 0; }   /* 70F3..70FF */
+        g->sfx_request = 0x13;                                          /* 7105 */
+    }
     orbs_update(g);                                                     /* 7133: the second orb pass */
-    sword_apply(g);                                                     /* 7147: second half of the frame */
+    sword_apply(g);                                                     /* 7144: 6F07, second half of the frame */
+    sword_advance(g);                                                   /* 7147: [3006], second swing step */
     sound_request(g);
     if (g->frame_end) g->frame_end(g);                                  /* 717F: the harness frame boundary */
     if (g->hero_dead) return;
-    if (g->hp == 0) { hero_die(g); return; }                            /* 718C */
+    if (g->hp == 0) { death_begin(g); return; }                         /* 718C: jmp 98FC */
     if (++g->regen_tick >= 0x10) {                                      /* 719E */
         g->regen_tick = 0;
         if (g->hp < g->max_hp) { g->hp += 2; if (g->hp > g->max_hp) g->hp = g->max_hp; }
     }
-    if (g->hp_regen_pending) {                                          /* 70D9: potion */
-        g->hp_regen_pending--; g->hp += 8;
-        if (g->hp > g->max_hp) { g->hp = g->max_hp; g->hp_regen_pending = 0; }
-    }
     if (g->post_boss_pending) { post_boss_transition(g); return; }       /* 71C2 -> 72F1 */
     boss_rewards(g);                                                     /* 71CC */
     check_status_menu(g);                                                /* 7202 */
+}
+
+
+/* 0x708F  the frame from its draw on: entered from 7081 and, on its own,
+ * by the door path (7B41 `call 708F`). */
+static void frame_tail(Game *g)
+{
+    g->hero_hidden = 0;                                                 /* 708F */
+    frame_7094(g);
 }
 
 /* 0x7202  The menu key opens select.bin (status.c).  fight.bin swaps the
@@ -854,6 +928,7 @@ static void ladder_step(Game *g)
 {
     g->crouching = 0; g->vstate = V_GROUND; g->conveyor = 0; g->attacking = 0;
     frame(g);
+    if (g->hero_dead) return;                                           /* 718C jumped to 98FC */
     hero_knockback(g);
     hero_input(g);
     if (g->on_ladder == 0xFF) {
@@ -876,14 +951,80 @@ static void encounter_step(Game *g)
     if (g->present) g->present(g);
 }
 
+/* 0x98FC  LIFE reached 0 at 718C (the frame's own 717F boundary has already
+ * been taken).  The rest of that main-loop pass never runs: 718C *jumps* here.
+ * Only the setup; the dying frames are death_step(). */
+static void death_begin(Game *g)
+{
+    g->attacking = 0;                                                   /* 9901 [FF43] */
+    g->vstate = V_GROUND;                                               /* 9906 [FF3D] */
+    g->crouching = 0;                                                   /* 990B [FF38] */
+    g->hero_hit_flash = 0;                                              /* 9910 [FF36] */
+    g->hero_dead = 0xFF;                                                /* 9915 [E8] */
+    g->death_anim = 0; g->death_anim_b = 0;                             /* 991A / 991F */
+    g->death_phase = 1;                                                 /* 9929 */
+}
+
+/* 0x9929..0x99A1  One dying frame per game_step: each pass runs 6F9B (one 717F
+ * boundary; with [E8] set it returns right after it, 7184) and the code up to
+ * the next 6F9B call.  The original's frame count, measured with the oracle:
+ * 1 (9938) + falling rows + 32 (9948: 16 to raise the pose [E7] 0 -> 2 every
+ * 8 frames, then 16 blinking) + 30 (9993) = 63 on flat ground; then 99A3
+ * (the penalties and the town, hero_die). */
+static void death_step(Game *g)
+{
+    switch (g->death_phase) {
+    case 1:                                                             /* 9929 */
+        g->hero_anim = 0; g->on_ladder = 0; g->hero_hidden = 0;
+        frame(g);                                                       /* 9938 */
+        /* 993B: `push 9929; call 695A`: 695A's falling and landing exits
+         * `pop ax` their own return address (698D, 6B49) and so return to
+         * 9929 -- the body falls one row a frame and lands -- the others
+         * (on the floor, rising) return to 9942. */
+        if (!gravity(g)) return;
+        g->hero_hidden = 0;                                             /* 9943 */
+        g->death_phase = 2;
+        return;
+    case 2:                                                             /* 9948 */
+        frame(g);
+        g->hero_hidden = 0;                                             /* 994B */
+        if (g->hero_anim == 2) {                                        /* 9950 */
+            g->death_anim_b++;                                          /* 9972 */
+            if (g->death_anim_b & 0x0F) {
+                if (g->death_anim_b & 1) g->hero_hidden = 0xFF;         /* 997D / 9984 */
+                return;
+            }
+            audio_music_fade(8);                                        /* 998B: [FF24] = 8 */
+            g->death_blink = 30;                                        /* 9990: mov cx,1E */
+            g->death_phase = 3;
+            return;
+        }
+        if (++g->death_anim & 7) return;                                /* 9957 */
+        {
+            uint8_t a = (uint8_t)((g->hero_anim + 1) & 3);              /* 9962 */
+            if (a != 3) g->hero_anim = a;                               /* 9969: 3 is never stored */
+        }
+        return;
+    case 3:                                                             /* 9993 */
+        frame(g);
+        g->hero_hidden = (uint8_t)((g->death_blink & 1) - 1);           /* 9998: odd CX shows, even hides */
+        if (--g->death_blink) return;                                   /* 99A1: loop */
+        g->death_phase = 0;
+        hero_die(g);                                                    /* 99A3 */
+        return;
+    }
+}
+
 void game_step(Game *g)
 {
     if (g->encounter_frames) { encounter_step(g); return; }             /* 60E6 */
+    if (g->hero_dead) { death_step(g); return; }                        /* 98FC's own loops */
     if (g->walk_in) { walk_in_step(g); return; }                        /* 7C6E */
     if (g->on_ladder) { ladder_step(g); return; }
     sword_input(g);                                                     /* 6E3B */
     ice_slide_step(g);
     frame(g);
+    if (g->hero_dead) return;                                           /* 718C jumped to 98FC */
     magic_input(g);                                                     /* 87B0 */
     unstick_from_wall(g);
     hero_knockback(g);                                                  /* 6412 */
@@ -903,6 +1044,11 @@ void game_init(Game *g, const Map *m, const Tileset *t)
     g->rng = 0x1234;
     g->town_map = 0x81;                                                 /* [C5] Muralla Town */
     g->max_rise = 2; g->hero_scr_col = 0x0C; g->hero_scr_row = m->row_bias; g->hero_home_row = m->row_bias;
+    /* fight.bin's locals start as the overlay image holds them (it is loaded
+     * from disk at boot and after a restore, then parked -- not reloaded --
+     * across town visits): 9EF5 menu_debounce is 0xFF there, so the first
+     * cavern frame's 7202 ignores an Enter held across the entry */
+    g->menu_debounce = 0xFF;
     shots_clear(g);
     for (int i = 0; i < 4; i++) g->orbs[i].phase = 0xFF;                /* 7A04 */
 }
@@ -917,7 +1063,7 @@ void game_place(Game *g, int col, int row, int face_left)
     g->hero_flags = face_left ? FACE_LEFT : 0;
     g->hero_anim = 0x80; g->vstate = V_GROUND; g->on_ladder = 0; g->crouching = 0;
     g->fall_rows = g->rise_rows = 0; g->diag_jump = 0;
-    g->attacking = 0; g->attack_var = 0; g->hero_dead = 0; g->death_anim = 0;
+    g->attacking = 0; g->attack_var = 0; g->hero_dead = 0; g->death_anim = 0; g->death_anim_b = 0; g->death_phase = 0;
     g->casting = g->magic_active = g->cast_timer = 0;
     shots_clear(g);                                                     /* 83DB */
     for (int i = 0; i < 4; i++) { g->magic[i].live = 0; g->orbs[i].phase = 0xFF; }

@@ -58,6 +58,7 @@ static void bat_update(struct enemy *e)
  * column (0x11). */
 static void bat_idle(struct enemy *e)
 {
+    fight_step_up(e);                                                               /* A2A5: call [600C], step up */
     if (e->phase) { e->phase -= 0x10; return; }                                     /* A2AA */
     if ((u8)(e->rcol - 0x11) < 10 || (u8)(0x11 - e->rcol) < 7) e->next = 0x40;     /* A2B5..A2C7 */
     e->phase = 0;                                                                   /* A2CB */
@@ -112,9 +113,9 @@ static void bat_retreat(struct enemy *e)
         return;
     }
     bat_anim(e);                                                    /* A389 */
-    if (e->hit & FACING_RIGHT) { if (fight_step_right_up(e)) return; e->hit &= ~FACING_RIGHT; }   /* A392 */
-    else                       { if (fight_step_left_up(e))  return; e->hit |= FACING_RIGHT;  }   /* A3A0 */
-    if (fight_step_up(e)) return;                                   /* A3AC */
+    if (e->hit & FACING_RIGHT) { if (!fight_step_right_up(e)) return; e->hit &= ~FACING_RIGHT; }  /* A392: jc = refused */
+    else                       { if (!fight_step_left_up(e))  return; e->hit |= FACING_RIGHT;  }  /* A3A0 */
+    if (!fight_step_up(e)) return;                                  /* A3AC */
     e->next |= 0x20; e->phase = 2;                                  /* A3B4 */
 }
 
@@ -171,9 +172,14 @@ static void frog_update(struct enemy *e)
     if (!facing) {
         if (e->phase & 0xE0) return;                                /* A47B */
         f = hero_dir8(e, &facing);                                  /* A483 */
-        if (f != 0xFF) e->hit = (e->hit & 0x7F) | f;                /* A48A: face the hero */
+        if (f != 0xFF) {                                            /* A486 */
+            e->hit = (e->hit & 0x7F) | f;                           /* A48A: face the hero */
+            e->phase = 2; e->next |= 8;                             /* A491: hop next frame */
+            return;
+        }
     }
-    e->phase = 2; e->next |= 8;                                     /* A491 / A49A */
+    e->phase = 2; e->next |= 8;                                     /* A49A: falls into A4A2 */
+    frog_hop(e);
 }
 
 /* 0xA4A2  Hop: phase 2..5 -> steps RU, R, R, RD (hop_r) or LU, L, L, LD

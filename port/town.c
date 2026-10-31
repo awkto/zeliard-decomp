@@ -144,6 +144,7 @@ static int dlg_count_lines(const uint8_t *s, const uint8_t *end)
     return x ? n + 1 : n;
 }
 
+static void town_draw_frame(Town *t);
 static void dlg_frame(Town *t)
 {
     t->frame_no++;
@@ -652,8 +653,18 @@ static void grid_set(Town *t, int col, int row, uint8_t v)
 }
 
 /* 0x6C2B / 0x6C4E  NPC markers live in the map grid itself. */
+/* 6C2B.  Every caller in town.bin has the previous markers lifted first (6C4E);
+ * the port re-places from several setup paths (town_place, the page pull after
+ * a restore, the shop return), so lift any markers still down here -- marking
+ * over a marker saved 0xFD as the "tile underneath" (seen by the harness as
+ * npc[i].saved = FD against the original's real cells). */
 static void npc_place_markers(Town *t)
 {
+    for (int i = 0; i < t->map->nnpcs; i++) {           /* lift only markers that are down */
+        TownNpc *n = &t->map->npcs[i];
+        if (grid_cell(t, n->col, TOWN_NPC_ROW) == TOWN_MARK && n->saved != TOWN_MARK)
+            grid_set(t, n->col, TOWN_NPC_ROW, n->saved);
+    }
     for (int i = 0; i < t->map->nnpcs; i++) {
         TownNpc *n = &t->map->npcs[i];
         n->saved = grid_cell(t, n->col, TOWN_NPC_ROW);
@@ -673,22 +684,24 @@ static void npc_idle_anim(TownNpc *n)                                   /* 6BD2 
 {
     n->anim = (uint8_t)(n->anim + 0x10);
     if (n->anim & 0x30) return;
-    n->anim ^= 1;
+    n->anim = (uint8_t)((n->anim + 1) & 1);                             /* 6BE1..6BE8: everything else drops */
 }
 static void npc_step(Town *t, TownNpc *n, int every4)                   /* 6B6C / 6BA6 */
 {
     n->anim = (uint8_t)(n->anim + 0x10);
     if (n->anim & (every4 ? 0x30 : 0x10)) return;
-    n->anim = (uint8_t)((n->anim & 0x30) | ((n->anim + 1) & 0x0F));
+    /* 6B7B: ((anim+1) & 0x0F) | (anim & 0x10) -- and that last term is 0 on
+     * this path, so the step timer bits are dropped, not kept */
+    n->anim = (uint8_t)((n->anim + 1) & 0x0F);
     if (n->sprite & 0x80) { n->col--; if (t->map->range_min >= n->col) n->sprite &= 0x7F; }
-    else                  { n->col++; if (t->map->range_max <= n->col) n->sprite |= 0x80; }
+    else                  { n->col++; if (t->map->range_max < n->col) n->sprite |= 0x80; }   /* 6B9B: cmp [C013],dx; jc */
 }
 static void npc_wander(Town *t, TownNpc *n, int every4)                 /* 6BEC / 6C19 */
 {
     (void)t;
     n->anim = (uint8_t)(n->anim + 0x10);
     if (n->anim & (every4 ? 0x30 : 0x10)) return;
-    n->anim = (uint8_t)((n->anim & 0x30) | ((n->anim + 1) & 0x0F));
+    n->anim = (uint8_t)((n->anim + 1) & 0x0F);                         /* 6BFB..6C02, as 6B7B */
     if (!(n->anim & 7)) { n->sprite ^= 0x80; return; }                  /* 6C05: turn every 8 steps */
     if (n->sprite & 0x80) n->col--; else n->col++;
 }
@@ -780,6 +793,8 @@ static void enter_door(Town *t)
         int dc = t->map->doors[i].col;
         if (dc != col && dc != col + 1 && dc != col - 1) continue;
         t->hero_anim = 4;                                               /* 6E5B: back view */
+        npc_restore_tiles(t);                                           /* 6E61: 6C4E */
+        town_draw_frame(t);                                             /* 6E64/6E69: FF1A=28, 68AF */
         uint8_t dest = t->map->doors[i].dest;
         if (dest == 0xFF)      { t->action = TOWN_PAST_DOOR; t->action_arg = 0; }
         else if (dest >= 8)    { t->action = TOWN_TO_CAVERN; t->action_arg = dest - 8; }
@@ -795,7 +810,8 @@ static void check_edge_exit(Town *t)
     if (t->hero_scr_col < 0) left = 1;
     else if (t->hero_scr_col == 0x1C) left = 0;
     else return;
-    npc_restore_tiles(t);
+    npc_restore_tiles(t);                                               /* 6CBC/6CFA: 6C4E */
+    town_draw_frame(t);                                                 /* 6CBF/6CFD: FF1A=28, 68AF */
     const TownExit *e = NULL;
     for (int i = 0; i < t->map->nexits; i++) {
         int is_left = t->map->exits[i].flags & 1;
@@ -848,7 +864,6 @@ void town_page_push(Town *t)
     p[0xC2] = t->hero_flags;
     p[0xE7] = t->hero_anim;
     t->g->cur_map = (uint8_t)(0x80 | t->map->index);
-    t->g->town_map = t->g->cur_map;
     p[0xC4] = t->g->cur_map;
     p[0xC5] = t->g->town_map;
 }
@@ -863,13 +878,17 @@ void town_page_pull(Town *t)
     t->scroll_col = sc;
     t->hero_scr_col = p[0x83] > 0x1B ? 0x1B : p[0x83];
     t->hero_flags = (uint8_t)(p[0xC2] & 1);
-    t->hero_anim = (uint8_t)(p[0xE7] & 3);
+    t->hero_anim = 0;                   /* 6050: the 601E boot entry zeroes [E7] after the restore */
     npc_place_markers(t);
 }
 
 void town_init(Town *t, TownMap *m, TownTiles *ti, TownSprites *s, TownHero *h, Game *g)
 {
+    /* the held keys live in the kernel's FF page (FF16/FF17/FF18), which no
+     * town.bin entry touches; only the press edges are cleared (60C3/60C6) */
+    uint8_t dirs = t->dirs, buttons = t->buttons, menu_key = t->menu_key;
     memset(t, 0, sizeof *t);
+    t->dirs = dirs; t->buttons = buttons; t->menu_key = menu_key;
     t->map = m; t->tiles = ti; t->spr = s; t->hero = h; t->g = g;
     t->hero_scr_col = 0x0D;
     t->hero_anim = 1;
@@ -885,16 +904,38 @@ static void check_status_menu(Town *t)
     if (t->menu_debounce) return;
     t->g->sfx_request = 0x0B;                                           /* 68FC */
     status_run_town(t);                                                 /* 6909 */
+    if (t->quit) return;
+    town_draw_frame(t);                                                 /* 692A: call 68AF, a tail frame */
     t->menu_debounce = 0xFF;
     t->btn1_edge = t->btn2_edge = 0;                                    /* 692D/6932 */
+}
+
+/* 0x68AF  draw and pace one frame, ending at the 68ED boundary.  68AC is the
+ * same with the NPC update (6B1C) first.  The callers of 68AF preset
+ * FF1A = 0x28 so it does not wait: a "tail" frame. */
+static void town_draw_frame(Town *t)
+{
+    t->frame_no++;
+    if (t->present) t->present(t);
+    if (t->frame_end) t->frame_end(t);                                  /* 68ED: the frame boundary */
+}
+void town_tail_frame(Town *t) { town_draw_frame(t); }
+
+/* 0x61A5..0x61E2  the town entry: E000 forced to FE, then one frame of 68AC
+ * (61B1) *before* the 61FC main loop -- whose own first 68AC follows at once,
+ * so the keys are first read after the second boundary.  [7C4B] = 0 (61E2).
+ * The underground walk-in (61B4..61DD, [7C44]) is not modelled. */
+void town_entry_frame(Town *t)
+{
+    town_npc_update(t);                                                 /* 68AC -> 6B1C */
+    town_draw_frame(t);
+    t->was_idle = 0;                                                    /* 61E2 */
 }
 
 void town_step(Town *t)
 {
     town_npc_update(t);                                                 /* 68AC */
-    t->frame_no++;
-    if (t->present) t->present(t);
-    if (t->frame_end) t->frame_end(t);                                  /* 68ED: the frame boundary */
+    town_draw_frame(t);
     if (t->action) return;
     check_status_menu(t);                                               /* 68F3 */
     if (t->action) return;

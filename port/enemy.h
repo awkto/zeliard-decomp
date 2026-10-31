@@ -60,6 +60,7 @@ void enemy_take_damage(Game *g, MapObj *o);             /* vec 26 97B5 */
 void kill_with_exp(Game *g, MapObj *o);                 /* 96C1 */
 void sword_input(Game *g);                              /* 6E3B */
 void sword_apply(Game *g);                              /* 6F07 */
+void sword_advance(Game *g);                            /* 3E34 via [3006]: 7047 and 7147 */
 void hero_enemy_contact(Game *g);                       /* 751F */
 void hero_knockback(Game *g);                           /* 6412 */
 void hero_damage(Game *g, unsigned dmg);                /* 7685 */

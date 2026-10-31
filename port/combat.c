@@ -2,6 +2,7 @@
  * hero's HP.  Port of src/fight.c 6412 / 6E3B / 6F07 / 751F / 75E2 / 7685 /
  * 9851 / 96C1 / 96D5 / 97B5 (docs/FIGHT.md §6). */
 #include "enemy.h"
+#include "gfx.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -121,7 +122,8 @@ void enemy_take_damage(Game *g, MapObj *o)
     if (!(*f & 0xF)) {
         const uint8_t *tbl = ai_drop_list(g->ai, o->type & 7);          /* 97E2 */
         if (tbl) {
-            int r = g->attack_type == 2 ? 0 : (krn_random(g) & 3);      /* 97F2: down-thrust always entry 0 */
+            int r = krn_random(g) & 3;                                  /* 97F2: the draw is always made (#62) */
+            if (g->attack_type == 2) r = 0;                             /* 97FC: a down-thrust takes entry 0 */
             *f = (uint8_t)((*f & 0xF0) | (tbl[r] & 0xF));
         }
     }
@@ -130,52 +132,104 @@ void enemy_take_damage(Game *g, MapObj *o)
 
 /* ------------------------------------------------------------- the sword */
 
-/* Blade shapes decoded from sword.grp section 0 (docs/FIGHT.md §6), as (row,
- * col) cells relative to the hero's top-left, facing right.  The left-facing
- * shapes are the mirror about the body column (+1), i.e. col' = 2 - col. */
+/* Blade shapes: the hit lists of sword.grp (ZELRES2[26]), one per section
+ * (kernel 0x0BA0: sword 1-3 -> section 0, 4-5 -> 1, 6 -> 2), which the game
+ * relocates to arena:B000.  6F69 `mov di,[es:bx+B002]` picks a list by the
+ * word index below; each list is a run of byte steps added to SI (6F79),
+ * starting 4 rows above the hero's top-left (6F21: -0x90; -0x6C crouched),
+ * up to an FF.  Decoded here to (row, col) cells relative to the hero's
+ * top-left (the crouch origin is one row lower).  The left-facing lists
+ * (word index | 0x10) are their own data, NOT a mirror of the right ones:
+ * e.g. up0 left is up0 right shifted one column, and the thrust left has
+ * 10 cells to the right one's 11 (an oracle run hit a frog behind the hero
+ * with the mirrored up0, left_walk f74). */
 typedef struct { int8_t dr, dc; } Cellofs;
-static const Cellofs SLASH0[] = {                                       /* frames 0-1: wind-up behind */
-    {-2,-2},{-2,-1},{-1,-2},{-1,-1},{-1,0},{0,-2},{0,-1},{0,0},{0,1},{1,-2},{1,-1},{1,0},{1,1}};
-static const Cellofs SLASH1[] = {                                       /* frames 2-3: rows 0..1 x cols -1..+4 */
-    {0,-1},{0,0},{0,1},{0,2},{0,3},{0,4},{1,-1},{1,0},{1,1},{1,2},{1,3},{1,4}};
-static const Cellofs SLASH2[] = {                                       /* frame 4: rows 0..1 x cols +1..+4 */
-    {0,1},{0,2},{0,3},{0,4},{1,1},{1,2},{1,3},{1,4}};
-static const Cellofs UP0[] = {                                          /* upward slash frames 0-1 */
-    {-2,-1},{-2,0},{-2,1},{-1,-2},{-1,-1},{-1,0},{-1,1},{0,-2},{0,-1},{0,0},{0,1},{0,2}};
-static const Cellofs UP1[] = {                                          /* upward slash frames 2-3 */
-    {-2,1},{-2,2},{-2,3},{-1,1},{-1,2},{-1,3},{-1,4},{0,1},{0,2},{0,3},{0,4},
-    {1,1},{1,2},{1,3},{1,4},{2,1},{2,2},{2,3},{2,4},{3,2},{3,3}};
-static const Cellofs THRUST[] = {                                       /* down-thrust, 1 row below the feet */
-    {0,1},{0,2},{1,0},{1,1},{1,2},{2,0},{2,1},{2,2},{3,0},{3,1},{3,2}};
+#define SHAPE_MAX 31
+#define END {127, 127}
+static const Cellofs SWORD_SHAPE[3][12][SHAPE_MAX] = {
+  {   /* section 0 (sword 1-3) */
+    /* R slash0 @1A6 */ {{-2,-2},{-2,-1},{-1,-2},{-1,-1},{-1,0},{0,-2},{0,-1},{0,0},{0,1},{1,-2},{1,-1},{1,0},{1,1},END},
+    /* R slash1 @1B4 */ {{0,-1},{0,0},{0,1},{0,2},{0,3},{0,4},{1,-1},{1,0},{1,1},{1,2},{1,3},{1,4},END},
+    /* R slash2 @1C1 */ {{0,1},{0,2},{0,3},{0,4},{1,1},{1,2},{1,3},{1,4},END},
+    /* R up0    @1CA */ {{-2,-1},{-2,0},{-2,1},{-1,-2},{-1,-1},{-1,0},{-1,1},{0,-2},{0,-1},{0,0},{0,1},{0,2},END},
+    /* R up1    @1D7 */ {{-2,1},{-2,2},{-2,3},{-1,1},{-1,2},{-1,3},{-1,4},{0,1},{0,2},{0,3},{0,4},{1,1},{1,2},{1,3},{1,4},{2,1},{2,2},{2,3},{2,4},{3,2},{3,3},END},
+    /* R thrust @1ED */ {{0,1},{0,2},{1,0},{1,1},{1,2},{2,0},{2,1},{2,2},{3,0},{3,1},{3,2},END},
+    /* L slash0 @1F9 */ {{-2,2},{-2,3},{-1,1},{-1,2},{-1,3},{0,0},{0,1},{0,2},{0,3},{1,0},{1,1},{1,2},{1,3},END},
+    /* L slash1 @207 */ {{0,-3},{0,-2},{0,-1},{0,0},{0,1},{0,2},{1,-3},{1,-2},{1,-1},{1,0},{1,1},{1,2},END},
+    /* L slash2 @214 */ {{0,-3},{0,-2},{0,-1},{0,0},{1,-3},{1,-2},{1,-1},{1,0},END},
+    /* L up0    @21D */ {{-2,0},{-2,1},{-2,2},{-1,-1},{-1,0},{-1,1},{-1,2},{0,-1},{0,0},{0,1},{0,2},{0,3},END},
+    /* L up1    @22A */ {{-2,-2},{-2,-1},{-2,0},{-1,-3},{-1,-2},{-1,-1},{-1,0},{0,-3},{0,-2},{0,-1},{0,0},{1,-3},{1,-2},{1,-1},{1,0},{2,-3},{2,-2},{2,-1},{2,0},{3,-2},{3,-1},END},
+    /* L thrust @240 */ {{0,-1},{0,0},{1,-1},{1,0},{2,-1},{2,0},{2,1},{3,-1},{3,0},{3,1},END},
+  },
+  {   /* section 1 (sword 4-5) */
+    /* R slash0 @1A6 */ {{-3,-2},{-3,-1},{-2,-3},{-2,-2},{-2,-1},{-1,-3},{-1,-2},{-1,-1},{-1,0},{0,-3},{0,-2},{0,-1},{0,0},{1,-2},{1,-1},{1,0},{1,1},END},
+    /* R slash1 @1B8 */ {{-1,-2},{-1,-1},{-1,0},{-1,1},{0,-2},{0,-1},{0,0},{0,1},{0,2},{0,3},{0,4},{0,5},{1,-1},{1,0},{1,1},{1,2},{1,3},{1,4},{1,5},END},
+    /* R slash2 @1CC */ {{0,1},{0,2},{0,3},{0,4},{0,5},{1,1},{1,2},{1,3},{1,4},{1,5},END},
+    /* R up0    @1D7 */ {{-3,-2},{-3,-1},{-3,0},{-3,1},{-2,-2},{-2,-1},{-2,0},{-2,1},{-1,-3},{-1,-2},{-1,-1},{-1,0},{-1,1},{0,-3},{0,-2},{0,-1},{0,0},{0,1},{0,2},END},
+    /* R up1    @1EB */ {{-2,2},{-2,3},{-2,4},{-1,1},{-1,2},{-1,3},{-1,4},{0,0},{0,1},{0,2},{0,3},{0,4},{1,0},{1,1},{1,2},{1,3},{1,4},{2,0},{2,1},{2,2},{2,3},{2,4},{3,1},{3,2},{3,3},END},
+    /* R thrust @205 */ {{0,0},{0,1},{0,2},{1,0},{1,1},{1,2},{2,0},{2,1},{2,2},{3,0},{3,1},{3,2},{4,0},{4,1},END},
+    /* L slash0 @214 */ {{-3,2},{-3,3},{-2,2},{-2,3},{-2,4},{-1,1},{-1,2},{-1,3},{-1,4},{0,1},{0,2},{0,3},{0,4},{1,0},{1,1},{1,2},{1,3},END},
+    /* L slash1 @226 */ {{-1,0},{-1,1},{-1,2},{-1,3},{0,-4},{0,-3},{0,-2},{0,-1},{0,0},{0,1},{0,2},{0,3},{1,-4},{1,-3},{1,-2},{1,-1},{1,0},{1,1},{1,2},END},
+    /* L slash2 @23A */ {{0,-4},{0,-3},{0,-2},{0,-1},{0,0},{1,-4},{1,-3},{1,-2},{1,-1},{1,0},END},
+    /* L up0    @245 */ {{-3,0},{-3,1},{-3,2},{-3,3},{-2,0},{-2,1},{-2,2},{-2,3},{-1,-1},{-1,0},{-1,1},{-1,2},{-1,3},{-1,4},{0,-1},{0,0},{0,1},{0,2},{0,3},{0,4},END},
+    /* L up1    @25A */ {{-2,-3},{-2,-2},{-2,-1},{-1,-3},{-1,-2},{-1,-1},{0,-3},{0,-2},{0,-1},{0,0},{1,-3},{1,-2},{1,-1},{1,0},{1,1},{1,2},{2,-3},{2,-2},{2,-1},{2,0},{2,1},{3,-3},{3,-2},{3,-1},END},
+    /* L thrust @273 */ {{0,-1},{0,0},{0,1},{1,-1},{1,0},{1,1},{2,-1},{2,0},{2,1},{3,-1},{3,0},{3,1},{4,0},{4,1},END},
+  },
+  {   /* section 2 (sword 6) */
+    /* R slash0 @1A6 */ {{-3,-2},{-3,-1},{-2,-3},{-2,-2},{-2,-1},{-1,-3},{-1,-2},{-1,-1},{-1,0},{0,-3},{0,-2},{0,-1},{0,0},{1,-1},{1,0},END},
+    /* R slash1 @1B6 */ {{-1,-2},{-1,-1},{-1,0},{0,-2},{0,-1},{0,0},{0,1},{0,2},{0,3},{0,4},{0,5},{1,-1},{1,0},{1,1},{1,2},{1,3},{1,4},{1,5},END},
+    /* R slash2 @1C9 */ {{0,1},{0,2},{0,3},{0,4},{0,5},{1,1},{1,2},{1,3},{1,4},{1,5},END},
+    /* R up0    @1D4 */ {{-4,0},{-4,1},{-3,-3},{-3,-2},{-3,-1},{-3,0},{-2,-4},{-2,-3},{-2,-2},{-2,-1},{-2,0},{-1,-4},{-1,-3},{-1,-2},{-1,-1},{-1,0},{-1,1},{0,-4},{0,-3},{0,-2},{0,-1},{0,0},{0,1},END},
+    /* R up1    @1EC */ {{-3,1},{-3,2},{-3,3},{-2,1},{-2,2},{-2,3},{-2,4},{-1,1},{-1,2},{-1,3},{-1,4},{0,1},{0,2},{0,3},{0,4},{1,1},{1,2},{1,3},{1,4},{1,5},{2,0},{2,1},{2,2},{2,3},{2,4},{2,5},{3,2},{3,3},{3,4},END},
+    /* R thrust @20A */ {{1,0},{1,1},{1,2},{2,0},{2,1},{2,2},{3,0},{3,1},{3,2},{4,0},{4,1},{5,0},{5,1},END},
+    /* L slash0 @218 */ {{-3,2},{-3,3},{-2,2},{-2,3},{-2,4},{-1,1},{-1,2},{-1,3},{-1,4},{0,1},{0,2},{0,3},{0,4},{1,1},{1,2},END},
+    /* L slash1 @228 */ {{-1,1},{-1,2},{-1,3},{0,-4},{0,-3},{0,-2},{0,-1},{0,0},{0,1},{0,2},{0,3},{1,-4},{1,-3},{1,-2},{1,-1},{1,0},{1,1},{1,2},END},
+    /* L slash2 @23B */ {{0,-4},{0,-3},{0,-2},{0,-1},{0,0},{1,-4},{1,-3},{1,-2},{1,-1},{1,0},END},
+    /* L up0    @246 */ {{-4,0},{-4,1},{-3,0},{-3,1},{-3,2},{-3,3},{-2,0},{-2,1},{-2,2},{-2,3},{-2,4},{-1,-1},{-1,0},{-1,1},{-1,2},{-1,3},{-1,4},{0,-1},{0,0},{0,1},{0,2},{0,3},{0,4},END},
+    /* L up1    @25E */ {{-3,-2},{-3,-1},{-3,0},{-2,-3},{-2,-2},{-2,-1},{-2,0},{-1,-3},{-1,-2},{-1,-1},{-1,0},{0,-3},{0,-2},{0,-1},{0,0},{1,-4},{1,-3},{1,-2},{1,-1},{1,0},{1,1},{2,-4},{2,-3},{2,-2},{2,-1},{2,0},{2,1},{3,-3},{3,-2},{3,-1},END},
+    /* L thrust @27D */ {{1,-1},{1,0},{1,1},{2,-1},{2,0},{2,1},{3,-1},{3,0},{3,1},{4,0},{4,1},{5,0},{5,1},END},
+  },
+};
+#undef END
 
-static const Cellofs *sword_shape(const Game *g, int *n)
+/* 6F33..6F5E: word index = ((FF46 | facing<<4) + {0 slash, 6 upward}) & 0xFE,
+ * a fixed facing<<4 + 0x0A for the thrust.  Pointers 6/7 (and 14/15) are
+ * unused (0000 / FFFF); a slash applies with FF46 = 1, 3, 5 (lists 0..2), an
+ * upward slash with 1, 3 (lists 3, 4; 5 would reach the thrust). */
+static const Cellofs *sword_shape(const Game *g)
 {
-    int step = g->attack_var >> 1;
-    if (g->attack_type == 2 || (g->attack_type == 1 && step >= 2)) { *n = (int)(sizeof THRUST / sizeof *THRUST); return THRUST; }
-    if (g->attack_type == 1) {
-        if (step == 0) { *n = (int)(sizeof UP0 / sizeof *UP0); return UP0; }
-        *n = (int)(sizeof UP1 / sizeof *UP1); return UP1;
-    }
-    if (step == 0) { *n = (int)(sizeof SLASH0 / sizeof *SLASH0); return SLASH0; }
-    if (step == 1) { *n = (int)(sizeof SLASH1 / sizeof *SLASH1); return SLASH1; }
-    *n = (int)(sizeof SLASH2 / sizeof *SLASH2); return SLASH2;
+    unsigned bl = (g->hero_flags & FACE_LEFT) ? 0x10 : 0;              /* 6F33 */
+    unsigned idx;
+    if (g->attack_type >= 2) idx = (bl + 0x0A) & 0xFE;                  /* 6F51 */
+    else idx = (((unsigned)g->attack_var | bl) + (g->attack_type ? 6u : 0u)) & 0xFE;   /* 6F57 */
+    idx = (idx >> 1) & 0x0F;
+    if ((idx & 7) > 5) return NULL;
+    int sw = g->sword ? g->sword : 1; if (sw > 6) sw = 6;
+    return SWORD_SHAPE[SWORD_SECTION[sw - 1]][(idx & 7) + (idx & 8 ? 6 : 0)];
 }
 
-/* The *renderer* runs the swing: 3E45 increments `[FF46]` and the three arms of
- * 3E34 end it at a different count each -- 3EAC `cmp [FF46],7` for the slash
- * (6 drawn frames), 3E81 `cmp [FF46],5` for the upward slash (**4**), and the
- * down-thrust never ends on its own because 6E61 rewrites `[FF46]` to 2 every
- * frame the button and "down" are held.  `attack_var` is `[FF46] - 1`: the port
- * renders before `sword_apply` runs, so a frame is drawn with the same value
- * 6F07 then applies, exactly as gfmcga draws with the value 6F07 reads.
- *
- * Known deviation: the port keeps a six-frame swing for the *upward* slash too.
- * Cutting it to the original's four (3E81) is a two-frame change in how long a
- * raised blade can land a hit, and it is enough to derail `make playthrough`'s
- * route 2 (it runs out of frames in MP20).  gfx.c's SWORD_FRAMES has the real
- * counts and render.c clamps the drawn frame to them, so the *picture* is
- * right; only the last two hit frames of an upward slash are extra. */
-#define SWING_FRAMES 6                          /* 3EAC; 3E81 is really 4 */
+/* The *renderer* runs the swing: gfmcga 3E34 (vector [3006]) increments
+ * `[FF46]` (3E45), ends the swing at a count that depends on the kind --
+ * 3EAC `cmp [FF46],7` for the slash, 3E81 / 3E54 `cmp [FF46],5` for the
+ * upward slash and the down-thrust -- and draws blade frame `[FF46] - 1`.
+ * fight.bin calls it **twice a game frame**: at 7047 in the first half and at
+ * 7147 in the second, right after 6F07 has applied the blade.  So a slash
+ * applies with [FF46] = 1, 3, 5 (shapes 0, 1, 2) and lasts three game frames
+ * (the next frame's 7047 reaches 7 and ends it); an upward slash applies with
+ * 1, 3 (two frames); a held down-thrust is re-armed to 2 by 6E61 every frame
+ * and runs out one frame after it is let go (2 -> 4 -> 5).  The boundary sees
+ * 2, 4, 6 -- confirmed against the DOSBox oracle (tools/tracediff.py).
+ * `attack_var` is `[FF46]` itself. */
+
+/* 0x3E34  [3006]: one swing step (twice per frame, 7047 and 7147) */
+void sword_advance(Game *g)
+{
+    if (!g->attacking) return;
+    g->attack_var++;                                                    /* 3E45 */
+    if (g->attack_var >= (g->attack_type == 0 ? 7 : 5)) {               /* 3EAC / 3E81 / 3E54 */
+        g->attacking = 0; g->attack_var = 0;                            /* 3F1A */
+    }
+}
 
 /* 0x6E3B  Sword input, once per frame before frame(). */
 void sword_input(Game *g)
@@ -184,11 +238,11 @@ void sword_input(Game *g)
     if ((g->buttons & 1) && g->vstate != V_GROUND && !g->conveyor && (g->dirs & DIR_DOWN)) {   /* 6E45 */
         g->attack_type = 2; g->attack_var = 2;
         if (!g->thrust_latch) { g->thrust_latch = 0xFF; g->sfx_request = 4; }
-        g->btn1_edge = 0; g->attacking = 0xFF;
+        g->btn1_edge = g->btn2_edge = 0; g->attacking = 0xFF;           /* 6EF7: both edges */
         return;
     }
     g->thrust_latch = 0;
-    if (!g->btn1_edge || g->attacking) return;                          /* 6E81..6E96 */
+    if (!g->btn1_edge || g->attacking || g->casting) return;            /* 6E81..6E96: [FF3C] too */
     g->attack_type = 0; g->attack_var = 0;
     if (!g->boss_map) {                                                 /* 6EA0: hittable sprite overhead? */
         int base = game_ring_add(game_hero_cell(g), -(4 * RING_W + 3)); /* rows -4..-1, cols -3..+4 */
@@ -197,15 +251,15 @@ void sword_input(Game *g)
             for (int c = 0; c < 8; c++) {
                 uint8_t v = g->ring[game_ring_add(base, r * RING_W + c)];
                 if (!(v & 0x80)) continue;
-                int i = v & 0x7F;
-                if (i < g->nobj && !(g->obj[i].type & 0x70)) found = 1;
+                int i = v & 0x7F;                                       /* 6EB9 / 6EBD: not immune/harmless, */
+                if (i < g->nobj && !(g->obj[i].type & 0x60) && !(g->obj[i].flags & 0x10)) found = 1;   /* not a tall body's 2nd record; items count */
             }
         }
         if (found) g->attack_type = 1;                                  /* 6EDC: upward slash */
     }
     if (!g->attack_type && (g->dirs & DIR_UP)) g->attack_type = 1;      /* 6ED6 */
     g->sfx_request = 3;
-    g->btn1_edge = 0; g->attacking = 0xFF;
+    g->btn1_edge = g->btn2_edge = 0; g->attacking = 0xFF;               /* 6EF7 / 6EFC / 6F01 */
 }
 
 /* 0x6F07  Apply the blade, once per rendered frame while attacking.  Every
@@ -215,13 +269,11 @@ void sword_apply(Game *g)
 {
     if (!g->attacking) return;
     if (g->boss_map && g->boss_cutscene) return;
-    int n;
-    const Cellofs *sh = sword_shape(g, &n);
-    int left = (g->hero_flags & FACE_LEFT) != 0;
+    const Cellofs *sh = sword_shape(g);
+    if (!sh) return;
     int base = game_hero_cell(g) + (g->crouching ? RING_W : 0);         /* 6F21: origin one row lower when crouched */
-    for (int i = 0; i < n; i++) {
-        int dc = left ? 2 - sh[i].dc : sh[i].dc;
-        uint8_t v = g->ring[game_ring_add(base, sh[i].dr * RING_W + dc)];
+    for (int i = 0; sh[i].dr != 127; i++) {                             /* 6F72: FF ends the list */
+        uint8_t v = g->ring[game_ring_add(base, sh[i].dr * RING_W + sh[i].dc)];
         if (!(v & 0x80)) continue;
         int oi = v & 0x7F;
         if (oi >= g->nobj) continue;
@@ -230,32 +282,37 @@ void sword_apply(Game *g)
         if (o->hit & 0x20) continue;
         o->hit = (uint8_t)((o->hit & 0xE0) | 0x40 | 1);
     }
-    if (g->attack_type != 2 && ++g->attack_var >= SWING_FRAMES) {
-        g->attacking = 0; g->attack_var = 0;                            /* 3F1A */
-    }
 }
 
 /* ---------------------------------------------------------- contact damage */
 
-/* 0x763E/0x7651/0x765E: scan `rows` cells downward; a sprite whose type lacks
- * bit 6 adds the AI's contact-damage entry (7675). */
-static int contact_column(Game *g, int p, int rows)
+/* 0x763E/0x7651/0x765E: scan `rows` cells downward (763E: 3 rows, 7651: 2
+ * when crouched; the last row of either is 765E).  6DCB gives CF=1 for a
+ * plain cell; a sprite whose type has bit 6 (harmless) is skipped (7643/7656/
+ * 766C) and the scan goes on, any other sprite adds the AI's contact-damage
+ * entry [A010+type&0F] (7675) and **ends the column** (stc; ret): one damage
+ * per column, however many sprites it holds.  `p` is left on the last row
+ * scanned, as SI is, so 765E can continue below it. */
+static int contact_scan(Game *g, int *p, int rows)
 {
-    int hit = 0;
-    for (int r = 0; r < rows; r++, p = game_ring_add(p, RING_W)) {
-        uint8_t v = g->ring[p];
-        if (!(v & 0x80)) continue;
+    for (int r = 0; r < rows; r++) {
+        if (r) *p = game_ring_add(*p, RING_W);                          /* 764B / 765E: add si,24 + 6D82 wrap */
+        uint8_t v = g->ring[*p];
+        if (!(v & 0x80)) continue;                                      /* 6DCB: CF=1, plain cell */
         int i = v & 0x7F;
         if (i >= g->nobj) continue;
         MapObj *o = &g->obj[i];
         if (o->type & 0x40) continue;                                   /* harmless */
         if (g->ai) g->contact_damage = (uint16_t)(g->contact_damage + g->ai->contact[o->type & 0xF]);
-        hit = 1;
+        return 1;                                                       /* 7683: stc */
     }
-    return hit;
+    return 0;
 }
 
-/* 0x751F  Four columns (ring col -1 .. +2) x 3 rows (-1..+1; 0..+1 crouched). */
+/* 0x751F  Four columns (ring col -1 .. +2) x 3 rows (-1..+1; 0..+1 crouched).
+ * The two middle columns, under the hero's body, look one row further down
+ * when the column scan finds nothing: 7566/757E `jc ...; call 765E` (his
+ * feet).  The outer two do not (7551, 7591: `call bx` only). */
 void hero_enemy_contact(Game *g)
 {
     if (g->boss_map && g->boss_cutscene) return;
@@ -264,7 +321,13 @@ void hero_enemy_contact(Game *g)
     int s = game_hero_cell(g) - 1;
     if (g->crouching) rows = 2; else s = game_ring_add(s, -RING_W);     /* 7545 */
     for (int i = 0; i < 4; i++) {
-        g->hit_side[i] = (uint8_t)(contact_column(g, game_ring_add(s, i), rows) ? 0xFF : 0);
+        int p = game_ring_add(s, i);
+        int hit = contact_scan(g, &p, rows);
+        if (!hit && (i == 1 || i == 2)) {                               /* 7568 / 7580: call 765E */
+            p = game_ring_add(p, RING_W);
+            hit = contact_scan(g, &p, 1);
+        }
+        g->hit_side[i] = (uint8_t)(hit ? 0xFF : 0);
         if (!g->hit_side[i] || g->hero_dead) continue;
         int facing_left = (g->hero_flags & FACE_LEFT) != 0;
         int shielded = i < 2 ? facing_left : !facing_left;              /* 75BA / 75CE */

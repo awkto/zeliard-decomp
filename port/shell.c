@@ -62,9 +62,22 @@ int shell_enter_town(Game *g, int idx, int col, int died)
     s->town.user = s; s->town.present = s->town_present; s->town.frame_end = s->town_frame_end;
     s->town.font = &s->tfont; s->town.dir = s->dir; s->town.pics = &s->pics;
     s->town.back = &s->tback;
-    town_place(&s->town, col < 0 ? s->tmap.start_col : col, 0);
+    /* facing: a door's way in runs fight.bin 7C6E (the cavern walk-in code,
+     * reached for a town too): [C3] set -> 7CB4 `or [C2],1`, else 7C75 clears
+     * it.  The death return jumps past it (99E0 -> 7D85): [C2] stays as the
+     * hero died.  [C8]: 7E93 / 7D9E store the loaded map's music index. */
+    int face_left = died ? (g->hero_flags & FACE_LEFT) != 0 : g->page[0xC3] != 0;
+    g->page[0xC8] = s->tmap.music;
+    town_place(&s->town, col < 0 ? s->tmap.start_col : col, face_left);
+    /* the rest of [C2] carries over too (die f125: the walking bit 2 stays
+     * set in town until something rewrites it; town.bin only touches bit 0) */
+    s->town.hero_flags = (uint8_t)((g->hero_flags & ~FACE_LEFT) | (face_left ? FACE_LEFT : 0));
+    s->town.hero_anim = 0;                                              /* 6050: both entries zero [E7] */
+    s->town_entry = died ? 2 : 1;                                       /* 616B: [E8] -> kenjpro, else 61B1 */
     g->cur_map = (uint8_t)(0x80 | idx);
-    g->town_map = g->cur_map;
+    /* [C5] town_map is NOT the town just entered: nothing in town.bin or
+     * fight.bin writes it but the ending (99B4); it is STDPLY's 0x81 or what
+     * the save file holds, and only the death return (99E5) reads it */
     s->in_town = 1;
     s->transitions++;
     LOG(s, "[town] %s (%d columns, %s, %d NPCs, %d patches)%s: hero at column %d\n",
@@ -115,6 +128,7 @@ void shell_load_enemy_banks(Shell *s, const Map *m)
         else fprintf(stderr, "[boss] overlay %d has no [A002] block\n", m->ai);
     } else {
         g->boss.active = 0; g->boss_knock_left = 0; g->encounter_frames = 0;
+        g->boss_state = 0xFF;                   /* EDA0: every fight.bin entry (6058) and level change (7E84) */
     }
 }
 
@@ -124,6 +138,10 @@ static int post_boss_banks(Game *g, int post_ai, int post_enemies)
     load_banks_by_index((Shell *)g->user, g, post_ai, post_enemies);
     return 1;
 }
+
+/* fight.bin 7E93 on every cavern entry (61F3 from town, 7A43/7BFF through a
+ * door): [C8] = the level record's score index, (+0 >> 1) & 0x0F (7EB0) */
+static void cavern_score_idx(Game *g, const Map *m) { g->page[0xC8] = (uint8_t)((m->lvl_flags >> 1) & 0x0F); }
 
 /* town.bin 6FF8 goto_cavern: the MAP_CAVES record hands the hero to fight.bin.
  *
@@ -156,6 +174,7 @@ int shell_enter_cavern(Shell *s, int sys_map, int col, int row, int face_left,
     if (gfx_load_tileset(&s->tiles[slot], s->dir, s->maps[slot].tileset)) return 0;
     s->cur = slot;
     shell_load_enemy_banks(s, &s->maps[slot]);
+    cavern_score_idx(g, &s->maps[slot]);
     g->map = &s->maps[slot]; g->tiles = &s->tiles[slot];
     if (from_cave_record) row = row - 10 + s->maps[slot].row_bias;       /* 7005 / 7D2D */
     game_place(g, col, row, face_left);
@@ -186,6 +205,7 @@ static int on_door(Game *g, const Door *d)
     if (gfx_load_tileset(&s->tiles[slot], s->dir, s->maps[slot].tileset)) return 0;
     s->cur = slot;
     shell_load_enemy_banks(s, &s->maps[slot]);
+    cavern_score_idx(g, &s->maps[slot]);
     game_enter(g, &s->maps[slot], &s->tiles[slot], d->dest_col, d->dest_row, (d->letter & 0x40) != 0);
     /* 7C11: the door record's byte +8 bit 7 (cached at [9F1D]) is set on every
      * boss room's exit door, the one post_boss_transition installs — load
@@ -263,6 +283,18 @@ static void town_frame(Shell *s)
     Game *g = &s->g;
     Town *t = &s->town;
     t->action = 0;
+    if (s->town_entry) {
+        int kind = s->town_entry;
+        s->town_entry = 0;
+        if (kind == 1) { town_entry_frame(t); return; }                 /* 61B1 */
+        /* 617A: the death return runs kenjpro's [A004] (the sage's text, not
+         * modelled) and comes back through 6EAF: a 68AF frame, edges cleared,
+         * [E7] = 1, then 61FC */
+        town_tail_frame(t);                                             /* 6EE6 */
+        t->btn1_edge = t->btn2_edge = 0;
+        t->hero_anim = 1;
+        return;
+    }
     town_step(t);
     if (!t->action) return;
     switch (t->action) {
@@ -271,6 +303,7 @@ static void town_frame(Shell *s)
         if (i < 0 || i >= s->tmap.ncaves) { fprintf(stderr, "[town] no cave record %d\n", i); break; }
         const TownCave *c = &s->tmap.caves[i];
         g->page[6] = 0xFF;                                              /* 702E: [06] entered a cavern */
+        g->page[0xC3] = (c->side & 1) ? 0xFF : 0;                       /* 700D..7011: shr / sbb */
         shell_enter_cavern(s, c->map, c->col, c->row, c->side & 1, 1);
         break; }
     case TOWN_TO_TOWN: {                                                /* 6CE1 */
@@ -285,8 +318,11 @@ static void town_frame(Shell *s)
          * old map left them.  The phase therefore *carries over* (measured:
          * Muralla's entry frame is 8 columns along, which is cmap's 78-30). */
         int carried_steps = t->back_steps;
+        uint8_t carried_anim = t->hero_anim;                            /* 60B7 is past 6050: [E7] stays */
         town_init(t, &s->tmap, &s->ttiles, &s->tspr, &s->thero, g);
         t->back_steps = carried_steps;
+        t->hero_anim = carried_anim;
+        s->town_entry = 1;                                              /* 60B7 .. 61B1 */
         t->user = s; t->present = s->town_present; t->frame_end = s->town_frame_end;
         t->font = &s->tfont; t->dir = s->dir; t->pics = &s->pics;
         t->back = &s->tback;                                            /* still painted: #38 */
@@ -295,8 +331,7 @@ static void town_frame(Shell *s)
         t->hero_scr_col = left ? 0x1A : 0;
         t->hero_flags = (uint8_t)(left ? 1 : 0);
         town_npc_markers_reset(t);
-        g->cur_map = (uint8_t)(0x80 | dest);
-        g->town_map = g->cur_map;
+        g->cur_map = (uint8_t)(0x80 | dest);                            /* 6D30: [C4] only */
         s->transitions++;
         LOG(s, "[town] -> %s (%d columns)\n", s->tmap.label, s->tmap.width);
         break; }
@@ -308,6 +343,10 @@ static void town_frame(Shell *s)
         if (shop_run(t, dest)) fprintf(stderr, "[shop] cannot load the overlay\n");
         town_apply_patches(&s->tmap, g->page);                          /* 6EAF */
         town_npc_markers_reset(t);
+        if (t->quit) break;
+        town_tail_frame(t);                                             /* 6EE1/6EE6: FF1A=28, 68AF */
+        t->btn1_edge = t->btn2_edge = 0;                                /* 6EE9/6EEE */
+        t->hero_anim = 1;                                               /* 6EF3 */
         LOG(s, "[shop] left: GOLD %u, sword %u, shield %u/%u, LIFE %u/%u, EXP %u, level %u\n",
             (unsigned)g->gold, g->sword, g->shield, g->shield_hp, g->hp, g->max_hp, g->exp, g->level);
         break; }

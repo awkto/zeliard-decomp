@@ -224,6 +224,9 @@ struct Game {
     uint8_t  harness_rng;           /* 1 = docs/HARNESS.md §3: pure LCG, no per-frame +20 stir */
     unsigned deaths;                /* hero deaths (the port restarts at the entry) */
     uint8_t  death_anim;            /* 9F28 */
+    uint8_t  death_anim_b;          /* 9F29 the blink counter of the 9972 loop */
+    uint8_t  death_phase;           /* 98FC's loops: 1 = 9929 (body falls), 2 = 9948, 3 = 9993 */
+    uint8_t  death_blink;           /* 9990 CX: the 30 frames of the last blink */
     int      entry_col, entry_row;  /* where hero_die() puts him back */
     uint8_t  entry_face;
     char     player_name[9];        /* FF6C..FF73: the NAME.USR base name */

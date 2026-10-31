@@ -313,3 +313,17 @@ their pre-change baselines.
   port with the same script: RNG at 75, 107, 135, LIFE 50 — tracediff has something to
   report. With `U1` instead of `U3` the original does **not** enter the cave (the port
   does): Up must still be held at the extra `68ED` tail frame.
+
+## 7. Scenario library (#49)
+
+`tests/scenarios/*.zs`: one scenario per file, `# start: NAME.usr` (the save both
+sides restore), `# make: ARGS` (the `port/zeliard` arguments that create that save,
+ending in `--save NAME`), `# what:` (free text), then the script on one line.
+`tools/harness/run_scenarios.sh [-j N] [--out DIR] [--png] [NAME ...]` runs oracle +
+port + `tracediff --first-only` for each, makes any missing start save from its
+`# make:` line, prints a table and exits non-zero on any divergence or failure.
+It builds nothing: run it on the droplet after building the port.
+
+Every scenario must be clean. The ones that die stop on their last dying `717F`
+frame, because the port does not yet emit the Sage text's `71EC` wait-loop
+boundaries (§6 "What the port must emit", #64).

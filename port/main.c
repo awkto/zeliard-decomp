@@ -1,6 +1,7 @@
 /* main.c — SDL2 shell (or headless PNG dumper) for the Zeliard port scaffold. */
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <string.h>
 #include <time.h>
 #include "sar.h"
@@ -395,7 +396,12 @@ static void trace_boundary(App *a, Game *g, Town *t)
     if (a->png_every && a->trace_n % a->png_every == 0) {
         char path[1100];
         snprintf(path, sizeof path, "%s/frame_%05u.png", a->trace_dir, a->trace_n);
+        /* the screen at 717F holds the blade gfmcga drew at 7147, frame
+         * [FF46]-1; attack_var has been stepped past it since (combat.c) */
+        int sw = !t && g->attacking && g->attack_var;
+        if (sw) g->attack_var--;
         if (t) fb_town(a, t); else fb_fight(a, g);
+        if (sw) g->attack_var++;
         fb_write_png(a, path);
     }
     a->trace_n++;
@@ -804,9 +810,18 @@ int main(int argc, char **argv)
     if (a.trace_f) g->harness_rng = 1;                                  /* HARNESS §3: no +20 stir */
 
     snprintf(g->player_name, sizeof g->player_name, "%s", save_name);    /* FF6C..FF73 */
-    if (load_name && player_load_usr(g, sh->dir, load_name) == 0)        /* town.bin 7592 restore_game */
+    if (load_name && player_load_usr(g, sh->dir, load_name) == 0) {      /* town.bin 7592 restore_game */
+        /* 7695 leaves the chosen file's name in FF6C (75C6 builds NAME.USR
+         * from it, NUL-padded to 8): DOS's directory listing gives it upper
+         * case.  Any later "Record Experience" writes back to that name. */
+        const char *b = load_name;
+        for (const char *c = load_name; *c; c++) if (*c == '/' || *c == '\\') b = c + 1;
+        memset(g->player_name, 0, sizeof g->player_name);
+        for (int i = 0; i < 8 && b[i] && b[i] != '.'; i++)
+            g->player_name[i] = (char)toupper((unsigned char)b[i]);
         fprintf(stderr, "[save] %s.usr restored: LIFE %u/%u, level %u, EXP %u, GOLD %u\n",
                 load_name, g->hp, g->max_hp, g->level, g->exp, (unsigned)g->gold);
+    }
     else if (load_name) fprintf(stderr, "[save] cannot read %s.usr\n", load_name);
     /* town.bin 7592 restarts GAME.BIN, which loads the map [C4] names (A1CB)
      * and jumps into town.bin's boot entry: a restore always resumes in the

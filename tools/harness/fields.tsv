@@ -227,7 +227,7 @@ heat_timer	9F25	1	fight
 boss_intro	9F26	1	fight	
 intro_done	9F27	1	fight	not modelled
 death_anim_a	9F28	1	fight	
-death_anim_b	9F29	1	fight	not modelled
+death_anim_b	9F29	1	fight	9972 blink counter
 magic_hit_any	9F2A	1	fight	
 cast_timer	9F2B	1	fight	
 dist_col	9F2C	1	fight	not modelled
@@ -270,8 +270,9 @@ shot[].last_col	+B	1	fight
 shot[].last_row	+C	1	fight	
 shot[].drawn	+7	2	fight	not modelled (screen pointer)
 
-# ---- magic sprites at EB15: 4 x 16 bytes (STATE_PAGE.md work areas); retired = col high byte 0xFF
-magic[]	EB15	16	fight	max=4 dead=+1:1:FF -- the hero's spell sprites
+# ---- magic sprites at EB15: up to 4 x 16 bytes, ended by col 0xFFFF (fight.bin 6061/7E87 empty it,
+#      884D writes the terminator after a bolt, the 896E walker stops at it); col high byte 0xFF = retiring (8BB5)
+magic[]	EB15	16	fight	max=4 end=+0:2:FFFF dead=+1:1:FF -- the hero's spell sprites
 magic[].col	+0	2	fight	map column
 magic[].row	+2	1	fight	ring row
 magic[].dir	+3	1	fight	bit0 right, bit7 hit
@@ -285,3 +286,13 @@ orb[]	EB60	7	fight	max=4 dead=+0:1:FF -- Magia Stone orbs
 orb[].phase	+0	1	fight	
 orb[].speed	+1	1	fight	
 orb[].hits	+2	1	fight	
+
+# ---- town NPCs at [C00F]: 8-byte records, 0xFFFF-terminated (TOWN.md §3; town.bin 6B1C update, 6C2B/6C4E markers)
+npc[]	[C00F]	8	town	max=32 end=+0:2:FFFF -- the town map's walkers and talkers
+npc[].col	+0	2	town	map column
+npc[].sprite	+2	1	town	bits 0-6 sprite, bit 7 facing left
+npc[].saved	+3	1	town	the map cell under the marker
+npc[].anim	+4	1	town	frame + step timer
+npc[].type	+5	1	town	behaviour
+npc[].flags	+6	1	town	0x40 solid, 0x80 talks once
+npc[].script	+7	1	town	
