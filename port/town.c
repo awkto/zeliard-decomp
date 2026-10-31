@@ -148,6 +148,7 @@ static void dlg_frame(Town *t)
 {
     t->frame_no++;
     if (t->present) t->present(t);
+    if (t->frame_end) t->frame_end(t);                                  /* 68ED (65AB..65E3 -> 68AC) */
 }
 /* 0x74D3  yes_no_prompt, the widget the shops reach through vector [6008].
  * The dialogue box (6655 / 66AD) puts it beside itself; the row list is drawn
@@ -893,6 +894,7 @@ void town_step(Town *t)
     town_npc_update(t);                                                 /* 68AC */
     t->frame_no++;
     if (t->present) t->present(t);
+    if (t->frame_end) t->frame_end(t);                                  /* 68ED: the frame boundary */
     if (t->action) return;
     check_status_menu(t);                                               /* 68F3 */
     if (t->action) return;

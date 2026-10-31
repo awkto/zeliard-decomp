@@ -49,6 +49,8 @@ typedef struct Shell {
     void         *user;
     PresentFn     present;              /* installed as g.present */
     TownPresentFn town_present;         /* installed as town.present */
+    FrameEndFn    frame_end;            /* installed as g.frame_end (--trace; NULL normally) */
+    TownFrameEndFn town_frame_end;      /* installed as town.frame_end */
     /* set by the shell for the front end / the tests */
     unsigned  transitions;              /* doors + gates taken */
 } Shell;

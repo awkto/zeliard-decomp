@@ -805,12 +805,13 @@ static void frame(Game *g)
     message_tick(g);                                                    /* 7210 */
     if (g->hero_dead) g->hero_hit_flash = 0; else g->hero_hidden = 0;
     g->frame_no++;
-    g->rng += 20;                                                       /* FF1B: ticks per frame at speed 5 */
+    if (!g->harness_rng) g->rng += 20;                                  /* FF1B: ticks per frame at speed 5 */
     sound_request(g);                                                   /* FF75 -> the sound stub */
     if (g->present) g->present(g);                                      /* draw + wait 4*speed ticks + poll input */
     orbs_update(g);                                                     /* 7133: the second orb pass */
     sword_apply(g);                                                     /* 7147: second half of the frame */
     sound_request(g);
+    if (g->frame_end) g->frame_end(g);                                  /* 717F: the harness frame boundary */
     if (g->hero_dead) return;
     if (g->hp == 0) { hero_die(g); return; }                            /* 718C */
     if (++g->regen_tick >= 0x10) {                                      /* 719E */
@@ -868,7 +869,7 @@ static void encounter_step(Game *g)
 {
     g->encounter_frames--;
     g->frame_no++;
-    g->rng += 20;
+    if (!g->harness_rng) g->rng += 20;
     if (g->present) g->present(g);
 }
 
@@ -1001,7 +1002,7 @@ static void walk_in_step(Game *g)
 {
     g->hero_anim++;                                                     /* 7C82 */
     g->frame_no++;
-    g->rng += 20;
+    if (!g->harness_rng) g->rng += 20;
     if (g->present) g->present(g);
     g->walk_in_x += g->walk_in_dir;
     if (--g->walk_in <= 0) {

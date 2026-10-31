@@ -1,0 +1,287 @@
+# tools/harness/fields.tsv -- the differential-harness schema (docs/HARNESS.md §4, #48).
+#
+# Columns, tab-separated:  name  addr  size  mode  note
+#   name  the field name; port/trace.c emits it under exactly this name
+#         (`zeliard --trace-fields` lists them; tracediff refuses unknown ones)
+#   addr  hex offset in BASE (the oracle's base.bin frame)
+#   size  bytes.  1 and 2 decode as little-endian unsigned ints; longer fields
+#         decode as a lowercase hex string in memory order
+#   mode  fight = only at fight.bin 717F boundaries, town = only at town.bin 68ED,
+#         any = both
+#   note  free text (docs/STATE_PAGE.md / docs/FIGHT.md names and caveats)
+#
+# Record lists.  A header row, then member rows:
+#   NAME[]        ADDR or [PTR]  STRIDE  mode  SPEC -- note
+#   NAME[].field  +OFF           size    mode  note
+# ADDR is the first record; [PTR] is the address of a u16 pointer to it.
+# SPEC (space separated, before " -- "):
+#   max=N            at most N records
+#   end=+O:SIZE:HEX  stop before a record whose field at +O equals HEX
+#   dead=+O:SIZE:HEX a record whose field at +O equals HEX is dead: only
+#                    NAME[i].live = 0 is decoded for it (live records get .live = 1)
+# Decoded names: NAME.n (the record count), NAME[i].field, NAME[i].live (dead= lists).
+#
+# Fields the port does not model are simply absent from its trace; they can
+# still be listed here so the oracle side can be read (tracediff --dump).
+
+# ---- story flags BASE:0000-0048 (STATE_PAGE.md 'Story flags'); boss flags at 00 08 10 18 20 28 30 32 47, [03]|=0x20 cavern 1 cleared
+flag_00	0000	1	any	
+flag_01	0001	1	any	
+flag_02	0002	1	any	
+flag_03	0003	1	any	
+flag_04	0004	1	any	
+flag_05	0005	1	any	
+flag_06	0006	1	any	
+flag_07	0007	1	any	
+flag_08	0008	1	any	
+flag_09	0009	1	any	
+flag_0a	000A	1	any	
+flag_0b	000B	1	any	
+flag_0c	000C	1	any	
+flag_0d	000D	1	any	
+flag_0e	000E	1	any	
+flag_0f	000F	1	any	
+flag_10	0010	1	any	
+flag_11	0011	1	any	
+flag_12	0012	1	any	
+flag_13	0013	1	any	
+flag_14	0014	1	any	
+flag_15	0015	1	any	
+flag_16	0016	1	any	
+flag_17	0017	1	any	
+flag_18	0018	1	any	
+flag_19	0019	1	any	
+flag_1a	001A	1	any	
+flag_1b	001B	1	any	
+flag_1c	001C	1	any	
+flag_1d	001D	1	any	
+flag_1e	001E	1	any	
+flag_1f	001F	1	any	
+flag_20	0020	1	any	
+flag_21	0021	1	any	
+flag_22	0022	1	any	
+flag_23	0023	1	any	
+flag_24	0024	1	any	
+flag_25	0025	1	any	
+flag_26	0026	1	any	
+flag_27	0027	1	any	
+flag_28	0028	1	any	
+flag_29	0029	1	any	
+flag_2a	002A	1	any	
+flag_2b	002B	1	any	
+flag_2c	002C	1	any	
+flag_2d	002D	1	any	
+flag_2e	002E	1	any	
+flag_2f	002F	1	any	
+flag_30	0030	1	any	
+flag_31	0031	1	any	
+flag_32	0032	1	any	
+flag_33	0033	1	any	
+flag_34	0034	1	any	
+flag_35	0035	1	any	
+flag_36	0036	1	any	
+flag_37	0037	1	any	
+flag_38	0038	1	any	
+flag_39	0039	1	any	
+flag_3a	003A	1	any	
+flag_3b	003B	1	any	
+flag_3c	003C	1	any	
+flag_3d	003D	1	any	
+flag_3e	003E	1	any	
+flag_3f	003F	1	any	
+flag_40	0040	1	any	
+flag_41	0041	1	any	
+flag_42	0042	1	any	
+flag_43	0043	1	any	
+flag_44	0044	1	any	
+flag_45	0045	1	any	
+flag_46	0046	1	any	
+flag_47	0047	1	any	
+flag_48	0048	1	any	
+
+# ---- player record BASE:0049-00E8 (STATE_PAGE.md; STDPLY.BIN)
+force_death	0049	1	any	*uncertain*; the port keeps [49] as jashiin_defeated
+immortal	007F	1	any	*uncertain*; page byte only in the port
+scroll_col	0080	2	any	map column in ring column 0 (town: the town scroll)
+scroll_row	0082	1	fight	ring row on screen row 0
+hero_scr_col	0083	1	any	0x0C in caverns; 0..0x1B in town
+hero_scr_row	0084	1	fight	
+gold_hi	0085	1	any	gold bits 16-23 (the 24-bit purse is hi byte + u16 lo)
+gold_lo	0086	2	any	gold bits 0-15
+bank_hi	0088	1	any	bank balance hi (TOWN.md §10)
+bank_lo	0089	2	any	bank balance lo
+almas	008B	2	any	
+level	008D	1	any	*name uncertain*
+exp	008E	2	any	
+hp	0090	2	any	
+sword	0092	1	any	1..6
+shield	0093	1	any	
+shield_hp	0094	2	any	durability
+shield_hp_max	0096	2	any	
+keys	0098	1	any	
+lion_keys	0099	1	any	
+glory_crest	009B	1	any	
+hero_crest	009C	1	any	
+magic_sel	009D	1	any	1..7
+worn_key_item	009E	1	any	1 Feruza .. 5 Asbestos
+tears	00A0	1	any	Tears of Esmesanti 0..9
+inventory	00A1	5	any	the key-item bag [A1..A5]
+potion_slots	00A6	5	any	drug id + 1
+magic_count	00AB	7	any	charges per spell
+max_hp	00B2	2	any	
+magic_max	00B4	7	any	
+spells_learned	00BB	7	any	
+hero_flags	00C2	1	any	bit0 facing left, bit1 walking
+door_side	00C3	1	any	page byte only in the port
+cur_map	00C4	1	any	
+town_map	00C5	1	any	
+hp_regen_pending	00C6	2	any	potion: +8 HP per frame. NB the original applies it before 717F (70D9), the port after
+music_idx	00C8	1	any	page byte only in the port
+drug_stock	00C9	9	any	per-town shop stock masks
+sword_stock	00D2	9	any	
+shield_stock	00DB	9	any	
+attack_bonus	00E4	1	any	sabre oil count
+sages	00E5	1	any	one bit per sage
+boss_room	00E6	1	any	level flags bit 6
+hero_anim	00E7	1	any	0x80 idle; walk frames & 0x7F; 0 jump pose (town: 0..3 walk, 4 back)
+hero_dead	00E8	1	any	
+
+# ---- FF00 page: input state (the oracle writes FF16/FF17/FF1D/FF1E/FF18 at the boundary, HARNESS §2)
+kbd_buttons	FF16	1	any	bit0 sword, bit1 magic
+kbd_dirs	FF17	1	any	1 up 2 down 4 left 8 right
+key_mask	FF18	2	any	bit0 Enter (menu); the port reports the K chord as 0x0286
+btn1_edge	FF1D	1	any	sword press edge
+btn2_edge	FF1E	1	any	magic press edge
+
+# ---- FF00 page: state
+tick	FF1A	1	any	not modelled by the port (about to be zeroed at the boundary)
+frame_counter	FF1B	2	any	not modelled (free-running tick count)
+speed	FF33	1	any	not modelled (the port keeps a frame period)
+music_fade	FF24	1	any	not modelled as state
+snd_proximity	FF08	1	fight	not modelled
+boss_cutscene	FF2E	1	fight	
+boss_dying	FF2F	1	fight	
+boss_defeated	FF30	1	fight	
+win	FF31	2	fight	not modelled (ring pointer)
+boss_map	FF34	1	fight	
+hero_map_row	FF35	1	fight	
+hero_hit_flash	FF36	1	fight	
+hero_hidden	FF37	1	fight	
+crouching	FF38	1	fight	
+on_ladder	FF39	1	fight	
+hero_entering	FF3A	1	fight	
+casting	FF3C	1	fight	
+vstate	FF3D	1	fight	0 ground, FF rise, 7F fall, 80 knocked
+magic_active	FF3E	1	fight	
+anim_arg	FF3F	1	fight	not modelled (the port's renderer derives it)
+anim_flag	FF40	1	fight	not modelled
+anim_kind	FF41	1	fight	not modelled
+conveyor	FF42	1	fight	
+attacking	FF43	1	fight	
+sword_frame	FF44	1	fight	not modelled (gfmcga)
+attack_type	FF45	1	fight	
+attack_var	FF46	1	fight	
+thrust_latch	FF47	1	fight	
+obj_index	FF4A	1	fight	
+menu_result	FF4B	1	fight	
+player_name	FF6C	8	any	NAME.USR base name; padding *uncertain* (port: NUL)
+sfx_request	FF75	1	any	sound id; normally consumed before the boundary
+
+# ---- fight.bin locals 9EED-9F2D (STATE_PAGE.md)
+msg_timer_a	9EED	1	fight	
+msg_timer_b	9EEE	1	fight	not modelled
+msg_box_a	9EEF	1	fight	
+msg_box_b	9EF0	1	fight	not modelled
+msg_box_rows	9EF1	1	fight	not modelled
+menu_debounce	9EF5	1	fight	
+level_copy	9EF6	6	fight	not modelled
+hero_home_row	9F00	1	fight	
+boss_knock_left	9F01	1	fight	
+music_restart	9F02	1	fight	not modelled
+fixture_anim	9F07	1	fight	
+fall_rows	9F08	1	fight	
+rise_rows	9F09	1	fight	
+crouch_release	9F0A	1	fight	
+diag_jump	9F0B	1	fight	
+conveyor_kick	9F0C	1	fight	
+max_rise	9F0D	1	fight	
+hit_side	9F0E	4	fight	ring cols -1,0,+1,+2
+contact_damage	9F12	2	fight	
+hero_hit	9F14	1	fight	
+on_updraft	9F15	1	fight	
+conveyor_phase	9F16	1	fight	
+on_hazard	9F17	1	fight	
+regen_tick	9F18	1	fight	
+door_msg_latch	9F19	1	fight	
+entry_col	9F1A	2	fight	not modelled faithfully (the port's entry_col is its death-return cell)
+entry_row	9F1C	1	fight	not modelled faithfully
+entry_flags	9F1D	1	fight	not modelled
+post_boss_pending	9F1E	1	fight	
+projectile_count	9F1F	1	fight	
+ice_slide	9F20	1	fight	
+ice_steps	9F21	1	fight	
+walk_dir	9F22	1	fight	
+slide_dir	9F23	1	fight	
+prev_facing	9F24	1	fight	
+heat_timer	9F25	1	fight	
+boss_intro	9F26	1	fight	
+intro_done	9F27	1	fight	not modelled
+death_anim_a	9F28	1	fight	
+death_anim_b	9F29	1	fight	not modelled
+magic_hit_any	9F2A	1	fight	
+cast_timer	9F2B	1	fight	
+dist_col	9F2C	1	fight	not modelled
+dist_row	9F2D	1	fight	not modelled
+
+# ---- town.bin locals
+town_was_idle	7C4B	1	town	the hero stood still last frame (6234)
+
+# ---- work areas above E000
+ring	E000	2304	fight	36x64 cells, stride 0x24; sprite markers 0x80|i included
+boss_state	EDA0	1	fight	0xFF = defeated; in boss maps gfmcga 373F also uses EDA0 as its particle list
+
+# ---- object table at [C010]: 16-byte records, 0xFFFF-terminated (FIGHT.md §7)
+obj[]	[C010]	16	fight	max=256 end=+0:2:FFFF -- enemies, items, event objects
+obj[].col	+0	2	fight	high byte 0xFF = inactive
+obj[].row	+2	1	fight	
+obj[].rcol	+3	1	fight	0xFF off-ring
+obj[].type	+4	1	fight	
+obj[].hit	+5	1	fight	
+obj[].phase	+6	1	fight	
+obj[].flags	+7	1	fight	
+obj[].hp	+8	1	fight	
+obj[].next	+9	1	fight	
+obj[].link	+A	1	fight	
+obj[].home_col	+B	2	fight	
+obj[].home_row	+D	1	fight	
+obj[].home_type	+E	1	fight	
+obj[].timer	+F	1	fight	
+
+# ---- enemy projectiles at EB80: 13-byte records, list ends at col == 0xFF (FIGHT.md §6)
+shot[]	EB80	13	fight	max=32 end=+0:1:FF -- col 0 = dead but not yet erased
+shot[].col	+0	1	fight	ring column
+shot[].row	+1	1	fight	
+shot[].cell	+2	1	fight	
+shot[].age	+3	1	fight	
+shot[].life	+4	1	fight	
+shot[].flags	+5	1	fight	
+shot[].damage	+6	1	fight	
+shot[].last_col	+B	1	fight	
+shot[].last_row	+C	1	fight	
+shot[].drawn	+7	2	fight	not modelled (screen pointer)
+
+# ---- magic sprites at EB15: 4 x 16 bytes (STATE_PAGE.md work areas); retired = col high byte 0xFF
+magic[]	EB15	16	fight	max=4 dead=+1:1:FF -- the hero's spell sprites
+magic[].col	+0	2	fight	map column
+magic[].row	+2	1	fight	ring row
+magic[].dir	+3	1	fight	bit0 right, bit7 hit
+magic[].age	+4	1	fight	
+magic[].anim	+5	1	fight	
+magic[].rcol	+6	1	fight	
+magic[].srow	+7	1	fight	
+
+# ---- orbs at EB60: 4 x 7 bytes {phase, speed, hits, 0,0,0,0}; off = phase 0xFF
+orb[]	EB60	7	fight	max=4 dead=+0:1:FF -- Magia Stone orbs
+orb[].phase	+0	1	fight	
+orb[].speed	+1	1	fight	
+orb[].hits	+2	1	fight	

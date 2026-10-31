@@ -59,7 +59,7 @@ int shell_enter_town(Game *g, int idx, int col, int died)
     if (town_load_banks(s)) return 0;
     audio_music(s->tmap.music);                                         /* town level record +0 bits 1-4 */
     town_init(&s->town, &s->tmap, &s->ttiles, &s->tspr, &s->thero, g);
-    s->town.user = s; s->town.present = s->town_present;
+    s->town.user = s; s->town.present = s->town_present; s->town.frame_end = s->town_frame_end;
     s->town.font = &s->tfont; s->town.dir = s->dir; s->town.pics = &s->pics;
     s->town.back = &s->tback;
     town_place(&s->town, col < 0 ? s->tmap.start_col : col, 0);
@@ -229,7 +229,7 @@ int shell_init(Shell *s, const char *dir_hint, int map_idx)
 
     Game *g = &s->g;
     game_init(g, &s->maps[0], &s->tiles[0]);
-    g->user = s; g->present = s->present; g->on_door = on_door; g->on_town = shell_enter_town;
+    g->user = s; g->present = s->present; g->frame_end = s->frame_end; g->on_door = on_door; g->on_town = shell_enter_town;
     g->font = &s->tfont; g->pics = &s->pics;                            /* select.bin needs both */
     g->screen = &s->frame; g->encnt = &s->encnt;
     g->post_boss = post_boss_banks;
@@ -287,7 +287,7 @@ static void town_frame(Shell *s)
         int carried_steps = t->back_steps;
         town_init(t, &s->tmap, &s->ttiles, &s->tspr, &s->thero, g);
         t->back_steps = carried_steps;
-        t->user = s; t->present = s->town_present;
+        t->user = s; t->present = s->town_present; t->frame_end = s->town_frame_end;
         t->font = &s->tfont; t->dir = s->dir; t->pics = &s->pics;
         t->back = &s->tback;                                            /* still painted: #38 */
         /* 6CE4 / 6D22: reappear at the far end of the new map */

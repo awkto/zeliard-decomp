@@ -100,6 +100,11 @@ typedef struct Game Game;
 /* one rendered frame: main loop presents the frame, waits 4*speed ticks and
  * refreshes g->dirs.  Called once per frame() (ladder climbs render 1-2 per step). */
 typedef void (*PresentFn)(Game *g);
+/* the differential harness (docs/HARNESS.md §1): called at the port's
+ * equivalent of fight.bin 717F, the frame boundary -- after the frame's logic,
+ * drawing and second-half passes (7133..7147), before the 718C death test.
+ * NULL unless `--trace` is on. */
+typedef void (*FrameEndFn)(Game *g);
 /* door transition (docs/FIGHT.md §8): return 1 if the caller switched maps */
 typedef int (*DoorFn)(Game *g, const Door *d);
 /* hand-off to the town engine (99E0 / 72D9): `col` < 0 means "use the map's
@@ -215,6 +220,8 @@ struct Game {
     Boss     boss;
     PostBossFn post_boss;
     uint16_t rng;                   /* kernel [11A] KRN_RANDOM source (FF1B) */
+    unsigned rng_calls;             /* krn_random calls so far (the harness traces it per frame) */
+    uint8_t  harness_rng;           /* 1 = docs/HARNESS.md §3: pure LCG, no per-frame +20 stir */
     unsigned deaths;                /* hero deaths (the port restarts at the entry) */
     uint8_t  death_anim;            /* 9F28 */
     int      entry_col, entry_row;  /* where hero_die() puts him back */
@@ -259,6 +266,7 @@ struct Game {
     unsigned frame_no;              /* rendered frames */
     unsigned hazard_frames;         /* frames spent on hazard tiles (damage is stubbed) */
     PresentFn present;
+    FrameEndFn frame_end;           /* --trace: the 717F boundary hook (NULL normally) */
     DoorFn    on_door;
     void     *user;
     char      message[64];          /* last game message ("Can't open this door.") */

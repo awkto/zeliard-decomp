@@ -96,6 +96,8 @@ const uint8_t *town_place_record(const TownMap *m);
 
 typedef struct Town Town;
 typedef void (*TownPresentFn)(Town *t);
+/* --trace: town.bin 68ED, the frame boundary (docs/HARNESS.md §1); NULL normally */
+typedef void (*TownFrameEndFn)(Town *t);
 struct Shop;
 struct TextFont;
 
@@ -131,6 +133,7 @@ struct Town {
     char     message[512];          /* the dialogue text the box would show */
     int      action, action_arg;    /* TOWN_* */
     TownPresentFn present;
+    TownFrameEndFn frame_end;       /* --trace: the 68ED boundary hook */
     void    *user;
     /* the shop overlay currently swapped into A000 (town.bin 6E7E) — while it
      * is set the shop owns the screen and the frame loop */

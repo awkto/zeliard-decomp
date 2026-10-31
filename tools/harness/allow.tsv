@@ -1,0 +1,20 @@
+# tools/harness/allow.tsv -- fields tools/tracediff.py does NOT compare.
+#
+# Every line is a deliberate, explained exception: a field that differs between
+# the original and the port *by design*, not because of a bug.  Keep it short;
+# an entry here hides every divergence of that field, in every frame.
+#
+# Columns, tab-separated:
+#   pattern  fnmatch glob on the schema name (obj[*].timer, flag_4?, ring, ...)
+#   mode     fight | town | any -- where the exception applies
+#   reason   why the difference is legitimate (an issue number if there is one)
+#
+# Not allowed on purpose (these are port bugs the harness should report):
+#   hp_regen_pending / hp  the potion tick runs before 717F in the original
+#                          (fight.bin 70D9), after the boundary in port/physics.c
+#
+# Candidates, enable only once an oracle run shows they differ for a known reason:
+#player_name	any	padding of FF6C..FF73 after the name (port: NUL) is unverified
+#sfx_request	any	the sound driver may consume FF75 on the tick before the boundary
+#shot[*].last_col	fight	+B/+C bookkeeping of the shot eraser; the port does not draw through them
+#shot[*].last_row	fight	(as above)

@@ -501,7 +501,7 @@ static void probe_reset(Nav *n, const Game *g)
 {
     Game *p = &n->probe;
     memcpy(p, g, sizeof *p);
-    p->present = NULL; p->on_door = NULL; p->on_town = NULL; p->post_boss = NULL;
+    p->present = NULL; p->frame_end = NULL; p->on_door = NULL; p->on_town = NULL; p->post_boss = NULL;
     p->status = NULL; p->menu_key = 0; p->user = NULL;
     p->map = &n->navmap;
     p->hp = p->max_hp = 9999;                   /* the probe must not die */

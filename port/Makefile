@@ -36,7 +36,7 @@ endif
 
 all: zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video
 
-zeliard: main.o $(CORE)
+zeliard: main.o trace.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
 
 test_physics: test_physics.o $(CORE)
@@ -69,7 +69,7 @@ test_cutscene: test_cutscene.o $(CORE)
 test_video: test_video.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
 
-%.o: %.c sar.h gfx.h map.h physics.h render.h video.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h nav.h playthrough.h opl2.h msd.h audio.h gd.h cutscene.h tear.h
+%.o: %.c sar.h gfx.h map.h physics.h render.h video.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h nav.h playthrough.h opl2.h msd.h audio.h gd.h cutscene.h tear.h trace.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Every binary's "N checks" line is collected so the last step can compare the
@@ -93,6 +93,12 @@ test: test_physics test_combat test_town test_boss test_shop test_status test_pl
 	./test_cutscene ../zeliard 2>&1 | tee -a $(COUNTS)
 	./test_video ../zeliard 2>&1 | tee -a $(COUNTS)
 	tools/check_counts.sh $(COUNTS)
+
+# random-input soak test (tools/monkey.py): `make monkey N=50 FRAMES=600 SEED=1`
+# always builds ASan+UBSan into $(OUT)/build-san (a copy, so this tree is untouched)
+monkey:
+	nice -n 19 ionice -c3 ../tools/monkey.py --san --cases $(or $(N),20) --frames $(or $(FRAMES),600) \
+	  --seed $(or $(SEED),1) --jobs 2 --out $(or $(OUT),/tmp/monkey-out)
 
 # the same two routes with the step-by-step log (issue #26's acceptance run)
 playthrough: test_playthrough
@@ -843,4 +849,4 @@ clean:
 	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video
 	rm -rf fuzz/obj fuzz/fuzz_sar fuzz/fuzz_map fuzz/fuzz_grp fuzz/fuzz_seed
 
-.PHONY: all test verify playthrough clean fuzz fuzz-corpus fuzz-smoke
+.PHONY: all test verify monkey playthrough clean fuzz fuzz-corpus fuzz-smoke

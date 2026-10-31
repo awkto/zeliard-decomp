@@ -21,11 +21,21 @@
 #include "audio.h"
 #include "cutscene.h"
 #include "tear.h"
+#include "trace.h"
+#include <errno.h>
+#ifdef _WIN32
+#include <direct.h>
+#define MKDIR(d) _mkdir(d)
+#else
+#include <sys/stat.h>
+#define MKDIR(d) mkdir((d), 0777)
+#endif
 #ifdef HAVE_SDL
 #include <SDL.h>
 #endif
 
 #define FRAME_MS_DEFAULT 84.5           /* 20 ticks of 236.7 Hz at speed 5 */
+#define TRACE_IDLE_MAX 2000             /* --trace: rendered frames allowed between two boundaries */
 
 typedef struct {
     Shell    sh;                        /* the two-engine shell (shell.c) */
@@ -52,6 +62,15 @@ typedef struct {
     /* set by --fullscreen in the arg parser, which is compiled either way;
      * only the SDL window path reads it (a headless build has no window) */
     int      fullscreen;
+    /* --trace DIR: the differential harness (docs/HARNESS.md, trace.c).  One
+     * frames.jsonl line per frame boundary; the script advances only there. */
+    const char *trace_dir;
+    FILE    *trace_f;
+    unsigned trace_n;                   /* the next trace frame number */
+    unsigned png_every;                 /* --png-every K */
+    unsigned rng_mark;                  /* g->rng_calls at the previous boundary */
+    int      trace_done;                /* script exhausted: the run is stopping */
+    unsigned trace_idle;                /* presents since the last boundary (shops, status) */
 #ifdef HAVE_SDL
     SDL_Window *win; SDL_Renderer *ren; SDL_Texture *tex;
     SDL_GameController *pad;            /* controller 0, opened on the fly */
@@ -264,7 +283,13 @@ static void usage(void)
         "  --ending    run enddemo (the ending and the credits roll) and exit\n"
         "  --cutscene-frames N    stop a cutscene after N rendered frames\n"
         "  --gd-art NAME OUT.png  render one intro/ending resource (ame.grp, ttl3.grp, ...)\n"
-        "              exactly as tools/grp2png.py's render_gd does\n");
+        "              exactly as tools/grp2png.py's render_gd does\n"
+        "  --trace DIR the differential harness (docs/HARNESS.md): headless; one line per\n"
+        "              frame boundary (fight 717F / town 68ED) to DIR/frames.jsonl, the\n"
+        "              harness RNG, and --script advanced one token-frame per boundary.\n"
+        "              --frames N stops after N traced frames\n"
+        "  --png-every K          with --trace: DIR/frame_NNNNN.png every K traced frames\n"
+        "  --trace-fields         list every field name --trace can emit and exit\n");
 }
 
 static int script_next(App *a)
@@ -297,7 +322,8 @@ static int script_next(App *a)
     return 1;
 }
 
-static void dump_png(App *a, Game *g)
+/* the whole 320x200 screen of a cavern / town frame into a->fb */
+static void fb_fight(App *a, Game *g)
 {
     if (g->status) memcpy(a->fb, status_framebuffer(g->status), FB_W * FB_H);
     else if (g->tear) memcpy(a->fb, tear_framebuffer(g->tear), FB_W * FB_H);
@@ -305,10 +331,28 @@ static void dump_png(App *a, Game *g)
     render_hud(a->fb, g, &a->sh.font, &a->sh.tfont, map_place_record(g->map));
     itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, g);
     if (!g->tear) tear_draw_slots(a->fb, g, &a->sh.tear_art);   /* GAME.BIN A18E -> A3A5 */
+}
+static void fb_town(App *a, Town *t)
+{
+    if (t->status) memcpy(a->fb, status_framebuffer(t->status), FB_W * FB_H);
+    else if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
+    else town_render(a->fb, t);
+    render_hud(a->fb, t->g, &a->sh.font, &a->sh.tfont, town_place_record(t->map));
+    itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, t->g);
+    tear_draw_slots(a->fb, t->g, &a->sh.tear_art);
+}
+static int fb_write_png(App *a, const char *path)
+{
     int vw, vh;
     const uint8_t *rgb = video_out(a, &vw, &vh);
-    if (png_write_rgb(a->shot_path, rgb, vw, vh)) fprintf(stderr, "cannot write %s\n", a->shot_path);
-    else fprintf(stderr, "wrote %s (frame %u, hero map (%d,%d) scr (%d,%d) scroll (%d,%d))\n", a->shot_path,
+    if (png_write_rgb(path, rgb, vw, vh)) { fprintf(stderr, "cannot write %s\n", path); return -1; }
+    return 0;
+}
+
+static void dump_png(App *a, Game *g)
+{
+    fb_fight(a, g);
+    if (fb_write_png(a, a->shot_path) == 0) fprintf(stderr, "wrote %s (frame %u, hero map (%d,%d) scr (%d,%d) scroll (%d,%d))\n", a->shot_path,
                  g->frame_no, game_hero_map_col(g), game_hero_map_row(g), g->hero_scr_col, g->hero_scr_row,
                  g->scroll_col, g->scroll_row);
 }
@@ -321,6 +365,54 @@ static void set_buttons(Game *g, uint8_t b)
     if ((b & 2) && !(g->buttons & 2)) g->btn2_edge = 0xFF;
     g->buttons = b;
 }
+
+/* ------------------------------------------------------------ the harness */
+/* docs/HARNESS.md §2/§3.  At boundary n the line for frame n is written (its
+ * `input` is what frame n read, i.e. what boundary n-1 applied), then the
+ * script's next token-frame is applied for frame n+1 -- to the cavern AND the
+ * town input state, because the original keeps one copy (FF16/FF17/FF1D/FF1E)
+ * and the next boundary may be in the other engine.  Trace frame 0 resets the
+ * harness RNG to 0 and the call counter. */
+static void trace_set_input(App *a, uint8_t dirs, uint8_t btns, uint8_t menu)
+{
+    Game *g = &a->sh.g; Town *t = &a->sh.town;
+    g->dirs = dirs; set_buttons(g, btns); g->menu_key = menu;
+    if ((btns & 1) && !(t->buttons & 1)) t->btn1_edge = 0xFF;
+    if ((btns & 2) && !(t->buttons & 2)) t->btn2_edge = 0xFF;
+    t->dirs = dirs; t->buttons = btns; t->menu_key = menu;
+}
+
+static void trace_boundary(App *a, Game *g, Town *t)
+{
+    if (a->trace_done) return;
+    if (a->trace_n == 0) { g->rng = 0; a->rng_mark = g->rng_calls; }    /* HARNESS §3: seed 0 */
+    char in[12];
+    if (t) trace_input_token(in, t->dirs, t->buttons, t->menu_key);
+    else   trace_input_token(in, g->dirs, g->buttons, g->menu_key);
+    unsigned k = g->rng_calls - a->rng_mark;
+    a->rng_mark = g->rng_calls;
+    trace_write_frame(a->trace_f, a->trace_n, k, in, g, t);
+    if (a->png_every && a->trace_n % a->png_every == 0) {
+        char path[1100];
+        snprintf(path, sizeof path, "%s/frame_%05u.png", a->trace_dir, a->trace_n);
+        if (t) fb_town(a, t); else fb_fight(a, g);
+        fb_write_png(a, path);
+    }
+    a->trace_n++;
+    a->trace_idle = 0;
+    int more = script_next(a);
+    if (!more && a->max_frames) { a->script_dirs = a->script_btns = 0; more = 1; }   /* --frames: idle on */
+    if ((a->max_frames && a->trace_n >= a->max_frames) || !more) {
+        a->trace_done = 1; a->quit = 1;
+        if (t) t->quit = 1;
+        trace_set_input(a, 0, 0, 0);
+        return;
+    }
+    trace_set_input(a, a->script_dirs, (uint8_t)((a->script_btns & 3) | (a->script_btns & 8 ? 4 : 0)),
+                    (uint8_t)(a->script_btns & 4 ? 1 : 0));
+}
+static void trace_fight_end(Game *g) { trace_boundary(app_of(g->user), g, NULL); }
+static void trace_town_end(Town *t)  { trace_boundary(app_of(t->user), t->g, t); }
 
 /* ------------------------------------------------------------- cutscenes */
 /* opdemo / enddemo own the frame loop exactly as the shops do; this is their
@@ -411,6 +503,14 @@ static void present(Game *g)
                 g->scroll_col, g->scroll_row, g->vstate, g->hero_anim, g->hero_flags, g->crouching, g->on_ladder,
                 g->dirs, g->hp, g->attacking, g->attack_var, g->on_hazard ? " HAZARD" : "",
                 g->hero_hit ? " HIT" : "");
+    if (a->trace_f) {                                /* inputs move only at the boundaries */
+        if (++a->trace_idle > TRACE_IDLE_MAX && !a->quit) {
+            fprintf(stderr, "[trace] %u frames without a boundary (a shop or menu waiting on input?): stopping\n", a->trace_idle);
+            a->quit = 1; a->trace_done = 1;
+        }
+        if (a->quit && g->status) g->status->done = 1;
+        return;
+    }
     if (a->max_frames && g->frame_no >= a->max_frames) a->quit = 1;
     if (a->quit && g->status) g->status->done = 1;   /* let the status screen out */
     if (a->headless) {
@@ -476,21 +576,21 @@ static void town_present(Town *t)
         fprintf(stderr, "town frame %4u  hero map col %3d scr %3d scroll %3d anim %u flags %02x%s%s\n",
                 t->frame_no, town_hero_col(t), t->hero_scr_col, t->scroll_col, t->hero_anim, t->hero_flags,
                 t->message[0] ? "  msg: " : "", t->message);
+    if (a->trace_f) {
+        if (++a->trace_idle > TRACE_IDLE_MAX && !a->quit) {
+            fprintf(stderr, "[trace] %u frames without a boundary (a shop or menu waiting on input?): stopping\n", a->trace_idle);
+            a->quit = 1; a->trace_done = 1;
+        }
+        if (a->quit) { t->quit = 1; if (t->status) t->status->done = 1; }
+        return;
+    }
     if (a->max_frames && t->frame_no >= a->max_frames) a->quit = 1;
     if (a->quit && t->status) t->status->done = 1;
     if (a->quit) t->quit = 1;
     if (a->headless) {
         if (a->shot_path && t->frame_no == a->shot_frame) {
-            if (t->status) memcpy(a->fb, status_framebuffer(t->status), FB_W * FB_H);
-            else if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
-            else town_render(a->fb, t);
-            render_hud(a->fb, t->g, &a->sh.font, &a->sh.tfont, town_place_record(t->map));
-            itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, t->g);
-            tear_draw_slots(a->fb, t->g, &a->sh.tear_art);
-            int vw, vh;
-            const uint8_t *rgb = video_out(a, &vw, &vh);
-            if (png_write_rgb(a->shot_path, rgb, vw, vh)) fprintf(stderr, "cannot write %s\n", a->shot_path);
-            else fprintf(stderr, "wrote %s (town frame %u, hero col %d)\n", a->shot_path, t->frame_no, town_hero_col(t));
+            fb_town(a, t);
+            if (fb_write_png(a, a->shot_path) == 0) fprintf(stderr, "wrote %s (town frame %u, hero col %d)\n", a->shot_path, t->frame_no, town_hero_col(t));
         }
         if (!script_next(a)) {
             if (!a->shot_path || t->frame_no >= a->shot_frame) a->quit = 1;
@@ -614,6 +714,9 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--ending")) { a.ending = 1; a.intro = 1; a.intro_only = 1; }
         else if (!strcmp(argv[i], "--cutscene-frames") && i + 1 < argc) a.cs_frames = (unsigned)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--verbose") || !strcmp(argv[i], "-v")) a.verbose = 1;
+        else if (!strcmp(argv[i], "--trace") && i + 1 < argc) { a.trace_dir = argv[++i]; a.headless = 1; explicit_start = 1; }
+        else if (!strcmp(argv[i], "--png-every") && i + 1 < argc) a.png_every = (unsigned)atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--trace-fields")) { trace_list_fields(stdout); return 0; }
         else { usage(); return 2; }
     }
     if (a.intro < 0) a.intro = !explicit_start;
@@ -669,6 +772,14 @@ int main(int argc, char **argv)
         return rc ? 1 : 0;
     }
     sh->user = &a; sh->present = present; sh->town_present = town_present;
+    if (a.trace_dir) {
+        if (MKDIR(a.trace_dir) && errno != EEXIST) { fprintf(stderr, "cannot create %s\n", a.trace_dir); return 1; }
+        char path[1100];
+        snprintf(path, sizeof path, "%s/frames.jsonl", a.trace_dir);
+        a.trace_f = fopen(path, "w");
+        if (!a.trace_f) { fprintf(stderr, "cannot write %s\n", path); return 1; }
+        sh->frame_end = trace_fight_end; sh->town_frame_end = trace_town_end;
+    }
     /* audio before shell_init: loading a map starts its score (shell.c).  A
      * headless run without --dump-audio never opens it, so `make verify` and
      * the scripted runs stay silent and do no extra work. */
@@ -690,6 +801,7 @@ int main(int argc, char **argv)
     audio_music_hold(1);
     if (shell_init(sh, dir, map_idx)) return 1;
     Game *g = &sh->g;
+    if (a.trace_f) g->harness_rng = 1;                                  /* HARNESS §3: no +20 stir */
 
     snprintf(g->player_name, sizeof g->player_name, "%s", save_name);    /* FF6C..FF73 */
     if (load_name && player_load_usr(g, sh->dir, load_name) == 0)        /* town.bin 7592 restore_game */
@@ -846,6 +958,10 @@ int main(int argc, char **argv)
     }
     while (!a.quit) shell_frame(sh);
 
+    if (a.trace_f) {
+        fclose(a.trace_f);
+        fprintf(stderr, "[trace] %u frames -> %s/frames.jsonl\n", a.trace_n, a.trace_dir);
+    }
     fprintf(stderr, "stopped after %u frames: hero map (%d,%d), LIFE %u/%u, EXP %u, GOLD %u, %u hazard frames, %u deaths\n",
             g->frame_no, game_hero_map_col(g), game_hero_map_row(g), g->hp, g->max_hp, g->exp, (unsigned)g->gold,
             g->hazard_frames, g->deaths);

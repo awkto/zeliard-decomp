@@ -44,9 +44,12 @@ int ai_map_col_to_ring(const Game *g, uint16_t col, uint8_t *rcol)
 
 /* kernel [11A] KRN_RANDOM: fight.bin only ever uses the low bits.  The original
  * sums the free-running tick counter FF1B; the port keeps a counter that the
- * frame loop advances by the same 4*speed ticks and stirs it here. */
+ * frame loop advances by the same 4*speed ticks and stirs it here.  Under
+ * --trace (g->harness_rng) the frame loop skips that stir, which leaves exactly
+ * the harness RNG of docs/HARNESS.md §3: state = state*25173 + 13849, seed 0. */
 uint16_t krn_random(Game *g)
 {
+    g->rng_calls++;
     g->rng = (uint16_t)(g->rng * 25173u + 13849u);
     return g->rng;
 }
