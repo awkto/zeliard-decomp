@@ -240,11 +240,12 @@ it is kept because every DOSBox capture in docs/ was taken at 3000 and the 84.5 
 
 ### What the port must emit at wait-loop boundaries
 
-The port writes a frame line + applies the next token exactly as `trace_boundary` does
-now, but with the site name of §1 and from inside the wait loops. In `--trace` mode
-today the shops/status screen advance no token at all (`present` only counts
-`trace_idle`), and in plain `--script` mode they take one token per 20-tick
-`shop_frame` / per status iteration, including while text prints: neither matches.
+**Implemented (#64).** `port/town.h` `WaitClock` (`wait_arm` / `wait_tick` /
+`wait_poll` / `wait_boundary_now`) is the one tick clock; `main.c` installs
+`trace_wait`, which writes the line with the site of §1 and applies the next token,
+and every frame boundary resets the clock. Plain `--script` (no `--trace`) still takes
+one token per presented frame (every 20 ticks in a shop, one per status pass). What the
+port does, per the spec below:
 
 - **Ticks, not frames.** Inside the wait loops the port must count 236.7 Hz ticks
   (`shop.c` already steps the `[A002]` hook per tick) and keep `ticks_since_boundary`
@@ -281,10 +282,16 @@ today the shops/status screen advance no token at all (`present` only counts
   redraw time to each pass, so holds longer than ~10 boundaries may drift), omoypro's
   Space wait (**`omoy:A04E`**) and the sage's name entry (**`kenj:A597`**, letters are
   not in the script language).
-- `tools/harness/schema.py` `SITE_MODE` knows only `717F`/`68ED`, so `tracediff` compares
-  nothing but `site` on the new lines. It needs a mode per new site: `71EC`, `7358`,
-  `bank:`, `omoy:`, `kenj:` are town-side (`town`); `select:AA58` takes the mode of the
-  last frame boundary before it (the status screen opens from either loop).
+- `tools/harness/schema.py` `site_mode()` / `site_modes()`: `71EC`, `7358`, `bank:`,
+  `omoy:`, `kenj:` are town-side (`town`); `select:AA58` takes the mode of the last
+  frame boundary before it (the status screen opens from either loop). `tracediff`,
+  `port2base` and `contact_sheet` use them.
+- Found while matching (fixed in the port): fight.bin leaves the status screen with
+  `jmp 6F9B` (72D6), one more whole frame inside the same step; dialogue_start runs a
+  68AF tail frame before the box (6363); the talker is frozen as type 7 (6297) and
+  the dialogue's waits are full 68AC frames (NPCs move); STICK has consumed FF75 by
+  the next boundary (status passes, town frames, the yes/no box); the shop printer
+  costs 6 ticks a byte (7084) and its page-break count (7269) skips `FF xx` pairs.
 
 ### Verified (wait-loop boundaries)
 
@@ -318,15 +325,19 @@ their pre-change baselines.
 
 `tests/scenarios/*.zs`: one scenario per file, `# start: NAME.usr` (the save both
 sides restore), `# make: ARGS` (the `port/zeliard` arguments that create that save,
-ending in `--save NAME`), `# what:` (free text), then the script on one line.
+ending in `--save NAME`), `# what:` (free text), optional `# allow: PATTERN [MODE]`
+lines (tracediff allow rules for that scenario only, on top of `tools/harness/allow.tsv`:
+for a known, filed divergence the scenario has to step over), then the script on one line.
 `tools/harness/run_scenarios.sh [-j N] [--out DIR] [--png] [NAME ...]` runs oracle +
 port + `tracediff --first-only` for each, makes any missing start save from its
 `# make:` line, prints a table and exits non-zero on any divergence or failure.
 It builds nothing: run it on the droplet after building the port.
 
-Every scenario must be clean. The ones that die stop on their last dying `717F`
-frame, because the port does not yet emit the Sage text's `71EC` wait-loop
-boundaries (§6 "What the port must emit", #64).
+Every scenario must be clean. `death_sage` goes on from the dying `717F` frames
+through the Sage's text (`71EC`) back to Muralla; `status_cave`, `drug_buy`,
+`bank_menu`, `npc_talk` and `npc_yesno` cover the other wait loops (#64). Not
+reachable yet: the bank amount entry, omoypro's Space wait and the Sage's name
+entry (#65).
 
 ## 8. Triage runbook (for agents) (#51)
 
@@ -414,3 +425,11 @@ put its script in a scenario file (`tests/scenarios/NAME.zs`, §7) and run it as
   address evidence, the scenario name and the clean result. Reference the issue (`#N`) in the commit message when the
   user asks for a commit.
 - Clean pass (everything `clean`, monkey 0 failures): note it on the open #51/#46 tracking issue with the seed, counts and port revision.
+
+| Scenario | Start | Covers |
+|---|---|---|
+| `sword4`/`sword5`/`sword6` | Muralla 205, LV 3, LIFE 255 | the sword.grp section 1/2 shapes, right then left |
+| `gate_walking` | `CAVE` | out of MP10 walking, Muralla, back in: `[C2]` bit 1 kept (#69), `79DC`'s locals reset, the `7AAA` side step |
+| `key_door` | Satono 4, one Key (`--keys 1`) | `7E15` on MP10 (128,32), through it to Satono and its `61B4` walk-in, back out |
+| `cave_door` | same | MP10 (141,32) → MP1D: door frame, `[C4]`, walk-in; stops at f90 (allows `obj[*]`: the Cangrejo room's object records, see the proposed issue) |
+| `elevator` | `TOUGH` | MP10's (48,24) A elevator up and down (`8024`/`80AF` 0-erase) and `8009`'s hit on a frog under it |

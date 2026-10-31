@@ -14,7 +14,7 @@ import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from schema import Schema, SITE_MODE, DEFAULT_SCHEMA  # noqa: E402
+from schema import Schema, site_mode, DEFAULT_SCHEMA  # noqa: E402
 
 
 def main():
@@ -35,7 +35,7 @@ def main():
         f, addr, val = s.split(":")
         edits.setdefault(int(f, 0), []).append((int(addr, 16), int(val, 0)))
     os.makedirs(a.out_dir, exist_ok=True)
-    n = 0
+    n, prev = 0, None
     with open(os.path.join(a.port_dir, "frames.jsonl")) as src, \
          open(os.path.join(a.out_dir, "frames.jsonl"), "w") as fj, \
          open(os.path.join(a.out_dir, "base.bin"), "wb") as fb:
@@ -44,7 +44,9 @@ def main():
             if d["f"] != n:
                 sys.exit("port2base: frame %d where %d was expected (base.bin is indexed by f)" % (d["f"], n))
             base = bytearray(0x10000)
-            sch.encode(d.get("fields", {}), SITE_MODE.get(d["site"], "any"), base)
+            mode = site_mode(d["site"], prev)
+            prev = mode or prev
+            sch.encode(d.get("fields", {}), mode or "any", base)
             for addr, val in edits.get(n, []):
                 base[addr & 0xFFFF] = (base[addr & 0xFFFF] ^ 1) if val is None else (val & 0xFF)
             fb.write(base)

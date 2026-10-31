@@ -21,6 +21,8 @@
 #   # start: NAME.usr          the save both sides restore (--load NAME)
 #   # make: ARGS               port/zeliard arguments that create it (ends in --save NAME)
 #   # what: TEXT               what the scenario exercises (free text)
+#   # allow: PATTERN [MODE]    optional, repeatable: a tracediff allow rule for this
+#                              scenario only (a known, filed divergence it must step over)
 #   SCRIPT                     the first non-comment line: the --script input
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -30,7 +32,7 @@ while [ $# -gt 0 ]; do
     -j) J=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;;
     --png) PNG=1; shift ;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
     *) SEL="$SEL $1"; shift ;;
   esac
 done
@@ -75,6 +77,12 @@ run_one() {
     printf 'ERROR\t-\tport exit %s (%s/port.out)\n' "$?" "$d" >"$d/result"; return
   fi
   dargs=--first-only; [ "$PNG" = 1 ] && dargs=--png
+  # `# allow: PATTERN [MODE]` lines add to tools/harness/allow.tsv for this scenario only
+  if grep -q '^# allow:' "$f"; then
+    { cat "$ROOT/tools/harness/allow.tsv" 2>/dev/null
+      sed -n 's/^# allow: *//p' "$f" | awk '{ print $1 "\t" ($2 == "" ? "any" : $2) }'; } >"$d/allow.tsv"
+    dargs="$dargs --allow $d/allow.tsv"
+  fi
   (cd "$ROOT" && python3 tools/tracediff.py "$d/o" "$d/p" $dargs) >"$d/diff.txt" 2>&1
   rc=$?
   frames=$(sed -n 's/^tracediff: \([0-9]*\) aligned.*/\1/p' "$d/diff.txt")

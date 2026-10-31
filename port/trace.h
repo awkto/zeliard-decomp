@@ -1,6 +1,7 @@
 /* trace.h — the port side of the differential harness (docs/HARNESS.md, #48).
  *
- * One JSON line per frame boundary (fight.bin 717F / town.bin 68ED):
+ * One JSON line per boundary (fight.bin 717F / town.bin 68ED, or a wait loop's
+ * poll site inside a shop, menu or the status screen):
  *   {"f":n,"site":"717F","rng_calls":k,"input":"R","fields":{...}}
  * `fields` holds every tools/harness/fields.tsv field the port models, under
  * the schema's names, serialised from the engine's C structs.  Integers for
@@ -17,10 +18,11 @@
 /* the script-language spelling of one frame's input: "UR", "X", "." (idle) */
 void trace_input_token(char out[12], uint8_t dirs, uint8_t buttons, uint8_t menu_key);
 
-/* append one frame line.  `t` = NULL for a fight.bin boundary (site 717F),
- * else the town engine (site 68ED).  `g` is only read (its page[] is used as a
- * scratch copy and restored). */
-void trace_write_frame(FILE *f, unsigned n, unsigned rng_calls, const char *input, Game *g, const Town *t);
+/* append one frame line.  `site`: 717F / 68ED for the frame boundaries, or a
+ * wait loop's (71EC, 7358, select:AA58: docs/HARNESS.md §1).  `t` = NULL
+ * serialises fight.bin's field set, else the town engine's.  `g` is only read
+ * (its page[] is used as a scratch copy and restored). */
+void trace_write_frame(FILE *f, unsigned n, const char *site, unsigned rng_calls, const char *input, Game *g, const Town *t);
 
 /* every field name the port can emit, one per line (`zeliard --trace-fields`),
  * so tools/tracediff.py can check them against the schema */

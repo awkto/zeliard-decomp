@@ -74,6 +74,7 @@ int shell_enter_town(Game *g, int idx, int col, int died)
     s->town.hero_flags = (uint8_t)((g->hero_flags & ~FACE_LEFT) | (face_left ? FACE_LEFT : 0));
     s->town.hero_anim = 0;                                              /* 6050: both entries zero [E7] */
     s->town_entry = died ? 2 : 1;                                       /* 616B: [E8] -> kenjpro, else 61B1 */
+    s->town_walk_in = 0;            /* 6078; on_door sets it (a restore/boot comes in at 601E: [7C43]) */
     g->cur_map = (uint8_t)(0x80 | idx);
     /* [C5] town_map is NOT the town just entered: nothing in town.bin or
      * fight.bin writes it but the ending (99B4); it is STDPLY's 0x81 or what
@@ -194,7 +195,13 @@ static int on_door(Game *g, const Door *d)
 {
     Shell *s = g->user;
     if (d->dest_row == 0xFF)                                    /* 7B76: dest_map | 0x80 = a town */
-        return shell_enter_town(g, d->dest_map & 0x7F, d->dest_col, 0);
+    {
+        if (!shell_enter_town(g, d->dest_map & 0x7F, d->dest_col, 0)) return 0;
+        /* fight.bin -> town.bin [6000] = 6026 ([7C43] = 0): 6084..6092 arm the
+         * 61B4 walk-in when the town is underground (town_flags bit 0) */
+        s->town_walk_in = (s->tmap.town_flags & 1) != 0;
+        return 1;
+    }
     int slot = s->cur ^ 1;
     if (map_load_system(&s->maps[slot], s->dir, d->dest_map)) {
         fprintf(stderr, "[door] cannot load system map %02x\n", d->dest_map);
@@ -207,6 +214,8 @@ static int on_door(Game *g, const Door *d)
     shell_load_enemy_banks(s, &s->maps[slot]);
     cavern_score_idx(g, &s->maps[slot]);
     game_enter(g, &s->maps[slot], &s->tiles[slot], d->dest_col, d->dest_row, (d->letter & 0x40) != 0);
+    g->cur_map = d->dest_map;                                   /* 7B6D..7B79: [C4] = record +4 */
+    g->hero_entering = 0; g->menu_debounce = 0xFF;              /* 7C02 [FF3A] / 7C07 [9EF5] */
     /* 7C11: the door record's byte +8 bit 7 (cached at [9F1D]) is set on every
      * boss room's exit door, the one post_boss_transition installs — load
      * ROKADEMO.BIN and call it, then jump to 7CF4, skipping the walk-in. */
@@ -286,10 +295,16 @@ static void town_frame(Shell *s)
     if (s->town_entry) {
         int kind = s->town_entry;
         s->town_entry = 0;
-        if (kind == 1) { town_entry_frame(t); return; }                 /* 61B1 */
-        /* 617A: the death return runs kenjpro's [A004] (the sage's text, not
-         * modelled) and comes back through 6EAF: a 68AF frame, edges cleared,
-         * [E7] = 1, then 61FC */
+        if (kind == 1) {                                                /* 61B1 */
+            town_entry_frame(t);
+            if (s->town_walk_in) town_walk_in(t);                       /* 61B4 */
+            return;
+        }
+        /* 617A: the death return runs kenjpro's [A004] (the sage's text) and
+         * comes back through 6EAF: a 68AF frame, edges cleared, [E7] = 1,
+         * then 61FC */
+        if (shop_run_death(t)) fprintf(stderr, "[shop] cannot load kenjpro: no sage text\n");
+        if (t->quit) return;
         town_tail_frame(t);                                             /* 6EE6 */
         t->btn1_edge = t->btn2_edge = 0;
         t->hero_anim = 1;
@@ -304,6 +319,8 @@ static void town_frame(Shell *s)
         const TownCave *c = &s->tmap.caves[i];
         g->page[6] = 0xFF;                                              /* 702E: [06] entered a cavern */
         g->page[0xC3] = (c->side & 1) ? 0xFF : 0;                       /* 700D..7011: shr / sbb */
+        g->hero_flags = t->hero_flags;      /* [C2] is one byte: the town's value goes in (#69) */
+        game_town_entry_reset(g);                                       /* [6002] = 79DC */
         shell_enter_cavern(s, c->map, c->col, c->row, c->side & 1, 1);
         break; }
     case TOWN_TO_TOWN: {                                                /* 6CE1 */

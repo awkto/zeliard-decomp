@@ -279,6 +279,7 @@ void game_init(Game *g, const Map *m, const Tileset *t);
 /* place the hero's top-left at map (col,row): the fight.bin entry model
  * (scroll_col = col-16, scroll_row = (row - row_bias) & 63, hero on screen (12, row_bias)) */
 void game_place(Game *g, int col, int row, int face_left);
+void game_town_entry_reset(Game *g);   /* 79DC: fight.bin's locals on the way in from town */
 /* switch maps through a door (7DC1 scroll_to_entry) */
 void game_enter(Game *g, const Map *m, const Tileset *t, int dest_col, int dest_row, int face_left);
 /* 61A8: the [E6] boss-room walk-in camera (scroll_col 0x29, hero 5 columns in) */

@@ -66,6 +66,12 @@ backdrop, start the music at arena:3000 (not when `[49]` = game won), apply the 
 place name from `[C004]`), `FF2A = C017 + scroll_col*8`, place the NPC markers.  If `[E8]`
 (died in the caverns): load KENJPRO to A000 and jump to its death entry `[A004]` with the return
 chain 6EAF → 61FC.  Otherwise full redraw, optional 5-step walk-in, main loop.
+The walk-in (`61B4..61DD`) runs when `[7C44]` is set: `6078` clears it, `6092` sets it
+when the level record's town_flags bit 0 (underground) is set, the entry was `6026`
+(fight.bin's `[6000]`; `601E`, the boot/restore entry, sets `[7C43]` and skips it) and
+`[E8]` is clear.  It is four times (walk step in the `[C2]` bit-0 facing, `6781` left /
+`67F4` right, then a `68AC` frame) and one more step; `60B7` (town→town) does not
+reset `[7C44]`.
 
 Frame pacing (68AC): NPC update → hero/NPC sprites → `GT_FLUSH` → the five kernel hotkey services
 → wait until `FF1A >= 4*speed` (callers preset `FF1A = 0x28` for an immediate frame).

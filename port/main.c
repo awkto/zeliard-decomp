@@ -268,7 +268,7 @@ static void usage(void)
         "              `videoDrv` set, at each driver's own screen size\n"
         "  --frames N  quit after N rendered frames (SDL and headless)\n"
         "  --sound     log every FF75 sound request the engine produces\n"
-        "  --sword N --shield N --level N --life N --gold N\n"
+        "  --sword N --shield N --level N --life N --gold N --keys N\n"
         "              set the player record directly (the shops do it properly)\n"
         "  --potions L comma list of drug ids 0..7 into the five [A6..AA] slots (Enter -> USE:)\n"
         "  --spells L  comma list of spell numbers 1..7 to mark learned at [BB..C1]\n"
@@ -383,16 +383,19 @@ static void trace_set_input(App *a, uint8_t dirs, uint8_t btns, uint8_t menu)
     t->dirs = dirs; t->buttons = btns; t->menu_key = menu;
 }
 
-static void trace_boundary(App *a, Game *g, Town *t)
+/* `site`: "717F" / "68ED" for the frame boundaries, else a wait loop's poll
+ * site (docs/HARNESS.md §1); `t` NULL = fight.bin's field set */
+static void trace_boundary_at(App *a, Game *g, Town *t, const char *site)
 {
     if (a->trace_done) return;
+    wait_reset();                                   /* any boundary restarts the wait-loop clock */
     if (a->trace_n == 0) { g->rng = 0; a->rng_mark = g->rng_calls; }    /* HARNESS §3: seed 0 */
     char in[12];
     if (t) trace_input_token(in, t->dirs, t->buttons, t->menu_key);
     else   trace_input_token(in, g->dirs, g->buttons, g->menu_key);
     unsigned k = g->rng_calls - a->rng_mark;
     a->rng_mark = g->rng_calls;
-    trace_write_frame(a->trace_f, a->trace_n, k, in, g, t);
+    trace_write_frame(a->trace_f, a->trace_n, site, k, in, g, t);
     if (a->png_every && a->trace_n % a->png_every == 0) {
         char path[1100];
         snprintf(path, sizeof path, "%s/frame_%05u.png", a->trace_dir, a->trace_n);
@@ -410,15 +413,21 @@ static void trace_boundary(App *a, Game *g, Town *t)
     if (!more && a->max_frames) { a->script_dirs = a->script_btns = 0; more = 1; }   /* --frames: idle on */
     if ((a->max_frames && a->trace_n >= a->max_frames) || !more) {
         a->trace_done = 1; a->quit = 1;
-        if (t) t->quit = 1;
+        Town *tw = &a->sh.town;
+        tw->quit = 1;                               /* out of any blocking box, shop or menu */
+        if (tw->status) tw->status->done = 1;
+        if (tw->shop) tw->shop->leave = 1;
+        if (g->status) g->status->done = 1;
         trace_set_input(a, 0, 0, 0);
         return;
     }
     trace_set_input(a, a->script_dirs, (uint8_t)((a->script_btns & 3) | (a->script_btns & 8 ? 4 : 0)),
                     (uint8_t)(a->script_btns & 4 ? 1 : 0));
 }
-static void trace_fight_end(Game *g) { trace_boundary(app_of(g->user), g, NULL); }
-static void trace_town_end(Town *t)  { trace_boundary(app_of(t->user), t->g, t); }
+static void trace_fight_end(Game *g) { trace_boundary_at(app_of(g->user), g, NULL, "717F"); }
+static void trace_town_end(Town *t)  { trace_boundary_at(app_of(t->user), t->g, t, "68ED"); }
+/* a wait-loop boundary (town.h wait_poll): shops, menus, the status screen */
+static void trace_wait(Game *g, Town *t, const char *site) { trace_boundary_at(app_of(g->user), g, t, site); }
 
 /* ------------------------------------------------------------- cutscenes */
 /* opdemo / enddemo own the frame loop exactly as the shops do; this is their
@@ -658,7 +667,7 @@ int main(int argc, char **argv)
     const char *dir = NULL;
     int map_idx = 0, pos_col = -1, pos_row = -1, start_in_town = -1, town_col = -1, town_scr = -1, town_anim = -1, town_face = 0, npc_i = -1, npc_f = 0;
     int dbg_sword = -1, dbg_shield = -1, dbg_level = -1, dbg_life = -1;
-    long dbg_gold = -1;
+    long dbg_gold = -1, dbg_keys = -1;
     const char *dbg_potions = NULL, *dbg_spells = NULL;
     const char *save_name = "ZELIARD", *load_name = NULL, *save_now = NULL;
     /* the intro runs on a plain interactive launch, the way GAME.BIN runs
@@ -708,6 +717,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--level") && i + 1 < argc) dbg_level = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--life") && i + 1 < argc) dbg_life = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--gold") && i + 1 < argc) dbg_gold = atol(argv[++i]);
+        else if (!strcmp(argv[i], "--keys") && i + 1 < argc) dbg_keys = atol(argv[++i]);
         else if (!strcmp(argv[i], "--potions") && i + 1 < argc) dbg_potions = argv[++i];
         else if (!strcmp(argv[i], "--spells") && i + 1 < argc) dbg_spells = argv[++i];
         else if (!strcmp(argv[i], "--name") && i + 1 < argc) save_name = argv[++i];
@@ -785,6 +795,7 @@ int main(int argc, char **argv)
         a.trace_f = fopen(path, "w");
         if (!a.trace_f) { fprintf(stderr, "cannot write %s\n", path); return 1; }
         sh->frame_end = trace_fight_end; sh->town_frame_end = trace_town_end;
+        wait_clock.fn = trace_wait;
     }
     /* audio before shell_init: loading a map starts its score (shell.c).  A
      * headless run without --dump-audio never opens it, so `make verify` and
@@ -838,6 +849,7 @@ int main(int argc, char **argv)
     if (dbg_level >= 0)  g->level = (uint8_t)dbg_level;                  /* [8D] */
     if (dbg_life >= 0)   { g->max_hp = (uint16_t)dbg_life; g->hp = g->max_hp; }   /* [B2]/[90] */
     if (dbg_gold >= 0)   g->gold = (uint32_t)dbg_gold;                   /* [85..87] */
+    if (dbg_keys >= 0)   g->keys = (uint8_t)dbg_keys;                    /* [98] */
     if (dbg_potions) {                                                  /* [A6..AA] = drug id + 1 */
         int n = 0;
         for (const char *c = dbg_potions; *c && n < 5; ) {

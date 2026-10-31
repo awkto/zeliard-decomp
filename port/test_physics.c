@@ -390,6 +390,7 @@ static void t_fixtures(const char *dir)
     /* 8244/8299: the fixture-C platform patrols at half speed and carries the
      * hero, reversing at lim_l with one paused frame. */
     game_place(&G, 8, 40, 0); G.nobj = 0;
+    G.fixture_anim = 0;     /* [9F07] survives game_place (a door carries it); 79DC zeroes it */
     game_first_frame(&G);
     int prev = hcol(), moves = 0;
     for (int i = 0; i < 12; i++) { step(0); if (hcol() != prev) { moves++; prev = hcol(); } }

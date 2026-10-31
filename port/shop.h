@@ -81,6 +81,8 @@ typedef struct Shop {
     int      bought, leave, saved;
     const char *dir;
     unsigned frames;                /* port counter */
+    int      tick_acc;              /* ticks since the last presented frame (shop_tick) */
+    int      kj_x8;                 /* kenjpro BB12 high byte: the portrait's x8, 7 or 0x0E (death entry) */
     int      headless_guard;        /* abort after this many frames (tests) */
     char     last_text[512];        /* everything printed since the last clear */
     int      last_len;
@@ -95,6 +97,10 @@ typedef struct Shop {
 /* town.bin 6E7E run_shop: load the overlay + portrait, run it, return when it
  * does.  `dest` is the door's dest byte 0..7.  Returns 0 when it ran. */
 int  shop_run(Town *t, int dest);
+/* town.bin 616B..61A0: the death return.  kenjpro's [A004] entry (A006): the
+ * sage's portrait moved right and the "While you were unconscious" text
+ * (BA67), with its 0xFF 0x04 pauses and page waits; then back to 6EAF. */
+int  shop_run_death(Town *t);
 /* what the shop has on screen (the town renderer shows this while it runs) */
 const uint8_t *shop_framebuffer(const struct Shop *s);
 

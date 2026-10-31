@@ -23,7 +23,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "harness"))
-from schema import Schema, SITE_MODE, DEFAULT_SCHEMA  # noqa: E402
+from schema import Schema, site_modes, DEFAULT_SCHEMA  # noqa: E402
 
 DEFAULT_ALLOW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "harness", "allow.tsv")
 FRAME = 0x10000
@@ -122,13 +122,13 @@ def modelled_members(sch, port):
     return seen
 
 
-def compare_frame(sch, rules, od, pd, base, members):
-    """[(name, oracle, port)] for one aligned frame"""
+def compare_frame(sch, rules, od, pd, base, members, mode):
+    """[(name, oracle, port)] for one aligned frame; `mode` = the port line's
+    field mode (schema.site_modes)"""
     diffs = []
     if od.get("site") != pd.get("site"):
         diffs.append(("site", od.get("site"), pd.get("site")))
         return diffs                            # different loops: fields are not comparable
-    mode = SITE_MODE.get(pd.get("site"))
     if mode is None:
         return diffs
     for k in ("input", "rng_calls"):
@@ -249,6 +249,7 @@ def main():
 
     common = sorted(set(port) & set(orac))
     members = modelled_members(sch, port)
+    modes = site_modes(port)
     first = None
     per_field = {}                              # name -> (first frame, count)
     ndiv_frames = 0
@@ -256,7 +257,7 @@ def main():
         if mm is not None and f >= nbase:
             die("base.bin holds %d frames, frames.jsonl names frame %d" % (nbase, f))
         base = mm[f * FRAME:(f + 1) * FRAME] if mm is not None else None
-        diffs = compare_frame(sch, rules, orac[f], port[f], base, members)
+        diffs = compare_frame(sch, rules, orac[f], port[f], base, members, modes[f])
         if not diffs:
             continue
         ndiv_frames += 1

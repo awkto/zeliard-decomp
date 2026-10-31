@@ -7,7 +7,38 @@ import re
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_SCHEMA = os.path.join(HERE, "fields.tsv")
 MODES = {"fight", "town", "any"}
-SITE_MODE = {"717F": "fight", "68ED": "town"}
+# The loop each boundary site belongs to (docs/HARNESS.md §1/§6).  The wait
+# loops of the shops, the yes/no widget and the text pages run under town.bin;
+# `bank:` / `omoy:` / `kenj:` sites are shop overlays (town).  select.bin (the
+# status screen) opens from either loop: None = the mode of the last frame
+# boundary before it.  Use site_mode() / site_modes(), not the table.
+SITE_MODE = {"717F": "fight", "68ED": "town", "71EC": "town", "7358": "town",
+             "select:AA58": None}
+SITE_PREFIX_MODE = (("bank:", "town"), ("omoy:", "town"), ("kenj:", "town"))
+
+
+def site_mode(site, prev=None):
+    """the field mode of a boundary at `site`; `prev` = the mode of the
+    boundary before it (what select.bin inherits).  None = unknown site."""
+    if site in SITE_MODE:
+        m = SITE_MODE[site]
+        return prev if m is None else m
+    for pre, m in SITE_PREFIX_MODE:
+        if site and site.startswith(pre):
+            return m
+    return None
+
+
+def site_modes(frames):
+    """{f: mode} for a {f: frames.jsonl line} trace, carrying the mode of the
+    last frame boundary into the sites that inherit it"""
+    out, prev = {}, None
+    for f in sorted(frames):
+        m = site_mode(frames[f].get("site"), prev)
+        out[f] = m
+        if m is not None:
+            prev = m
+    return out
 
 
 class Field:

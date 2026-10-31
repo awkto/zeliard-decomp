@@ -493,6 +493,10 @@ static void status_frame(Status *s)
 {
     s->frames++;
     if (s->frame_guard && (int)s->frames > s->frame_guard) { s->done = 1; return; }
+    /* STICK's timer plays and clears FF75 within a few ticks; select.bin's
+     * drawing and its polls take longer than that, so a request made on the
+     * screen (open 0x0B, move 0x0C, row 0x0D) is gone by the next poll */
+    sound_request(s->g);
     if (s->present) s->present(s);
 }
 
@@ -525,78 +529,112 @@ void status_open(Status *s, Game *g, const TextFont *f, const ItemPics *p, int i
     if (s->pane != 0xFF) draw_headers(s);
 }
 
-/* A0CA / A1BB / A2B9 — one input loop per row.  The original re-enters the
- * row's routine through the A0B8 dispatch on every row change; the port folds
- * the three into one frame loop with the same rules. */
+/* AA58 idle_poll: Enter closes the screen, but the Enter that opened it
+ * (menu_key_held, set by the A084 probe) has to be released first */
+static int status_idle_poll(Status *s)
+{
+    if (!s->menu_key_held) return s->menu_key != 0;
+    if (!s->menu_key) s->menu_key_held = 0;                                  /* AA7F */
+    return 0;
+}
+
+static void row_cursor(Status *s, int colour)
+{
+    if (s->pane == 0) magic_cursor(s, colour);
+    else if (s->pane == 1) item_cursor(s, colour);
+    else potion_cursor(s, colour);
+}
+
+/* a release wait (`do int 61h while (al & mask)`): every pass is a poll site
+ * with a boundary and reads nothing but the directions */
+static void release_wait(Status *s, uint8_t mask)
+{
+    do status_frame(s); while (!s->done && (s->dirs & mask));
+}
+
+/* A0CA / A1BB / A2B9 — one input loop per row, re-entered through the A0B8
+ * dispatch on every row change.  The port folds the three into one loop with
+ * the same rules and the same polls:
+ *   - row entry: headers, the red cursor, then the release wait for U/D
+ *     (A0D2 / A1C3 / A2C1);
+ *   - a pass: idle_poll AA58 (Enter) then int 61h;
+ *   - after an L/R step, the release wait for L/R (A174 / A25F / A373).
+ * Each status_frame() is one poll that takes a boundary (select:AA58 under
+ * --trace).  The row loop's first idle_poll after a release wait comes in the
+ * same tick as the wait's last poll and reads the same input: no frame. */
 void status_loop(Status *s)
 {
-    int held = 0, arm = 0;
-    if (s->pane != 0xFF) {
-        if (s->pane == 0) magic_cursor(s, 2);
-        else if (s->pane == 1) item_cursor(s, 2);
-        else potion_cursor(s, 2);
+    if (s->pane == 0xFF) {                                                   /* A0AE: idle only */
+        while (!s->done) {
+            status_frame(s);
+            if (s->done || status_idle_poll(s)) break;
+        }
+        player_page_push(s->g);
+        return;
     }
+    int enter = 1, fresh = 0;
     while (!s->done) {
-        status_frame(s);
+        if (enter) {                                                         /* A0B8 dispatch */
+            enter = 0;
+            draw_headers(s);
+            row_cursor(s, 2);
+            release_wait(s, 3);
+            fresh = 1;
+        }
+        if (!fresh) status_frame(s);
+        fresh = 0;
         if (s->done) break;
-        /* AA58 idle_poll: the Enter that opened the screen must be released
-         * before another press can close it */
-        if (s->menu_key_held) { if (!s->menu_key) s->menu_key_held = 0; }
-        else if (s->menu_key) { s->done = 1; break; }
-        if (s->pane == 0xFF) continue;                                       /* A0AE */
-
-        /* A2CD: the hidden LEVEL/EXP panel, potion row only */
-        if (s->pane == 2 && (s->buttons & 4)) { show_level_box(s); continue; }
-        /* A2DA: the sword button drinks the potion under the cursor */
-        if (s->pane == 2 && (s->buttons & 1)) {
-            if (!arm) { arm = 1; status_use_potion(s); }
-            continue;
-        }
-        arm = 0;
+        if (status_idle_poll(s)) break;                                      /* A0D8 / A1C9 / A2C7 */
         uint8_t d = s->dirs;
-        if (!d) { held = 0; continue; }
-        if (held) continue;
-        held = 1;
-        if (s->pane == 2) close_box(s);                                      /* A2E7 */
-
-        if (d & (DIR_LEFT | DIR_RIGHT)) {
-            int left = (d & DIR_LEFT) != 0;
-            int *cur = s->pane == 0 ? &s->magic_cursor : s->pane == 1 ? &s->item_cursor : &s->potion_cursor;
-            int n    = s->pane == 0 ? s->n_magic       : s->pane == 1 ? s->n_items      : s->n_potions;
-            void (*draw)(Status *, int) = s->pane == 0 ? magic_cursor : s->pane == 1 ? item_cursor : potion_cursor;
-            if (left ? (*cur == 0) : (n - 1 < *cur + 1)) continue;
-            draw(s, 0);
-            *cur += left ? -1 : 1;
-            draw(s, 2);
-            s->g->sfx_request = 0x0C;
-            if (s->pane == 0) status_select_magic(s);
-            else if (s->pane == 1) status_select_item(s);
-            else potion_show(s);
+        int want = -1;
+        if (s->pane == 0) {
+            if (!(d & 0x0E)) continue;                                       /* A0E0 */
+            if (!(d & 0x0C)) {                                               /* A190 down */
+                /* reaches the potion row even in town: the `test [ADF8]` at
+                 * A199 is clobbered by the `mov cl,2` that follows */
+                if (s->n_items) want = 1; else if (s->n_potions) want = 2;
+                if (want < 0) continue;
+            }
+        } else if (s->pane == 1) {
+            if (!(d & 0x0F)) continue;                                       /* A1D1 */
+            if (!(d & 0x0C)) {                                               /* A27D */
+                if (d & DIR_UP) { if (!s->n_magic) continue; want = 0; }
+                else { if (s->in_town || !s->n_potions) continue; want = 2; } /* A293 */
+            }
+        } else {
+            if (s->buttons & 4) { show_level_box(s); continue; }            /* A2CD: FF18 == 0286 */
+            if (s->buttons & 1) {                                            /* A2DA */
+                status_use_potion(s);
+                continue;
+            }
+            if (!(d & 0x0D)) continue;                                       /* A2E2 */
+            close_box(s);                                                    /* A2E7 */
+            if (!(d & 0x0C)) {                                               /* A391 up */
+                if (s->n_items) want = 1; else if (s->n_magic) want = 0;
+                if (want < 0) continue;
+            }
+        }
+        if (want >= 0) {                                                     /* a row change */
+            s->g->sfx_request = 0x0D;
+            row_cursor(s, 5);
+            s->pane = (uint8_t)want;
+            enter = 1;
             continue;
         }
-        /* row changes.  The magic row's Down reaches the potion row even in
-         * town: the original's `test [ADF8]` at A199 is clobbered by the
-         * `mov cl,2` that follows (docs/TOWN.md §12.3). */
-        int want = -1;
-        if (s->pane == 0 && (d & DIR_DOWN)) {
-            if (s->n_items) want = 1; else if (s->n_potions) want = 2;
-        } else if (s->pane == 1 && (d & DIR_UP)) {
-            if (s->n_magic) want = 0;
-        } else if (s->pane == 1 && (d & DIR_DOWN)) {
-            if (!s->in_town && s->n_potions) want = 2;                       /* A293 */
-        } else if (s->pane == 2 && (d & DIR_UP)) {
-            if (s->n_items) want = 1; else if (s->n_magic) want = 0;
-        }
-        if (want < 0) continue;
-        if (s->pane == 0) magic_cursor(s, 5);
-        else if (s->pane == 1) item_cursor(s, 5);
-        else potion_cursor(s, 5);
-        s->pane = (uint8_t)want;
-        s->g->sfx_request = 0x0D;
-        draw_headers(s);
-        if (s->pane == 0) magic_cursor(s, 2);
-        else if (s->pane == 1) item_cursor(s, 2);
-        else potion_cursor(s, 2);
+        /* left / right inside the row */
+        int left = (d & DIR_LEFT) != 0;
+        int *cur = s->pane == 0 ? &s->magic_cursor : s->pane == 1 ? &s->item_cursor : &s->potion_cursor;
+        int n    = s->pane == 0 ? s->n_magic       : s->pane == 1 ? s->n_items      : s->n_potions;
+        if (left ? (*cur == 0) : (n - 1 < *cur + 1)) continue;
+        row_cursor(s, 0);
+        *cur += left ? -1 : 1;
+        row_cursor(s, 2);
+        s->g->sfx_request = 0x0C;
+        if (s->pane == 0) status_select_magic(s);
+        else if (s->pane == 1) status_select_item(s);
+        else potion_show(s);
+        release_wait(s, 0x0C);                                               /* A174 / A25F / A373 */
+        fresh = 1;
     }
     player_page_push(s->g);
 }
@@ -607,6 +645,7 @@ static void status_present_town(Status *s)
     Town *t = s->user;
     t->frame_no++;
     if (t->present) t->present(t);
+    if (wait_clock.fn) wait_boundary_now(t->g, t, "select:AA58");
     s->dirs = t->dirs; s->buttons = t->buttons; s->menu_key = t->menu_key;
 }
 static void status_present_fight(Status *s)
@@ -614,6 +653,7 @@ static void status_present_fight(Status *s)
     Game *g = s->user;
     g->frame_no++;
     if (g->present) g->present(g);
+    if (wait_clock.fn) wait_boundary_now(g, NULL, "select:AA58");
     s->dirs = g->dirs; s->buttons = g->buttons; s->menu_key = g->menu_key;
 }
 

@@ -76,23 +76,41 @@ const uint8_t *shop_framebuffer(const Shop *s) { return s->fb; }
 
 static void shop_hook_tick(Shop *s);            /* the [A002] hook, one tick */
 
-/* one rendered frame is 4*speed = 20 ticks of the 236.7 Hz clock, and town.bin
- * calls idle_poll (and so the hook) far faster than that, so step the hook a
- * tick at a time before presenting. */
-#define SHOP_TICKS_PER_FRAME 20
+/* One rendered frame is 4*speed = 20 ticks of the 236.7 Hz clock.  The shop
+ * code runs tick by tick (shop_tick): every tick steps the [A002] hook, as
+ * town.bin's idle_poll does, and counts towards the --trace wait-loop rule
+ * (town.h); every 20th presents the screen.  Presenting is decoupled from the
+ * boundaries: under --trace `present` reads no input. */
+#define SHOP_TICKS_PER_FRAME WAIT_TICKS
 
 static void shop_frame(Shop *s)
 {
     s->frames++;
-    if (s->headless_guard && (int)s->frames > s->headless_guard) { s->leave = 1; return; }
-    for (int t = 0; t < SHOP_TICKS_PER_FRAME; t++) shop_hook_tick(s);
     if (s->t && s->t->present) { s->t->frame_no++; s->t->present(s->t); }
 }
 
-/* the shops measure time in 236.7 Hz ticks; one frame is 4*speed = 20 of them */
+static void shop_tick(Shop *s)
+{
+    /* tests: stop after `headless_guard` frames, i.e. exactly 20x that many ticks */
+    if (s->headless_guard && (int)s->frames >= s->headless_guard) { s->leave = 1; return; }
+    shop_hook_tick(s);
+    wait_tick();
+    if (++s->tick_acc >= SHOP_TICKS_PER_FRAME) { s->tick_acc = 0; shop_frame(s); }
+}
+
+/* the shops' timed waits, in 236.7 Hz ticks: no boundary, no input */
 static void shop_wait(Shop *s, int ticks)
 {
-    for (int n = (ticks + 19) / 20; n > 0 && !s->leave; n--) shop_frame(s);
+    for (int n = 0; n < ticks && !s->leave; n++) shop_tick(s);
+}
+
+/* a poll site of a wait loop: the boundary rule, and out if the run ended */
+static int shop_poll(Shop *s, const char *site)
+{
+    if (!s->t) return 0;
+    wait_poll(s->g, s->t, site);
+    if (s->t->quit) s->leave = 1;
+    return s->leave;
 }
 
 static int shop_btn(Shop *s, int *cancel)
@@ -103,13 +121,17 @@ static int shop_btn(Shop *s, int *cancel)
     return 0;
 }
 
-static void shop_wait_key(Shop *s)                              /* 71DF */
+/* 71DF: wait for Space or Alt.  Poll site 71EC (after idle_poll), armed on
+ * entry: boundary rule -> the edges -> one tick. */
+static void shop_wait_key(Shop *s)
 {
     if (s->t) s->t->btn1_edge = s->t->btn2_edge = 0;
-    for (int guard = 0; guard < 4000 && !s->leave; guard++) {
-        shop_frame(s);
+    wait_arm();
+    for (long guard = 0; guard < 4000L * SHOP_TICKS_PER_FRAME && !s->leave; guard++) {
+        if (shop_poll(s, "71EC")) break;
         int cancel = 0;
         if (shop_btn(s, &cancel)) break;
+        shop_tick(s);
     }
     s->g->sfx_request = 0x1D;
 }
@@ -128,12 +150,16 @@ static void box_scroll(Shop *s)
 /* 7224: the width of the next word (stops at a space, '/', 0, 0x0C, 0x0D, 0xFF) */
 static int word_width(const Shop *s, unsigned p)
 {
-    int w = 0;
+    int w = 0, k = 0;
+    uint8_t last = 0;
     for (int n = 0; n < 64; n++) {
         uint8_t c = img8(s, p + (unsigned)n);
         if (c == ' ' || c == '/' || c == 0 || c == 0x0C || c == 0x0D || c == 0xFF) break;
-        if (c >= 0x20 && c < 0x80) w += FONT_ADVANCE[c - 0x20];
+        if (c < 0x20) continue;                                 /* 7245 */
+        k++; last = c;
+        if (c < 0x80) w += FONT_ADVANCE[c - 0x20];
     }
+    if (k == 1 && (last == '.' || last == ',')) return 0;       /* 7255..7266: a lone . or , */
     return w;
 }
 
@@ -148,21 +174,24 @@ static void box_wait_and_clear(Shop *s)
     s->lines = 0;
 }
 
-/* 7269: how many more lines the rest of this text will take */
+/* 7269: how many more lines the rest of this text will take.  Counted from
+ * x = 0 up to FF FF / 00 / 0C -- an FF op pair is skipped, not an end -- with
+ * the wrap tested only at a space (like the printer's own 7148).  A control
+ * byte below 0x20 indexes the width table out of range in the original
+ * (bx = al - 0x20 into 7BE2); the port counts it as 0 px. */
 static int lines_pending(const Shop *s)
 {
-    int n = 1, x = s->tx;
+    int n = 0, x = 0;
     unsigned p = s->tp;
-    for (int guard = 0; guard < 1024; guard++) {
+    for (int guard = 0; guard < 2048; guard++) {
         uint8_t c = img8(s, p++);
-        if (c == 0 || c == 0x0C) break;
-        if (c == 0xFF) break;
-        if (c == '/' || c == 0x0D) { n++; x = 0; continue; }
-        if (c < 0x20 || c >= 0x80) continue;
-        x += FONT_ADVANCE[c - 0x20];
-        if (x >= TEXT_WRAP) { n++; x = 0; }
+        if (c == 0 || c == 0x0C) break;                         /* 7272 / 7281 */
+        if (c == 0xFF) { if (img8(s, p++) == 0xFF) break; continue; }   /* 7276..727F */
+        if (c == '/' || c == 0x0D) { n++; x = 0; continue; }    /* 7285 / 728E */
+        if (c >= 0x20 && c < 0x80) x += FONT_ADVANCE[c - 0x20]; /* 7297 */
+        if (c == ' ' && x + word_width(s, p) >= TEXT_WRAP) { x = 0; n++; }   /* 72A4..72BD */
     }
-    return n;
+    return x ? n + 1 : n;                                       /* 72C0 */
 }
 
 static void box_newline(Shop *s)                                /* 7169 */
@@ -179,9 +208,8 @@ static void box_newline(Shop *s)                                /* 7169 */
 static uint8_t print_text(Shop *s)
 {
     if (s->tx + word_width(s, s->tp) >= TEXT_WRAP) box_newline(s);
-    int per_frame = 0;
     for (int guard = 0; guard < 8192 && !s->leave; guard++) {
-        if (++per_frame >= 3) { per_frame = 0; shop_frame(s); }      /* 6 ticks per glyph */
+        shop_wait(s, 6);                                        /* 7084..7091: 6 ticks a byte */
         uint8_t c = img8(s, s->tp++);
         if (c == 0x2F || c == 0x0D) { box_newline(s); continue; }
         if (c == 0x0C) { s->tx = s->tline = s->lines = 0; box_clear(s); s->last_len = 0; s->last_text[0] = 0; continue; }
@@ -217,7 +245,7 @@ static void print_str(Shop *s, const char *str)
         if (s->last_len < (int)sizeof s->last_text - 1) s->last_text[s->last_len++] = (char)c;
         s->last_text[s->last_len] = 0;
     }
-    shop_frame(s);
+    shop_wait(s, SHOP_TICKS_PER_FRAME);
 }
 
 static void print_name(Shop *s, int id)
@@ -283,18 +311,34 @@ static void menu_draw_icons(Shop *s, int first, int rows)
     }
 }
 
-/* 0x7344  BL = cursor row; returns 1 when cancelled (Alt). */
+/* 747B / 74A7: the cursor slides one pixel per 4 ticks, ten steps */
+static void menu_cursor_slide(Shop *s, int row, int dir)
+{
+    int y = s->my + row * 10;
+    for (int i = 0; i < 10 && !s->leave; i++) {
+        gt_cursor(s->fb, s->mx4 + 1, y, 0);
+        y += dir;
+        gt_cursor(s->fb, s->mx4 + 1, y, 1);
+        shop_wait(s, 4);
+    }
+}
+
+/* 0x7344  BL = cursor row; returns 1 when cancelled (Alt).
+ * One pass: idle_poll, the poll site 7358 (armed on entry) -> Alt -> Space
+ * -> int 61h U/D.  A move runs its 40-tick animation (no boundary inside) and
+ * goes straight back to the poll, so a held direction repeats every 40 ticks:
+ * the original has no release debounce here.  Anything else is one tick. */
 static int menu_select(Shop *s, int *cursor)
 {
     if (s->t) s->t->btn1_edge = s->t->btn2_edge = 0;
     int row = *cursor;
     if (row >= s->mvis) row = s->mvis ? s->mvis - 1 : 0;
     menu_cursor(s, row, 1);
-    int held = 0;
     s->in_menu = 1; s->menu_n = s->mvis;
-    for (int guard = 0; guard < 8000 && !s->leave; guard++) {
+    wait_arm();
+    for (long guard = 0; guard < 8000L * SHOP_TICKS_PER_FRAME && !s->leave; guard++) {
         s->menu_row = row + s->mscroll;
-        shop_frame(s);
+        if (shop_poll(s, "7358")) break;
         if (s->t && s->t->btn2_edge) { s->t->btn2_edge = 0; menu_cursor(s, row, 0); s->in_menu = 0; return 1; }
         if (s->t && s->t->btn1_edge) {
             s->t->btn1_edge = 0; s->g->sfx_request = 0x1F;
@@ -304,16 +348,24 @@ static int menu_select(Shop *s, int *cursor)
             return 0;
         }
         uint8_t d = s->t ? (uint8_t)(s->t->dirs & 3) : 0;
-        if (!d) { held = 0; continue; }
-        if (held) continue;
-        held = 1;
-        if (d == 1) {                                           /* up */
-            if (row) { menu_cursor(s, row, 0); row--; menu_cursor(s, row, 1); }
-            else if (s->mscroll) { s->mscroll--; menu_draw_icons(s, s->mscroll, s->mvis); menu_cursor(s, row, 1); }
-        } else if (d == 2) {                                    /* down */
-            if (row < s->mvis - 1) { menu_cursor(s, row, 0); row++; menu_cursor(s, row, 1); }
-            else if (row + s->mscroll + 1 < s->mtot) { s->mscroll++; menu_draw_icons(s, s->mscroll, s->mvis); menu_cursor(s, row, 1); }
+        if (d == 1) {                                           /* 7380 up */
+            if (row) { s->menu_row = row - 1 + s->mscroll; menu_cursor_slide(s, row, -1); row--; continue; }
+            if (s->mscroll) {                                   /* 738C */
+                s->mscroll--; s->menu_row = row + s->mscroll;
+                menu_draw_icons(s, s->mscroll, s->mvis); menu_cursor(s, row, 1);
+                shop_wait(s, 10 * 4);                           /* 73A9..73E3 */
+                continue;
+            }
+        } else if (d == 2) {                                    /* 73E9 down */
+            if (row < s->mvis - 1) { s->menu_row = row + 1 + s->mscroll; menu_cursor_slide(s, row, 1); row++; continue; }
+            if (row + s->mscroll + 1 < s->mtot) {               /* 73FF */
+                s->mscroll++; s->menu_row = row + s->mscroll;
+                menu_draw_icons(s, s->mscroll, s->mvis); menu_cursor(s, row, 1);
+                shop_wait(s, 10 * 4);                           /* 7427..7463 */
+                continue;
+            }
         }
+        shop_tick(s);
     }
     *cursor = row;
     s->in_menu = 0;
@@ -374,7 +426,8 @@ static void draw_portrait(Shop *s)
     if (!SHOPS[s->dest].portrait) return;
     int rows = 8, cols = 12;
     if (s->dest == SHOP_OMOYA) { rows = 16; cols = 17; }
-    draw_portrait_map(s, SHOPS[s->dest].portrait, rows, cols, SHOPS[s->dest].px4,
+    draw_portrait_map(s, SHOPS[s->dest].portrait, rows, cols,
+                      s->dest == SHOP_SAGE && s->kj_x8 ? s->kj_x8 : SHOPS[s->dest].px4,
                       s->dest == SHOP_OMOYA ? 0x0C : 0x17);
 }
 
@@ -551,7 +604,7 @@ static void inn_draw_night(Shop *s, int frame)
 /* AA16: the ritual aura, 4 rows x 8 cells at [BB12]+0x210 = (x8 9, y 0x27) */
 static void kenj_draw_ritual(Shop *s, int frame)
 {
-    draw_portrait_map(s, 0xAA47 + 0x20u * (unsigned)frame, 4, 8, 0x09, 0x27);
+    draw_portrait_map(s, 0xAA47 + 0x20u * (unsigned)frame, 4, 8, s->kj_x8 + 2, 0x27);
 }
 static void kenj_hook(Shop *s)
 {
@@ -579,7 +632,7 @@ static void kenj_hook(Shop *s)
     h->kj_blink_state = (uint8_t)~h->kj_blink_state;
     /* ABDF: one cell at [BB12]+0x718 = (x8 0x0E, y 0x2F); ABFB open, ABFD shut */
     gt_draw_cell(s->fb, s->cell, s->present,
-                 img8(s, (h->kj_eyes_closed ? 0xABFD : 0xABFB) + bl), 0x0E, 0x2F);
+                 img8(s, (h->kj_eyes_closed ? 0xABFD : 0xABFB) + bl), s->kj_x8 + 7, 0x2F);
 }
 
 /* one 236.7 Hz tick of whichever hook is loaded */
@@ -1188,11 +1241,14 @@ static void shop_dispatch(Shop *s, uint8_t op)
     }
 }
 
-int shop_open(Shop *s, Town *t, int dest)
+/* `death`: kenjpro's [A004] entry A006 instead of [A000] -- the portrait at
+ * BB12 = 0E17 and the text BA67 in place of the greeting (so [E5] stays) */
+static int shop_open_entry(Shop *s, Town *t, int dest, int death)
 {
     if (dest < 0 || dest >= SHOP_COUNT) return -1;
     memset(s, 0, sizeof *s);
     s->t = t; s->g = t->g; s->dest = dest;
+    s->kj_x8 = death ? 0x0E : 0x07;                             /* A009 / A02A: BB12 */
     s->town_id = t->map->town_id ? t->map->town_id : 1;
     s->font = (const TextFont *)t->font;
     const char *dir = t->dir ? t->dir : "../zeliard";
@@ -1226,7 +1282,7 @@ int shop_open(Shop *s, Town *t, int dest)
         drug_build(s);
     }
     shop_prologue(s);
-    s->tp = shop_first_script(s);
+    s->tp = death ? 0xBA67 : shop_first_script(s);              /* A01F / A040 */
     /* the enables the overlays' own entry code sets (everything else is zero
      * in the overlay image, which is where these variables live) */
     switch (dest) {
@@ -1238,6 +1294,8 @@ int shop_open(Shop *s, Town *t, int dest)
     }
     return 0;
 }
+
+int shop_open(Shop *s, Town *t, int dest) { return shop_open_entry(s, t, dest, 0); }
 
 void shop_close(Shop *s) { free(s->img); s->img = NULL; }
 
@@ -1262,6 +1320,20 @@ void shop_loop(Shop *s)
         if (op == 0xFF) break;
         shop_dispatch(s, op);
     }
+}
+
+int shop_run_death(Town *t)
+{
+    static Shop shop;
+    Shop *s = &shop;
+    if (shop_open_entry(s, t, SHOP_SAGE, 1)) return -1;
+    t->shop = s;
+    player_page_push(t->g);
+    shop_loop(s);
+    player_page_push(t->g);
+    t->shop = NULL;
+    shop_close(s);
+    return 0;
 }
 
 int shop_run(Town *t, int dest)

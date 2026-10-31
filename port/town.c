@@ -4,6 +4,7 @@
  * (src/shops.c) and the status screen (select.bin, status.c) run on top of it;
  * the parallax backdrop painters are not implemented.  Hex tags are town.bin addresses; docs/TOWN.md is the spec.  */
 #include "town.h"
+#include "audio.h"
 #include "sar.h"
 #include "render.h"
 #include "status.h"
@@ -144,35 +145,85 @@ static int dlg_count_lines(const uint8_t *s, const uint8_t *end)
     return x ? n + 1 : n;
 }
 
+/* ------------------------------------------- wait-loop boundaries (town.h) */
+WaitClock wait_clock;
+
+void wait_boundary_now(Game *g, Town *t, const char *site)
+{
+    if (!wait_clock.fn) return;
+    wait_reset();
+    wait_clock.fn(g, t, site);
+}
+int wait_poll(Game *g, Town *t, const char *site)
+{
+    if (!wait_clock.fn) return 0;
+    if (!wait_clock.armed && wait_clock.ticks < WAIT_TICKS) return 0;
+    wait_boundary_now(g, t, site);
+    return 1;
+}
+
+/* STICK's timer plays and clears FF75 a few ticks after it is written: the
+ * frame's busy-wait (before 68ED) and the drawing of a dialogue box always
+ * outlast that, so a town request is gone by the next boundary */
+static void town_sound(Town *t)
+{
+    if (!t->sfx_request) return;
+    audio_sfx_request(t->sfx_request);
+    t->sfx_request = 0;
+}
+
 static void town_draw_frame(Town *t);
+/* the dialogue's waits call the full town frame 68AC: the NPCs keep moving
+ * (6B1C), only the talker is frozen (type 7, check_talk) */
 static void dlg_frame(Town *t)
 {
+    town_npc_update(t);                                                 /* 68AC -> 6B1C */
     t->frame_no++;
     if (t->present) t->present(t);
+    town_sound(t);
     if (t->frame_end) t->frame_end(t);                                  /* 68ED (65AB..65E3 -> 68AC) */
 }
+/* one 236.7 Hz tick inside the yes/no widget: no town frame runs (NPCs stand
+ * still, nothing reaches 68ED); the screen is presented every 4*speed ticks
+ * so a front end still sees it and can feed it keys */
+static void dlg_tick(Town *t, int *acc)
+{
+    wait_tick();
+    if (++*acc < WAIT_TICKS) return;
+    *acc = 0;
+    t->frame_no++;
+    if (t->present) t->present(t);
+}
+
 /* 0x74D3  yes_no_prompt, the widget the shops reach through vector [6008].
  * The dialogue box (6655 / 66AD) puts it beside itself; the row list is drawn
  * by dlg_render, so the box and the menu come back every frame.  Returns the
- * chosen row, or 1 (the "no" row) when Alt cancels. */
+ * chosen row, or 1 (the "no" row) when Alt cancels.
+ *
+ * It is town.bin's menu_select 7344: poll (site 7358) -> Alt -> Space ->
+ * U/D.  A move is the 10 x 4-tick cursor animation and then straight back to
+ * the poll, so a held direction repeats every 40 ticks (no release needed). */
 static int dlg_menu(Town *t, const char *a, const char *b, int x4, int y, int w4)
 {
     t->dlg.menu_item[0] = a; t->dlg.menu_item[1] = b;
     t->dlg.menu_n = 2; t->dlg.menu_row = 0;
     t->dlg.menu_x4 = x4; t->dlg.menu_y = y; t->dlg.menu_w4 = w4; t->dlg.menu_h = 0x19;
-    t->btn1_edge = t->btn2_edge = 0;
-    int held = 0, row = 0;
-    for (int i = 0; i < 6000 && !t->quit; i++) {
-        dlg_frame(t);
+    t->btn1_edge = t->btn2_edge = 0;                                    /* 7344 */
+    town_sound(t);                                                      /* the box took longer than a tick */
+    int row = 0, acc = 0;
+    wait_arm();
+    for (long i = 0; i < 6000L * WAIT_TICKS && !t->quit; i++) {
+        wait_poll(t->g, t, "7358");
+        if (t->quit) break;
         if (t->btn2_edge) { t->btn2_edge = 0; row = 1; break; }      /* Alt = No */
         if (t->btn1_edge) { t->btn1_edge = 0; t->sfx_request = 0x1F; break; }
         uint8_t d = (uint8_t)(t->dirs & 3);
-        if (!d) { held = 0; continue; }
-        if (held) continue;
-        held = 1;
-        if (d == DIR_UP && row) row--;
-        else if (d == DIR_DOWN && row < 1) row++;
+        int moved = 0;
+        if (d == DIR_UP && row) { row--; moved = 1; }                   /* 7380 */
+        else if (d == DIR_DOWN && row < 1) { row++; moved = 1; }        /* 73EE */
+        if (!moved) { dlg_tick(t, &acc); continue; }
         t->dlg.menu_row = row;
+        for (int k = 0; k < 10 * 4; k++) dlg_tick(t, &acc);             /* 747B / 74A7 */
     }
     t->dlg.menu_n = 0;
     return row;
@@ -759,9 +810,13 @@ static void check_talk(Town *t)
         if (grid_cell(t, c, TOWN_NPC_ROW) != TOWN_MARK) continue;
         TownNpc *n = npc_find(t, c);
         if (!n || (n->flags & 0xC0)) return;                            /* 6288 */
+        uint8_t sv_sprite = n->sprite, sv_type = n->type;              /* 6290..6296 */
+        n->type = 7;                                                    /* 6297 / 62D6: frozen */
         if (step > 0) n->sprite |= 0x80; else n->sprite &= 0x7F;        /* face the hero */
         n->anim |= 1;
-        town_dialogue_run(t, n->script, (t->hero_flags & 1) != 0);      /* 638F */
+        town_draw_frame(t);                                             /* 6363..6368: FF1A=28, 68AF */
+        if (!t->quit) town_dialogue_run(t, n->script, (t->hero_flags & 1) != 0);   /* 638F */
+        n->type = sv_type; n->sprite = sv_sprite;                       /* 62A6..62AA */
         return;
     }
 }
@@ -779,8 +834,10 @@ static void check_auto_talk(Town *t)
     else          { if (n->sprite & 0x80) return; }
     n->anim |= 1;
     n->flags &= 0x7F;                                                   /* 635A: only once */
-    t->sfx_request = 0x1E;
     t->dlg_forced = 0xFF;                                               /* 62ED: uncancellable */
+    town_draw_frame(t);                                                 /* 6363..6368: FF1A=28, 68AF */
+    if (t->quit) return;
+    t->sfx_request = 0x1E;                                              /* 636B */
     town_dialogue_run(t, n->script, (t->hero_flags & 1) != 0);
 }
 
@@ -877,7 +934,7 @@ void town_page_pull(Town *t)
     if (sc > max) sc = max;
     t->scroll_col = sc;
     t->hero_scr_col = p[0x83] > 0x1B ? 0x1B : p[0x83];
-    t->hero_flags = (uint8_t)(p[0xC2] & 1);
+    t->hero_flags = p[0xC2];            /* the whole byte comes back with the page (7592) */
     t->hero_anim = 0;                   /* 6050: the 601E boot entry zeroes [E7] after the restore */
     npc_place_markers(t);
 }
@@ -917,6 +974,7 @@ static void town_draw_frame(Town *t)
 {
     t->frame_no++;
     if (t->present) t->present(t);
+    town_sound(t);
     if (t->frame_end) t->frame_end(t);                                  /* 68ED: the frame boundary */
 }
 void town_tail_frame(Town *t) { town_draw_frame(t); }
@@ -930,6 +988,19 @@ void town_entry_frame(Town *t)
     town_npc_update(t);                                                 /* 68AC -> 6B1C */
     town_draw_frame(t);
     t->was_idle = 0;                                                    /* 61E2 */
+}
+
+/* 0x61B4..0x61DD  the walk-in into an underground town entered from a
+ * cavern ([7C44], set at 6092 when the level record's town_flags bit 0 is
+ * set, the entry was 6026 -- fight.bin's -- and [E8] is clear): four times
+ * the walk step in the hero's facing (6781 left / 67F4 right, picked by [C2]
+ * bit 0 at 61C1) and a 68AC frame, then one more step with no frame.  The
+ * port had none of it (key_door f66: Satono's hero_scr_col 1, [E7] 1). */
+void town_walk_in(Town *t)
+{
+    void (*step)(Town *) = (t->hero_flags & 1) ? walk_left : walk_right;   /* 61BB..61C8 */
+    for (int i = 0; i < 4; i++) { step(t); town_entry_frame(t); }       /* 61CE..61DB */
+    step(t);                                                            /* 61DD */
 }
 
 void town_step(Town *t)

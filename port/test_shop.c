@@ -540,7 +540,9 @@ static void t_hooks(void)
 
     /* --- kingpro A302: the blink and the lip-sync ----------------------- */
     fresh_player();
-    if (hook_run(&s, 0, SHOP_KING, 60) == 0) {
+    /* 40 frames: at 6 ticks a text byte (7084) the second lip-sync run starts
+     * at frame 30 and its op 5 comes at frame 52 */
+    if (hook_run(&s, 0, SHOP_KING, 40) == 0) {
         static const uint8_t bs[26] = {0,0,0,0,0,0,1,1,1,1,1,2,2,2,2,2,1,1,1,1,1,0,0,0,0,0};
         int bad = 0;
         for (int i = 0; i < 26; i++) if (IMG(s, 0xA360 + i) != bs[i]) bad++;

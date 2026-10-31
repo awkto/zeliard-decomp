@@ -539,10 +539,10 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 		--screenshot 22 /tmp/zel_bank0.png
 	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 23 /tmp/zel_bank1.png
+		--screenshot 14 /tmp/zel_bank1.png
 	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 34 /tmp/zel_bank2.png
+		--screenshot 30 /tmp/zel_bank2.png
 	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
 		--screenshot 38 /tmp/zel_bank3.png
@@ -560,14 +560,18 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# both frames do, pixel for pixel.  Satono's inn door is column 128.
 	./zeliard --dir ../zeliard --town 2 --town-col 128 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 25 /tmp/zel_inn0.png
+		--screenshot 22 /tmp/zel_inn0.png
 	./zeliard --dir ../zeliard --town 2 --town-col 128 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 27 /tmp/zel_inn1.png
+		--screenshot 23 /tmp/zel_inn1.png
 	python3 tools/compare_shot.py /tmp/zel_inn0.png ../docs/screenshots/shop_inn.png \
 		--box 64 39 16 16 --label "innapro A22F: the innkeeper's eyes open"
-	python3 tools/compare_shot.py /tmp/zel_inn0.png ../docs/screenshots/shop_inn.png \
-		--box 48 14 224 144 --label "inn: the WHOLE playfield"
+	# shop_inn.png's text stands where frame 23's does (6 ticks a byte, 7084);
+	# the eye rows 39..54 are the coin flip's and are checked on their own
+	python3 tools/compare_shot.py /tmp/zel_inn1.png ../docs/screenshots/shop_inn.png \
+		--box 48 14 224 25 --label "inn: the playfield above the eyes"
+	python3 tools/compare_shot.py /tmp/zel_inn1.png ../docs/screenshots/shop_inn.png \
+		--box 48 55 224 103 --label "inn: the playfield below the eyes, with the text"
 	python3 tools/compare_shot.py /tmp/zel_inn1.png ../docs/screenshots/shop_inn2.png \
 		--box 64 39 16 16 --label "innapro A22F: the innkeeper's eyes shut"
 	# kenjpro AB47: the sage's blink, one cell at [BB12]+0x718 = (112,47),
@@ -588,10 +592,10 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# door is column 52 of Felishika's Castle.
 	./zeliard --dir ../zeliard --town 0 --town-col 52 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 29 /tmp/zel_king0.png
+		--screenshot 20 /tmp/zel_king0.png
 	./zeliard --dir ../zeliard --town 0 --town-col 52 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 30 /tmp/zel_king1.png
+		--screenshot 31 /tmp/zel_king1.png
 	./zeliard --dir ../zeliard --town 0 --town-col 52 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
 		--screenshot 33 /tmp/zel_king2.png
@@ -599,8 +603,8 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 		--box 136 63 40 16 --label "kingpro A3A6: the mouth shut"
 	python3 tools/compare_shot.py /tmp/zel_king1.png ../docs/screenshots/shop_king2.png \
 		--box 136 63 40 16 --label "kingpro A3A6: the mouth open"
-	# (the blink and the mouth are independent counters, so the port's frame 27
-	# carries the capture's mouth-shut with the *next* eye map and frame 28 the
+	# (the blink and the mouth are independent counters, so the port's frame 20
+	# carries the capture's mouth-shut with the *next* eye map and frame 31 the
 	# other way round — the two boxes are crossed on purpose)
 	python3 tools/compare_shot.py /tmp/zel_king1.png ../docs/screenshots/shop_king.png \
 		--box 136 47 32 8 --label "kingpro A338: the eyes, A37A map 0"

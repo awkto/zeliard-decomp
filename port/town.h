@@ -163,6 +163,29 @@ struct Town {
     const char  *dir;               /* the game directory, for the overlays */
 };
 
+/* --- wait-loop boundaries (docs/HARNESS.md §1/§6, #64) --------------------
+ * The shops, the yes/no widget, the text pages and the status screen have no
+ * frame: they spin on idle_poll / int 61h until a key arrives.  Under --trace
+ * their boundary is the loop's poll site, taken on the first poll after the
+ * loop's entry (`armed`) and then at the first poll once 4*speed kernel ticks
+ * have passed since the previous boundary of any kind.  Work between polls
+ * that reads no input (text, the 40-tick cursor animation, timed waits) takes
+ * no boundary however long it is.  One clock per machine, like FF1B: the
+ * frame boundaries reset it too.  `fn` is NULL unless --trace installed it,
+ * and then nothing here does anything. */
+#define WAIT_TICKS 20                       /* 4*speed at speed 5 */
+typedef void (*WaitBoundaryFn)(Game *g, Town *t, const char *site);
+typedef struct { WaitBoundaryFn fn; unsigned ticks; int armed; } WaitClock;
+extern WaitClock wait_clock;
+static inline void wait_arm(void)  { wait_clock.armed = 1; }
+static inline void wait_tick(void) { wait_clock.ticks++; }
+static inline void wait_reset(void) { wait_clock.ticks = 0; wait_clock.armed = 0; }
+/* the poll at `site`: emit a boundary if the rule says so (1 = one was taken).
+ * `t` = NULL for a loop running under fight.bin (the cavern status screen). */
+int  wait_poll(Game *g, Town *t, const char *site);
+/* an unconditional boundary at `site` (select.bin, which has no time base) */
+void wait_boundary_now(Game *g, Town *t, const char *site);
+
 void town_init(Town *t, TownMap *m, TownTiles *ti, TownSprites *s, TownHero *h, Game *g);
 /* 7DE1: put the hero on map column `col` (scroll clamped to the map ends) */
 void town_place(Town *t, int col, int face_left);
@@ -170,6 +193,7 @@ void town_place(Town *t, int col, int face_left);
 void town_step(Town *t);
 /* 61B1: the entry frame (68AC) every town entry runs before the 61FC loop */
 void town_entry_frame(Town *t);
+void town_walk_in(Town *t);       /* 61B4: underground town, entered from a cavern */
 /* 68AF: a frame without the NPC update and without waiting (FF1A preset to
  * 0x28): the "tail" frames after a door, an edge exit, the status screen and
  * a shop (6EE6) */

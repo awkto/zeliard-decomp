@@ -209,15 +209,40 @@ The sprite is 3×3 cells but the **solid body is the middle column only**
   cells 0x46-0x48) erasing, moving and drawing one record at a time; the erase
   (`831F` on the *rightmost* cell) also clears a platform hanging over a ring
   edge and writes 0, not the map cell. `7019` 7FB1 (A, `[C004]`) and `701C` 8163
-  (B, `[C006]`) only draw (fully on the ring, `82F8`); a move erases its old row.
-* **Doors** (`7A83`→`7B25`): before the next map loads, shots are dropped (`83DB`),
+  (B, `[C006]`) only draw (fully on the ring, `82F8`); a move erases its old row,
+  cell by cell writing the fixture cell into the new row and **0** into the old one
+  (`8054`/`805D`, `80DC`/`80E5` → `8352`, which writes under a sprite marker
+  instead), not the map cell.
+* **Doors** (`7A83`→`7B25`): the door cell is looked for at col−1, col, col+1 of the
+  row above, in that order; a door beside the hero that he faces (`7AAA` col−1 /
+  `7A9E` col+1) takes `pop ax / jmp 66A5` (`684C`), the bare scroll, not the walk
+  `663E`/`67C6` (no walk frame, no `[9F22]`, no WALKING bit).  Once a record matches,
+  `7AF6 pop ax` drops jump_up's return, so every `ret` below leaves jump_up.  A
+  locked door with a Key: `7E15` spends it (`[98]`/`[99]`−1, sound 0x15, letter |= 0x80,
+  `[flag] |= mask`) and returns CF clear, `7B02 ret`: **no message and no pose reset**
+  (the 7B03 `[E7]=80`, `[9F21]=0` and "Can't open this door." are the no-key path's).
+  Before the next map loads, shots are dropped (`83DB`),
   the hero state reset (`7E5B`) and **one more cavern frame** is run (`7B41 call
   708F`, the frame tail: draw, 717F boundary); `[C3]` = letter & 0x40 (`7B64`)
   then picks the walk-in side, for a town too (`7C6E`: set → `[C2] |= 1`).
+  `[C4]` = record +4, | 0x80 for a town (`7B6D..7B79`); a cavern door then sets
+  `[FF3A]=0`, `[9EF5]=FF` (`7C02`/`7C07`).  Only bit 0 of `[C2]` is the door's: the
+  walk-in writes nothing else (`7C75`/`7CB4`).  A door does **not** clear fight.bin's
+  locals: `[9F07]` (fixture_anim) and the rest carry over.
+* **Way in from town** (`[6002]` = `79DC`, town.bin `6FF8`): zeroes the locals
+  `9EED..9F2C` (`79E7..79F4`, 0x40 bytes: crouch_release, regen_tick, prev_facing,
+  fixture_anim, ...), `[9EF5]`/`[9EFE]`/`[9EFF]` = FF, `7E5B`, the four orb slots FF,
+  `[FF3A]=0`.  fight.bin is parked, not reloaded, across a town visit, so without this
+  the last cavern's values would come back in.  `[C2]` is the town's byte (bit 1 included).
 * **Elevators** (fixture list A, DCHR cells 0x40-0x42): "down" while standing
   on one moves the platform and the hero one row down if the 3 cells under it
   are empty (`7FDC/8024`); "up" moves it up (`8074`); standing on it follows
-  its motion (`818E`).
+  its motion (`818E`).  When "down" is refused (`8009`), the cell that stopped it
+  (SI is left on it: the down-left sprite test or the first non-empty cell below) is
+  read through `6DCB`: a live sprite (type & 0x60 == 0) not already stunned (`+5 & 0x20`)
+  gets `+5 = (+5 | 0x40) & 0xE0`, a pending hit with source 0 (the stomp's damage) —
+  pressing an elevator onto a frog kills it.  B gates (`818E → 8024`, `81A8`) and
+  "up" (`80AF`) have no such hit.
 
 ## 6. Combat
 

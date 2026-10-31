@@ -293,17 +293,58 @@ static int door_unlock(Game *g, Door *d)
     g->sfx_request = 0x15;
     d->letter |= 0x80;
     if (d->flag_ptr != 0xFFFF) g->page[d->flag_ptr & 0xFF] |= d->flag_mask;   /* 7E39 */
-    game_message(g, (d->dflags & 1) ? fight_message(MSG_LION_KEY) : fight_message(MSG_KEY));
+    /* no message box: 7E26..7E3B is the whole of it (the "You get a Key."
+     * the port printed here is the pickup's, 90D3) -- key_door f43 */
     return 1;
+}
+
+/* 0x7E5B  the hero's state reset (door 7B3E, town entry 7A01) */
+static void hero_state_reset(Game *g)
+{
+    g->attacking = 0; g->casting = 0; g->vstate = V_GROUND;             /* 7E5D..7E66 [FF43] [FF3C] [FF3D] */
+    g->crouching = 0; g->hero_hit_flash = 0; g->msg_box = 0;            /* 7E69..7E6F [FF38] [FF36] [9EEF] */
+    g->magic_active = 0; g->menu_result = 0; g->hero_anim = 0;          /* 7E72..7E7B [FF3E] [FF4B] [E7] */
+    g->boss_state = 0xFF; g->hero_entering = 0xFF; g->menu_debounce = 0xFF;   /* 7E84 / 7E8A / 7E8D */
+}
+
+/* 0x79DC  fight.bin entry 2 ([6002]), the way in from town.bin 6FF8: before
+ * the map is loaded it zeroes fight.bin's locals 9EED..9F2C (79E7..79F4, 0x40
+ * bytes), sets 9EF5/9EFE/9EFF to FF, runs 7E5B, frees the four orb slots and
+ * clears [FF3A].  The locals live in the overlay image that is parked, not
+ * reloaded, across the town visit, so without this the port carried the last
+ * cavern's crouch_release [9F0A], prev_facing [9F24] and regen_tick [9F18]
+ * back in (gate_walking f99).  The door entry (6042) does none of it. */
+void game_town_entry_reset(Game *g)
+{
+    g->msg_timer = 0; g->msg_box = 0; g->hero_home_row = 0; g->boss_knock_left = 0;      /* 9EED..9F01 */
+    g->fixture_anim = 0; g->fall_rows = 0; g->rise_rows = 0; g->crouch_release = 0;      /* 9F07..9F0A */
+    g->diag_jump = 0; g->conveyor_kick = 0; g->max_rise = 0;                             /* 9F0B..9F0D */
+    memset(g->hit_side, 0, sizeof g->hit_side); g->contact_damage = 0; g->hero_hit = 0;  /* 9F0E..9F14 */
+    g->on_updraft = 0; g->conveyor_phase = 0; g->on_hazard = 0; g->regen_tick = 0;       /* 9F15..9F18 */
+    g->door_msg_latch = 0; g->post_boss_pending = 0; g->projectile_count = 0;            /* 9F19..9F1F */
+    g->ice_slide = 0; g->ice_steps = 0; g->walk_dir = 0; g->slide_dir = 0;               /* 9F20..9F23 */
+    g->prev_facing = 0; g->heat_timer = 0; g->boss_intro = 0;                            /* 9F24..9F26 */
+    g->death_anim = 0; g->death_anim_b = 0; g->magic_hit_any = 0; g->cast_timer = 0;     /* 9F28..9F2B */
+    g->menu_debounce = 0xFF;                                            /* 79F8 */
+    hero_state_reset(g);                                                /* 7A01 */
+    for (int i = 0; i < 4; i++) g->orbs[i].phase = 0xFF;                /* 7A04..7A0F */
+    g->hero_entering = 0;                                               /* 7A12 [FF3A] */
 }
 
 /* 7A83: returns 1 when it consumed the "up" (door entered, message, or side step) */
 static int door_check(Game *g)
 {
+    /* A door one column to the side, facing it: 7AB2/7AA6 `pop ax / jmp 66A5`
+     * (`684C`), the bare scroll, not the walk at 663E/67C6 -- no walk_dir, no
+     * walk frame, no WALKING bit.  The port called walk_left/right and drew
+     * the next walk frame (gate_walking f51: hero_anim 1 -> 2, [9F22] 2). */
     int s = wrap_up(game_hero_cell(g) - 0x25);                          /* row-1, col-1 */
-    if (g->ring[s] == DOOR_CELL) { if (g->hero_flags & FACE_LEFT) { walk_left(g); return 1; } return 0; }
-    if (g->ring[wrap_down(s + 2)] == DOOR_CELL) { if (!(g->hero_flags & FACE_LEFT)) { walk_right(g); return 1; } return 0; }
-    if (g->ring[wrap_down(s + 1)] != DOOR_CELL) return 0;
+    if (g->ring[s] == DOOR_CELL) { if (g->hero_flags & FACE_LEFT) { try_move_left(g); return 1; } return 0; }    /* 7AAA */
+    if (g->ring[wrap_down(s + 1)] != DOOR_CELL) {                       /* 7A92: col before col+1 */
+        if (g->ring[wrap_down(s + 2)] != DOOR_CELL) return 0;
+        if (!(g->hero_flags & FACE_LEFT)) { try_move_right(g); return 1; }   /* 7A9E */
+        return 0;
+    }
     int col = game_hero_map_col(g);
     int row = (g->hero_scr_row - 1 + g->scroll_row) & 0x3F;
     Door *d = NULL;
@@ -311,10 +352,10 @@ static int door_check(Game *g)
         if (g->map->doors[i].col == col && g->map->doors[i].row == row) { d = &((Map *)g->map)->doors[i]; break; }
     if (!d) return 0;
     if (!(d->letter & 0x80)) {                                          /* 7AF7: locked */
-        if (door_unlock(g, (Door *)d)) {                                /* 7E15: a key opens it */
-            g->hero_anim = 0x80; g->ice_steps = 0;                      /* 7B03 */
-            return 1;
-        }
+        /* 7E15 returns CF clear after a key is spent (the `or` at 7E39), and
+         * 7B02's `ret` leaves jump_up at once (7AF6 popped its return): the
+         * 7B03 pose/ice reset is the no-key path's only. */
+        if (door_unlock(g, (Door *)d)) return 1;                        /* 7AFD..7B02 */
         g->hero_anim = 0x80; g->ice_steps = 0;
         if (!g->door_msg_latch) {                                       /* 7B0D */
             g->door_msg_latch = 0xFF;
@@ -334,10 +375,7 @@ static int door_check(Game *g)
      * shows it: Up at the town gate is still a cavern frame, the town's first
      * 68ED is the next one (jumps f44). */
     shots_clear(g);                                                     /* 83DB */
-    g->attacking = 0; g->casting = 0; g->vstate = V_GROUND;             /* 7E5D..7E66 [FF43] [FF3C] [FF3D] */
-    g->crouching = 0; g->hero_hit_flash = 0; g->msg_box = 0;            /* 7E69..7E6F [FF38] [FF36] [9EEF] */
-    g->magic_active = 0; g->menu_result = 0; g->hero_anim = 0;          /* 7E72..7E7B [FF3E] [FF4B] [E7] */
-    g->boss_state = 0xFF; g->hero_entering = 0xFF; g->menu_debounce = 0xFF;   /* 7E84 / 7E8A / 7E8D */
+    hero_state_reset(g);                                                /* 7E5B */
     frame_tail(g);                                                      /* 7B41 */
     if (g->hero_dead) return 1;                                         /* 718C jumped to 98FC */
     g->page[0xC3] = (uint8_t)(d->letter & 0x40);                        /* 7B5F..7B64 */
@@ -588,22 +626,6 @@ static void fixture_put(Game *g, int p, uint8_t v)
     if (cur & 0x80) { int i = cur & 0x7F; if (i < MAX_OBJS) g->under_sprite[i] = v; return; }
     g->ring[p] = v;
 }
-static uint8_t map_cell(const Game *g, int col, int row)
-{
-    while (col < 0) col += g->map->width;
-    while (col >= g->map->width) col -= g->map->width;
-    return g->map->grid[col][row & 0x3F];
-}
-static void fixture_erase(Game *g, Fixture *f)
-{
-    if (!f->drawn) return;
-    f->drawn = 0;
-    int rc = fixture_rcol(g, f->drawn_col);
-    if (rc < 0) return;
-    for (int k = 0; k < 3 && rc + k < RING_W; k++)
-        fixture_put(g, game_ring_index(g, f->drawn_row, (uint8_t)(rc + k)),
-                    map_cell(g, (int)f->drawn_col + k, f->drawn_row));
-}
 static void fixture_draw_one(Game *g, Fixture *f)
 {
     int rc = fixture_rcol(g, f->col);
@@ -668,7 +690,9 @@ static void fixtures_load(Game *g)
     g->nfix = g->map->nfix;
     if (g->nfix > 256) g->nfix = 256;
     for (int i = 0; i < g->nfix; i++) { g->fix[i] = g->map->fix[i]; g->fix[i].drawn = 0; }
-    g->fixture_anim = 0;
+    /* [9F07] fixture_anim is not reset with the map: only 79E7 (the way in
+     * from town, game_town_entry_reset) clears it, so a door carries the
+     * count over (cave_door f61: 57 in MP1D) */
 }
 
 /* 0x81BE..0x8208  erase a C platform where it stands, before it moves.  831F
@@ -741,16 +765,20 @@ static Fixture *fixture_under_hero(Game *g, int kind, int idx)
  *     the row *two* above and `test [bx],0xff` on the row one above.
  * So a rising platform ignored a sprite over its head and stalled on one beside
  * its feet. */
-static int fixture_shift_row(Game *g, Fixture *f, int dr)
+static int fixture_shift_row(Game *g, Fixture *f, int dr, int *block)
 {
     int rc = fixture_rcol(g, f->col);
     if (rc < 0) return 0;
     uint8_t nrow = (uint8_t)((f->row + dr) & 0x3F);
     int probe = game_ring_index(g, nrow, (uint8_t)rc);
+    if (block) *block = -1;
     if (dr > 0) {                                                       /* 8024 */
-        if (g->ring[game_ring_add(probe, -1)] & 0x80) return 0;         /* 802B */
-        for (int k = 0; k < 3; k++)
-            if (g->ring[game_ring_add(probe, k)] != 0) return 0;        /* 803C */
+        int p = game_ring_add(probe, -1);
+        if (g->ring[p] & 0x80) { if (block) *block = p; return 0; }     /* 802B..8037 */
+        for (int k = 0; k < 3; k++) {
+            p = game_ring_add(probe, k);
+            if (g->ring[p] != 0) { if (block) *block = p; return 0; }   /* 803C..8041: SI stays on it */
+        }
     } else {                                                            /* 80AF */
         int above = game_ring_index(g, (uint8_t)((f->row - 2) & 0x3F), (uint8_t)rc);
         for (int k = 0; k < 3; k++) {
@@ -758,9 +786,19 @@ static int fixture_shift_row(Game *g, Fixture *f, int dr)
             if (g->ring[game_ring_add(probe, k)] != 0) return 0;        /* 80C0 */
         }
     }
-    fixture_erase(g, f);
+    /* 804C..8068 / 80D4..80F0: per cell, the new row gets the fixture cell
+     * and the old row a **0** (`xor dl,dl` -> 8352, which writes under a
+     * sprite marker instead), not the map's cell as the port had it.  The
+     * maps hold 0 under every A/B fixture's start cells (all 31 checked) and
+     * 8024/80AF only move into empty rows, so the two agreed in practice;
+     * the elevator scenario covers it. */
+    int old = game_ring_index(g, f->row, (uint8_t)rc);
+    for (int k = 0; k < 3 && rc + k < RING_W; k++) {
+        fixture_put(g, game_ring_add(probe, k), (uint8_t)(f->cell + k));   /* 8054 */
+        fixture_put(g, game_ring_add(old, k), 0);                          /* 805D */
+    }
     f->row = nrow;
-    fixture_draw_one(g, f);
+    f->drawn = 1; f->drawn_col = f->col; f->drawn_row = f->row;
     return 1;
 }
 
@@ -774,7 +812,22 @@ static int elevator_down(Game *g)
     if (idx < 0) return 0;
     Fixture *f = fixture_under_hero(g, 0, idx);
     if (!f) return 0;
-    if (!fixture_shift_row(g, f, 1)) return 0;
+    int block;
+    if (!fixture_shift_row(g, f, 1, &block)) {
+        /* 8009..8023: what stopped it, if a live enemy (6DCB: a sprite whose
+         * type & 0x60 == 0) not already stunned, takes a hit with source 0
+         * (+5 = (+5 | 0x40) & 0xE0: pending, the stomp's damage 9851).  An
+         * elevator pressed down onto a frog kills it (elevator f106). */
+        if (block >= 0 && (g->ring[block] & 0x80)) {
+            int oi = g->ring[block] & 0x7F;
+            if (oi < g->nobj) {
+                MapObj *o = &g->obj[oi];
+                if (!(o->type & 0x60) && !(o->hit & 0x20))
+                    o->hit = (uint8_t)((o->hit | 0x40) & 0xE0);
+            }
+        }
+        return 0;
+    }
     g->hero_anim = 0x80;
     scroll_down(g);                                                     /* 8006 */
     return 1;
@@ -790,7 +843,7 @@ static int elevator_up(Game *g)
     if (idx < 0) return 0;
     Fixture *f = fixture_under_hero(g, 0, idx);
     if (!f) return 0;
-    if (!fixture_shift_row(g, f, -1)) return 0;
+    if (!fixture_shift_row(g, f, -1, NULL)) return 0;
     g->hero_anim = 0x80;
     scroll_up(g);
     return 1;
@@ -804,7 +857,7 @@ static int fixture_ride(Game *g)
     if (idx < 0) return 0;
     Fixture *f = fixture_under_hero(g, 1, idx);
     if (!f) return 0;
-    if (!fixture_shift_row(g, f, 1)) return 0;
+    if (!fixture_shift_row(g, f, 1, NULL)) return 0;                    /* 81A8: no 8009 here */
     scroll_down(g);                                                     /* 81AB */
     return 1;
 }
@@ -921,6 +974,7 @@ static void check_status_menu(Game *g)
     g->menu_debounce = 0xFF;                                             /* 72BA */
     g->btn1_edge = g->btn2_edge = 0;                                     /* 72C2/72C7 */
     g->msg_box = 0; g->msg_timer = 0;                                    /* 72CC/72D1 */
+    frame(g);                                                            /* 72D6: jmp 6F9B, a whole frame more */
 }
 
 /* 62DB: main-loop variant while on a ladder */
@@ -1060,7 +1114,12 @@ void game_place(Game *g, int col, int row, int face_left)
     g->scroll_col %= m->width;
     g->hero_home_row = m->row_bias; g->hero_scr_row = m->row_bias; g->hero_scr_col = 0x0C;
     g->scroll_row = (uint8_t)((row - m->row_bias) & 0x3F);
-    g->hero_flags = face_left ? FACE_LEFT : 0;
+    /* [C2]: only bit 0 is the entry's; the rest is whatever the town (or the
+     * map the hero left) had -- neither town.bin 6FF8 nor fight.bin 7DC1/7C6E
+     * writes anything but bit 0 (7C75 `and [c2],FE` / 7CB4 `or [c2],1`).  The
+     * port cleared bit 1 (WALKING) here, so a hero who left the cavern walking
+     * came back in standing (#69, gate_walking). */
+    g->hero_flags = (uint8_t)((g->hero_flags & ~FACE_LEFT) | (face_left ? FACE_LEFT : 0));
     g->hero_anim = 0x80; g->vstate = V_GROUND; g->on_ladder = 0; g->crouching = 0;
     g->fall_rows = g->rise_rows = 0; g->diag_jump = 0;
     g->attacking = 0; g->attack_var = 0; g->hero_dead = 0; g->death_anim = 0; g->death_anim_b = 0; g->death_phase = 0;

@@ -65,6 +65,7 @@ def main():
         die("no aligned frame within %d of %d (trace has %d..%d)" % (a.span, a.frame, common[0], common[-1]))
 
     miss = []
+    modes = tracediff.site_modes(port)
     for f in rows:
         for d in (a.oracle_dir, a.port_dir):
             if not os.path.exists(os.path.join(d, "frame_%05d.png" % f)):
@@ -96,7 +97,7 @@ def main():
         diff = Image.blend(o, Image.new("RGB", o.size), 0.6)
         diff.paste((255, 0, 0), mask=mask)
         base = mm[f * tracediff.FRAME:(f + 1) * tracediff.FRAME] if mm is not None else None
-        diffs = tracediff.compare_frame(sch, rules, orac[f], port[f], base, members)
+        diffs = tracediff.compare_frame(sch, rules, orac[f], port[f], base, members, modes[f])
         npix = sum(1 for v in mask.getdata() if v)
         names = [n for n, _, _ in diffs]
         shown = ", ".join(names[:a.max_names]) + (" +%d more" % (len(names) - a.max_names) if len(names) > a.max_names else "")

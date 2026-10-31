@@ -313,13 +313,13 @@ void trace_input_token(char out[12], uint8_t dirs, uint8_t buttons, uint8_t menu
     out[n] = 0;
 }
 
-void trace_write_frame(FILE *f, unsigned n, unsigned rng_calls, const char *input, Game *g, const Town *t)
+void trace_write_frame(FILE *f, unsigned n, const char *site, unsigned rng_calls, const char *input, Game *g, const Town *t)
 {
     int mode = t ? M_TOWN : M_FIGHT;
     uint8_t page[256];
     build_page(g, t, page);
     fprintf(f, "{\"f\":%u,\"site\":\"%s\",\"rng_calls\":%u,\"input\":\"%s\",\"fields\":{",
-            n, t ? "68ED" : "717F", rng_calls, input);
+            n, site, rng_calls, input);
     Out o = {f, 1};
     char nm[16];
     for (int i = 0; i < STORY_FLAGS; i++) { snprintf(nm, sizeof nm, "flag_%02x", i); emit_int(&o, nm, page[i]); }

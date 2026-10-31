@@ -44,6 +44,7 @@ typedef struct Shell {
     /* the frame a town entry runs before the 61FC loop: 1 = 61B1 (68AC),
      * 2 = the death return's 6EE6 (68AF) after kenjpro's [A004] */
     int      town_entry;
+    int      town_walk_in;          /* town.bin [7C44]: 61B4's walk-in pending (6092) */
     int      town_tiles_idx, town_spr_idx;
     int      ai_index, enp_index;
     Game     g;
