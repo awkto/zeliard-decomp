@@ -338,7 +338,12 @@ const PStep PLAY_ROUTE_BOSSES[] = {
   {P_CAV_CELL,  38,16,  NULL,      "MP1D: Cangrejo's Key, on the floor at last", 0},
   {P_CAV_DOOR,  47,14,  NULL,      "MP1D: out again -> MP10 (141,32)", 0},
   {P_CAV_DOOR, 128,32,  NULL,      "MP10: the Key opens (128,32) -> Satono Town", 0},
-  {P_TOWN_SHOP,185, 0,  "22yc",    "Satono weapon shop: the best sword it stocks", 0},
+  /* Look, don't buy.  This step used to buy row 2, which -- with the Knight's
+   * sword (4) route 2 starts from -- was a *trade-down* to sword 2 (the smith
+   * paid 3,400 gold of difference).  With the faithful 3E34 sword timing a
+   * sword-2 Garland dies to Pollo; with sword 4 he kills it in ~190 frames.
+   * A player does not sell his best blade for a worse one. */
+  {P_TOWN_SHOP,185, 0,  "c",       "Satono weapon shop: look, but keep the Knight's sword", 0},
   {P_TOWN_SHOP, 92, 0,  "1yc",     "Satono: the Sage levels him up", 0},
   {P_TOWN_EDGE,  1, 0,  NULL,      "off Satono's right edge -> MP20 (6,62)", 0},
   {P_CAV_CELL,  89,44,  NULL,      "MP20: the first of its two Keys, at (89,44)", 0},

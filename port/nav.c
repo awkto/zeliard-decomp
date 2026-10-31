@@ -739,7 +739,7 @@ static void reset(Nav *n, const Game *g)
 {
     if (n->map != g->map) { n->built = 0; n->map = g->map; }
     n->cur_macro = -1; n->cur_frame = 0; n->expect_node = -1; n->cur_edge = -1;
-    n->stall = 0; n->best_dist = NAV_INF; n->fixwait = 0; n->shake = 0;
+    n->stall = 0; n->best_dist = NAV_INF; n->fixwait = 0; n->shake = 0; n->rebase = 8;
     memset(n->pen, 0, sizeof n->pen);
 }
 void nav_goal_cell(Nav *n, const Game *g, int col, int row)
@@ -886,9 +886,13 @@ void nav_step(Nav *n, Game *g)
             nemit(n, g, d, 0);
             return;
         }
-        if (hc < bc - 2)      d = DIR_RIGHT;
+        /* A slash is three game frames (gfmcga 3E34 runs twice a frame), so a
+         * new one can start every fourth frame: offer an edge every other
+         * frame, and stand a column closer so the first shape's front cells
+         * (column +1) reach the boss too. */
+        if (hc < bc - 1)      d = DIR_RIGHT;
         else if (hc > bc + 3) d = DIR_LEFT;
-        nemit(n, g, d, (uint8_t)((g->frame_no & 3) < 2 ? 1 : 0));
+        nemit(n, g, d, (uint8_t)((g->frame_no & 1) ? 1 : 0));
         return;
     }
 
@@ -1124,12 +1128,31 @@ void nav_step(Nav *n, Game *g)
      * there is suicide -- MP30's (135,42) burned 560 LIFE off him in 180
      * frames while the rule held him in place. */
     if (g->hp * 3 < g->max_hp * 2 && ea > 8 && !g->on_hazard) {
-        if (g->hp * 4 < g->max_hp * 3) { n->cur_macro = MACRO_WAIT; n->cur_frame = 1; n->cur_edge = -1; nemit(n, g, 0, 0); return; }
+        if (g->hp * 4 < g->max_hp * 3) {
+            /* Resting is not being stuck: without this the anti-stuck counter
+             * above bumped the resting cell's penalty every 60 frames, and a
+             * rest of a few hundred frames on MP30's column-113 ladder made
+             * the ladder dearer than the floor beside it -- the hero then
+             * walked off it and hopped back on for the rest of the budget. */
+            n->same = 0;
+            n->cur_macro = MACRO_WAIT; n->cur_frame = 1; n->cur_edge = -1; nemit(n, g, 0, 0); return;
+        }
     }
 
     /* anti-stuck: when the distance stops falling, make this patch expensive.
      * A ride is exempt — a platform can spend a whole span carrying him the
      * wrong way before it turns round, and that is not being stuck. */
+    /* A big step *backwards* is not a move the planner made -- every edge it
+     * takes lands strictly closer -- it is a knock-back or a fall: a gallery
+     * crawler on MP30's row 7 throws the hero back down the column-58 shaft.
+     * Measured against the best distance from before the fall, every honest
+     * step of the climb back up read as "stuck" and buried the ladder under
+     * anti-stuck penalties until the field sent him away from it.  So start
+     * the count again from where he landed -- a bounded number of times per
+     * goal, so a genuine fall-and-repeat loop still gets penalised. */
+    if (n->best_dist != NAV_INF && n->dist[here] > n->best_dist + 8 && n->rebase > 0) {
+        n->rebase--; n->best_dist = n->dist[here]; n->stall = 0;
+    }
     if (n->dist[here] < n->best_dist) { n->best_dist = n->dist[here]; n->stall = 0; }
     else if (carried || n->fixwait) { /* the platform owns the clock */ }
     else if (++n->stall > 12) {

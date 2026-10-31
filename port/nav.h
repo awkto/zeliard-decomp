@@ -76,6 +76,7 @@ typedef struct Nav {
     int      shake;                 /* which move macro the next anti-stuck shake tries */
     int      fixwait;               /* frames spent waiting for a platform */
     uint16_t best_dist;
+    int      rebase;                /* knock-back re-baselines left this goal */
 
     /* scratch */
     Map      navmap;                /* private copy: probes may unlock doors */
