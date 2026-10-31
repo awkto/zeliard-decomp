@@ -19,7 +19,7 @@ PORT = os.path.join(ROOT, "port")
 
 STATUS_RE = re.compile(r"stopped after (\d+) frames: hero map \((-?\d+),(-?\d+)\), LIFE (\d+)/(\d+), "
                        r"EXP (\d+), GOLD (\d+), (\d+) hazard frames, (\d+) deaths")
-BANNER_RE = re.compile(r"^(?:\[cavern\] )?(MP\w+)[: ] ?\(?cavern \d+, (\d+) col", re.M)
+BANNER_RE = re.compile(r"\b(MP\w+)(?::| \() ?cavern \d+, (\d+) col")   # start banner and "[door] entered MPxx (cavern n, W cols"
 LOC_RE = re.compile(r"^\[(town|cavern)\]", re.M)
 SAN_RE = re.compile(r"ERROR: (Address|Leak|Undefined)Sanitizer|runtime error:|SUMMARY: \w+Sanitizer")
 
