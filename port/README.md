@@ -51,9 +51,9 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 10 test binaries
-make test            # physics (147) + combat/AI (228) + town (160) + boss (634) + shop (183)
-                     #   + status (87) + playthrough (118) + audio (315) + cutscene (46)
-                     #   + video (70) = 1988 assertions.  Needs no game files: every
+make test            # physics (147) + combat/AI (228) + town (160) + boss (634) + shop (187)
+                     #   + status (87) + playthrough (119) + audio (315) + cutscene (46)
+                     #   + video (70) = 1993 assertions.  Needs no game files: every
                      #   binary skips its data half when zeliard/ is not there.
 make verify          # 209 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -634,7 +634,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   `or byte [si+5],0x20` — never sets it while still taking the hit; and MAO2's
   phase-1 draws on the real MPA0 — exactly two `KRN_RANDOM` per teleport, the side
   from AL bit 0 (`A483`) and the throw/cast variant from AL bit 7 (`A3EC`) (#61).
-* `test_shop.c` — 183 assertions: the font metrics and `format_number`; the
+* `test_shop.c` — 187 assertions: the font metrics and `format_number`; the
   STDPLY record and the page <-> Game mapping; the NAME.USR round trip (exactly
   256 bytes); **all nine rows of both the armour and the drug price tables**
   read out of the overlays and compared with docs/TOWN.md §7; the shield
@@ -644,7 +644,10 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   30 durability, a shielded 40-point hit costing 40/4); a Ken'ko Potion into
   slot `[A6]`; the church heal (and that the "tired" script does *not* refill
   magic); a 30-gold night in Satono and the refusal at 10 gold; the bank's
-  1:6 exchange and the deposit landing in `[88..8A]`; the sage's `EXP_NEXT`,
+  1:6 exchange, the amount entry (Left held clamps a deposit at the purse,
+  `[88..8A]` = 150; a withdrawal of 150 - 10 - 1 = 139); the sage's "Record
+  Experience" name entry (typed keys, Backspace, a cursor step, FF6C and the
+  written NAME.USR); the sage's `EXP_NEXT`,
   cap and `LEVEL_TABLE` tables, `kenj_assess`'s four thresholds, the level-up
   (level 0 + 120 EXP -> level 1, 120/120 LIFE, 70 EXP left) and the one-level
   clamp; and the first-visit spell + `[E5]` bit (Yasmin teaches spell 1, Marid
@@ -676,7 +679,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   `menu_result = 8`; selecting a spell into `[9D]` and wearing an item into
   `[9E]` through the real cursor; the row change; the Enter debounce; and the
   window frames and header colours in the rendered framebuffer.
-* `test_playthrough.c` — 118 assertions over two autopilot runs, two fixture
+* `test_playthrough.c` — 119 assertions over two autopilot runs, two fixture
   crossings and a survey of cavern 1's topology (`make playthrough` prints the
   routes step by step):
   * **route 1, the opening**, played end to end with nobody at the keyboard: the

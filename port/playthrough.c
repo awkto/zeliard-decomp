@@ -132,6 +132,7 @@ static void step_enter(Play *p)
     p->shop_seen = 0; p->menu_pos = 0; p->menu_press = 0; p->farm_end = 0; p->boss_seen = 0;
     p->town_at_start = p->sh.in_town ? p->sh.tmap.index : -1;
     p->step_map = g->map;
+    p->step_exp = g->exp; p->step_almas = g->almas; p->step_gold = (long)g->gold;
     if (st->kind == P_END) { p->done = 1; return; }
     VLOG(p, "[play] step %d: %s\n", p->step, st->what ? st->what : "?");
     /* The two "put him there" steps are the shell calls a door or a town gate
@@ -208,7 +209,14 @@ static int play_loop(Play *p)
         }
         if (step_done(p)) {
             const PStep *st = cur(p);
-            if (st->kind == P_BOSS) p->bosses_killed++;
+            if (st->kind == P_BOSS) {
+                p->bosses_killed++;
+                p->boss_exp_paid   += (long)g->exp - p->step_exp;
+                p->boss_almas_paid += (long)g->almas - p->step_almas;
+                p->boss_gold_paid  += (long)g->gold - p->step_gold;
+                p->boss_exp_due    += g->boss.exp;
+                p->boss_almas_due  += g->boss.almas;
+            }
             if (st->kind == P_CAV_DOOR || st->kind == P_TOWN_CAVE) p->doors_taken++;
             if (st->kind == P_TOWN_SHOP) p->shops_visited++;
             VLOG(p, "[play] step %d done in %u frames (LIFE %u/%u, EXP %u, GOLD %u, keys %u)\n",

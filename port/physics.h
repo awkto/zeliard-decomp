@@ -165,6 +165,14 @@ struct Game {
     int      nobj;
     uint8_t  under_sprite[MAX_OBJS];   /* ED20 */
     uint8_t  obj_index;                /* FF4A */
+    /* BASE:C000-DFFF as the kernel's raw map loads leave it: every cavern map
+     * is loaded over the last one without clearing, so the bytes past a short
+     * map's end are the previous map's.  Boss overlays build their part
+     * records from [C010] on and write only +0..+6 (CRAB A69B..A6CA), so in a
+     * boss room (MP1D: [C010] = C236, the file is 0x238 bytes) +7..+F of each
+     * part are those leftovers (#71).  `c000_objs` = [C010] - C000. */
+    uint8_t  c000[0x2000];
+    uint16_t c000_objs;
     const struct AiOverlay *ai;        /* eai1..8 tables */
     const EnemyGfx         *egfx;      /* enp1..8 cells */
 
@@ -212,9 +220,14 @@ struct Game {
     uint8_t  boss_cutscene;         /* FF2E */
     uint8_t  boss_dying;            /* FF2F */
     uint8_t  boss_defeated;         /* FF30 */
-    uint8_t  boss_state;            /* EDA0  0xFF until the rewards are paid (71DA) */
+    /* EDA0: the boss-death sparks of gfmcga 3729/379B, {x, y, life, kind}
+     * records ended by 0xFF; 71DA pays the rewards only once the list is empty.
+     * `boss_state` is its first byte (FF = empty), spark[] the rest. */
+    uint8_t  boss_state;
+    uint8_t  spark[0x81];
     uint8_t  boss_knock_left;       /* 9F01 */
     uint8_t  post_boss_pending;     /* 9F1E */
+    uint8_t  loop_restart;          /* port: 72F1 jumped to 6042, the rest of the 629C pass is skipped */
     uint8_t  boss_intro;            /* 9F26 */
     unsigned encounter_frames;      /* 60E6: the 6 flashes of the encounter card */
     Boss     boss;
@@ -279,6 +292,8 @@ void game_init(Game *g, const Map *m, const Tileset *t);
 /* place the hero's top-left at map (col,row): the fight.bin entry model
  * (scroll_col = col-16, scroll_row = (row - row_bias) & 63, hero on screen (12, row_bias)) */
 void game_place(Game *g, int col, int row, int face_left);
+void c000_load(Game *g);
+void game_ring_refill(Game *g);    /* 6C98 */          /* Game.c000: write the old records back, load g->map over it */
 void game_town_entry_reset(Game *g);   /* 79DC: fight.bin's locals on the way in from town */
 /* switch maps through a door (7DC1 scroll_to_entry) */
 void game_enter(Game *g, const Map *m, const Tileset *t, int dest_col, int dest_row, int face_left);

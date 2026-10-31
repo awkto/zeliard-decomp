@@ -30,7 +30,7 @@ static Town     TOWN;
 static Game     G;
 
 /* ------------------------------------------------- the scripted joystick */
-typedef struct { uint8_t dirs, btns; int frames; } Step;
+typedef struct { uint8_t dirs; uint16_t btns; int frames; } Step;   /* btns 1/2 buttons, 4 Enter, high byte = a key's ASCII (FF29) */
 static const Step *SCRIPT;
 static int SCRIPT_N, SCRIPT_I, SCRIPT_LEFT;
 
@@ -42,7 +42,8 @@ static void present(Town *t)
     SCRIPT_LEFT--;
     if ((st->btns & 1) && !(t->buttons & 1)) t->btn1_edge = 0xFF;
     if ((st->btns & 2) && !(t->buttons & 2)) t->btn2_edge = 0xFF;
-    t->dirs = st->dirs; t->buttons = st->btns;
+    if ((st->btns >> 8) && SCRIPT_LEFT == st->frames - 1) t->last_ascii = (uint8_t)(st->btns >> 8);   /* the key's INT 9 */
+    t->dirs = st->dirs; t->buttons = st->btns & 3; t->menu_key = (st->btns & 4) ? 1 : 0;
 }
 
 static void run_shop(int town_index, int dest, const Step *script, int n)
@@ -328,16 +329,27 @@ static void t_bank(void)
     G.almas = 25; G.gold = 0;
     run_shop(1, SHOP_BANK, exchange, (int)(sizeof exchange / sizeof exchange[0]));
     CHECK(G.almas == 0 && G.gold == 150, "25 almas at 1:6 = %u gold (almas left %u)", (unsigned)G.gold, G.almas);
-    /* deposit everything, then withdraw it */
+    /* bankpro A295..A319: the amount entry.  Left held adds 10 per repeat
+     * (35, 34, ... ticks apart) and clamps at the gold carried; Space takes it */
     static const Step deposit[] = {
         {0, 0, 60}, {DIR_DOWN, 0, 1}, {0, 0, 2}, {DIR_DOWN, 0, 1}, {0, 0, 2},
-        {0, 1, 1}, {0, 0, 200},
+        {0, 1, 1}, {0, 0, 100}, {DIR_LEFT, 0, 60}, {0, 0, 5}, {0, 1, 1}, {0, 0, 200},
         {0, 2, 1}, {0, 0, 20}, {0, 2, 1}, {0, 0, 400},
     };
     run_shop(1, SHOP_BANK, deposit, (int)(sizeof deposit / sizeof deposit[0]));
-    CHECK(G.gold == 0, "the deposit emptied the purse (%u)", (unsigned)G.gold);
+    CHECK(G.gold == 0, "Left held clamps the deposit at the purse: gold left %u", (unsigned)G.gold);
     CHECK(page_gold24(G.page, P_BANK_HI) == 150, "the balance [88..8A] is %u",
           page_gold24(G.page, P_BANK_HI));
+    /* withdraw 150 - 10 (Right) - 1 (Down) = 139 */
+    static const Step withdraw[] = {
+        {0, 0, 60}, {DIR_DOWN, 0, 1}, {0, 0, 2}, {DIR_DOWN, 0, 1}, {0, 0, 2}, {DIR_DOWN, 0, 1}, {0, 0, 2},
+        {0, 1, 1}, {0, 0, 100}, {DIR_LEFT, 0, 60}, {0, 0, 5}, {DIR_RIGHT, 0, 1}, {0, 0, 5},
+        {DIR_DOWN, 0, 1}, {0, 0, 5}, {0, 1, 1}, {0, 0, 200},
+        {0, 2, 1}, {0, 0, 20}, {0, 2, 1}, {0, 0, 400},
+    };
+    run_shop(1, SHOP_BANK, withdraw, (int)(sizeof withdraw / sizeof withdraw[0]));
+    CHECK(G.gold == 139 && page_gold24(G.page, P_BANK_HI) == 11,
+          "withdrew 139: gold %u, balance %u", (unsigned)G.gold, page_gold24(G.page, P_BANK_HI));
 }
 
 /* -------------------------------------------------------------- the sage */
@@ -579,6 +591,31 @@ static void t_sage_visit(void)
     CHECK(G.magic_sel == 0, "Marid teaches no spell");
 }
 
+/* Record Experience (kenjpro A178 -> A427 name entry -> AF7C -> A862 write) */
+static void t_sage_record(void)
+{
+    static const Step script[] = {
+        {0, 0, 200}, {DIR_DOWN, 0, 1}, {0, 0, 3}, {DIR_DOWN, 0, 1}, {0, 0, 3}, {DIR_DOWN, 0, 1}, {0, 0, 3},
+        {0, 1, 1}, {0, 0, 10},
+        {0, 'Z' << 8, 2}, {0, 'T' << 8, 2}, {0, 'Q' << 8, 2}, {0, 0x08 << 8, 2}, {0, 'R' << 8, 2},
+        {DIR_LEFT, 0, 3}, {0, 0, 2}, {0, 'X' << 8, 2},          /* the cursor back on R: overwrite it */
+        {0, 4, 1}, {0, 0, 200},                               /* Enter */
+        {0, 1, 1}, {0, 0, 200},                               /* Yes, continue */
+        {0, 2, 1}, {0, 0, 100}, {0, 1, 1}, {0, 0, 300},
+    };
+    fresh_player();
+    G.page[P_SAGES] = 0x80;                     /* Marid met: straight to the menu */
+    memset(G.player_name, 0, sizeof G.player_name);
+    char path[1100];
+    snprintf(path, sizeof path, "%s/ZTX.usr", G_DIR);
+    remove(path);
+    run_shop(1, SHOP_SAGE, script, (int)(sizeof script / sizeof script[0]));
+    CHECK(!strcmp(G.player_name, "ZTX"), "typed Z T Q, Backspace, R, Left, X: FF6C = \"%s\"", G.player_name);
+    FILE *f = fopen(path, "rb");
+    CHECK(f != NULL, "A862 wrote %s", path);
+    if (f) { fclose(f); remove(path); }
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -591,7 +628,7 @@ int main(int argc, char **argv)
         {"font", t_font}, {"player record", t_player}, {"save file", t_save},
         {"price tables", t_prices}, {"buy sword", t_buy_sword}, {"buy shield", t_buy_shield},
         {"drug shop", t_drug}, {"church", t_church}, {"inn", t_inn}, {"bank", t_bank},
-        {"sage tables", t_sage_tables}, {"sage visit", t_sage_visit},
+        {"sage tables", t_sage_tables}, {"sage visit", t_sage_visit}, {"sage record", t_sage_record},
         {"[A002] hooks", t_hooks},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {

@@ -75,7 +75,7 @@ ring marker `0x80|i`); before rebuilding it reads back the pending-hit bits (`hi
 of last frame's parts, takes the first one (weak-point parts flag it `|0x80`), scales
 `damage_for_source()` by its own rule, subtracts from the HP word at `[A002]+3`, updates
 the bar, and at 0 sets `boss_cutscene`; a 40-frame death (`boss_dying`) ends with
-`boss_defeated`, after which fight.bin (`71DA`, needs `EDA0 == FF`) awards EXP and gold.
+`boss_defeated`, after which fight.bin (`71DA`, needs `EDA0 == FF`) awards EXP and **almas** (`71E8` → 9715, `71F2` → 917C), never gold: the original's crab_fight scenario goes EXP 0 → 120, ALMAS 0 → 150, GOLD unchanged (#68). `EDA0` is the list of death sparks gfmcga `3729` spawns (one RNG draw per boss sprite drawn in viewport rows 0-15, columns 0-26, while FF34 and FF2F are set) and `379B` ages (4 frames each), so the reward comes 1-4 frames after the last spark.
 
 ## 2. Cavern enemies
 
@@ -194,7 +194,7 @@ individual hits.
 Common: HP word at `[A002]+3`, 40-frame death (`boss_dying`, sound effects) then
 `boss_defeated`; "damage" = the multiplier applied to `damage_for_source()` (vec 28).
 
-| # | overlay / map | name | start (col,row) | HP | EXP | gold | camera col | knockback | contact |
+| # | overlay / map | name | start (col,row) | HP | EXP | almas | camera col | knockback | contact |
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | CRAB `[9]` mp1d | Cangrejo | 0x2B, 0x0C | 150 | 120 | 150 | 12 | free | 6 |
 | 2 | TAKO `[10]` mp2d | Pulpo | 0x24, 0x10 | 250 | 200 | 200 | 7 | always left | 10 |
@@ -254,7 +254,7 @@ animation speed.  50 % per frame when facing him: shot from (col+1, row+3) left 
 row+3) right — Agar: cells 0x15 (left) / 0x14 (right), 50 cells, **damage 80**, hit sound 0x25, damage ×½
 except magic 3 (source 4) ×2 with sound 0x24.  **Paguro** is the same code (13 bytes shorter:
 no magic-3 branch, always ×½ and sound 0x24), palette 0, bolts cell 0x05/0x04 **damage 120**,
-HP 600 / EXP 3000 / gold 1600.  Death: 40 frames, sound 0x28 every 4th frame for 21.
+HP 600 / EXP 3000 / almas 1600.  Death: 40 frames, sound 0x28 every 4th frame for 21.
 
 ### Vista (jellyfish, `boss_meda.c`)
 14×12 word image from layered bitmaps (`A5DC` body, `A613` right side, tentacles by hero

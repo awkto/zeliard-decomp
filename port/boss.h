@@ -37,6 +37,9 @@ int  boss_init(Game *g);
 void boss_update(Game *g);
 /* 71CC: EXP + almas once boss_defeated and boss_state == 0xFF. */
 void boss_rewards(Game *g);
+/* fight.bin 710F/7114: the frame renderer's boss-death sparks (gfmcga 3729
+ * spawn per drawn sprite, 379B age) -- RNG calls and the EDA0 list. */
+void boss_sparks(Game *g);
 /* 72F1: swap in the post-boss AI/enemy banks, clear FF34, apply the level
  * record's pokes and move the exit door to the hero's column.  The port asks
  * the shell to reload the banks through this callback. */

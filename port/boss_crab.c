@@ -4,7 +4,7 @@
  * every number is the original's.  Map mp1d, sprites CRAB.GRP.
  *
  *   [A002] = A7C3: col 0x2B, row 0x0C, HP 150, EXP 120, camera column 12,
- *   knockback free, name "Cangrejo", gold 150.  Contact A010 = 6 everywhere.
+ *   knockback free, name "Cangrejo", almas 150 (71F2 -> 917C; no gold, #68).  Contact A010 = 6 everywhere.
  *   Pose matrices: pointer table A70A[pose] -> 6 rows x 10 columns of part
  *   classes (0xFF = empty); poses 0..8 share A71E, the jump pose 9 uses A75A.
  */
@@ -47,14 +47,24 @@ static void crab_draw(Game *g)
             }
     }
     /* 0xA501: the projectile the jump drops, falling one row per frame */
-    if (ST(S_SHOT_ON)) {
-        uint8_t s = drop_script[ST(S_SHOT_IDX)];
-        if (s == 0xFF) ST(S_SHOT_ON) = 0;
-        else {
-            if (s & 0x80) ST(S_SHOT_ROW) = (uint8_t)((ST(S_SHOT_ROW) + 1) & 0x3F);
-            boss_part(g, b->sw[0], ST(S_SHOT_ROW), 0x35, (uint8_t)(s & 0xF));   /* A55C */
-            ST(S_SHOT_IDX)++;
-        }
+    if (!ST(S_SHOT_ON)) {
+        if (!ST(S_JUMP_ON)) { boss_parts_end(g); return; }                 /* A508 */
+        /* A510: the jump pose's part 0x14 shows the jump step as its phase
+         * (only while no projectile is falling: A506 skips this) */
+        for (int i = 0; i < g->nobj; i++)
+            if (g->obj[i].type == 0x14) { g->obj[i].phase = ST(S_JUMP_IDX); break; }
+        if (ST(S_JUMP_IDX) != 4) { boss_parts_end(g); return; }            /* A525 */
+        ST(S_SHOT_IDX) = 0; ST(S_SHOT_ON) = 0xFF;                          /* A52D */
+        b->sw[0] = (uint16_t)(b->col + 4); ST(S_SHOT_ROW) = (uint8_t)((b->row + 3) & 0x3F);
+    }
+    uint8_t s = drop_script[ST(S_SHOT_IDX)++];                             /* A54A */
+    if (s == 0xFF) ST(S_SHOT_ON) = 0;
+    else {
+        if (s & 0x80) ST(S_SHOT_ROW) = (uint8_t)((ST(S_SHOT_ROW) + 1) & 0x3F);
+        uint8_t hit = g->boss.part_hit;
+        g->boss.part_hit = 0;                                              /* A594: +5 = 0 */
+        boss_part(g, b->sw[0], ST(S_SHOT_ROW), 0x35, (uint8_t)(s & 0x7F)); /* A57E */
+        g->boss.part_hit = hit;
     }
     boss_parts_end(g);
 }
@@ -72,28 +82,33 @@ static void jump_step(Game *g)
     Boss *b = &g->boss;
     b->pose = 9;
     uint8_t s = jump_script[ST(S_JUMP_IDX)];
-    if (s == 0xFF) { ST(S_JUMP_ON) = 0; ST(S_LAND_IDX) = 0; ST(S_LAND_ON) = 0xFF; land_step(g); return; }
+    if (s == 0xFF) {                                                       /* A5C0 */
+        b->walk_dir = (uint8_t)~b->walk_dir;                               /* A5C0 not [A7E0]: lands facing back */
+        ST(S_JUMP_ON) = 0; ST(S_LAND_IDX) = 0; ST(S_LAND_ON) = 0xFF;
+        land_step(g); crab_draw(g); return;                                /* A5D3 -> A671 */
+    }
     if ((s & 0xF) != 8) b->row = (uint8_t)((b->row + ((s & 0xF) >> 1) - (s & 1)) & 0x3F);   /* A4D7 */
     if (s & 0xF0) { if (!b->walk_dir) step_left(g); else step_right(g); }
-    if (ST(S_JUMP_IDX) == 4 && !ST(S_SHOT_ON)) {                           /* A501 */
-        ST(S_SHOT_ON) = 0xFF; ST(S_SHOT_IDX) = 0;
-        b->sw[0] = (uint16_t)(b->col + 4); ST(S_SHOT_ROW) = (uint8_t)((b->row + 3) & 0x3F);
-    }
-    ST(S_JUMP_IDX)++;
+    crab_draw(g);                                                          /* A4F9 (A501 sees the old index) */
+    ST(S_JUMP_IDX)++;                                                      /* A4FC */
 }
 
 /* 0xA466  8 frames of crouch poses, then turn toward the hero and jump */
-static void prepare_step(Game *g)
+static void prepare_step(Game *g)     /* the caller draws unless the jump did */
 {
     Boss *b = &g->boss;
     if (++ST(S_PREP_IDX) == 8) {                                           /* A489 */
-        uint16_t hero = boss_hero_col(g, 12);
-        b->walk_dir = (uint8_t)((b->col + 5 < hero) ? 0xFF : 0);
+        /* hero column = [80]+12, wrapped by the map width (A493..A49A: not
+         * the clamp A37E uses for the knock-back) */
+        unsigned hero = (unsigned)g->scroll_col + 12u;
+        if (g->map && hero >= (unsigned)g->map->width) hero -= (unsigned)g->map->width;
+        b->walk_dir = (uint8_t)(((unsigned)b->col + 5u < hero) ? 0xFF : 0);
         ST(S_PREP_ON) = 0; ST(S_JUMP_IDX) = 0; ST(S_JUMP_ON) = 0xFF;
         jump_step(g);
         return;
     }
     b->pose = prep_poses[ST(S_PREP_IDX) & 7];
+    crab_draw(g);                                                          /* A47E */
 }
 
 /* 0xA607  Death: 40 frames, sound 0x23 every other frame for the first 30;
@@ -128,11 +143,11 @@ void boss_crab_entry(Game *g)
         else                   { step_right(g); step_right(g); }
     }
 
-    if (ST(S_JUMP_ON))            jump_step(g);                            /* A4B9 */
+    if (ST(S_JUMP_ON))          { jump_step(g); return; }                  /* A4B9 (draws itself) */
     else if (ST(S_LAND_ON))       land_step(g);                            /* A5D3 */
     else if (g->boss_cutscene)  { if (!death_step(g)) { boss_parts_begin(g); boss_parts_end(g); return; } }
-    else if (ST(S_PREP_ON))       prepare_step(g);                         /* A466 */
-    else if (!(krn_random(g) & 7)) { ST(S_PREP_IDX) = 0; ST(S_PREP_ON) = 0xFF; prepare_step(g); }  /* A45C */
+    else if (ST(S_PREP_ON))     { prepare_step(g); return; }               /* A466 */
+    else if (!(krn_random(g) & 7)) { ST(S_PREP_IDX) = 0; ST(S_PREP_ON) = 0xFF; prepare_step(g); return; }  /* A45C */
     else {                                                                 /* A3F0: walk one cell every 2nd frame */
         b->parity++;
         if (b->parity & 1) { crab_draw(g); return; }

@@ -59,10 +59,10 @@ index e31e63f..b521035 100644
 +libmisc_a_SOURCES = clipboard.cpp cross.cpp ethernet.cpp ethernet_pcap.cpp ethernet_slirp.cpp ethernet_ethnet.cpp ethernet_nothing.cpp messages.cpp programs.cpp setup.cpp support.cpp regionalloctracking.cpp savestates.cpp shiftjis.cpp iconvpp.cpp mkdir_p.cpp zel_oracle.cpp
 diff --git a/src/misc/zel_oracle.cpp b/src/misc/zel_oracle.cpp
 new file mode 100644
-index 0000000..41af0a4
+index 0000000..5f75ab1
 --- /dev/null
 +++ b/src/misc/zel_oracle.cpp
-@@ -0,0 +1,420 @@
+@@ -0,0 +1,450 @@
 +/*
 + * zel_oracle.cpp -- Zeliard differential-test oracle (decomp-zel docs/HARNESS.md).
 + *
@@ -123,6 +123,8 @@ index 0000000..41af0a4
 +size_t script_pos = 0;
 +unsigned script_left = 0;
 +uint8_t script_dirs = 0, script_btns = 0;
++uint8_t script_char = 0;              /* 'C token: FF29 on the token's first frame (0 = none) */
++bool script_char_new = false;
 +unsigned png_every = 0, settle = 20;
 +unsigned long max_ms = 600000, debug_ms = 0, stall_ms = 120000, last_boundary_ms = 0;
 +unsigned menu_ticks = 0;             /* wait-loop boundaries: one per this many kernel ticks (0 = 4*[FF33]) */
@@ -139,6 +141,7 @@ index 0000000..41af0a4
 +unsigned long frame = 0;
 +std::string cur_input = ".";          /* input frame `frame` was played with */
 +uint8_t prev_btns = 0;
++uint8_t typed = 0;                    /* the FF29 key applied with the current input (0 = none) */
 +std::map<uint16_t, unsigned long> *unknown = nullptr;
 +unsigned long dbg_0918 = 0, rng_total = 0;
 +
@@ -227,6 +230,16 @@ index 0000000..41af0a4
 +               script[script_pos] == '\n' || script[script_pos] == '\t' || script[script_pos] == '\r')) script_pos++;
 +        if (script_pos >= script.size()) return false;
 +        uint8_t d = 0, b = 0;
++        script_char = 0; script_char_new = false;
++        if (script[script_pos] == '\'') {
++            /* 'C types one key: A-Z (either case), 0-9, '< = Backspace (08) */
++            char c = script_pos + 1 < script.size() ? script[script_pos + 1] : 0;
++            if (c >= 'a' && c <= 'z') c = (char)(c - 32);
++            if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) script_char = (uint8_t)c;
++            else if (c == '<') script_char = 0x08;
++            script_char_new = script_char != 0;
++            script_pos += c ? 2 : 1;
++        } else
 +        for (; script_pos < script.size(); script_pos++) {
 +            char c = script[script_pos];
 +            if (c == 'U' || c == 'u') d |= 1;
@@ -243,7 +256,7 @@ index 0000000..41af0a4
 +        unsigned n = 0;
 +        while (script_pos < script.size() && script[script_pos] >= '0' && script[script_pos] <= '9')
 +            n = n * 10 + (unsigned)(script[script_pos++] - '0');
-+        if (script_pos < script.size() && n == 0 && !d && !b && script[script_pos] != '.' &&
++        if (script_pos < script.size() && n == 0 && !d && !b && !script_char && script[script_pos] != '.' &&
 +            !(script[script_pos] >= '0' && script[script_pos] <= '9')) {
 +            /* unknown character: skip it so we cannot loop forever (the port would too) */
 +            logf("script: skipping '%c' at %zu", script[script_pos], script_pos);
@@ -283,6 +296,9 @@ index 0000000..41af0a4
 +    p[0x02BE] = (b & 1) ? 0x00 : 0xFF;
 +    p[0x02BF] = (b & 2) ? 0x00 : 0xFF;
 +    prev_btns = b;
++    /* a typed key: STICK's INT 9 (kbd_scan_to_ascii 04D0) leaves its ASCII in FF29 */
++    if (script_char_new) { p[0xFF29] = script_char; script_char_new = false; typed = script_char; }
++    else typed = 0;
 +}
 +
 +void key(KBD_KEYS k, bool down) { KEYBOARD_AddKey(k, down); }
@@ -321,6 +337,11 @@ index 0000000..41af0a4
 +    if (!script_next()) finish(0, "script done");
 +    apply_input(script_dirs, script_btns);
 +    cur_input = input_name(script_dirs, script_btns);
++    if (typed) {                                       /* "'A", "'<" (port/main.c the same) */
++        if (cur_input == ".") cur_input.clear();
++        cur_input += '\'';
++        cur_input += typed == 0x08 ? '<' : (char)typed;
++    }
 +    frame++;
 +}
 +
@@ -344,6 +365,9 @@ index 0000000..41af0a4
 +const uint8_t SIG_KENJ[]    = {0x2E,0xFF,0x16,0x16,0x60,0xC6,0x06,0x1A,0xFF,0x00,0xF6,0x06,0x1E,0xFF,0xFF,0xF9}; /* kenjpro A592 */
 +const uint8_t SIG_BANK_ARM[] = {0xC6,0x06,0x29,0xAD,0x00,0xC7,0x06,0x2A,0xAD,0x00,0x00};                       /* bankpro A295 */
 +const uint8_t SIG_BANK[]    = {0xCD,0x61,0xE8,0x4F,0x03,0xF6,0xC4,0x01};                                        /* bankpro A2D8 */
++const uint8_t SIG_BANK_W[]  = {0xCD,0x61,0xE8,0xB0,0x01,0xF6,0xC4,0x01};                                        /* bankpro A477 (withdraw) */
++const uint8_t SIG_KENJ_RR[] = {0xCD,0x61,0xA8,0x08,0x75,0xFA};                                                  /* kenjpro A66A: wait for R up */
++const uint8_t SIG_KENJ_RL[] = {0xCD,0x61,0xA8,0x04,0x75,0xFA};                                                  /* kenjpro A67F: wait for L up */
 +#define MATCH(off, sig) match(off, sig, sizeof sig)
 +
 +inline bool select_loaded() { return MATCH(0xAA58, SIG_SELECT) && MATCH(0xA084, SIG_SEL_OPEN); }
@@ -369,6 +393,12 @@ index 0000000..41af0a4
 +    case 0xA597: if (MATCH(0xA592, SIG_KENJ)) menu_poll("kenj:A597", ip); return;
 +    case 0xA295: if (MATCH(0xA295, SIG_BANK_ARM) && MATCH(0xA2D8, SIG_BANK)) armed = true; return;  /* bankpro amount entry */
 +    case 0xA2D8: if (MATCH(0xA2D8, SIG_BANK) && MATCH(0xA295, SIG_BANK_ARM)) menu_poll("bank:A2D8", ip); return;
++    case 0xA42A: if (MATCH(0xA42A, SIG_BANK_ARM) && MATCH(0xA477, SIG_BANK_W)) armed = true; return;  /* bankpro withdraw amount entry */
++    case 0xA477: if (MATCH(0xA477, SIG_BANK_W) && MATCH(0xA42A, SIG_BANK_ARM)) menu_poll("bank:A477", ip); return;
++    /* kenjpro's R/L cursor steps spin on int 61h until the key is up (no idle_poll):
++     * polls of the same loop, like select's release waits */
++    case 0xA66A: if (MATCH(0xA66A, SIG_KENJ_RR) && MATCH(0xA592, SIG_KENJ)) menu_poll("kenj:A597", ip); return;
++    case 0xA67F: if (MATCH(0xA67F, SIG_KENJ_RL) && MATCH(0xA592, SIG_KENJ)) menu_poll("kenj:A597", ip); return;
 +    case 0xA08C: case 0xA0B8:                                                   /* select: opened / pane dispatch */
 +        if (select_loaded() && (ip == 0xA08C || MATCH(0xA0B8, SIG_SEL_DISP))) armed = true;
 +        return;

@@ -301,7 +301,9 @@ in ten 100-gold steps, then `[05] = FF`.  Actions 0/2..5 are face animations (12
 blink restarted when `KRN_RANDOM()==0`).
 
 ### omoypro (Princess Felicia's chamber, cmap col 95)
-Picture only (16×17 cells).  `[49]==0` → wait for Space, return.  `[49]!=0` → pops the return
+Picture only (16×17 cells at BX = `0C1E`: column 0x0C in 8-px cells, row 0x1E; no text
+box).  `[49]==0` → wait for Space (A044 clears FF1D, idle_poll, A04E tests it: Alt does
+nothing), `[2040]` dissolve, return.  `[49]!=0` → pops the return
 address, loads ENDDEMO.BIN (ZELRES2[50]) to 6000 and gd*.bin to 3000, waits 300 ticks, `[FF77]=FF`,
 `jmp [6000]`: the ending.
 
@@ -350,8 +352,15 @@ town's stock.  No effect is applied in the shop (the item menu does that).
 **Balance = `[88]` u8 hi + `[89]` u16 lo** (24-bit like gold).  Exchange converts *all* almas at
 the town rate (remainder kept, no fee): castle/Muralla 1→6, Satono 1→6, Bosque 1→8, Helada 1→4,
 Tumba 1→2, Dorado 1→4, Llama 4→2, Pureza 1→6, Esco 1→8 (A8FA).  Deposit/withdraw: 24-bit amount
-entry (Up/Down ±1, Left/Right ±10, auto-repeat), Space confirms; deposit ≥ 1000 gold plays the
-"delighted" text.  **No interest.**
+entry (A295 / A42A): **R −10, L +10, D −1, U +1** (A62C, clamped to 0..gold carried / balance),
+read from `int 61h` as *held* state: a held direction repeats after `[AD2F]` ticks, 0x23 then
+one less per repeat (0 − 1 → 1); Space held confirms, Alt held cancels ("I don't understand",
+also for an amount of 0).  The box shows gold (or balance) − amount and the amount as 7-digit
+number lines (gtmcga 388E/37CC at x4 0x31, y 0x2E / 0x48).  A deposit ≥ 1000 gold plays the
+"delighted" teller and text (AB10, which sets `[AD24]`); leaving says AC5A / AC9D / ACD4 by
+`[AD23]` (any business) / `[AD24]`.  Quirks kept by the port: the "one gold" balance test is
+`test [88],al` with AL = low byte of `[89]` (A38B/A547); and a withdrawal that leaves a
+"one gold" balance returns at A554 **before** paying the gold out.  **No interest.**
 
 ### churpro (The Church) — free
 `hp == max_hp` → restore magic (`[AB..B1] = [B4..BA]`); else heal `[90] += 8` every 20 ticks up
@@ -384,7 +393,12 @@ hp = max, `[C4] = [C5]`).
 * Name: `[FF6C..FF73]` player name (≤ 8 upper-case chars) + `.usr`.  The name dialog (kenjpro
   A427 / town.bin 7695 for F7) lists `*.usr` via kernel `[11C]`, lets you type or pick (Space copies
   the highlighted file, Enter accepts, Alt cancels); town.bin's version prepends **"Re-Start"** =
-  new game (a `-` in the name sets `restart_chosen`).
+  new game (a `-` in the name sets `restart_chosen`).  kenjpro's (A559, ported in #65): 8 slots
+  at BB27 (`` ` `` = empty), seeded with FF6C; a typed key (FF29) goes at the cursor and steps it,
+  Backspace (A827) deletes before it, R/L step the cursor (A790: 0..7, ≤ length) and wait for the
+  release; Enter clears FF6C and copies the name up to the first `` ` `` -- an empty name cancels
+  *after* FF6C was cleared.  Then AF7C: op 3 = the A862 write, op 2 = "continue your quest?"
+  (No = `jmp far [FF00]`, back to DOS).
 * **Loaded by town.bin restore_game 7592** (F7 confirmed by `[11E]`): probe STDPLY.BIN (disk-1
   prompt), load `NAME.USR` raw with mode 3 to BASE:0000 (`FF78 = FF`, "User File / Not Found" →
   retry) or STDPLY.BIN for Re-Start, reload GAME.BIN to A000, `AX = 0xFFFF`, `jmp A000`.  GAME.BIN

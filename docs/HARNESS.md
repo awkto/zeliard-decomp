@@ -48,8 +48,9 @@ token count. One token-frame = one wait-loop boundary.
 | `menu_select` 7344, also `yes_no` 74D3 (shops; dialogue 0x81/0x89) | town.bin | `7344` | `7358` | FF1E, FF1D, int 61h U/D |
 | status screen (all row loops and release waits) | select.bin @A000 | `A08C`, `A0B8` | `select:AA58` | FF18 bit0, int 61h, `FF18==0286` |
 | omoypro wait for Space | omoypro | `A044` | `omoy:A04E` | FF1D |
-| sage's name entry (Record) | kenjpro | `A568` | `kenj:A597` | FF1E, FF18 bit0, FF1D, FF29 |
-| bank amount entry | bankpro | `A295` | `bank:A2D8` | int 61h (held, not edges) |
+| sage's name entry (Record), and its two R/L release waits `A66A` / `A67F` | kenjpro | `A568` | `kenj:A597` | FF1E, FF18 bit0, FF1D, FF29, int 61h |
+| bank amount entry, deposit | bankpro | `A295` | `bank:A2D8` | int 61h (held, not edges) |
+| bank amount entry, withdraw (#65) | bankpro | `A42A` | `bank:A477` | int 61h (held, not edges) |
 
 Every site is recognised by its own code bytes, so another overlay at the same IP
 cannot fire it. `select:AA58` is taken at whichever select poll comes first:
@@ -67,6 +68,13 @@ directions, `X` sword, `M` magic, `E` Enter, `K` the LEVEL/EXP chord, `.N` idle,
 a number = hold for N frames (`R10`, `UR2`, `X1`). One token-frame = one game frame,
 or one wait-loop boundary inside a menu (§1).
 
+`'C` (#65) types one key: `FF29` = its ASCII on the token's first frame, nothing held,
+for the sage's name entry. `C` is `A-Z` (either case, stored upper case), `0-9`, or
+`<` for Backspace (08) -- what STICK's INT 9 table (04D0) produces. It stands alone (no
+other letters in the token); a count holds nothing more (`'A3` = the key, then two idle
+frames). The frame's `"input"` is `'A` / `'<` (appended to the held letters, if any),
+identically on both sides.
+
 The oracle applies frame `n`'s inputs at boundary `n-1`. It writes the kernel's
 input state directly (`FF17` dirs, `FF16` buttons, `FF1D`/`FF1E` press edges,
 `FF18` key mask), exactly as STICK's INT 9 would leave it. This is deterministic
@@ -79,12 +87,16 @@ with a site, because each reads only these bytes (`int 61h` = `FF17`/`FF16`):
 | shop menus, yes/no | U/D move (auto-repeat every 40 ticks while held); X choose; M cancel / No | int 61h, FF1D, FF1E |
 | text pages, death/sage text | X or M | FF1D / FF1E |
 | dialogue boxes (town frame) | X next page / close; M cancels a page | FF1D / FF1E |
-| bank amount | L/R ±10, U/D ±1 (accelerating while held); X ok; M back | int 61h AH/AL |
+| bank amount | R −10, L +10, D −1, U +1 (repeating 35, 34, … ticks apart while held); X held = ok; M held = back | int 61h AH/AL |
+| sage's name entry | `'C` types at the cursor (`'<` Backspace); L/R move the cursor (then wait for the release); E accepts; M cancels; X copies the highlighted `*.usr` name; U/D move that list | FF29, int 61h, FF18 bit0, FF1E, FF1D |
 
-No scancode injection is needed. Keys the script language has no token for (letters
-for the sage's name entry `FF29`, Y/N of the kernel's F7 / Ctrl+Q boxes, F9's
-digits) would also be direct writes (`FF29`, `FF18` bits 0x20/0x40), but those
-kernel boxes spin on `FF18` with no poll site, so they stay out of scope.
+No scancode injection is needed: typed keys are direct `FF29` writes too. Y/N of the
+kernel's F7 / Ctrl+Q boxes and F9's digits would be (`FF18` bits 0x20/0x40, `FF29`),
+but those kernel boxes spin on `FF18` with no poll site, so they stay out of scope.
+
+The file list of the name entry is the game directory's `*.usr`: the oracle's staged
+directory holds only the start save, the port's `zeliard/` every scenario's, so a
+scenario must not move that list or copy from it (Space) -- the names differ.
 
 ## 3. Determinism
 
@@ -276,12 +288,16 @@ port does, per the spec below:
   (the next pass is a boundary at once).
 - Death → sage: the dying `717F` frames, then no boundary until the sage text's first
   `71EC` page wait (armed), then `68ED` when the town resumes.
-- Not in the port yet, needed for these sites: the bank amount entry (**`bank:A2D8`**;
-  the port deposits everything; one pass = redraw + `int 61h` + a wait of `[AD2F]` ticks
-  that starts at 0x23 and drops by one per held pass — the oracle adds the original's
-  redraw time to each pass, so holds longer than ~10 boundaries may drift), omoypro's
-  Space wait (**`omoy:A04E`**) and the sage's name entry (**`kenj:A597`**, letters are
-  not in the script language).
+- **#65:** the bank amount entry (`shop.c bank_enter_amount`, **`bank:A2D8`** deposit /
+  **`bank:A477`** withdraw, armed at A295 / A42A): one pass = redraw + poll + `int 61h`;
+  no direction = one tick; a held direction adjusts, then waits `[AD2F]` ticks (0x23,
+  then one less per held pass; 0 − 1 gives 1) with no boundary inside. The port counts
+  no redraw time, so once `[AD2F]` drops below 20 (a hold of ~16 boundaries) the
+  boundaries may stop lining up: keep holds shorter. omoypro's Space wait
+  (`shop.c omoy_wait`, **`omoy:A04E`**: only the Space edge ends it). The sage's name
+  entry (`shop.c kenj_name_edit`, **`kenj:A597`**, typed keys via `'C`); its R/L release
+  waits spin on `int 61h` without idle_poll and are polls of the same site on both
+  sides (else a held R would stall the oracle).
 - `tools/harness/schema.py` `site_mode()` / `site_modes()`: `71EC`, `7358`, `bank:`,
   `omoy:`, `kenj:` are town-side (`town`); `select:AA58` takes the mode of the last
   frame boundary before it (the status screen opens from either loop). `tracediff`,
@@ -292,6 +308,10 @@ port does, per the spec below:
   the dialogue's waits are full 68AC frames (NPCs move); STICK has consumed FF75 by
   the next boundary (status passes, town frames, the yes/no box); the shop printer
   costs 6 ticks a byte (7084) and its page-break count (7269) skips `FF xx` pairs.
+  #65: menu_select (735D/7366) only *tests* FF1D/FF1E, it does not clear them on a
+  choice (the bank's amount entry starts with FF1D still set); STICK's resource loader
+  clears FF1D (not FF1E) on every successful open (`sar_open_entry` 0CDC), so a shop's
+  overlay load and the town reload after it (6ECA) drop a pending Space edge.
 
 ### Verified (wait-loop boundaries)
 
@@ -307,6 +327,17 @@ their pre-change baselines.
 | drug store buy + leave (`--town-col 111 --gold 5000` → DRUG) | `U2 .3 D1 .3 X1 .3 X1 .20 X1 .30 X1 .30 M1 .5 M1 .5 X1 .40` | 150, 106 at `7358`/`71EC` | two Ken'ko Potions (GOLD 5000 → 4900), cancel, "come again" page, town at f109 |
 | bank deposit (`--town-col 138 --gold 5000` → BANK) | `U2 .3 D2 .3 X1 .10 L5 .3 U3 .3 X1 .10 X1 .10 M1 .10 M1 .10` | 80, 77 at `7358`/`bank:A2D8`/`71EC` | amount 0 → 50 → 53, deposited, balance 53 |
 | death → sage (`--town-col 205 --life 4` → DIE) | `U3 .40 R40 .150 X1 .20 …` | 339 | dies in the cavern (last `717F` f118), sage text from f119 at `71EC`, two pages, town `68ED` from f255 |
+
+### Verified (#65)
+
+The oracle change (`'C` keys, the `bank:A477` site, the kenjpro release-wait polls) was
+built as a separate binary first: the 24 scenarios of the time gave byte-identical
+`frames.jsonl` and `base.bin` with the old and the new binary (48 files), all clean.
+Then the four new scenarios, all clean: `bank_deposit` (111 frames, 36 at `bank:A2D8`,
+GOLD 5000 → 4878, balance 122), `bank_withdraw` (109, 43 at `bank:A477`, GOLD 100 →
+163, balance 75 → 12), `omoya_wait` (45, 11 at `omoy:A04E`), `sage_record` (132, 38 at
+`kenj:A597`, FF6C `SAGE` → `HER5`). The amount and name screens are pixel-identical
+to the oracle's apart from the HUD place label and the file list (§2).
 
 ### Verified (#47)
 
@@ -335,9 +366,9 @@ It builds nothing: run it on the droplet after building the port.
 
 Every scenario must be clean. `death_sage` goes on from the dying `717F` frames
 through the Sage's text (`71EC`) back to Muralla; `status_cave`, `drug_buy`,
-`bank_menu`, `npc_talk` and `npc_yesno` cover the other wait loops (#64). Not
-reachable yet: the bank amount entry, omoypro's Space wait and the Sage's name
-entry (#65).
+`bank_menu`, `npc_talk` and `npc_yesno` cover the other wait loops (#64);
+`bank_deposit`, `bank_withdraw` (amount entry: repeat, clamp, cancel), `omoya_wait` and
+`sage_record` (typed name, Backspace, cursor step, the A862 write) the last three (#65).
 
 ## 8. Triage runbook (for agents) (#51)
 
@@ -431,5 +462,6 @@ put its script in a scenario file (`tests/scenarios/NAME.zs`, §7) and run it as
 | `sword4`/`sword5`/`sword6` | Muralla 205, LV 3, LIFE 255 | the sword.grp section 1/2 shapes, right then left |
 | `gate_walking` | `CAVE` | out of MP10 walking, Muralla, back in: `[C2]` bit 1 kept (#69), `79DC`'s locals reset, the `7AAA` side step |
 | `key_door` | Satono 4, one Key (`--keys 1`) | `7E15` on MP10 (128,32), through it to Satono and its `61B4` walk-in, back out |
-| `cave_door` | same | MP10 (141,32) → MP1D: door frame, `[C4]`, walk-in; stops at f90 (allows `obj[*]`: the Cangrejo room's object records, see the proposed issue) |
+| `cave_door` | same | MP10 (141,32) → MP1D: door frame, `[C4]`, walk-in |
+| `crab_fight` | Satono 4, LV 8, sword 3, one Key | MP1D: Cangrejo to the kill (#71: part records' +7..+F are the previous map's bytes past MP1D's end at C238, the scroll re-mark `6771`/`68FF`, `A5C0` turn on landing, `A510` part 0x14 phase, gfmcga `3729`/`379B` death sparks in `EDA0` with their RNG draws), the `71DA` reward (EXP +120, ALMAS +150, no gold: #68), `72F1`'s exit door and its `jmp 6042` restart (`628A` drops the press edges), out to MP10 |
 | `elevator` | `TOUGH` | MP10's (48,24) A elevator up and down (`8024`/`80AF` 0-erase) and `8009`'s hit on a frog under it |

@@ -623,8 +623,14 @@ int main(int argc, char **argv)
         ck(rc == 0, "route 2 ran to the end");
         ck(p.bosses_killed >= 3, "route 2: Cangrejo, Pulpo and Pollo defeated");
         ck(p.deaths == 0, "route 2: Garland never died");
-        ck(g->exp > 0, "route 2: the bosses paid EXP");
-        ck((unsigned)g->gold > 0, "route 2: the bosses paid gold");
+        /* 71CC..71F5 (#68, crab_fight: EXP 0 -> 120, ALMAS 0 -> 150, GOLD
+         * unchanged in the original): a boss pays its [A002]+5 EXP through
+         * 9715 and its +B through 917C, the ALMAS adder -- never gold */
+        ck(p.boss_exp_due > 0 && p.boss_exp_paid == p.boss_exp_due,
+           "route 2: the bosses paid their EXP (%ld of %ld)", p.boss_exp_paid, p.boss_exp_due);
+        ck(p.boss_almas_due > 0 && p.boss_almas_paid == p.boss_almas_due,
+           "route 2: the bosses paid their almas (%ld of %ld)", p.boss_almas_paid, p.boss_almas_due);
+        ck(p.boss_gold_paid == 0, "route 2: the bosses paid no gold (%ld)", p.boss_gold_paid);
         ck(p.shops_visited >= 3, "route 2: shopping between the caverns");
         ck(p.doors_taken >= 14, "route 2: every boss room is walked into and out of *twice* "
                                 "through its own doors (%u doors taken)", p.doors_taken);

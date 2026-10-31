@@ -157,6 +157,7 @@ struct Town {
      * status screen owns the screen and the frame loop */
     struct Status *status;
     uint8_t  menu_key;              /* FF18 bit0 (Enter) */
+    uint8_t  last_ascii;            /* FF29: the last key's ASCII (INT 9); only kenjpro's name entry reads it */
     uint8_t  menu_debounce;
     const struct ItemPics *pics;    /* itemp.grp, shared with the status screen */
     const struct TextFont *font;    /* font.grp, shared with the shops */

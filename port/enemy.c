@@ -81,6 +81,7 @@ void enemies_load(Game *g)
         g->obj[i].rcol = 0xFF;                      /* recomputed by 8D38 */
     }
     g->nobj = n;
+    g->obj_index = (uint8_t)n;      /* 9667: the entry pass counts every record into FF4A */
 }
 
 static inline int obj_ring(const Game *g, const MapObj *o) { return game_ring_index(g, o->row, o->rcol); }

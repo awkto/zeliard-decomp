@@ -92,6 +92,16 @@ typedef struct Shop {
     int      in_menu;               /* 1 while 7344 menu_select owns the loop */
     int      menu_row, menu_n;      /* the cursor row and the visible row count */
     ShopHook hk;                    /* the [A002] idle hook's state */
+    /* bankpro's own variables (src/shops.c bank_*) */
+    uint8_t  bank_business;         /* AD23: exchanged/deposited/withdrew/checked this visit */
+    uint8_t  bank_big;              /* AD24: action 3 after a deposit of 1000 or more */
+    uint8_t  bank_delay;            /* AD2F: the amount entry's repeat delay in ticks */
+    /* kenjpro's name entry (A427..A862) */
+    uint8_t  kj_name[9];            /* BB27: 8 chars, '`' = unused, [8] = 0xFF */
+    uint8_t  kj_cur, kj_len;        /* BB25 cursor, BB26 length */
+    uint8_t  kj_row;                /* BB24: the file-list cursor row */
+    int      kj_nfiles;             /* E000: *.usr files found (svc_find_files) */
+    char     kj_files[254][9];      /* E201: their base names */
 } Shop;
 
 /* town.bin 6E7E run_shop: load the overlay + portrait, run it, return when it

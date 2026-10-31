@@ -61,6 +61,10 @@ typedef struct {
     long     start_gold;
     /* the report */
     unsigned bosses_killed, doors_taken, shops_visited, deaths;
+    /* what the P_BOSS steps (the boss room alone) changed vs what the
+     * overlays' [A002] blocks promise (+5 EXP, +B almas: 71E8 / 71F2) */
+    long     boss_exp_paid, boss_exp_due, boss_almas_paid, boss_almas_due, boss_gold_paid;
+    long     step_exp, step_almas, step_gold;
     int      entry_col, entry_scroll;   /* where the castle put the hero on frame 0 */
 } Play;
 

@@ -15,6 +15,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
+#include <dirent.h>
 
 #define A(x) (x)                        /* overlay addresses are A000-based */
 #define BOX_X4 0x0D
@@ -31,7 +33,7 @@ static const struct {
     int ovl, grp; unsigned label, portrait; int px4; const char *name;
 } SHOPS[SHOP_COUNT] = {
     {10, 18, 0xA41A, 0xA16E, 0x0E, "king"},
-    {11, 19, 0xA245, 0,      0x1E, "omoya"},
+    {11, 19, 0xA245, 0xA129, 0x0C, "omoya"},       /* A104: map A129 at bx = 0C1E */
     {17, 25, 0,      0xA9B6, 0x07, "sage"},
     {12, 20, 0xACAE, 0,      0x07, "armour"},   /* armr: frame table AA10 */
     {15, 23, 0xA81C, 0xA5E4, 0x07, "drug"},
@@ -339,9 +341,12 @@ static int menu_select(Shop *s, int *cursor)
     for (long guard = 0; guard < 8000L * SHOP_TICKS_PER_FRAME && !s->leave; guard++) {
         s->menu_row = row + s->mscroll;
         if (shop_poll(s, "7358")) break;
-        if (s->t && s->t->btn2_edge) { s->t->btn2_edge = 0; menu_cursor(s, row, 0); s->in_menu = 0; return 1; }
+        /* 735D / 7366 only test the edges: FF1D / FF1E stay set for whatever
+         * runs next (the bank's amount entry shows it; 71DF / 7344 clear them
+         * on entry) */
+        if (s->t && s->t->btn2_edge) { menu_cursor(s, row, 0); s->in_menu = 0; return 1; }
         if (s->t && s->t->btn1_edge) {
-            s->t->btn1_edge = 0; s->g->sfx_request = 0x1F;
+            s->g->sfx_request = 0x1F;
             menu_cursor(s, row, 0);
             *cursor = row;
             s->in_menu = 0;
@@ -428,7 +433,7 @@ static void draw_portrait(Shop *s)
     if (s->dest == SHOP_OMOYA) { rows = 16; cols = 17; }
     draw_portrait_map(s, SHOPS[s->dest].portrait, rows, cols,
                       s->dest == SHOP_SAGE && s->kj_x8 ? s->kj_x8 : SHOPS[s->dest].px4,
-                      s->dest == SHOP_OMOYA ? 0x0C : 0x17);
+                      s->dest == SHOP_OMOYA ? 0x1E : 0x17);
 }
 
 /* like draw_portrait_map, but a cell of 0xFF leaves the screen alone
@@ -663,7 +668,7 @@ static void shop_prologue(Shop *s)
     if (label) vid_label_text(s->fb, s->font, imgp(s, label));
     draw_portrait(s);
     s->tx = s->tline = s->lines = 0;
-    box_clear(s);
+    if (s->dest != SHOP_OMOYA) box_clear(s);    /* omoypro (A028..A03A) draws no text box */
 }
 
 /* =========================================================== ARMOUR SHOP == */
@@ -997,8 +1002,107 @@ static void inn_action(Shop *s, uint8_t op)
 }
 
 /* ================================================================== BANK == */
+/* A61F: clear the menu area (x4 0x27, y 0x17, 0x1C x 0x41) */
+static void bank_erase_box(Shop *s) { vid_window(s->fb, 0, 0x27, 0x17, 0x1C, 0x41); }
+
+/* gtmcga 388E GT_NUMBER_LINE + 37CC GT_MENU_BLIT, as the amount entry uses
+ * them: DL:AX as seven 6x7 digits (font [F502]) on a 6-px pitch, leading zeros
+ * blanked except the last (3911..3928), colour 9 on 0, in rows 2..8 of the
+ * 160x10 line buffer (3DEF); the blit copies 9 rows x [FF6A]*4 = 44 px (FF6A
+ * = 0x0B, set at 38AC) to (BH*4, BL).  A millions digit above 9 (amounts of
+ * 10,000,000 or more) indexes past the digit glyphs in the original; the port
+ * leaves that cell blank. */
+static void bank_number_line(Shop *s, uint32_t v, int x4, int y)
+{
+    uint8_t dg[7];
+    v &= 0xFFFFFF;
+    dg[0] = (uint8_t)(v / 1000000u); v %= 1000000u;             /* 3930: 0F4240 */
+    for (int i = 1, d = 100000; i < 7; i++, d /= 10) { dg[i] = (uint8_t)(v / (unsigned)d); v %= (unsigned)d; }
+    int lead = 1;
+    for (int r = 0; r < 9; r++) memset(s->fb + (y + r) * TEXT_W + x4 * 4, 0, 44);
+    for (int i = 0; i < 7; i++) {
+        if (lead && i < 6 && dg[i] == 0) continue;              /* 391A: FF = blank */
+        lead = 0;
+        if (dg[i] > 9 || !s->font) continue;
+        for (int r = 0; r < 7; r++)
+            for (int c = 0; c < 6; c++)
+                if (s->font->digit[dg[i]][r] & (0x20 >> c))
+                    s->fb[(y + 2 + r) * TEXT_W + x4 * 4 + i * 6 + c] = 9;   /* 38FF: and bl,9 */
+    }
+}
+
+/* A62C: R -10, L +10, D -1, U +1 (first match wins), clamped to 0..[AD2C:AD2D] */
+static uint32_t bank_adjust(uint32_t v, uint32_t max, uint8_t dirs)
+{
+    if (dirs & DIR_RIGHT) return v >= 10 ? v - 10 : 0;          /* A634..A644 */
+    if (dirs & DIR_LEFT)  return v + 10 < max ? v + 10 : max;   /* A646..A666 */
+    if (dirs & DIR_DOWN)  return v >= 1 ? v - 1 : 0;            /* A668..A678 */
+    if (dirs & DIR_UP)    return v + 1 < max ? v + 1 : max;     /* A67A..A696 */
+    return v;
+}
+
+/* The amount entry, deposit A295..A319 / withdraw A42A..A4B8 (the same loop).
+ * Armed at A295 / A42A, poll site A2D8 / A477 (the int 61h).  One pass:
+ *   redraw: the left column ("GOLD CARRIED" = gold - amount via 600A, or
+ *   "GOLD IN BANK" = balance - amount, A44C..A459) at (x4 0x31, y 0x2E), the
+ *   amount at (x4 0x31, y 0x48);
+ *   the poll; int 61h: AL (held directions) adjusts the amount (A62C) -- held
+ *   state, not edges; AH bit0 (Space held) = done, bit1 (Alt held) = cancel;
+ *   no direction: [AD2F] = 0x23, next pass (one tick here);
+ *   a direction: wait until it is released or [AD2F] ticks have passed
+ *   (A2F9..A30B), then [AD2F] -= 1, and 0 - 1 gives 1 (A30D..A314), so a held
+ *   key repeats after 35, 34, 33, ... ticks, down to an alternating 1/0.
+ * The release cannot be seen inside the wait: under --trace the input changes
+ * only at a boundary, and there is none inside it (on either side).
+ * Returns 1 with the amount in *out, 0 when cancelled (or the run ended). */
+static int bank_enter_amount(Shop *s, int withdraw, uint32_t *out)
+{
+    Game *g = s->g;
+    uint32_t amt = 0;                                           /* A295 / A42A [AD29]:[AD2A] = 0 */
+    uint32_t have = withdraw ? page_gold24(g->page, P_BANK_HI) : g->gold;
+    uint32_t max = have;                                        /* A2A0 / A435 [AD2C]:[AD2D] */
+    const char *site = withdraw ? "bank:A477" : "bank:A2D8";
+    wait_arm();
+    for (long guard = 0; guard < 8000L * SHOP_TICKS_PER_FRAME && !s->leave; guard++) {
+        bank_number_line(s, have - amt, 0x31, 0x2E);            /* A2B7..A2C4 / A44C..A463 */
+        bank_number_line(s, amt, 0x31, 0x48);                   /* A2C9..A2D3 / A468..A472 */
+        if (shop_poll(s, site)) return 0;
+        uint8_t d = s->t ? s->t->dirs : 0, b = s->t ? s->t->buttons : 0;   /* int 61h */
+        amt = bank_adjust(amt, max, d);                         /* A2DA call A62C */
+        if (b & 1) { *out = amt; return 1; }                    /* A2DD test ah,1 */
+        if (b & 2) return 0;                                    /* A2E8 test ah,2 */
+        if (!d) { s->bank_delay = 0x23; shop_tick(s); continue; }   /* A2EE..A2F7 */
+        shop_wait(s, s->bank_delay);                            /* A2F9..A30B */
+        s->bank_delay = s->bank_delay ? (uint8_t)(s->bank_delay - 1) : 1;  /* A30D..A314 */
+    }
+    return 0;
+}
+
+/* A385..A3C8 / A541..A583: "One gold" or "Your balance is N golds."; the
+ * one-gold test is `test [88],al` with AL = the low byte of [89], so a balance
+ * of 0x010001 also counts as "one" -- reproduced.  On the N path the text
+ * pointer is left after the FF 00, and the shop loop prints the rest. */
+static int bank_balance_text(Shop *s)
+{
+    uint32_t b = page_gold24(s->g->page, P_BANK_HI);
+    say(s, 0xAC35);
+    if (!((b >> 16) & b & 0xFF) && (b & 0xFFFF) == 1) return 1;
+    say(s, 0xAAF4); print_text(s);                              /* "\rYour balance is " */
+    print_number(s, b);                                         /* 6006 -> AD30, 6004 */
+    return 0;
+}
+
+static void bank_amount_box(Shop *s, unsigned labels)
+{
+    vid_window(s->fb, 0xFF, 0x2C, 0x1D, 0x12, 0x37);            /* A268 / A3FD */
+    s->mx4 = 0x2A; s->my = 0x20;                                /* [FF54] = 2A20 */
+    s->mvis = s->mtot = 4; s->mprices = 0;                      /* A27B..A285 */
+    menu_draw_items(s, labels, 4);                              /* A951 / A96D */
+}
+
 static void bank_action(Shop *s, uint8_t op)
 {
+    Game *g = s->g;
     if (op != 1) {                                              /* 0/2/3 are animations */
         if (op == 0) { shop_wait(s, 60); bank_play_anim(s, 0xA82F); }    /* A0C0 he stands up */
         if (op == 2) {                                          /* A5F3 he sits back down */
@@ -1007,60 +1111,81 @@ static void bank_action(Shop *s, uint8_t op)
             s->hk.bank_on = 0xFF; s->hk.bank_map = 0xA773;
             shop_wait(s, 100);
         }
-        if (op == 3) s->bought = 1;                             /* A619 [AD24] */
+        if (op == 3) s->bank_big = 0xFF;                        /* A619 [AD24] */
         return;
     }
-    /* A0D2 main menu */
-    vid_window(s->fb, 0, 0x17, 0x27, 0x41, 0x1C);
-    menu_box(s, 0x27, 0x1D, 0x1C, 0x37, 0x27, 0x20);
+    /* A0D2 main menu: window (x4 0x28, y 0x1D, 0x1A x 0x37), items at [FF54] = 2820 */
+    bank_erase_box(s);
+    menu_box(s, 0x28, 0x1D, 0x1A, 0x37, 0x28, 0x20);
     s->mvis = s->mtot = 5; s->mscroll = 0;
     menu_draw_items(s, 0xA90C, 5);
     int row = s->cursor_main;
-    if (menu_select(s, &row)) row = 0;
+    if (menu_select(s, &row)) row = 0;                          /* A10B: Alt = "Go outside" */
     s->cursor_main = row;
-    vid_window(s->fb, 0, 0x17, 0x27, 0x41, 0x1C);
-    /* A14B / A23B / A3D0: every branch off the menu stops the idle and puts the
-     * teller back in his A8BB pose before it talks */
-    s->hk.bank_on = 0;
-    if (row >= 1 && row <= 3) draw_portrait_map(s, 0xA8BB, 5, 8, 0x09, 0x1F);
-    uint32_t bank = page_gold24(s->g->page, P_BANK_HI);
+    bank_erase_box(s);                                          /* every branch starts with A61F */
+    /* A14B / A23B / A3D0: exchange, deposit and withdraw stop the idle and put
+     * the teller in his A8BB pose before they talk; leave and balance do not */
+    if (row >= 1 && row <= 3) { s->hk.bank_on = 0; draw_portrait_map(s, 0xA8BB, 5, 8, 0x09, 0x1F); }
+    uint32_t bank = page_gold24(g->page, P_BANK_HI);
     switch (row) {
-    case 0: say(s, 0xAC5A); return;                             /* A125 "busy man" */
+    case 0:                                                     /* A125 */
+        say(s, s->bank_big ? 0xACD4 : s->bank_business ? 0xAC9D : 0xAC5A);
+        return;
     case 1: {                                                   /* A14B exchange ALL almas */
-        if (!s->g->almas) { say(s, 0xA9B2); return; }
-        int in = img8(s, 0xA8FA + 2u * (unsigned)(s->town_id - 1));
-        int out = img8(s, 0xA8FA + 2u * (unsigned)(s->town_id - 1) + 1);
-        say(s, 0xA9D9); print_text(s); print_number(s, (uint32_t)in); print_text(s);
-        print_number(s, (uint32_t)out); print_text(s);
+        if (!g->almas) { say(s, 0xA9B2); return; }
+        int in = img8(s, 0xA8FA + 2u * (unsigned)(s->town_id - 1));      /* [AD25] */
+        int out = img8(s, 0xA8FA + 2u * (unsigned)(s->town_id - 1) + 1); /* [AD26] */
+        say(s, 0xA9D9); print_text(s); print_number(s, (uint32_t)in);    /* AD27 = '0'+n */
+        say(s, 0xA9F1); print_text(s); print_number(s, (uint32_t)out);
+        say(s, 0xA9FD); print_text(s);
         menu_box(s, 0x2F, 0x2B, 0x0C, 0x19, 0x30, 0x2E);
         int yes = yes_no(s);
-        vid_window(s->fb, 0, 0x2F, 0x2B, 0x0C, 0x19);
-        if (!yes) { say(s, 0xAA82); return; }
-        unsigned units = s->g->almas / (unsigned)in;
-        if (!units) { say(s, 0xAA1D); return; }
-        s->g->almas = (uint16_t)(s->g->almas - units * (unsigned)in);
-        shop_gold_add(s, units * (uint32_t)out);
-        say(s, 0xAB10);
+        if (!yes) { say(s, 0xAA48); return; }                   /* A1DF..A1E7 */
+        if (g->almas < (unsigned)in) { say(s, 0xAA1D); return; }   /* A1E8..A1FB */
+        bank_erase_box(s);                                      /* A1FD */
+        s->bank_business = 0xFF;                                /* A201 */
+        say(s, 0xAA82);
+        while (g->almas >= (unsigned)in) {                      /* A20E..A239: one unit at a time */
+            g->almas = (uint16_t)(g->almas - (unsigned)in);
+            shop_gold_add(s, (uint32_t)out);
+        }
         return; }
     case 2: {                                                   /* A23B deposit */
-        if (!s->g->gold) { say(s, 0xAAA1); return; }
-        uint32_t amt = s->g->gold;                              /* the port deposits everything */
-        gold_pay(s, amt);
-        page_set_gold24(s->g->page, P_BANK_HI, bank + amt);
-        /* A331: a deposit of 1000 or more sets him counting — the second cell-map
-         * pair at A7C3 — for the rest of the visit */
-        if (amt >= 1000) { s->bought = 1; s->hk.bank_on = 0xFF; s->hk.bank_map = 0xA7C3; }
-        say(s, 0xAAF4); print_text(s); print_number(s, bank + amt); print_text(s);
+        if (!g->gold) { say(s, 0xAAA1); return; }
+        say(s, 0xAACA); print_text(s);                          /* "How much gold ... deposit?" */
+        bank_amount_box(s, 0xA951);
+        uint32_t amt = 0;
+        if (!bank_enter_amount(s, 0, &amt) || !amt) { say(s, 0xAA48); return; }   /* A2E2 / A31B..A330 */
+        if (amt >= 1000) { s->hk.bank_on = 0xFF; s->hk.bank_map = 0xA7C3; }     /* A331..A33F */
+        page_set_gold24(g->page, P_BANK_HI, (bank + amt) & 0xFFFFFF);          /* A345 add / A349 adc */
+        g->gold -= amt;                                         /* A34D..A35D */
+        s->bank_business = 0xFF;                                /* A365 */
+        if (s->hk.bank_on) { say(s, 0xAB10); return; }          /* A36A -> A3C9 */
+        say(s, 0xABF7);                                         /* A371 */
+        if (page_gold24(g->page, P_BANK_HI)) bank_balance_text(s);
         return; }
     case 3: {                                                   /* A3D0 withdraw */
         if (!bank) { say(s, 0xAB32); return; }
-        shop_gold_add(s, bank);
-        page_set_gold24(s->g->page, P_BANK_HI, 0);
-        say(s, 0xABA4); print_text(s); print_number(s, bank); print_text(s);
+        say(s, 0xAB80); print_text(s);                          /* "How much do you wish to withdraw?/" */
+        bank_amount_box(s, 0xA96D);
+        uint32_t amt = 0;
+        if (!bank_enter_amount(s, 1, &amt) || !amt) { say(s, 0xAA48); return; }   /* A481 / A4BA..A4CF */
+        s->bank_business = 0xFF;                                /* A4D0 */
+        if (amt == 1) { say(s, 0xABC1); print_text(s); }        /* "Here you are, sir. One gold." */
+        else { say(s, 0xABA4); print_text(s); print_number(s, amt); print_text(s); }   /* A4EB..A51A */
+        bank -= amt;
+        page_set_gold24(g->page, P_BANK_HI, bank);              /* A51F..A532 */
+        say(s, 0xABDE);                                         /* A535 "\rYour account is empty." */
+        /* A554: a balance of "one gold" returns before A584 -- the original
+         * never hands that withdrawal over.  Reproduced. */
+        if (bank && bank_balance_text(s)) return;
+        shop_gold_add(s, amt);                                  /* A584 [600C], A590 [2016] */
         return; }
     default:                                                    /* A595 balance */
         if (!bank) { say(s, 0xABF7); return; }
-        say(s, 0xAC10); print_text(s); print_number(s, bank); print_text(s);
+        s->bank_business = 0xFF;                                /* A5AA */
+        if (bank == 1) { say(s, 0xAC35); return; }              /* A5AF..A5C2 */
+        say(s, 0xAC10); print_text(s); print_number(s, bank);   /* "You have " N, then the rest */
         return;
     }
 }
@@ -1106,6 +1231,186 @@ void sage_level_up(Shop *s)                                     /* A2B4 */
     if (g->exp >= EXP_NEXT[cur]) g->exp = (uint16_t)(EXP_NEXT[cur] - 1);
 }
 
+/* --- kenjpro A427..A861: "Record Experience" asks for the file name ------ */
+#define KJ_NAME_X 0x60                  /* [BB21] */
+#define KJ_NAME_Y 0x7E                  /* [BB23] */
+
+/* STICK svc_find_files [11C] (09D6) on "*.usr" (A516): the base names (up to
+ * the '.', at most 8) of the matching files in the game directory.  DOS
+ * returns them in directory order; the port sorts them. */
+static int kj_cmp(const void *a, const void *b) { return strcmp((const char *)a, (const char *)b); }
+static void kenj_find_files(Shop *s)
+{
+    s->kj_nfiles = 0;
+    DIR *d = opendir(s->dir ? s->dir : ".");
+    if (!d) return;
+    struct dirent *e;
+    while ((e = readdir(d)) && s->kj_nfiles < 254) {
+        const char *dot = strrchr(e->d_name, '.');
+        if (!dot || strlen(dot) != 4 || (dot[1] | 0x20) != 'u' || (dot[2] | 0x20) != 's' || (dot[3] | 0x20) != 'r') continue;
+        size_t n = (size_t)(dot - e->d_name);
+        if (n == 0 || n > 8) continue;
+        char *o = s->kj_files[s->kj_nfiles++];
+        for (size_t i = 0; i < n; i++) o[i] = (char)toupper((unsigned char)e->d_name[i]);
+        o[n] = 0;
+    }
+    closedir(d);
+    qsort(s->kj_files, (size_t)s->kj_nfiles, sizeof s->kj_files[0], kj_cmp);
+}
+
+/* A528: GT_MENU_LINE(file `idx`) + GT_MENU_BLIT at [FF54]+0x300+10*row, 40 px
+ * ([FF6A] = 0x0A) by 9 rows */
+static void kenj_draw_row(Shop *s, int row, int idx)
+{
+    int x4 = s->mx4 + 3, y = s->my + row * 10;
+    vid_window(s->fb, 0, x4, y, 0x0A, 9);
+    if (idx >= 0 && idx < s->kj_nfiles) vid_label_asciiz(s->fb, s->font, s->kj_files[idx], x4, y, 0);
+}
+static void kenj_draw_rows(Shop *s)
+{
+    int n = s->kj_nfiles < 5 ? s->kj_nfiles : 5;
+    for (int r = 0; r < n; r++) kenj_draw_row(s, r, s->mscroll + r);
+}
+
+/* A7FD: clear 64x8 at the name and VID_PUTS the 8 slots ('`' = empty) */
+static void kenj_draw_name(Shop *s)
+{
+    vid_window(s->fb, 0, KJ_NAME_X / 4, KJ_NAME_Y, 0x10, 8);
+    vid_puts(s->fb, s->font, s->kj_name, KJ_NAME_X, KJ_NAME_Y);
+}
+
+/* A790: move the name cursor (char 0x7F, colour 6, a row under the name) by
+ * `d`, clamped to 0..7 and to the name's length */
+static void kenj_move_cursor(Shop *s, int d)
+{
+    vid_window(s->fb, 0, KJ_NAME_X / 4 + s->kj_cur * 2, KJ_NAME_Y + 8, 2, 8);   /* A792..A7AE */
+    uint8_t c = (uint8_t)(s->kj_cur + d);                       /* A7B4 */
+    if (c & 0x80) c = 0;                                        /* A7B8 */
+    if (c >= 8) c--;                                            /* A7C4 */
+    if (c >= s->kj_len) c = s->kj_len;                          /* A7CF..A7D8 */
+    s->kj_cur = c;
+    vid_putchar(s->fb, s->font, 0x7F, 6, KJ_NAME_X + c * 8, KJ_NAME_Y + 8);   /* A7DB..A7F6 [2022] */
+}
+
+/* A827 Backspace: delete the char before the cursor (at the cursor when it is
+ * at 0), pad slot 7 with '`', length - 1, cursor - 1 */
+static void kenj_backspace(Shop *s)
+{
+    int b = s->kj_cur ? s->kj_cur : 1;                          /* A828..A830 */
+    memmove(s->kj_name + b - 1, s->kj_name + b, (size_t)(8 - b));   /* A836..A846 */
+    if (s->kj_len) s->kj_len--;                                 /* A848..A84F */
+    s->kj_name[7] = 0x60;                                       /* A853 [BB2E] */
+    kenj_move_cursor(s, -1);
+    kenj_draw_name(s);
+}
+
+/* A45E..A487 / A5D1..A5F8: the name slots from an ASCIIZ (max 8) */
+static void kenj_set_name(Shop *s, const char *src)
+{
+    memset(s->kj_name, 0x60, 8); s->kj_name[8] = 0xFF;
+    s->kj_cur = 0;
+    for (int i = 0; i < 8 && src[i]; i++) { s->kj_name[i] = (uint8_t)src[i]; s->kj_cur++; }
+    s->kj_len = s->kj_cur;
+}
+
+/* A66A / A67F: after a cursor step, spin on int 61h until the direction is
+ * released.  No idle_poll there; the oracle takes these int 61h polls as
+ * kenj:A597 boundaries too (they would stall it otherwise), so does the port. */
+static int kenj_release_wait(Shop *s, uint8_t bit)
+{
+    for (long guard = 0; guard < 8000L * SHOP_TICKS_PER_FRAME && !s->leave; guard++) {
+        if (shop_poll(s, "kenj:A597")) return 1;
+        if (!(s->t && (s->t->dirs & bit))) break;
+        shop_tick(s);
+    }
+    if (s->t) s->t->last_ascii = 0;                             /* A670 / A685 */
+    return s->leave;
+}
+
+/* A559 kenj_name_edit: 0 = Enter, 1 = Alt (or the run ended).  Armed at A568,
+ * poll site A597 (after idle_poll A592).  Per pass: Alt edge -> cancel; Enter
+ * held (FF18 bit0) -> accept; Space edge -> the highlighted file's name; a
+ * typed key (FF29: Enter ignored, Backspace, else the char at the cursor);
+ * then int 61h: R/L move the cursor (and wait for the release), U/D move the
+ * file list exactly like menu_select (a 40-tick slide or scroll, no boundary
+ * inside, repeating while held). */
+static int kenj_name_edit(Shop *s)
+{
+    Town *t = s->t;
+    if (t) { t->last_ascii = 0; t->btn1_edge = t->btn2_edge = 0; }   /* A55E..A56D (FF74 = FF: text entry) */
+    s->mscroll = 0; s->kj_row = 0;                              /* A572 / A577 */
+    if (s->mtot) menu_cursor(s, 0, 1);                          /* A57E..A585 [6014] */
+    kenj_draw_name(s); kenj_move_cursor(s, 0);                  /* A58A / A58F */
+    wait_arm();                                                 /* A568 */
+    for (long guard = 0; guard < 8000L * SHOP_TICKS_PER_FRAME && !s->leave; guard++) {
+        if (shop_poll(s, "kenj:A597") || !t) return 1;
+        if (t->btn2_edge) { t->btn2_edge = 0; return 1; }       /* A59C: CF=1, A5AE..A5B3 */
+        if (t->menu_key & 1) { t->btn2_edge = 0; return 0; }    /* A5A4: CF=0, A5AE..A5B3 */
+        if (t->btn1_edge) {                                     /* A5B9 */
+            int i = s->mscroll + s->kj_row;
+            kenj_set_name(s, i < s->kj_nfiles ? s->kj_files[i] : "");
+            t->btn1_edge = 0;
+            vid_window(s->fb, 0, KJ_NAME_X / 4, KJ_NAME_Y, 0x10, 0x10);   /* A601..A613 */
+            kenj_draw_name(s); kenj_move_cursor(s, 0);
+            continue;
+        }
+        if (t->last_ascii) {                                    /* A627 */
+            uint8_t c = t->last_ascii;
+            t->last_ascii = 0;
+            if (c == 0x0D) continue;                            /* A636 */
+            if (c == 0x08) { kenj_backspace(s); continue; }     /* A63B -> A827 */
+            if (s->kj_name[s->kj_cur] == 0x60) s->kj_len++;     /* A642..A64F */
+            s->kj_name[s->kj_cur] = c;                          /* A653 */
+            kenj_draw_name(s); kenj_move_cursor(s, 1);
+            continue;
+        }
+        uint8_t d = t->dirs;                                    /* A65F int 61h */
+        if (d & DIR_RIGHT) { kenj_move_cursor(s, 1);  if (kenj_release_wait(s, DIR_RIGHT)) return 1; continue; }
+        if (d & DIR_LEFT)  { kenj_move_cursor(s, -1); if (kenj_release_wait(s, DIR_LEFT))  return 1; continue; }
+        if (s->mtot) {                                          /* A68B */
+            d &= 3;
+            int row = s->kj_row;
+            if (d == 1) {                                       /* A699 up */
+                if (row) { menu_cursor_slide(s, row, -1); s->kj_row--; continue; }   /* [6018] */
+                if (s->mscroll) { s->mscroll--; kenj_draw_rows(s); shop_wait(s, 10 * 4); continue; }   /* A6B6..A704 */
+            } else if (d == 2 && row + s->mscroll + 1 <= s->mtot - 1) {   /* A70E..A71F */
+                if (row < s->mvis - 1) { menu_cursor_slide(s, row, 1); s->kj_row++; continue; }   /* [601A] */
+                s->mscroll++; kenj_draw_rows(s); shop_wait(s, 10 * 4); continue;   /* A73B..A78B */
+            }
+        }
+        shop_tick(s);
+    }
+    return 1;
+}
+
+/* A427 kenj_pick_name: 1 = a name is in FF6C, 0 = cancelled (CF=1) */
+static int kenj_pick_name(Shop *s)
+{
+    Game *g = s->g;
+    /* A427: krn_load mode 6 probes STDPLY.BIN (the "insert disk 1" prompt) */
+    kenj_find_files(s);                                         /* A433..A43F */
+    vid_window(s->fb, 0xFF, 0x0D, 0x60, 0x36, 0x37);            /* A444 */
+    vid_window(s->fb, 0xFF, 0x0D, 0x60, 0x26, 0x37);            /* A451 */
+    kenj_set_name(s, g->player_name);                           /* A45E..A48A */
+    const uint8_t *prompt = imgp(s, 0xA51C);                    /* "Input name:" FF */
+    if (prompt) vid_puts(s->fb, s->font, prompt, 0x3C, 0x6C);   /* A48D..A495 [202A] */
+    s->mx4 = 0x34; s->my = 0x63;                                /* A4A5 [FF54] = 3463 */
+    s->mscroll = 0;
+    kenj_draw_rows(s);                                          /* A4B1..A4C5 */
+    s->mtot = s->kj_nfiles; s->mvis = 5;                        /* A4CB..A4D1 */
+    int cancel = kenj_name_edit(s);                             /* A4D6 */
+    vid_window(s->fb, 0xFF, 0x0D, 0x60, 0x36, 0x37);            /* A4DA */
+    if (cancel) return 0;                                       /* A4E8 */
+    memset(g->player_name, 0, 8);                               /* A4EB..A4F5: before the check */
+    if (!s->kj_len) return 0;                                   /* A4F7..A4FF: an empty name cancels */
+    for (int i = 0; i < 8; i++) {                               /* A500..A514 */
+        uint8_t c = s->kj_name[i];
+        if (c == 0xFF || c == 0x60) break;
+        g->player_name[i] = (char)c;
+    }
+    return 1;
+}
+
 static void sage_action(Shop *s, uint8_t op)
 {
     Game *g = s->g;
@@ -1131,13 +1436,20 @@ static void sage_action(Shop *s, uint8_t op)
         case 2: say(s, img16(s, 0xB5EB + 2u * (unsigned)(s->town_id - 1))); print_text(s);
                 say(s, 0xADBF); return;
         default:                                                /* A178 Record Experience */
-            if (s->t) town_page_push(s->t);      /* [80]/[83]/[C2]: the page is the file */
-            if (player_save_usr(g, s->dir, g->player_name[0] ? g->player_name : "ZELIARD") == 0) {
-                s->saved = 1;
-                say(s, 0xAF7C);                                 /* "I shall record your experiences." */
-            } else say(s, 0xADBF);
+            /* A17B: the name dialog; cancelled -> ADBF, else AF7C "I shall
+             * record your experiences./" FF 03 (the write, below) "Place is
+             * saved ... continue your quest?" FF 02 FF 06 */
+            say(s, kenj_pick_name(s) ? 0xAF7C : 0xADBF);
             return;
         } }
+    case 3:                                                     /* A862: write NAME.USR */
+        if (s->t) town_page_push(s->t);          /* [80]/[83]/[C2]: the page is the file */
+        /* 256 bytes from BASE:0000.  A failed create/write shows the disk-error
+         * box (A8B2..A8FF, a Space wait with no poll site) and goes back to
+         * A178; the port reports it and carries on with the script. */
+        if (player_save_usr(g, s->dir, g->player_name) == 0) s->saved = 1;
+        else fprintf(stderr, "[sage] cannot write %s.usr\n", g->player_name);
+        return;
     case 1: {                                                   /* A18E See Power */
         s->bought = 1;
         /* A1D1: the sage raises his arms — three frames at 0x19 ticks, eyes shut
@@ -1164,9 +1476,10 @@ static void sage_action(Shop *s, uint8_t op)
         say(s, img16(s, 0xB029 + 2u * (unsigned)sage_assess(s)));
         return; }
     case 2:                                                     /* A914 "continue your quest?" */
-        menu_box(s, 0x2B, 0x2F, 0x0C, 0x19, 0x30, 0x2E);
+        menu_box(s, 0x2F, 0x2B, 0x0C, 0x19, 0x30, 0x2E);        /* A913: bx = 2F2B */
+        /* No = `jmp far [FF00]` (A934), back to DOS; the port stays in the game */
         yes_no(s);
-        vid_window(s->fb, 0, 0x2B, 0x2F, 0x0C, 0x19);
+        vid_window(s->fb, 0, 0x27, 0x17, 0x1D, 0x41);           /* A92D call A983 */
         return;
     case 4: shop_wait(s, 140); return;
     case 5: sage_level_up(s); return;                           /* A2B4 */
@@ -1248,6 +1561,9 @@ static int shop_open_entry(Shop *s, Town *t, int dest, int death)
     if (dest < 0 || dest >= SHOP_COUNT) return -1;
     memset(s, 0, sizeof *s);
     s->t = t; s->g = t->g; s->dest = dest;
+    /* 6E96 / A006: the overlay and its portrait come through [10C], and STICK's
+     * sar_open_entry clears FF1D on every successful open (0CDC) */
+    t->btn1_edge = 0;
     s->kj_x8 = death ? 0x0E : 0x07;                             /* A009 / A02A: BB12 */
     s->town_id = t->map->town_id ? t->map->town_id : 1;
     s->font = (const TextFont *)t->font;
@@ -1289,7 +1605,8 @@ static int shop_open_entry(Shop *s, Town *t, int dest, int death)
     case SHOP_ARMOUR:                                           /* A06B, cleared at A09E */
         s->hk.armr_on = (s->tp == 0xB2A2) ? 0 : 0xFF; break;
     case SHOP_INN:    s->hk.inn_on = 0xFF; break;               /* A06F */
-    case SHOP_BANK:   s->hk.bank_on = 0xFF; s->hk.bank_map = 0xA773; break;  /* A058 */
+    case SHOP_BANK:   s->hk.bank_on = 0xFF; s->hk.bank_map = 0xA773;  /* A058 */
+                      s->bank_delay = img8(s, 0xAD2F); break;   /* whatever the image holds until A2F2 sets it */
     default: break;
     }
     return 0;
@@ -1310,8 +1627,29 @@ static void bank_entry(Shop *s)
     s->hk.bank_on = 0;                                          /* A08F */
 }
 
+/* omoypro A03D..A055.  [49] == 0: wait for the sword button -- A044 clears
+ * FF1D (the arm point), A049 idle_poll, A04E the poll site, and only the
+ * Space edge ends it (Alt does nothing) -- then [2040], the dissolve back to
+ * town.bin.  [49] != 0 is the ending instead (A05A..A0A9: enddemo.bin over
+ * town.bin, never to return), which the port does not start from here. */
+static void omoy_wait(Shop *s)
+{
+    if (s->g->jashiin_defeated) {
+        fprintf(stderr, "[omoya] [49] is set: the original starts the ending here (not wired)\n");
+        return;
+    }
+    if (s->t) s->t->btn1_edge = 0;                              /* A044 */
+    wait_arm();
+    for (long guard = 0; guard < 8000L * SHOP_TICKS_PER_FRAME && !s->leave; guard++) {
+        if (shop_poll(s, "omoy:A04E")) break;
+        if (!s->t || s->t->btn1_edge) break;                    /* A04E test [FF1D] */
+        shop_tick(s);
+    }
+}
+
 void shop_loop(Shop *s)
 {
+    if (s->dest == SHOP_OMOYA) { omoy_wait(s); return; }
     if (!s->tp) return;
     if (s->dest == SHOP_BANK) bank_entry(s);
     for (int guard = 0; guard < 200 && !s->leave; guard++) {

@@ -16,7 +16,7 @@
  *   +3 u16 HP = 150 (also the initial HP-bar value passed to video [200A]/[200C])
  *   +5 u16 EXP = 120   +7 hero camera column 12   +8 knockback-left = 0
  *   +9 u16 -> A7D0 name record passed to video [2010]: {x 0x10, y 0x00BB, len 8, "Cangrejo"}
- *   +B u16 gold = 150
+ *   +B u16 almas = 150 (fight.bin 71F2 -> 917C, the almas adder)
  * Contact table A010: 6 for every part.  No drops, no per-class EXP.
  * Frame tables A030: parts 0..8 (A05C..A1E2, 10 poses each), 0x10..0x12
  * (A214/A246/A273: the three lower weak-point parts), 0x14 (A2A5), 0x15
@@ -115,7 +115,7 @@ static void jump_step(void)
 {
     pose = 9;
     u8 s = jump_script[jump_idx];
-    if (s == 0xFF) { jump_on = 0; land_idx = 0; land_on = 0xFF; land_step(); return; }   /* A5C0 */
+    if (s == 0xFF) { walk_dir = ~walk_dir; jump_on = 0; land_idx = 0; land_on = 0xFF; land_step(); return; }   /* A5C0 */
     if ((s & 0xF) != 8) *boss_row = (*boss_row + ((s & 0xF) >> 1) - (s & 1)) & 0x3F;    /* A4D7 */
     if (s & 0xF0) { if (!walk_dir) step_left(); else step_right(); }
     draw(); jump_idx++;
@@ -123,7 +123,7 @@ static void jump_step(void)
 
 /* 0xA607  Death: 40 frames; sound 0x23 every other frame during the first 30,
  * boss_dying set (fight.bin plays the explosion fx), poses swing 0..5 for
- * the first 20 frames then pose 8; then boss_defeated (EXP/gold awarded by
+ * the first 20 frames then pose 8; then boss_defeated (EXP/almas awarded by
  * fight.bin 71DA). */
 static void death_step(void)
 {

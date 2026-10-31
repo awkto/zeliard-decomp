@@ -30,7 +30,7 @@ established the meaning. *uncertain* = inferred from a single use.
 | FF2C | 2 | arena_seg | segment of the 64 KB data arena | loader | everyone |
 | FF2E | 1 | boss_cutscene | boss intro/hero frozen: disables contact, sword, magic hits | AI (boss) | fight `6F16`,`7526`,`71FA`,`8BFE` |
 | FF2F | 1 | boss_dying | play boss death fx `[3010]` | AI (boss) | fight `7114` |
-| FF30 | 1 | boss_defeated | skip enemy pass; with `EDA0==FF` award EXP/gold | AI (boss) | fight `7025`,`71D3` |
+| FF30 | 1 | boss_defeated | skip enemy pass; with `EDA0==FF` award EXP/almas (no gold) | AI (boss) | fight `7025`,`71D3` |
 | FF31 | 2 | win | ring pointer of screen row 0, col 0 | fight `6CE8`,`6621`,`6B2E` | fight `6DB1`, gf `3042`,`3DDF` |
 | FF33 | 1 | speed | frame = 4×speed ticks; default 5 | loader `0173`, kernel `07F9` | fight `7125`,`714C`,`7F82` |
 | FF34 | 1 | boss_map | level flags bit 7 (boss room map) | fight `7D0D`,`61E4` | fight (many) |

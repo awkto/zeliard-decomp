@@ -358,6 +358,7 @@ static void town_frame(Shell *s)
             (const char *[]){"king", "omoya", "sage", "armour", "drug", "church", "bank", "inn"}[dest],
             s->tmap.town_id);
         if (shop_run(t, dest)) fprintf(stderr, "[shop] cannot load the overlay\n");
+        t->btn1_edge = 0;   /* 6ECA 6AA2 reloads through [10C]: STICK 0CDC clears FF1D (FF1E stays) */
         town_apply_patches(&s->tmap, g->page);                          /* 6EAF */
         town_npc_markers_reset(t);
         if (t->quit) break;

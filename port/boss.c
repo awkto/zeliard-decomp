@@ -161,7 +161,17 @@ void boss_part(Game *g, uint16_t col, uint8_t row, uint8_t type, uint8_t phase)
     memset(o, 0, sizeof *o);
     o->col = col; o->row = (uint8_t)(row & 0x3F); o->rcol = r;
     o->type = type; o->hit = g->boss.part_hit; o->phase = phase;
-    o->home_col = 0xFFFF; o->flags = 0x20;              /* never respawned by 8D90 */
+    /* +7..+F: the overlay never writes them (CRAB A69B..A6CA, A57E..A594), so
+     * they are whatever BASE:C000+ held there -- in a boss room the tail of
+     * the previous map (#71).  Nothing reads them while FF34 is set: the
+     * enemy pass 8D19 (respawn, tall records, items) is skipped at 8D1D and
+     * the slash probe 6E99 does not run. */
+    unsigned a = (unsigned)g->c000_objs + 16u * (unsigned)i;
+    if (a + 16 <= sizeof g->c000) {
+        const uint8_t *q = g->c000 + a;
+        o->flags = q[7]; o->hp = q[8]; o->next = q[9]; o->link = q[10];
+        o->home_col = (uint16_t)(q[11] | q[12] << 8); o->home_row = q[13]; o->home_type = q[14]; o->timer = q[15];
+    }
     int p = game_ring_index(g, o->row, r);
     g->under_sprite[i] = g->ring[p];
     g->ring[p] = (uint8_t)(0x80 | i);
@@ -210,6 +220,56 @@ void boss_update(Game *g)
     case BOSS_MAO2: boss_mao2_entry(g); return;
     default: boss_generic_entry(g); return;
     }
+}
+
+/* gfmcga 3729: one spawn attempt for a sprite whose top-left cell is drawn
+ * at viewport (x, y).  The list lives at EDA0: {x, y, life 3, kind}, FF-ended,
+ * at most 32. */
+static void spark_spawn(Game *g, uint8_t *list, uint8_t x, uint8_t y)
+{
+    if ((krn_random(g) & 0xF) < 0xE) return;                       /* 3733..373E */
+    unsigned n = 0;
+    while (list[4 * n] != 0xFF) n++;                                /* 3744 */
+    if (n >= 0x20) return;                                          /* 3750 */
+    uint8_t *p = list + 4 * n, r;
+    do r = (uint8_t)(krn_random(g) & 3); while (r == 3);            /* 3756 */
+    uint8_t v = (uint8_t)(r - 1 + x);
+    if (v == 0xFF) v = 4;                                           /* 3767: sic, not 0 */
+    if (v >= 0x1B) v = 0x1A;
+    p[0] = v;
+    do r = (uint8_t)(krn_random(g) & 3); while (r == 3);            /* 3774 */
+    v = (uint8_t)(r - 1 + y);
+    if (v == 0xFF) v = 0;
+    p[1] = v;
+    p[2] = 3;                                                       /* 378C */
+    p[3] = (uint8_t)(krn_random(g) & 3);                            /* 378F */
+    p[4] = 0xFF;
+}
+
+void boss_sparks(Game *g)
+{
+    uint8_t *list = g->spark;
+    list[0] = g->boss_state;               /* whoever reset EDA0 to FF emptied the list */
+    if (g->boss_map && g->boss_dying) {
+        /* 302C's row loop: [4FF1] = 0x12..1, [4FF3] = 0x12-[4FF1] = the row;
+         * the inner columns 0..26 go through 3124 -> 3468 for every sprite
+         * marker (E900 holds FE under a sprite, so it always differs); 3468
+         * spawns (34D5) unless it is the last row (34C0), 3729 only for rows
+         * < 0x10.  The edge paths 33E3 / 34E3 / the row above never spawn. */
+        for (int r = 0; r < 0x10; r++)
+            for (int c = 0; c < 27; c++)
+                if (game_ring_cell(g, c, r) & 0x80) spark_spawn(g, list, (uint8_t)c, (uint8_t)r);
+    }
+    if (g->boss_dying) {                                            /* 7114 -> [3010] = 379B */
+        unsigned si = 0, di = 0;
+        while (list[si] != 0xFF && si + 4 < sizeof g->spark) {
+            /* (the spark is drawn here and its 2x2 E900 cells set to FE) */
+            if (--list[si + 2] != 0xFF) { memmove(list + di, list + si, 4); di += 4; }   /* 387F */
+            si += 4;
+        }
+        list[di] = 0xFF;
+    }
+    g->boss_state = list[0];
 }
 
 /* 0x71CC  EXP + almas once the death animation has finished (71F2 -> 917C). */
@@ -266,8 +326,20 @@ int post_boss_transition(Game *g)
     memcpy(name, m->name, sizeof name);
     map_parse(m, m->raw, m->rawlen);
     memcpy(m->name, name, sizeof name);
-    enemies_load(g);                                                /* 73B0 -> 6042 */
-    g->boss_state = 0xFF;
+    enemies_load(g);                                                /* 9659's count into FF4A */
+    /* 73B0 `jmp 6042`: fight.bin restarts on the same map.  6049..6073 clear
+     * 9F20..9F22, the shot/magic/spark lists and the boss flags; FF34 is 0
+     * now, so 6179 redraws the HUD and 623D refills the ring (6C98), then
+     * 628A drops both press edges before the main loop starts again at 629C
+     * -- the rest of the pass that called 6F9B never runs. */
+    g->ice_slide = g->ice_steps = g->walk_dir = 0;                  /* 6049..6053 */
+    g->shots[0].col = 0xFF;                                         /* 605B: EB80 */
+    g->boss_state = 0xFF;                                           /* 605E: EDA0 */
+    for (int i = 0; i < 4; i++) g->magic[i].live = 0;               /* 6061: EB15 = FFFF */
+    g->boss_knock_left = 0;                                         /* 6073: 9F01 */
+    game_ring_refill(g);                                            /* 623D -> 6C98 */
+    g->btn1_edge = g->btn2_edge = 0;                                /* 628A: FF1D / FF1E */
+    g->loop_restart = 1;
     fprintf(stderr, "[boss] defeated: %d pokes applied, exit door at column %u, "
                     "post-boss AI %d / bank %d\n", npoke, col, pai, pen);
     return 1;

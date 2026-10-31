@@ -271,7 +271,8 @@ static const struct req *const omoy_gd_req[6] = /* A0BB */ {A0C7 /*gdega*/, A0D3
  * {0,0x02,"gdega.bin"} {0,0x03,"gdcga.bin"} {0,0x03,"gdcga.bin"} {0,0x04,"gdhgc.bin"}
  * {0,0x06,"gdmcga.bin"} {0,0x05,"gdtga.bin"} — an earlier note here claimed five entries with
  * no Tandy row; there is one. */
-/* omoy_draw_picture @A104: 16 rows x 17 cols at (x4 0x1E = 120 px, y 0x0C = 12) from omoy_picture_map */
+/* omoy_draw_picture @A104: 16 rows x 17 cols from omoy_picture_map, BX = 0C1E (A107): GT_DRAW_CELL's BH is the
+ * column in 8-px cells (0x0C = 96 px) and BL the row (0x1E = 30) -- not (x4 0x1E, y 0x0C) as this said before #65 */
 static const u8 omoy_picture_map[16][17] = /* A129 */ {
     {0,0,0,0,0,0,0,0x01,0x02,0,0,0,0,0,0,0,0},
     {0,0,0,0,0,0,0x03,0x04,0x05,0x06,0,0,0,0,0,0,0},
@@ -406,8 +407,8 @@ static const u8 bank_bow_frames[4][40] = {
 /* bank_act1_menu @A0D2 */
 void bank_act1_menu(void)
 {
-    bank_erase_box();                                        /* A0D2 call A61F: VID_WINDOW(0, x4 0x17, y 0x27, w 0x41, h 0x1C) */
-    VID_WINDOW(0xFF, x4=0x1D, y=0x28, w4=0x1A, h=0x37);      /* A0D5..A0DD */
+    bank_erase_box();                                        /* A0D2 call A61F */
+    VID_WINDOW(0xFF, x4=0x28, y=0x1D, w4=0x1A, h=0x37);      /* A0D5..A0DD: BX = 281D, CX = 1A37 */
     menu_pos = 0x2820; menu_visible_rows = 5; menu_total = 5;/* A0E2..A0ED [FF54],[FF52],[FF53] */
     menu_draw_items(bank_menu, 5);                           /* A0F2..A0F8 [600E] */
     menu_scroll = 0;                                         /* A0FD [FF56] */
@@ -463,14 +464,19 @@ void bank_deposit(void)
     bank_amt_hi = 0; bank_amt = 0;                                        /* A295..A29A */
     bank_max_hi = gold_hi; bank_max = gold_lo;                            /* A2A0..A2AB (limit = gold carried) */
     for (;;) {                                                            /* A2AE */
-        GT_NUMBER_LINE(gold_can_pay(bank_amt));  GT_MENU_BLIT(x4 0x2E, y 0x31);   /* A2B7..A2C4 "GOLD CARRIED" = gold - amount */
-        GT_NUMBER_LINE(bank_amt);                GT_MENU_BLIT(x4 0x48, y 0x31);   /* A2CB..A2D3 "DEPOSIT AMT" */
-        input = INT61();                                                  /* A2D8 */
+        /* gtmcga 388E: seven 6x7 digits, leading zeros blanked, colour 9, 44 px x 9 rows; BX = 312E / 3148 */
+        GT_NUMBER_LINE(gold_can_pay(bank_amt));  GT_MENU_BLIT(x4 0x31, y 0x2E);   /* A2B7..A2C4 "GOLD CARRIED" = gold - amount */
+        GT_NUMBER_LINE(bank_amt);                GT_MENU_BLIT(x4 0x31, y 0x48);   /* A2CB..A2D3 "DEPOSIT AMT" */
+        input = INT61();                                                  /* A2D8: held state (AL dirs, AH buttons), not edges.
+                                                                             The harness boundary bank:A2D8 (armed at A295) */
         bank_adjust_amount(input.dirs);                                   /* A2DA call A62C */
         if (input.fire & 1) break;                                        /* A2DD confirm (Space/A) */
         shop_text_ptr = bank_str_dont_understand;                         /* A2E2 */
         if (input.fire & 2) return;                                       /* A2E8 cancel (Alt/B) */
-        bank_key_repeat(input.dirs);                                      /* A2EE..A319: first repeat after 0x23 ticks, then delay-1 each time, min 1 */
+        /* A2EE..A319: no direction -> [AD2F] = 0x23 and round again; a direction -> FF1A = 0 and spin on
+         * int 61h until it is released or FF1A >= [AD2F], then [AD2F] -= 1 (0 - 1 -> 1): a held key
+         * repeats after 35, 34, 33, ... ticks, down to an alternating 1 / 0.  [AD2F] is 0 in the image. */
+        bank_key_repeat(input.dirs);
     }
     shop_text_ptr = bank_str_dont_understand;                             /* A31B */
     if (bank_amt_hi == 0 && bank_amt == 0) return;                        /* A321..A330 */
@@ -487,7 +493,8 @@ void bank_deposit(void)
 void bank_say_balance(const char *empty_str)
 {
     shop_text_ptr = empty_str;  if (bank_hi == 0 && bank_lo == 0) return;             /* A371..A384 */
-    shop_text_ptr = bank_str_one_gold_balance;  if (bank_hi == 0 && bank_lo == 1) return;   /* A385..A398 (AC35) */
+    shop_text_ptr = bank_str_one_gold_balance;  if (!(bank_hi & (u8)bank_lo) && bank_lo == 1) return;   /* A385..A398 (AC35):
+                                     `test [88],al` with AL = low byte of [89], so 0x010001 also reads "one gold" */
     print(AAF4 "\x0dYour balance is "); print_number(bank_hi:bank_lo); /* A399..A3C4: format_number -> AD30, printed; then continues "&golds.\xff\x01" */
 }
 /* bank_withdraw @A3D0 */
@@ -509,6 +516,7 @@ void bank_withdraw(void)
     else { print(ABA4 "Here you are, sir. "); print_number(amount); print("&golds."); }   /* A4EB..A51A */
     bank -= amount;                                                       /* A51F..A532 */
     bank_say_balance(ABDE /*"\x0dYour account is empty."*/);              /* A535..A583 */
+    /* ...but A554 is a plain `ret`: when the balance left is "one gold" the withdrawal is never paid out */
     gold_add(amount); VID_NUM_GOLD();                                     /* A584..A590 [600C],[2016] */
 }
 /* bank_balance @A595 */
@@ -528,7 +536,7 @@ void bank_act2_unbow(void)
     tick = 0; do bank_hook(); while (tick < 0x64);                        /* A609..A616 */
 }
 void bank_act3_flag_big(void) { bank_big_deposit = 0xFF; }                /* A619 */
-void bank_erase_box(void) { VID_WINDOW(0, x4=0x17, y=0x27, w4=0x41, h=0x1C); }   /* A61F */
+void bank_erase_box(void) { VID_WINDOW(0, x4=0x27, y=0x17, w4=0x1C, h=0x41); }   /* A61F: BX = 2717, CX = 1C41 */
 /* bank_adjust_amount @A62C (AL = directions): right -10, left +10, down -1, up +1; clamp 0..max */
 void bank_adjust_amount(u8 dirs)
 {

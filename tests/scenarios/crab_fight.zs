@@ -1,0 +1,4 @@
+# start: CRAB.usr
+# make: --town 2 --town-col 4 --level 8 --life 255 --sword 3 --shield 2 --keys 1 --save CRAB
+# what: Satono -> MP10 (141,32) door -> MP1D; the Cangrejo fight to the kill (#71: part records' +7..+F are the previous map's bytes past MP1D's end, A5C0 turn on landing, A510 part 0x14 phase, gfmcga 3729/379B death sparks in EDA0 and their RNG), the 71DA reward (EXP 120 + ALMAS 150, no gold: #68), 72F1's poked exit door and its 6042 restart (628A edges), then out through the door to MP10
+L2 .40 R13 .3 U2 .30 .20 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2  .40 L3 .3 U2 .40 R6 .10

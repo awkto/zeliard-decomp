@@ -92,12 +92,27 @@ static void ring_fill(Game *g)                                                  
         if (++c == g->map->width) c = 0;
     }
 }
+/* 6771 / 68FF: after a scroll, every live record standing in the map column
+ * that just came in gets its marker back in that ring column (the column
+ * itself was refilled from the map).  The cell under it is not saved; FF4A
+ * is left at the record count. */
+static void remark_column(Game *g, int map_col, uint8_t ring_col)
+{
+    g->obj_index = 0;
+    for (int i = 0; i < g->nobj; i++, g->obj_index++) {
+        const MapObj *o = &g->obj[i];
+        if ((o->col >> 8) == 0xFF || o->col != (uint16_t)map_col) continue;
+        g->ring[game_ring_index(g, o->row, ring_col)] = (uint8_t)(0x80 | i);
+    }
+}
+void game_ring_refill(Game *g) { ring_fill(g); }
 static void scroll_left(Game *g)                                                                        /* 66F8: world right, hero left */
 {
     if (--g->scroll_col < 0) g->scroll_col = g->map->width - 1;
     memmove(g->ring + 1, g->ring, RING_SIZE - 1);
     ring_put_column(g, 0, g->scroll_col);
     shots_shift(g, 1);                                                  /* 864E */
+    remark_column(g, g->scroll_col, 0);                                 /* 676D */
 }
 static void scroll_right(Game *g)                                                                       /* 68A0 */
 {
@@ -113,6 +128,7 @@ static void scroll_right(Game *g)                                               
     int c = g->scroll_col + 0x23; if (c >= g->map->width) c -= g->map->width;
     ring_put_column(g, 0x23, c);
     shots_shift(g, 0);                                                  /* 8639 */
+    remark_column(g, c, 0x23);                                          /* 68FF */
 }
 /* 6621 `dec byte [0x82]` / 6B2E `inc byte [0x82]`: the byte is never masked --
  * every reader takes `& 0x3F` -- so it runs on past 63 (seen as 0x40 by the
@@ -932,6 +948,7 @@ static void frame_7094(Game *g)
         if (g->hp > g->max_hp) { g->hp = g->max_hp; g->hp_regen_pending = 0; }   /* 70F3..70FF */
         g->sfx_request = 0x13;                                          /* 7105 */
     }
+    boss_sparks(g);                                                     /* 710F [3000] / 7114 [3010] */
     orbs_update(g);                                                     /* 7133: the second orb pass */
     sword_apply(g);                                                     /* 7144: 6F07, second half of the frame */
     sword_advance(g);                                                   /* 7147: [3006], second swing step */
@@ -983,6 +1000,7 @@ static void ladder_step(Game *g)
     g->crouching = 0; g->vstate = V_GROUND; g->conveyor = 0; g->attacking = 0;
     frame(g);
     if (g->hero_dead) return;                                           /* 718C jumped to 98FC */
+    if (g->loop_restart) { g->loop_restart = 0; return; }               /* 73B0 jmp 6042: 629C starts over */
     hero_knockback(g);
     hero_input(g);
     if (g->on_ladder == 0xFF) {
@@ -1079,6 +1097,7 @@ void game_step(Game *g)
     ice_slide_step(g);
     frame(g);
     if (g->hero_dead) return;                                           /* 718C jumped to 98FC */
+    if (g->loop_restart) { g->loop_restart = 0; return; }               /* 73B0 jmp 6042: 629C starts over */
     magic_input(g);                                                     /* 87B0 */
     unstick_from_wall(g);
     hero_knockback(g);                                                  /* 6412 */
@@ -1129,7 +1148,33 @@ void game_place(Game *g, int col, int row, int face_left)
     g->entry_col = col; g->entry_row = row; g->entry_face = (uint8_t)(face_left ? 1 : 0);
     ring_fill(g);
     fixtures_load(g);
+    c000_load(g);
     enemies_load(g);
+}
+
+/* The object records of the map being left are part of its image at
+ * [C010] (fight.bin works on them in place); the kernel then loads the new
+ * map raw to C000 over it (ARCHITECTURE.md "Maps").  Keep that memory so the
+ * bytes past a short map's end -- which a boss overlay's part records reach,
+ * see Game.c000 -- are the ones the original has there. */
+void c000_load(Game *g)
+{
+    unsigned o = g->c000_objs;
+    for (int i = 0; i < g->nobj && o + 16 <= sizeof g->c000; i++, o += 16) {
+        const MapObj *e = &g->obj[i];
+        uint8_t *p = g->c000 + o;
+        p[0] = (uint8_t)e->col; p[1] = (uint8_t)(e->col >> 8); p[2] = e->row; p[3] = e->rcol;
+        p[4] = e->type; p[5] = e->hit; p[6] = e->phase; p[7] = e->flags; p[8] = e->hp;
+        p[9] = e->next; p[10] = e->link; p[11] = (uint8_t)e->home_col; p[12] = (uint8_t)(e->home_col >> 8);
+        p[13] = e->home_row; p[14] = e->home_type; p[15] = e->timer;
+    }
+    if (g->nobj && o + 2 <= sizeof g->c000) g->c000[o] = g->c000[o + 1] = 0xFF;
+    const Map *m = g->map;
+    if (!m || !m->raw) return;
+    size_t n = m->rawlen < sizeof g->c000 ? m->rawlen : sizeof g->c000;
+    memcpy(g->c000, m->raw, n);
+    unsigned t = n >= 0x12 ? (unsigned)(m->raw[0x10] | m->raw[0x11] << 8) : 0;
+    g->c000_objs = (uint16_t)(t >= 0xC000 && t < 0xE000 ? t - 0xC000 : 0);
 }
 
 void game_enter(Game *g, const Map *m, const Tileset *t, int dest_col, int dest_row, int face_left)
