@@ -462,7 +462,9 @@ static void run_overlay(int ai_index, int sysmap, const char *name)
     CHECK(maxparts >= 8, "%s composes at least 8 parts (max %d)", name, maxparts);
     CHECK(G.boss.hp == G.boss.hp0, "%s took no damage while idle", name);
     /* one magic-7 hit (source 8 = 255) costs HP under every boss's own rule.
-     * MAO1 is the exception: its script reads no hit bits at all. */
+     * MAO1 is the exception: its script reads no hit bits at all.  MAO2 is
+     * invisible between teleports, so step on until a part is drawn. */
+    for (int k = 0; k < 64 && !G.nobj; k++) boss_update(&G);
     if (G.nobj && ai_index != BOSS_MAO1) {
         unsigned before = G.boss.hp;
         G.obj[0].hit = 0x48;
@@ -714,6 +716,54 @@ static void t_mao2(void)
     ai_unload(&o);
 }
 
+/* #61: phase 1 draws KRN_RANDOM exactly twice per teleport — A47E takes the
+ * side from AL bit 0 (shr al,1 / sbb al,al: set = face right at scroll_col + 4,
+ * clear = face left at + 24, the other side when outside 0x10..0x34) and A3E7
+ * the variant from AL bit 7 (rol al,1 / and al,1).  Run the real MPA0 and
+ * replay the LCG (ai.c) to check every decision.  The st[] indices mirror
+ * boss_mao2.c's enum: 2 = facing, 5 = teleporting, 6 = variant. */
+static uint16_t lcg(uint16_t r) { return (uint16_t)(r * 25173u + 13849u); }
+static void t_mao2_rng(void)
+{
+    Map m; Tileset t; AiOverlay o;
+    memset(&m, 0, sizeof m); memset(&t, 0, sizeof t);
+    if (map_load_system(&m, G_DIR, 30) || gfx_load_tileset(&t, G_DIR, m.tileset) || ai_load(&o, G_DIR, m.ai)) {
+        CHECK(0, "MAO2: cannot load MPA0"); map_free(&m); return;
+    }
+    game_init(&G, &m, &t);
+    G.present = present; G.ai = &o; G.boss_map = 0xFF; G.harness_rng = 1;
+    boss_init(&G);
+    G.encounter_frames = 0;
+    game_place(&G, (int)G.boss.start_col - 8, G.boss.start_row + 3, 0);
+    enemies_load(&G);
+    int decisions = 0, bad_calls = 0, bad_side = 0, bad_variant = 0, var[2] = {0, 0}, side[2] = {0, 0};
+    for (int f = 0; f < 1000; f++) {
+        uint16_t r0 = G.rng; unsigned c0 = G.rng_calls; uint8_t tele = G.boss.st[5];
+        boss_update(&G);
+        if (tele || G.boss.st[5] != 0xFF) continue;           /* not a new teleport */
+        decisions++;
+        uint16_t r1 = lcg(r0), r2 = lcg(r1);
+        if (G.rng_calls - c0 != 2) bad_calls++;
+        int right = r1 & 1;
+        unsigned c = (uint8_t)(G.scroll_col + (right ? 4 : 0x18));
+        if (c >= (unsigned)m.width) c -= (unsigned)m.width;
+        if (c < 0x10 || c > 0x34) {
+            right = !right;
+            c = (uint8_t)(G.scroll_col + (right ? 4 : 0x18));
+            if (c >= (unsigned)m.width) c -= (unsigned)m.width;
+        }
+        if (G.boss.col != c || G.boss.row != 9 || G.boss.st[2] != (right ? 0xFF : 0)) bad_side++;
+        if (G.boss.st[6] != ((r2 >> 7) & 1)) bad_variant++;
+        var[G.boss.st[6] & 1]++; side[right]++;
+    }
+    CHECK(decisions >= 5, "MAO2 teleported %d times in 1000 frames", decisions);
+    CHECK(bad_calls == 0, "MAO2: %d teleports did not draw KRN_RANDOM exactly twice (A47E, A3E7)", bad_calls);
+    CHECK(bad_side == 0, "MAO2: %d teleports took the side from the wrong bit (A483: AL bit 0)", bad_side);
+    CHECK(bad_variant == 0, "MAO2: %d variants not AL bit 7 of the second draw (A3EC)", bad_variant);
+    CHECK(var[0] && var[1], "MAO2 both throws and casts (%d/%d)", var[0], var[1]);
+    ai_unload(&o); map_free(&m);
+}
+
 /* the level records of the eleven boss maps, and the bank 6117 ends up with.
  * MPA0's +5 is 0xFF while its +4 names MAO2.GRP, so taking +5 unconditionally
  * left the final boss with no sprite bank at all. */
@@ -802,7 +852,7 @@ int main(int argc, char **argv)
         {"tako", t_tako}, {"tori", t_tori}, {"zela", t_zela}, {"zel2", t_zel2},
         {"meda", t_meda}, {"lega", t_lega}, {"layer tables", t_layers},
         {"drgn tables", t_drgn}, {"akma tables", t_akma},
-        {"mao1 script", t_mao1}, {"mao2 tables", t_mao2},
+        {"mao1 script", t_mao1}, {"mao2 tables", t_mao2}, {"mao2 rng", t_mao2_rng},
         {"boss banks", t_boss_banks},
         {"drgn/akma/mao", t_generic}, {"[E6] room", t_e6_room},
     };

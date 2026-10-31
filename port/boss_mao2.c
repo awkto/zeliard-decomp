@@ -153,24 +153,27 @@ static uint8_t mao2_hero_col(const Game *g)
     return (uint8_t)c;
 }
 
-/* A479: appear four columns left of the hero facing right, or 24 columns
- * along facing left; if that column is out of range use the other side. */
+/* A479: one random draw, bit 0 (shr al,1 / sbb al,al -> [AC1E]): set = face
+ * right and appear four columns right of scroll_col, clear = face left at
+ * scroll_col + 24 (8-bit sums, wrapped once at the map width [C002]).  If that
+ * column is outside 0x10..0x34 (A4A1) the side flips and the other column is
+ * taken as it is, unchecked (A4AA..A4C8).  Row 9 (A479: [AC05]). */
+static uint8_t mao2_side_col(Game *g, int right)
+{
+    unsigned width = g->map ? (unsigned)g->map->width : 256u;
+    uint8_t c = (uint8_t)(g->scroll_col + (right ? 4u : 0x18u));
+    if (c >= width) c = (uint8_t)(c - width);
+    return c;
+}
+
 static void mao2_teleport(Game *g)
 {
-    int right = (krn_random(g) & 0x80) != 0;
-    int width = g->map ? g->map->width : 256;
-    for (int try = 0; try < 2; try++) {
-        unsigned c = (unsigned)g->scroll_col + (right ? 4u : 24u);
-        if ((int)c >= width) c -= (unsigned)width;
-        if (c >= 0x10 && c <= 0x34) {
-            g->boss.col = (uint16_t)c;
-            ST(S_FACING) = (uint8_t)(right ? 0xFF : 0);
-            g->boss.row = 9;
-            return;
-        }
-        right = !right;
-    }
-    g->boss.col = 0x20; ST(S_FACING) = (uint8_t)(right ? 0xFF : 0); g->boss.row = 9;
+    int right = (krn_random(g) & 1) != 0;
+    uint8_t c = mao2_side_col(g, right);
+    if (c < 0x10 || c >= 0x35) { right = !right; c = mao2_side_col(g, right); }
+    g->boss.col = c;
+    ST(S_FACING) = (uint8_t)(right ? 0xFF : 0);
+    g->boss.row = 9;
 }
 
 /* AB88: +80 HP every 32 frames; back to 800 resumes phase 1 at the flicker-out */
@@ -278,7 +281,7 @@ void boss_mao2_entry(Game *g)
         if (ST(S_S1ON) || ST(S_S2ON)) { mao2_shots(g); return; }
         mao2_teleport(g);
         ST(S_STEP) = 0; ST(S_TELE) = 0xFF;
-        ST(S_VARIANT) = (uint8_t)(krn_random(g) >> 15);
+        ST(S_VARIANT) = (uint8_t)((krn_random(g) >> 7) & 1);   /* A3E7: rol al,1 / and al,1 */
     }
     ST(S_STEP)++;                                               /* A3F3 */
     if (ST(S_STEP) < 6 || (ST(S_STEP) >= 11 && ST(S_STEP) < 17)) {

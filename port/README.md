@@ -51,9 +51,9 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 10 test binaries
-make test            # physics (143) + combat/AI (219) + town (160) + boss (628) + shop (183)
+make test            # physics (147) + combat/AI (219) + town (160) + boss (634) + shop (183)
                      #   + status (87) + playthrough (118) + audio (315) + cutscene (46)
-                     #   + video (70) = 1969 assertions.  Needs no game files: every
+                     #   + video (70) = 1979 assertions.  Needs no game files: every
                      #   binary skips its data half when zeliard/ is not there.
 make verify          # 208 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -598,8 +598,9 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   not scripted at all.  Shops are answered frame by frame: the driver pages the text
   with the select button and walks the cursor to the row the route names, using the
   `in_menu` / `menu_row` that `menu_select` now publishes.
-* `test_physics.c` — 143 assertions (idle, walk, walls, jumps, ceilings, gaps, edge
-  fall, ladders, conveyor, hazard, MP10 door/platform, elevators and the fixture-C
+* `test_physics.c` — 147 assertions (idle, walk, walls, jumps, ceilings, gaps, edge
+  fall, ladders, conveyor, hazard, currents/updraft (2 per frame, and the frame still
+  renders: #60), MP10 door/platform, elevators and the fixture-C
   patrol, locked doors + keys + the message-box lifetime, the C00C patch list, the
   26-frame walk-in, **and the ring/`[80]` alignment after scrolling both ways** —
   the last one walks MP10's entrance shelf 40 columns east and back and checks that
@@ -613,7 +614,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   the sound stub; every eai overlay's A008/A010 tables and a 200-frame run of each
   cavern's AI; the tall (2×4) spawn**.  It also renders the DOSBox capture's scene
   for `make verify`.
-* `test_boss.c` — 628 assertions: the `[A002]` block of **all eleven** boss
+* `test_boss.c` — 634 assertions: the `[A002]` block of **all eleven** boss
   overlays against docs/ENEMIES.md §3 (HP, EXP, gold, camera column, knock-left,
   start cell, contact damage, the name record); mp1d's level record (boss bit 7,
   AI 1 = CRAB, bank +5, post-boss banks +6/+7, an *empty* C010 list and no door);
@@ -629,7 +630,9 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   hit *every* part carries bit 5, that `sword_apply` then refuses them all so the
   boss takes no damage that frame, that the flag clears again the next frame and the
   blade lands, and that ZELA — one of the three overlays whose image has no
-  `or byte [si+5],0x20` — never sets it while still taking the hit.
+  `or byte [si+5],0x20` — never sets it while still taking the hit; and MAO2's
+  phase-1 draws on the real MPA0 — exactly two `KRN_RANDOM` per teleport, the side
+  from AL bit 0 (`A483`) and the throw/cast variant from AL bit 7 (`A3EC`) (#61).
 * `test_shop.c` — 183 assertions: the font metrics and `format_number`; the
   STDPLY record and the page <-> Game mapping; the NAME.USR round trip (exactly
   256 bytes); **all nine rows of both the armour and the drug price tables**

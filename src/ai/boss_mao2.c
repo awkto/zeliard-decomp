@@ -107,7 +107,7 @@ void boss_entry(void)
     /* phase 1 (A3BF) */
     if (!teleporting) {
         if (shot1.on || shot2.on) { draw_shots(); return; }         /* A3C6: stay hidden while a projectile flies */
-        teleport(); step = 0; teleporting = 0xFF; variant = KRN_RANDOM() >> 7;   /* A3DA..A3F0 */
+        teleport(); step = 0; teleporting = 0xFF; variant = (KRN_RANDOM() >> 7) & 1;   /* A3DA..A3F0: rol al,1; and al,1 = AL bit 7 */
     }
     step++;                                                         /* A3F3 */
     if (step < 6 || (step >= 11 && step < 17)) {                    /* flicker */
@@ -121,9 +121,11 @@ void boss_entry(void)
     draw(); draw_shots();                                           /* A6BC / A7AE */
 }
 
-/* 0xA479  Pick a side of the hero: facing = random bit; column = scroll_col
- * + 4 (facing right) or + 24 (facing left), wrapped at the map width; if it
- * is outside 0x10..0x34 use the other side.  Row = 9. */
+/* 0xA479  Pick a side of the hero: facing = bit 0 of KRN_RANDOM (shr al,1;
+ * sbb al,al); column = scroll_col + 4 (facing right) or + 24 (facing left),
+ * wrapped at the map width; if it is outside 0x10..0x34 use the other side
+ * (that column is not checked again).  Row = 9.  Phase 1 thus draws the RNG
+ * exactly twice per teleport: here and for the variant at A3E7. */
 static void teleport(void);
 
 /* 0xA4C9  Phase 2. */
