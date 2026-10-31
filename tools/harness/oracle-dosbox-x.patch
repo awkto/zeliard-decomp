@@ -1,0 +1,408 @@
+diff --git a/src/cpu/core_normal.cpp b/src/cpu/core_normal.cpp
+index 26d9f49..31836da 100644
+--- a/src/cpu/core_normal.cpp
++++ b/src/cpu/core_normal.cpp
+@@ -157,11 +157,15 @@ static INLINE uint32_t Fetchd() {
+ 
+ #define EALookupTable (core.ea_table)
+ 
++extern uint16_t oracle_base_seg; /* zel oracle */
++void ORACLE_Exec(void);
++
+ Bits CPU_Core_Normal_Run(void) {
+ 	if (CPU_Cycles <= 0)
+ 		return CBRET_NONE;
+ 
+ 	while (CPU_Cycles-->0) {
++		if (GCC_UNLIKELY(oracle_base_seg != 0) && SegValue(cs) == oracle_base_seg) ORACLE_Exec(); /* zel oracle */
+ 		LOADIP;
+ 		last_prefix=MP_NONE;
+ 		core.opcode_index=cpu.code.big*(Bitu)0x200u;
+diff --git a/src/hardware/cmos.cpp b/src/hardware/cmos.cpp
+index 88f2976..b92fb31 100644
+--- a/src/hardware/cmos.cpp
++++ b/src/hardware/cmos.cpp
+@@ -602,7 +602,7 @@ void CMOS_Reset(Section* sec) {
+ void CMOS_Init() {
+     LOG(LOG_MISC,LOG_DEBUG)("Initializing CMOS/RTC");
+ 
+-    cmos_sync_time(time(NULL));
++    cmos_sync_time(getenv("ORACLE_OUT") ? (time_t)946684800 : time(NULL)); /* zel oracle: fixed RTC start */
+ 
+     AddExitFunction(AddExitFunctionFuncPair(CMOS_Destroy),true);
+     AddVMEventFunction(VM_EVENT_RESET,AddVMEventFunctionFuncPair(CMOS_Reset));
+diff --git a/src/hardware/pic.cpp b/src/hardware/pic.cpp
+index dc7d787..c9c1c05 100644
+--- a/src/hardware/pic.cpp
++++ b/src/hardware/pic.cpp
+@@ -851,9 +851,11 @@ static unsigned long PIC_benchstart = 0;
+ static unsigned long PIC_tickstart = 0;
+ 
+ extern void GFX_SetTitle(int32_t cycles, int frameskip, Bits timing, bool paused);
++void ORACLE_Tick(void); /* zel oracle */
+ void TIMER_AddTick(void) {
+     /* Setup new amount of cycles for PIC */
+     PIC_Ticks++;
++    ORACLE_Tick(); /* zel oracle */
+     if ((PIC_Ticks&0x3fff) == 0) {
+         unsigned long ticks = GetTicks();
+         int delta = int((PIC_Ticks-PIC_tickstart)*10000/(ticks-PIC_benchstart)+5);
+diff --git a/src/misc/Makefile.am b/src/misc/Makefile.am
+index e31e63f..b521035 100644
+--- a/src/misc/Makefile.am
++++ b/src/misc/Makefile.am
+@@ -3,4 +3,4 @@ AM_CPPFLAGS = -I$(top_srcdir)/include -I$(top_srcdir)/src "-DRESDIR=\"$(resdir)\
+ resdir = $(datarootdir)/dosbox-x
+ 
+ noinst_LIBRARIES = libmisc.a
+-libmisc_a_SOURCES = clipboard.cpp cross.cpp ethernet.cpp ethernet_pcap.cpp ethernet_slirp.cpp ethernet_ethnet.cpp ethernet_nothing.cpp messages.cpp programs.cpp setup.cpp support.cpp regionalloctracking.cpp savestates.cpp shiftjis.cpp iconvpp.cpp mkdir_p.cpp
++libmisc_a_SOURCES = clipboard.cpp cross.cpp ethernet.cpp ethernet_pcap.cpp ethernet_slirp.cpp ethernet_ethnet.cpp ethernet_nothing.cpp messages.cpp programs.cpp setup.cpp support.cpp regionalloctracking.cpp savestates.cpp shiftjis.cpp iconvpp.cpp mkdir_p.cpp zel_oracle.cpp
+diff --git a/src/misc/zel_oracle.cpp b/src/misc/zel_oracle.cpp
+new file mode 100644
+index 0000000..f7ecc93
+--- /dev/null
++++ b/src/misc/zel_oracle.cpp
+@@ -0,0 +1,343 @@
++/*
++ * zel_oracle.cpp -- Zeliard differential-test oracle (decomp-zel docs/HARNESS.md).
++ *
++ * Runs the original game frame by frame from a scripted input and dumps the
++ * shared 64 KB segment BASE at every game-frame boundary.  Everything is driven
++ * by emulated time / emulated instructions, never by the host clock.
++ *
++ * Hooks (the only changes outside this file):
++ *   core_normal.cpp  top of the instruction loop:  ORACLE_Exec() when CS == BASE
++ *   pic.cpp          TIMER_AddTick (every emulated ms): ORACLE_Tick()
++ *
++ * Environment (all optional except ORACLE_OUT):
++ *   ORACLE_OUT        output directory (frames.jsonl, base.bin, frame_NNNNN.png, oracle.log)
++ *   ORACLE_SCRIPT     input script in the port's --script language, or a path to a file holding it
++ *   ORACLE_LOAD       "1" = F7-restore the only *.USR in the game dir before tracing
++ *   ORACLE_PNG_EVERY  K: write frame_NNNNN.png every K trace frames (0 = never)
++ *   ORACLE_SETTLE     town boundaries to wait after the intro before F7 (default 20)
++ *   ORACLE_MAX_MS     emulated-ms watchdog for the whole run (default 600000)
++ *   ORACLE_STALL_MS   while tracing, give up after this many emulated ms without a boundary (default 30000)
++ *   ORACLE_DEBUG_MS   during boot, write boot_<ms>.png every N emulated ms (debugging)
++ */
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <string>
++#include <map>
++#include <stdarg.h>
++#include <setjmp.h>
++#include <unistd.h>
++#include <png.h>
++
++#include "dosbox.h"
++#include "mem.h"
++#include "regs.h"
++#include "cpu.h"
++#include "keyboard.h"
++#include "vga.h"
++
++extern HostPt MemBase;
++
++uint16_t oracle_base_seg = 0;        /* 0 until BASE is known; checked by the CPU core */
++
++namespace {
++
++enum { ST_OFF, ST_WAIT_BASE, ST_INTRO, ST_SETTLE, ST_RESTORE_KEYS, ST_WAIT_RESTORE, ST_WAIT_FRAME0, ST_TRACE, ST_DONE };
++
++const uint8_t BOUNDARY[5] = {0xC6, 0x06, 0x1A, 0xFF, 0x00};      /* mov byte [0xff1a],0 */
++const uint8_t RNG_ENTRY[4] = {0x2E, 0xA1, 0x1B, 0xFF};           /* STICK 0918 mov ax,[cs:0xff1b] */
++const uint8_t RESTORE_EXIT[7] = {0xB8, 0xFF, 0xFF, 0xFF, 0x26, 0x86, 0x76}; /* town 7628 mov ax,-1; jmp [7686] */
++
++int state = ST_OFF;
++bool inited = false;
++std::string outdir;
++FILE *f_jsonl = nullptr, *f_base = nullptr, *f_log = nullptr;
++std::string script;
++size_t script_pos = 0;
++unsigned script_left = 0;
++uint8_t script_dirs = 0, script_btns = 0;
++unsigned png_every = 0, settle = 20;
++unsigned long max_ms = 600000, debug_ms = 0, stall_ms = 30000, last_boundary_ms = 0;
++bool do_load = false;
++unsigned long ms = 0;                /* emulated ms since start */
++unsigned long phase_ms = 0;          /* ms at which the current boot phase started */
++unsigned town_boundaries = 0;
++bool restored = false;
++uint16_t rng = 0;
++unsigned rng_calls = 0;
++unsigned long frame = 0;
++std::string cur_input = ".";          /* input frame `frame` was played with */
++uint8_t prev_btns = 0;
++std::map<uint16_t, unsigned long> *unknown = nullptr;
++unsigned long dbg_0918 = 0, rng_total = 0;
++
++void logf(const char *fmt, ...) {
++    va_list ap;
++    va_start(ap, fmt);
++    FILE *f = f_log ? f_log : stderr;
++    fprintf(f, "[oracle %8lu ms] ", ms);
++    vfprintf(f, fmt, ap);
++    fputc('\n', f);
++    fflush(f);
++    va_end(ap);
++}
++
++inline uint8_t *base_ptr(uint16_t off) { return MemBase + ((uint32_t)oracle_base_seg << 4) + off; }
++inline bool match(uint16_t off, const uint8_t *b, size_t n) { return memcmp(base_ptr(off), b, n) == 0; }
++
++void write_png(const std::string &path) {
++    /* mode 13h, chain-4: pixel a lives at planar offset ((a & ~3) << 2) | (a & 3) */
++    FILE *fp = fopen(path.c_str(), "wb");
++    if (!fp) { logf("cannot write %s", path.c_str()); return; }
++    png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
++    png_infop info = png_create_info_struct(png);
++    if (setjmp(png_jmpbuf(png))) { png_destroy_write_struct(&png, &info); fclose(fp); return; }
++    png_init_io(png, fp);
++    png_set_IHDR(png, info, 320, 200, 8, PNG_COLOR_TYPE_RGB, PNG_INTERLACE_NONE,
++                 PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
++    png_write_info(png, info);
++    static uint8_t row[320 * 3];
++    for (unsigned y = 0; y < 200; y++) {
++        for (unsigned x = 0; x < 320; x++) {
++            uint32_t a = y * 320 + x;
++            uint8_t idx = vga.mem.linear[(((a & ~3u) << 2) | (a & 3u)) & vga.mem.memmask];
++            const RGBEntry &c = vga.dac.rgb[idx];
++            row[x * 3 + 0] = (uint8_t)((c.red << 2) | (c.red >> 4));
++            row[x * 3 + 1] = (uint8_t)((c.green << 2) | (c.green >> 4));
++            row[x * 3 + 2] = (uint8_t)((c.blue << 2) | (c.blue >> 4));
++        }
++        png_write_row(png, row);
++    }
++    png_write_end(png, nullptr);
++    png_destroy_write_struct(&png, &info);
++    fclose(fp);
++}
++
++void finish(int code, const char *why) {
++    logf("finish: %s (frames=%lu, harness rng calls=%lu, BASE:0918 entries=%lu)", why, frame, rng_total, dbg_0918);
++    if (f_jsonl) fclose(f_jsonl);
++    if (f_base) fclose(f_base);
++    if (state != ST_TRACE || code) write_png(outdir + "/final.png");
++    if (f_log) fclose(f_log);
++    state = ST_DONE;
++    fflush(stdout); fflush(stderr);
++    _exit(code);
++}
++
++void init() {
++    inited = true;
++    const char *o = getenv("ORACLE_OUT");
++    if (!o || !*o) return;                       /* oracle off: plain DOSBox-X */
++    outdir = o;
++    f_log = fopen((outdir + "/oracle.log").c_str(), "w");
++    const char *s = getenv("ORACLE_SCRIPT");
++    if (s) {
++        FILE *sf = fopen(s, "r");
++        if (sf) { char buf[4096]; size_t n; while ((n = fread(buf, 1, sizeof buf, sf)) > 0) script.append(buf, n); fclose(sf); }
++        else script = s;
++    }
++    if ((s = getenv("ORACLE_PNG_EVERY"))) png_every = (unsigned)atoi(s);
++    if ((s = getenv("ORACLE_SETTLE"))) settle = (unsigned)atoi(s);
++    if ((s = getenv("ORACLE_MAX_MS"))) max_ms = strtoul(s, nullptr, 10);
++    if ((s = getenv("ORACLE_STALL_MS"))) stall_ms = strtoul(s, nullptr, 10);
++    if ((s = getenv("ORACLE_DEBUG_MS"))) debug_ms = strtoul(s, nullptr, 10);
++    if ((s = getenv("ORACLE_LOAD"))) do_load = atoi(s) != 0;
++    unknown = new std::map<uint16_t, unsigned long>();
++    state = ST_WAIT_BASE;
++    logf("on: out=%s load=%d png_every=%u settle=%u script=%zu chars", outdir.c_str(), do_load, png_every, settle, script.size());
++}
++
++/* the port's script_next(), token for token (port/main.c) */
++bool script_next() {
++    while (script_left == 0) {
++        while (script_pos < script.size() && (script[script_pos] == ' ' || script[script_pos] == ',' ||
++               script[script_pos] == '\n' || script[script_pos] == '\t' || script[script_pos] == '\r')) script_pos++;
++        if (script_pos >= script.size()) return false;
++        uint8_t d = 0, b = 0;
++        for (; script_pos < script.size(); script_pos++) {
++            char c = script[script_pos];
++            if (c == 'U' || c == 'u') d |= 1;
++            else if (c == 'D' || c == 'd') d |= 2;
++            else if (c == 'L' || c == 'l') d |= 4;
++            else if (c == 'R' || c == 'r') d |= 8;
++            else if (c == 'X' || c == 'x') b |= 1;
++            else if (c == 'M' || c == 'm') b |= 2;
++            else if (c == 'E' || c == 'e') b |= 4;
++            else if (c == 'K' || c == 'k') b |= 8;
++            else if (c == '.') ;
++            else break;
++        }
++        unsigned n = 0;
++        while (script_pos < script.size() && script[script_pos] >= '0' && script[script_pos] <= '9')
++            n = n * 10 + (unsigned)(script[script_pos++] - '0');
++        if (script_pos < script.size() && n == 0 && !d && !b && script[script_pos] != '.' &&
++            !(script[script_pos] >= '0' && script[script_pos] <= '9')) {
++            /* unknown character: skip it so we cannot loop forever (the port would too) */
++            logf("script: skipping '%c' at %zu", script[script_pos], script_pos);
++            script_pos++;
++            continue;
++        }
++        script_dirs = d; script_btns = b; script_left = n ? n : 1;
++    }
++    script_left--;
++    return true;
++}
++
++std::string input_name(uint8_t d, uint8_t b) {
++    std::string s;
++    if (d & 1) s += 'U';
++    if (d & 2) s += 'D';
++    if (d & 4) s += 'L';
++    if (d & 8) s += 'R';
++    if (b & 1) s += 'X';
++    if (b & 2) s += 'M';
++    if (b & 4) s += 'E';
++    if (b & 8) s += 'K';
++    return s.empty() ? "." : s;
++}
++
++/* Leave the kernel input state exactly as STICK's INT 9 + timer poll would. */
++void apply_input(uint8_t d, uint8_t b) {
++    uint8_t *p = base_ptr(0);
++    p[0xFF17] = d;                                        /* dirs 1=U 2=D 4=L 8=R */
++    p[0xFF16] = (uint8_t)(b & 3);                         /* bit0 Space (X), bit1 Alt (M) */
++    uint16_t hk = (uint16_t)((b & 4 ? 0x0001 : 0) | (b & 8 ? 0x0286 : 0));
++    p[0xFF18] = (uint8_t)hk; p[0xFF19] = (uint8_t)(hk >> 8);
++    /* edges: what timer_poll_fire_keys (STICK 0122) does on the first poll that sees
++     * the key down; the latches 02BE/02BF are set so that poll does not fire again */
++    if ((b & 1) && !(prev_btns & 1)) p[0xFF1D] = 0xFF;
++    if ((b & 2) && !(prev_btns & 2)) p[0xFF1E] = 0xFF;
++    p[0x02BE] = (b & 1) ? 0x00 : 0xFF;
++    p[0x02BF] = (b & 2) ? 0x00 : 0xFF;
++    prev_btns = b;
++}
++
++void key(KBD_KEYS k, bool down) { KEYBOARD_AddKey(k, down); }
++
++void on_boundary(uint16_t site) {
++    if (site == 0x68ED) town_boundaries++;
++    if (state == ST_RESTORE_KEYS && restored && site == 0x68ED)
++        logf("warning: town frame before the restore key sequence ended; not frame 0");
++    if (state == ST_WAIT_FRAME0 && site == 0x68ED) {
++        state = ST_TRACE;
++        frame = 0; rng = 0; rng_calls = 0; prev_btns = 0; cur_input = ".";
++        f_jsonl = fopen((outdir + "/frames.jsonl").c_str(), "w");
++        f_base = fopen((outdir + "/base.bin").c_str(), "wb");
++        if (!f_jsonl || !f_base) finish(2, "cannot open outputs");
++        logf("trace start: BASE=%04X", oracle_base_seg);
++    }
++    if (state != ST_TRACE) return;
++    last_boundary_ms = ms;
++    fprintf(f_jsonl, "{\"f\":%lu,\"site\":\"%04X\",\"base\":\"0x%04X\",\"rng_calls\":%u,\"input\":\"%s\"}\n",
++            frame, site, oracle_base_seg, rng_calls, cur_input.c_str());
++    fwrite(base_ptr(0), 1, 65536, f_base);
++    if (png_every && frame % png_every == 0) {
++        char name[64]; snprintf(name, sizeof name, "/frame_%05lu.png", frame);
++        write_png(outdir + name);
++    }
++    rng_calls = 0;
++    if (!script_next()) finish(0, "script done");
++    apply_input(script_dirs, script_btns);
++    cur_input = input_name(script_dirs, script_btns);
++    frame++;
++}
++
++} // namespace
++
++/* Called by the normal core before each instruction while CS == BASE. */
++void ORACLE_Exec(void) {
++    if (cpu.pmode) return;
++    uint16_t ip = (uint16_t)reg_eip;
++    uint8_t *p = base_ptr(ip);
++    if (p[0] == 0xC6 && memcmp(p, BOUNDARY, 5) == 0) {
++        if (ip == 0x717F || ip == 0x68ED) {
++            on_boundary(ip);
++        } else if (state == ST_TRACE) {
++            unsigned long &n = (*unknown)[ip];
++            if (n++ == 0) logf("unknown boundary site %04X at frame %lu", ip, frame);
++        }
++        /* execute the instruction ourselves and step over it, so an interrupt taken
++         * right here cannot make the same boundary fire twice */
++        mem_writeb(SegPhys(ds) + 0xFF1A, 0);
++        reg_eip += 5;
++        return;
++    }
++    if (ip == 0x0918) dbg_0918++;
++    if (ip == 0x0918 && state == ST_TRACE && memcmp(p, RNG_ENTRY, 4) == 0) {
++        rng = (uint16_t)(rng * 25173u + 13849u);
++        rng_calls++; rng_total++;
++        reg_ax = rng;
++        reg_eip = 0x092A;                                /* the routine's own near `ret` */
++        return;
++    }
++    if (ip == 0x7628 && (state == ST_RESTORE_KEYS || state == ST_WAIT_RESTORE) && memcmp(p, RESTORE_EXIT, 7) == 0) {
++        logf("restore succeeded (town 7628)");
++        restored = true;
++        if (state == ST_WAIT_RESTORE) state = ST_WAIT_FRAME0;
++    }
++}
++
++/* Called once per emulated millisecond (TIMER_AddTick). */
++void ORACLE_Tick(void) {
++    if (!inited) init();
++    if (state == ST_OFF || state == ST_DONE) return;
++    ms++;
++    if (ms > max_ms) finish(3, "watchdog: ORACLE_MAX_MS exceeded");
++    if (debug_ms && state < ST_TRACE && ms % debug_ms == 0) {
++        char name[64]; snprintf(name, sizeof name, "/boot_%07lu.png", ms);
++        write_png(outdir + name);
++    }
++    unsigned long t = ms - phase_ms;
++    switch (state) {
++    case ST_WAIT_BASE: {
++        uint16_t off = mem_readw(0x61 * 4), seg = mem_readw(0x61 * 4 + 2);
++        if (seg && off == 0x0109 && memcmp(MemBase + ((uint32_t)seg << 4) + 0x0918, RNG_ENTRY, 4) == 0) {
++            oracle_base_seg = seg;
++            logf("BASE=%04X (INT 61h -> %04X:0109)", seg, seg);
++            state = ST_INTRO; phase_ms = ms;
++        }
++        break;
++    }
++    case ST_INTRO: {
++        /* tap Return (held 120 ms) every 1.5 s until town.bin is loaded at BASE:6000
++         * (its frame-boundary bytes appear at 68ED); then release and stop, because
++         * in the town Return opens the status menu */
++        static bool held = false;
++        if (match(0x68ED, BOUNDARY, 5)) {
++            if (held) { key(KBD_enter, false); held = false; }
++            logf("town.bin loaded after intro");
++            state = do_load ? ST_SETTLE : ST_WAIT_FRAME0; phase_ms = ms; town_boundaries = 0;
++            break;
++        }
++        if (t % 1500 == 1000) { key(KBD_enter, true); held = true; }
++        if (t % 1500 == 1120) { key(KBD_enter, false); held = false; }
++        break;
++    }
++    case ST_SETTLE:
++        if (town_boundaries >= settle) { state = ST_RESTORE_KEYS; phase_ms = ms; logf("F7 restore"); }
++        break;
++    case ST_RESTORE_KEYS: {
++        /* F7 -> Sure?(Y/N) -> y -> list: Down, Space (copy name), Enter.  All holds. */
++        static const struct { unsigned long at; KBD_KEYS k; } seq[] = {
++            {100, KBD_f7}, {1000, KBD_y}, {2500, KBD_down}, {3500, KBD_space}, {4500, KBD_enter}};
++        for (auto &e : seq) {
++            if (t == e.at) key(e.k, true);
++            if (t == e.at + 150) key(e.k, false);
++            if (t == e.at + 100 || t == e.at + 200) logf("keys: FF18=%04X FF17=%02X FF16=%02X", base_ptr(0)[0xFF18] | (base_ptr(0)[0xFF19] << 8), base_ptr(0)[0xFF17], base_ptr(0)[0xFF16]);
++        }
++        if (t == 4660) { state = restored ? ST_WAIT_FRAME0 : ST_WAIT_RESTORE; phase_ms = ms; }
++        break;
++    }
++    case ST_WAIT_RESTORE:
++        if (t > 20000) finish(4, "restore did not complete (see final.png)");
++        break;
++    case ST_WAIT_FRAME0:
++        if (t > 60000) finish(5, "no town boundary after restore");
++        break;
++    case ST_TRACE:
++        if (ms - last_boundary_ms > stall_ms) finish(6, "stalled: no town/fight frame boundary for ORACLE_STALL_MS (menu, shop or cutscene?)");
++        break;
++    default:
++        break;
++    }
++}
