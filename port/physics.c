@@ -488,8 +488,12 @@ static void hero_input(Game *g)
 }
 
 /* 7699 / 76F6: updraft and current tiles under the hero's centre column.
- * Returns 1 when the frame must be aborted before rendering (76C2). */
-static int special_tiles_check(Game *g)
+ * 76C2's two `pop ax` drop 76B8's return address and the loop's `push cx`
+ * (76AA), so the handler's `ret` goes back to 6FAC: the frame carries on and
+ * renders.  It is NOT aborted (#60: treating it as aborted spun forever,
+ * unrendered and uncounted, with the hero pushed against a wall).
+ * Updraft 76D4 = 6621 twice, currents 76F0/76EA = 66A5/684C twice. */
+static void special_tiles_check(Game *g)
 {
     g->on_updraft = 0;
     int s = wrap_down(game_hero_cell(g) + 0x49);
@@ -497,12 +501,11 @@ static int special_tiles_check(Game *g)
         int k = special_tile(g, g->ring[s]);
         if (k < 0) continue;
         switch (k) {
-        case 0: scroll_up(g); g->on_updraft = 0xFF; g->vstate = V_GROUND; g->hero_anim = 0x80; return 1;
-        case 1: try_move_left(g);  try_move_left(g);  return 1;
-        default: try_move_right(g); try_move_right(g); return 1;
+        case 0: scroll_up(g); scroll_up(g); g->on_updraft = 0xFF; g->vstate = V_GROUND; g->hero_anim = 0x80; return;
+        case 1: try_move_left(g);  try_move_left(g);  return;
+        default: try_move_right(g); try_move_right(g); return;
         }
     }
-    return 0;
 }
 
 /* 7981: ring column of map column (col+3); returns -1 when off the ring */
@@ -777,7 +780,7 @@ static void hazard_check(Game *g)
 static void frame(Game *g)
 {
     g->max_rise = g->shoes == 1 ? 4 : 2;
-    if (special_tiles_check(g)) return;                                 /* 76C2: frame aborted */
+    special_tiles_check(g);                                             /* 7699 (returns to 6FAC) */
     if (g->vstate == V_GROUND) {                                        /* 6FAC vertical re-centring */
         g->rise_rows = 0;
         if (g->hero_home_row != g->hero_scr_row) {

@@ -132,10 +132,13 @@ The sprite is 3×3 cells but the **solid body is the middle column only**
   why jumping *up* a left-pushing scree slope (MP20 (189,0), MP21 (37,26)) gains one
   column instead of three.
 * Currents (lists 8028/802C, `7699`): the hero is pushed 2 cells per
-  main-loop iteration and **the frame is aborted before rendering** (`76C2`
-  pops two return addresses), so the push repeats without delay until the
-  hero's centre column is clear of the tiles. Updraft (8024): same, 1 row up
-  per iteration, gravity and knockback disabled (`9F15`).
+  frame (`76F0`/`76EA`: `66A5`/`684C` twice), then the frame **carries on and
+  renders**: `76C2`'s two `pop ax` drop `76B8`'s return address and the
+  loop's `push cx` (`76AA`), so the handler's `ret` lands at `6FAC`. (An
+  earlier revision read them as two return addresses and the frame as
+  aborted; the port then spun forever, unrendered, with a hero pushed into a
+  wall — #60.) Updraft (8024): 2 rows up per frame (`76D4`: `6621` twice),
+  gravity and knockback disabled (`9F15`).
 
 ### Vertical
 * **Rise:** while "up" is held, 1 row per frame, up to `max_rise` rows =

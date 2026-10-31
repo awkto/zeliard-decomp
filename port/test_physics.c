@@ -258,6 +258,38 @@ static void t_hazard(void)
     CHECK(G.on_hazard == 0xFF && G.hazard_frames >= 1, "hazard cell below the feet is detected every frame");
 }
 
+/* #60: currents (7699 lists 8028/802C) and the updraft (8024) push the hero
+ * twice per frame and the frame then CARRIES ON (76C2 pops 76B8's return
+ * address and the loop's push cx, so the handler returns to 6FAC).  The port
+ * once read it as "frame aborted", and a hero pushed into a wall spun forever
+ * without rendering a frame. */
+static void t_current(void)
+{
+    uint8_t saved[0x30]; memcpy(saved, ttiles.lists, sizeof saved);
+    ttiles.lists[6] = 0x09; ttiles.lists[7] = 0x0E;     /* passable */
+    ttiles.lists[0x24] = 0x0E;                          /* updraft */
+    ttiles.lists[0x28] = 0x09;                          /* current, pushes left */
+    flat_map();
+    for (int c = 20; c < 60; c++) for (int r = 10; r < 13; r++) set(c, r, 0x09);
+    for (int r = 0; r < 13; r++) set(24, r, 6);         /* a wall on the left */
+    start(40, 10, 0);                                   /* (game_first_frame already pushed once) */
+    int c0 = hcol(); unsigned p0 = presented;
+    step(0);
+    CHECK(hcol() == c0 - 2 && presented == p0 + 1, "a current pushes 2 cells and the frame renders (moved %d, %u frames)", hcol() - c0, presented - p0);
+    p0 = presented;
+    for (int i = 0; i < 30; i++) step(0);
+    CHECK(presented == p0 + 30, "pinned against a wall by a current: one rendered frame per step (%u in 30)", presented - p0);
+    CHECK(hcol() == 24, "the current holds him at the wall (col %d, want 24 as in t_wall)", hcol());
+
+    flat_map();
+    for (int r = 4; r < 13; r++) set(31, r, 0x0E);      /* an updraft shaft under his centre column */
+    start(30, 10, 0);
+    int r0 = hrow(); p0 = presented;
+    step(0);
+    CHECK(hrow() == r0 - 2 && presented == p0 + 1, "an updraft lifts him 2 rows per rendered frame (76D4: 6621 twice): moved %d, %u frames", hrow() - r0, presented - p0);
+    memcpy(ttiles.lists, saved, sizeof saved);
+}
+
 static const Door *taken;
 static int door_cb(Game *g, const Door *d) { taken = d; return 0; }
 
@@ -568,7 +600,7 @@ int main(int argc, char **argv)
     struct { const char *name; void (*fn)(void); } tests[] = {
         {"idle", t_idle}, {"walk", t_walk}, {"walls", t_wall}, {"jump", t_jump}, {"ceiling", t_ceiling},
         {"diagonal jump", t_diagonal_jump}, {"gaps", t_gap}, {"edge fall", t_edge_fall}, {"ladder", t_ladder},
-        {"conveyor", t_conveyor}, {"hazard", t_hazard},
+        {"conveyor", t_conveyor}, {"hazard", t_hazard}, {"currents", t_current},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = fails;

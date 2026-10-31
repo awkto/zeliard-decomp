@@ -1064,9 +1064,11 @@ void special_tiles_check(void)
     s = ring_wrap_down(hero_cell() + 0x49);                               /* 76A1 */
     for (n = 3; n; n--, s = ring_wrap_up(s - 0x24)) {
         k = special_tile(*s); if (k == 0xFF) continue;
-        /* 76C2: pops two return addresses -> returns to frame()'s caller of 7699 */
+        /* 76C2: pop ax / pop ax drops 76B8's return address and the loop's
+         * push cx (76AA); the handler's ret goes back to 6FAC, so frame()
+         * carries on and renders (it is not aborted). */
         switch (k) {
-        case 0: scroll_up(); on_updraft = 0xFF; vstate = V_GROUND; hero_anim = 0x80; return;   /* 76D4 */
+        case 0: scroll_up(); scroll_up(); on_updraft = 0xFF; vstate = V_GROUND; hero_anim = 0x80; return;   /* 76D4: 6621 twice */
         case 1: try_move_left();  try_move_left();  return;               /* 76F0 */
         case 2: try_move_right(); try_move_right(); return;               /* 76EA */
         }
