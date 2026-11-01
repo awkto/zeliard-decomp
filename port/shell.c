@@ -389,8 +389,11 @@ static void town_frame(Shell *s)
             s->tmap.town_id);
         if (shop_run(t, dest)) fprintf(stderr, "[shop] cannot load the overlay\n");
         t->btn1_edge = 0;   /* 6ECA 6AA2 reloads through [10C]: STICK 0CDC clears FF1D (FF1E stays) */
-        town_apply_patches(&s->tmap, g->page);                          /* 6EAF */
-        town_npc_markers_reset(t);
+        town_apply_patches(&s->tmap, g->page);                          /* 6EDE */
+        /* 6EAF..6F06: shop_return never re-marks the NPCs (6C2B).  The door's
+         * entry frame lifted them (enter_door 6E61 -> 6C4E), so this return
+         * frame_tail draws every NPC cell as the plain tile; the next 61FC
+         * frame's npc_update (6B1C -> 6C2B) puts the markers back (#107). */
         if (t->quit) break;
         town_force_redraw(t);                                           /* 6ED4 */
         town_tail_frame(t);                                             /* 6EE1/6EE6: FF1A=28, 68AF */
