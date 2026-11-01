@@ -60,6 +60,9 @@ int shell_enter_town(Game *g, int idx, int col, int died)
     if (town_load_banks(s)) return 0;
     audio_music(s->tmap.music);                                         /* town level record +0 bits 1-4 */
     town_init(&s->town, &s->tmap, &s->ttiles, &s->tspr, &s->thero, g);   /* 7B7F/99EF/6AAF load via [10C] and 60C3/60C6: the memset clears both edges */
+    /* the town HUD is the non-boss one (GOLD, PLACE): a death in a boss room
+     * left the boss flags and name plate set (issue #102) */
+    g->boss_map = g->boss_room = 0; g->boss.active = 0;
     hud_town_panels(g);                                                 /* 610F/6127 */
     s->town.user = s; s->town.present = s->town_present; s->town.frame_end = s->town_frame_end;
     s->town.font = &s->tfont; s->town.dir = s->dir; s->town.pics = &s->pics;
