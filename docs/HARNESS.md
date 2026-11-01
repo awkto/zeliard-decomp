@@ -565,3 +565,23 @@ only takes the hero *down* out of it.  MP72's (127,8) is reached only from its (
 (MP71's (20,9) door): the (101,57) and (76,9) entries are cut off by the floor gaps and the
 one-way currents (`heat_current`), and MP71's (20,9) is not reachable in the survey from its
 (171,32) entry (C platforms, spikes).  All of that under the 704F heat.
+Hand-routing it (#87, follow-up) found more walls than the survey: in cavern 7 the 0x28/0x29
+cells push 2 cells a frame and 0x2A lifts 2 rows (`76A1`), so they are one-way doors, and the
+rise is 2 rows (4 only with the Feruza shoes, which leave the heat on).  MP71's (20,9) sits in
+a component {the cols 0-34 rows 6-12 room, the seam ledge (191..4,14), fix[5]/fix[6]/fix[7],
+the cols 160-195 rows 4-26 updraft loop, the left room rows 21-36} that no MP71 entry reaches
+with the cape: the middle floor (cols 38-82, row 34) is cut from the left room by the col 40-41
+current, the (171,32) pocket from the (160..175,25..26) updraft by 7+ rows, and the seam needs a
+3-row climb to the (188..191,34) ledge.  With the shoes there are two ways in, both by moves the
+survey does not make: (a) seam floor (192,36) → ledge → fix[6] → rope 192 or fix[5] → the
+(188..191,19..23) current/updraft, which carries the hero to (165,11) (checked in the port) →
+fix[15] → seam ledge → fix[7] → rope 14; (b) block (76..85,13) → fix[13] (swept off by the
+(68,14) cell) → block (59..61,14) → fix[9] → the round block's (46..47,12) step → the (35,9)
+elevator → (19,10).  Both start inside MP71's middle/top region, which only the (9,55) entry
+reaches (the wrap fall at cols 40-64), and its MP70 side, the (202,60) pocket (rows 60-63, floor
+row 0 at cols 198..2), cannot be entered: ropes 190 and 5 are 8 and 3 columns from that floor,
+`rise` refuses a jump from a rope and there is no air control.  The bottom band (rows 43-49) may
+drop into MP71's bottom-left room through the (48..70,51..55) current/updraft at its col-70 wall
+(untested).  MP72 itself is fine: from (25,40), rope 40 down → rope 66 up → rope 58 up → rope 40
+up → rope 32 up through the wrap into the bottom corridor → rope 7 down through the wrap → west to
+(126,9); every other entry is fenced by the corridor currents.
