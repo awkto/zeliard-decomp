@@ -372,10 +372,22 @@ to the oracle's apart from the HUD place label and the file list (§2).
 sides restore), `# make: ARGS` (the `port/zeliard` arguments that create that save,
 ending in `--save NAME`), `# what:` (free text), optional `# allow: PATTERN [MODE]`
 lines (tracediff allow rules for that scenario only, on top of `tools/harness/allow.tsv`:
-for a known, filed divergence the scenario has to step over), then the script on one line.
-`tools/harness/run_scenarios.sh [-j N] [--out DIR] [--png] [NAME ...]` runs oracle +
-port + `tracediff --first-only` for each, makes any missing start save from its
+for a known, filed divergence the scenario has to step over), optional
+`# allow-px: x0,y0,x1,y1 [frames A-B] -- reason` lines (pixel allow rules, below), then the
+script on one line.
+`tools/harness/run_scenarios.sh [-j N] [--out DIR] [--png-every K] [--png] [NAME ...]` runs
+oracle + port + `tracediff --first-only` for each, makes any missing start save from its
 `# make:` line, prints a table and exits non-zero on any divergence or failure.
+**Pixels (#91).** Both sides also write `frame_NNNNN.png` every K frames (default 1; `0` =
+fields only) and `tools/harness/pixdiff.py` compares them frame by frame. A scenario is
+`clean` only if fields AND pixels match; otherwise the row says `DIVERGES` (fields; the
+pixel summary is appended) or `PIXELS` (fields match) with `first-px-frame`, `px-frames`
+(frames with a difference), the `bbox` x0,y0,x1,y1 (inclusive, union over all frames) and
+`npix`. `# allow-px:` ignores an inclusive rectangle (320x200 frame coordinates), optionally
+only in frames A-B (or one frame A), before judging; the reason after ` -- ` (or an em
+dash) is mandatory and the line should cite the filed issue. The first differing frame's
+oracle|port|diff image goes to `DIR/NAME/pixdiff/`. Passing scenarios have their PNGs
+deleted (`--png` keeps them); failing ones keep them.
 It builds nothing: run it on the droplet after building the port.
 
 **Story flags and long routes (#75).** `--flag N[=V]` (hex, repeatable) sets story-flag
@@ -393,6 +405,20 @@ syntax, for a move the autopilot cannot find; #87). `tools/harness/pilot_scenari
 NAME` makes the start save if missing and rewrites the scenario's script line from its
 `# pilot:` line; rerun it whenever a port fix changes what the autopilot sees (it is the
 port's view: the oracle then checks it).
+
+**Live prediction (#90).**  The survey probes every move from `game_place` (hero at rest,
+`[9F07]` restarted, a platform wherever the probe put it), but the pilot is asked at a
+boundary half-way through a main-loop pass, with the C platforms already moved for the frame
+and `[9F07]`/`hero_anim` at whatever parity the run has reached, so a move across MP61's
+fix[15]/fix[13]/fix[10] that worked in the plan missed live.  `Game.step_begin` lets
+`nav.c` keep a copy of the state at the top of each pass; before it commits to an edge it
+replays the pass from that copy with the inputs already fed, checks the replay has reached
+the live state, feeds the edge's macro and reads off where the hero settles (`predict`).  An
+edge is taken when that lands on its target or closer; none ready means wait, unless waiting
+itself loses ground (a platform carrying him off its end: `hold_on`).  The same replay drives
+the Tarso fight (`fight_lookahead`: twelve frames of each stick/swing choice, scored by the
+boss's LIFE lost against the hero's).  `tarso_fight` is the first route through moving
+platforms; the Dragon/Alguien routes (MP71, MP81 lifts) are separate follow-ups.
 
 Every scenario must be clean. `death_sage` goes on from the dying `717F` frames
 through the Sage's text (`71EC`) back to Muralla; `status_cave`, `drug_buy`,
@@ -522,6 +548,7 @@ put its script in a scenario file (`tests/scenarios/NAME.zs`, §7) and run it as
 | `paguro_fight` | Llama 200, LV 20, sword 6 (`PAGURO`, `# pilot:`) | Llama's column-222 door → MP73; Paguro (ZEL2) to the kill and the reward; the parts' +7..+F are the *town* map's bytes (`shell_enter_cavern` seeds `c000` from the town image). |
 | `paguro_return` | same | `paguro_fight` on through 72F1's exit door to Llama (#85): the 0x80 NPC at 222 auto-talks (62ED), the Elf Crest opcode 0x83 (6685) runs 6AED mid-visit and pokes only its bytes (the live NPC records and 0xFD markers stay: `town_sync_raw`); a second talk, and a held Left ends the 65A1 wait (65DE: any FF17 direction) |
 | `edge_press` | Muralla 12 (`EDGEP`) | #79: Space on the frame before each town edge (Muralla → castle → Muralla) is latched (FF1D = FF) and dropped by `6D30`'s `[10C]` loads (STICK `0CDC`) and `60C3` |
+| `tarso_fight` | Dorado 4, LV 25, sword 6, one Key, Feruza shoes worn (`--worn 1`), `--flag 2B=08` (`TARSO`, `# pilot:`) | Dorado's left edge → MP61, across its C platforms (live prediction, #90) to the (12,27) door → MP60, round the seam to the front door (309,41) → MP6D; Tarso to the kill (LEGA, #86), reward, 72F1's door out to MP60 (28,47).  Also: EAI6's beast turns at a wall when the step down is refused (`A947`), its `A90A` bounce is dead code; the tall-sprite step's marker test is rows -1..+3 of the column (`A595`, -2 going left, EAI2/5-8); death sparks spawn inside the 302C scan, interleaved with the cavern-6 cell animation's KRN_RANDOM draws |
 | `dragon_fight` | Pureza 4, LV 25, sword 6 (`DRAGONB`) | MP80's (57,5) door into MP7D from its far side: the hero lands inside the Dragon's body and dies of contact after ~80 frames of DRGN (no kill) |
 | `heat_current` | Llama 8, LV 25, one Key (`CALIK`) | MP70 (176,43) → MP72 (cavern 7): into the bottom corridor's rope gap, the fall through the ring, the (116,11) rope hole, then west into the (88..90,25) current that pushes the hero back.  Current cells are one-way walls (`67A3`/`6942`) in every cavern **but** 7 (#87) |
 

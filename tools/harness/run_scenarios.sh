@@ -5,10 +5,13 @@
 # tools/tracediff.py compares them.  Prints one row per scenario and exits
 # non-zero if any scenario diverges or fails to run.
 #
-# usage: tools/harness/run_scenarios.sh [-j N] [--out DIR] [--png] [NAME_OR_FILE ...]
+# usage: tools/harness/run_scenarios.sh [-j N] [--out DIR] [--png-every K] [--png] [NAME_OR_FILE ...]
 #   -j N     scenarios run in parallel (default 4; each oracle uses one core)
 #   --out    where the traces go (default /tmp/zel-scenarios); DIR/NAME/{o,p,diff.txt}
-#   --png    also write frame PNGs (every frame) and tracediff's oracle|port|diff images
+#   --png-every K  trace PNGs every K frames on both sides and compare pixels on those
+#            frames (default 1; 0 = fields only, no pixel check)
+#   --png    keep the PNGs of passing scenarios too, and write tracediff's images
+#            (failing scenarios always keep theirs; passing ones are cleaned up)
 #   NAME     run only these (a name from tests/scenarios/ or a path to a .zs)
 # env: ORACLE_DOSBOX / ORACLE_BUILD as for tools/oracle.sh.
 #
@@ -23,16 +26,21 @@
 #   # what: TEXT               what the scenario exercises (free text)
 #   # allow: PATTERN [MODE]    optional, repeatable: a tracediff allow rule for this
 #                              scenario only (a known, filed divergence it must step over)
+#   # allow-px: x0,y0,x1,y1 [frames A-B] -- reason
+#                              optional, repeatable: pixels (inclusive rect, game 320x200
+#                              coords, optional frame range) ignored by the pixel compare;
+#                              the reason is mandatory (tools/harness/pixdiff.py)
 #   SCRIPT                     the first non-comment line: the --script input
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-J=4; OUT=/tmp/zel-scenarios; PNG=0; SEL=
+J=4; OUT=/tmp/zel-scenarios; PNG=0; PE=1; SEL=
 while [ $# -gt 0 ]; do
   case "$1" in
     -j) J=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;;
+    --png-every) PE=$2; shift 2 ;;
     --png) PNG=1; shift ;;
-    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
     *) SEL="$SEL $1"; shift ;;
   esac
 done
@@ -68,11 +76,11 @@ run_one() {
   rm -rf "$d"; mkdir -p "$d"
   save=$(hdr "$f" start); load=${save%.*}
   script=$(grep -v '^#' "$f" | grep -v '^[[:space:]]*$' | head -1)
-  pe=0; [ "$PNG" = 1 ] && pe=1
+  pe=$PE
   if ! (cd "$ROOT" && tools/oracle.sh "$script" --load "$load" --out "$d/o" --png-every $pe) >"$d/oracle.out" 2>&1; then
     printf 'ERROR\t-\toracle exit %s (%s/oracle.out, o/oracle.log)\n' "$?" "$d" >"$d/result"; return
   fi
-  pargs=; [ "$PNG" = 1 ] && pargs="--png-every 1"
+  pargs=; [ "$PE" != 0 ] && pargs="--png-every $PE"
   if ! (cd "$ROOT" && "$PORT" --dir zeliard --load "$load" --trace "$d/p" --script "$script" $pargs) >"$d/port.out" 2>&1; then
     printf 'ERROR\t-\tport exit %s (%s/port.out)\n' "$?" "$d" >"$d/result"; return
   fi
@@ -86,12 +94,27 @@ run_one() {
   (cd "$ROOT" && python3 tools/tracediff.py "$d/o" "$d/p" $dargs) >"$d/diff.txt" 2>&1
   rc=$?
   frames=$(sed -n 's/^tracediff: \([0-9]*\) aligned.*/\1/p' "$d/diff.txt")
-  if [ $rc = 0 ]; then printf 'clean\t%s\t\n' "$frames" >"$d/result"
+  px=; prc=0
+  if [ "$PE" != 0 ]; then
+    (cd "$ROOT" && python3 tools/harness/pixdiff.py "$d/o" "$d/p" --scenario "$f" --out "$d/pixdiff") >"$d/pixdiff.txt" 2>&1
+    prc=$?
+    px=$(sed -n 's/^PIXDIFF //p' "$d/pixdiff.txt" | head -1)
+  fi
+  pxdesc=
+  if [ $prc = 1 ]; then
+    pxdesc=$(printf '%s' "$px" | sed 's/compared=[0-9]* //; s/diff_frames=/px-frames=/; s/first=/first-px-frame=/')
+  fi
+  if [ $rc -gt 1 ] || [ $prc -gt 1 ]; then
+    printf 'ERROR\t%s\ttracediff exit %s, pixdiff exit %s (%s/diff.txt, pixdiff.txt)\n' "${frames:--}" "$rc" "$prc" "$d" >"$d/result"
   elif [ $rc = 1 ]; then
     first=$(sed -n 's/^FIRST DIVERGENCE at frame \([0-9]*\).*/\1/p' "$d/diff.txt")
     field=$(awk '/field\(s\) differ:/{getline; print $1; exit}' "$d/diff.txt")
-    printf 'DIVERGES\t%s\tframe %s: %s\n' "$frames" "$first" "$field" >"$d/result"
-  else printf 'ERROR\t%s\ttracediff exit %s (%s/diff.txt)\n' "${frames:--}" "$rc" "$d" >"$d/result"
+    printf 'DIVERGES\t%s\tframe %s: %s%s\n' "$frames" "$first" "$field" "${pxdesc:+; $pxdesc}" >"$d/result"
+  elif [ $prc = 1 ]; then printf 'PIXELS\t%s\t%s\n' "$frames" "$pxdesc" >"$d/result"
+  else
+    printf 'clean\t%s\t\n' "$frames" >"$d/result"
+    # passing: drop the big PNGs (a failing scenario keeps them)
+    [ "$PNG" = 1 ] || rm -f "$d"/o/*.png "$d"/p/*.png
   fi
 }
 
