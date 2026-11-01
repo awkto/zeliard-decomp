@@ -148,6 +148,14 @@ struct Town {
          * town.bin's own 74D3 yes_no_prompt, which the shops call through
          * vector [6008].  Only the geometry differs between the two. */
         int  menu_n, menu_row, menu_x4, menu_y, menu_w4, menu_h;
+        int  menu_ix4;              /* [FF54] x - window x: 1 (74D3) or 2 (670E) */
+        /* the original draws the widget once and never takes it down: when
+         * it closes, the next script's box (63C5) is drawn over it and what
+         * sticks out stays on screen until the dialogue's 6396 restore. */
+        int  menu_left;
+        /* 63C5 sets [E7] bit 0 but only a town frame (68AC) redraws the hero:
+         * until one runs the screen keeps the pose of the last frame (+1; 0 = none) */
+        int  hero_shown;
         const char *menu_item[2];
     } dlg;
     int      dlg_forced;            /* 7C54: an auto-talk script cannot be cancelled */

@@ -178,6 +178,7 @@ static void town_draw_frame(Town *t);
 static void dlg_frame(Town *t)
 {
     town_npc_update(t);                                                 /* 68AC -> 6B1C */
+    t->dlg.hero_shown = 0;                                              /* the hero is redrawn */
     t->frame_no++;
     if (t->present) t->present(t);
     town_sound(t);
@@ -195,6 +196,8 @@ static void dlg_tick(Town *t, int *acc)
     if (t->present) t->present(t);
 }
 
+#define DLG_POS_Y 0x18           /* [7C4C] low byte: 6370 0718 / 0B18 */
+
 /* 0x74D3  yes_no_prompt, the widget the shops reach through vector [6008].
  * The dialogue box (6655 / 66AD) puts it beside itself; the row list is drawn
  * by dlg_render, so the box and the menu come back every frame.  Returns the
@@ -203,11 +206,12 @@ static void dlg_tick(Town *t, int *acc)
  * It is town.bin's menu_select 7344: poll (site 7358) -> Alt -> Space ->
  * U/D.  A move is the 10 x 4-tick cursor animation and then straight back to
  * the poll, so a held direction repeats every 40 ticks (no release needed). */
-static int dlg_menu(Town *t, const char *a, const char *b, int x4, int y, int w4)
+static int dlg_menu(Town *t, const char *a, const char *b, int x4, int y, int w4, int ix4)
 {
     t->dlg.menu_item[0] = a; t->dlg.menu_item[1] = b;
-    t->dlg.menu_n = 2; t->dlg.menu_row = 0;
+    t->dlg.menu_n = 2; t->dlg.menu_row = 0; t->dlg.menu_left = 0;
     t->dlg.menu_x4 = x4; t->dlg.menu_y = y; t->dlg.menu_w4 = w4; t->dlg.menu_h = 0x19;
+    t->dlg.menu_ix4 = ix4;
     t->btn1_edge = t->btn2_edge = 0;                                    /* 7344 */
     town_sound(t);                                                      /* the box took longer than a tick */
     int row = 0, acc = 0;
@@ -225,7 +229,7 @@ static int dlg_menu(Town *t, const char *a, const char *b, int x4, int y, int w4
         t->dlg.menu_row = row;
         for (int k = 0; k < 10 * 4; k++) dlg_tick(t, &acc);             /* 747B / 74A7 */
     }
-    t->dlg.menu_n = 0;
+    t->dlg.menu_n = 0; t->dlg.menu_left = 1;
     return row;
 }
 
@@ -280,16 +284,28 @@ void town_dialogue_run(Town *t, int script, int face_left)
     if (o >= m->rawlen) return;
     const uint8_t *p = m->raw + o, *end = m->raw + m->rawlen;
 
+    int was = t->dlg.hero_shown ? t->dlg.hero_shown : t->hero_anim + 1;
     t->hero_anim |= 1;                                              /* 63C5 */
     t->sfx_request = 0x1E;                                          /* 636B */
     int total = dlg_count_lines(p, end);                            /* 63F2 */
     int left = total, shown = 0;
     int cl = total > 8 ? 8 : (total ? total : 1);                   /* 63FA */
+    /* a yes/no widget the previous script left on screen stays (6676 / 66CE
+     * jump straight to 63C5, nothing erases it) */
+    int keep = t->dlg.menu_left, krow = t->dlg.menu_row, kx4 = t->dlg.menu_x4, ky = t->dlg.menu_y,
+        kw4 = t->dlg.menu_w4, kh = t->dlg.menu_h, kix4 = t->dlg.menu_ix4;
+    const char *ki0 = t->dlg.menu_item[0], *ki1 = t->dlg.menu_item[1];
     memset(&t->dlg, 0, sizeof t->dlg);
+    if (keep) {
+        t->dlg.menu_left = 1; t->dlg.menu_row = krow; t->dlg.menu_ix4 = kix4;
+        t->dlg.menu_x4 = kx4; t->dlg.menu_y = ky; t->dlg.menu_w4 = kw4; t->dlg.menu_h = kh;
+        t->dlg.menu_item[0] = ki0; t->dlg.menu_item[1] = ki1;
+    }
+    if (was != t->hero_anim + 1) t->dlg.hero_shown = was;
     t->dlg.x8 = face_left ? 7 : 11;                                 /* 6370: x8 7 or 11 */
     t->dlg.w4 = 0x2C;                                               /* 176 px */
     t->dlg.h  = cl * 10 + 6;                                        /* 6401 */
-    t->dlg.y  = 24 + (0x56 - t->dlg.h) - ((0x40 - ((cl & 0xFE) << 3)) >> 1);   /* 640F..642A */
+    t->dlg.y  = DLG_POS_Y + (0x56 - t->dlg.h) - ((0x40 - ((cl & 0xFE) << 3)) >> 1);   /* 640F..642A */
     t->dlg.nvis = 1;
     t->dlg.active = 1;
     t->message[0] = 0;
@@ -313,13 +329,15 @@ void town_dialogue_run(Town *t, int script, int face_left)
         if (c == 0x87) { dlg_wait_key(t); t->dlg.active = 0;         /* 66A2: then script 5 */
                          town_dialogue_run(t, 5, face_left); return; }
         if (c == 0x81) {                                             /* 6655: yes/no */
-            int no = dlg_menu(t, "Yes", "No", t->dlg.x8 * 2 + 0x19, t->dlg.y, 0x0C);
+            int no = dlg_menu(t, "Yes", "No", t->dlg.x8 * 2 + 0x19,  /* 6655: [7C4C] + 193F */
+                              DLG_POS_Y + 0x3F, 0x0C, 1);            /* 666B: +0103 */
             t->dlg.active = 0;
             town_dialogue_run(t, no ? 13 : 12, face_left);            /* 6676 */
             return;
         }
         if (c == 0x89) {                                             /* 66AD: the Asbestos cape */
-            int no = dlg_menu(t, "Take", "No Take", t->dlg.x8 * 2 + 0x19, t->dlg.y, 0x12);
+            int no = dlg_menu(t, "Take", "No Take", t->dlg.x8 * 2 + 0x18,  /* 66AD: [7C4C] + 1832 */
+                              DLG_POS_Y + 0x32, 0x12, 2);            /* 66C3: +0203 */
             t->dlg.active = 0;
             if (no) { town_dialogue_run(t, 6, face_left); return; }   /* 66D1 */
             if (t->g->almas < 2500) { town_dialogue_run(t, 7, face_left); return; }   /* 66D8 */
@@ -348,13 +366,26 @@ void town_dialogue_run(Town *t, int script, int face_left)
     t->message[mlen] = 0;
     dlg_wait_key(t);                                                 /* 65A1 */
     t->dlg.active = 0;                                               /* 6396: the box comes down */
+    t->dlg.menu_left = 0; t->dlg.hero_shown = 0;                     /* 63A9: and the widget with it */
     t->btn1_edge = t->btn2_edge = 0; t->dlg_forced = 0;
 }
 
 /* draw the box and its lines over the finished town frame (63C5 / 6478) */
+/* the widget: window at [7C4C] + 193F / 1832, [FF54] = window + 0103 / 0203;
+ * labels at [FF54] + 0301 (751A), the cursor at [FF54] + 0100 + row*10 (7469) */
+static void dlg_render_menu(uint8_t *fb, const Town *t)
+{
+    int mx4 = t->dlg.menu_x4 + t->dlg.menu_ix4, my = t->dlg.menu_y + 3;
+    vid_window(fb, 0xFF, t->dlg.menu_x4, t->dlg.menu_y, t->dlg.menu_w4, t->dlg.menu_h);
+    for (int i = 0; i < 2; i++)
+        vid_label_asciiz(fb, t->font, t->dlg.menu_item[i], mx4 + 3, my + 1 + i * 10, 0);
+    gt_cursor(fb, mx4 + 1, my + t->dlg.menu_row * 10, 1);
+}
+
 static void dlg_render(uint8_t *fb, const Town *t)
 {
     if (!t->dlg.active || !t->font) return;
+    if (t->dlg.menu_left && !t->dlg.menu_n) dlg_render_menu(fb, t);  /* under the new box */
     vid_window(fb, 0xFF, t->dlg.x8 * 2, t->dlg.y, t->dlg.w4, t->dlg.h);
     for (int l = 0; l < t->dlg.nvis; l++) {
         int x = t->dlg.x8 * 8 + 4, y = t->dlg.y + l * 10 + 4;
@@ -367,13 +398,7 @@ static void dlg_render(uint8_t *fb, const Town *t)
     }
     if (t->dlg.marker)                                               /* 6533 */
         vid_putchar(fb, t->font, 0x7C, 2, t->dlg.x8 * 8 + 0x54, t->dlg.y + 0x4A);
-    if (t->dlg.menu_n) {                                             /* 6655 / 66AD */
-        vid_window(fb, 0xFF, t->dlg.menu_x4, t->dlg.menu_y, t->dlg.menu_w4, t->dlg.menu_h);
-        for (int i = 0; i < t->dlg.menu_n; i++)
-            vid_label_asciiz(fb, t->font, t->dlg.menu_item[i], t->dlg.menu_x4 + 4,
-                             t->dlg.menu_y + 4 + i * 10, 0);
-        gt_cursor(fb, t->dlg.menu_x4 + 2, t->dlg.menu_y + 3 + t->dlg.menu_row * 10, 1);
-    }
+    if (t->dlg.menu_n) dlg_render_menu(fb, t);                     /* 6655 / 66AD */
 }
 
 const char *town_dialogue(const TownMap *m, int script)
@@ -1222,8 +1247,9 @@ void town_render(uint8_t *fb, const Town *t)
     }
     /* the hero: the same 2x3 layout, tman cells (0-based) */
     if (t->hero_scr_col >= 0 && t->hero_scr_col < 0x1B) {
-        const uint8_t *cells = (t->hero_flags & 1) ? HERO_L[t->hero_anim > 4 ? 4 : t->hero_anim]
-                                                   : HERO_R[t->hero_anim > 4 ? 4 : t->hero_anim];
+        int anim = t->dlg.active && t->dlg.hero_shown ? t->dlg.hero_shown - 1 : t->hero_anim;
+        if (anim > 4) anim = 4;
+        const uint8_t *cells = (t->hero_flags & 1) ? HERO_L[anim] : HERO_R[anim];
         for (int k = 0; k < 6; k++) {
             int cell = cells[k];
             if (cell >= t->hero->ncells) continue;
