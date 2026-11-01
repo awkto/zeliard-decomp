@@ -119,6 +119,8 @@ struct Game {
     const Map     *map;
     const Tileset *tiles;
     uint8_t  ring[RING_SIZE];       /* E000: row-major, stride 36; ring row == map row */
+    uint8_t  hero_drawn_ok; int hero_drawn_row, hero_drawn_col;   /* [4FED]: where 70D4 last drew the hero */
+    uint8_t  sword_blk_ok;  int sword_blk_row,  sword_blk_col;    /* [4FED] as 7047's 3E34 saw it (previous frame's) */
     uint8_t  bg_ring[RING_SIZE];    /* the ring as 710F [3000] (gfmcga 302C) draws the background at 3159, i.e. before 315C animates each cell: render.c draws the background from this, so it lags only this frame's 315C step.  Refreshed from ring at the top of frame_7094 (after 6F9B's simulation, before the draw). */
 
     /* player record 0049-00E8 */

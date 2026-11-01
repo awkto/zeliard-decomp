@@ -170,7 +170,8 @@ static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
  * `add si,0x120`), and GF_ERASE_SPRITES (3F29, fight.bin 7136, *after* the
  * sparks) restores it, so a death spark under the blade's block is erased and
  * the blade redrawn (3E34 at 7147) -- the cell clipping the port was missing. */
-static int sword_origin_f(const Game *g, const HeroGfx *h, int f, int *x0, int *y0)
+static int sword_origin_at(const Game *g, const HeroGfx *h, int f, int hsr, int hsc,
+                           int *x0, int *y0)
 {
     if (!g->attacking || g->hero_hidden || g->hero_dead) return 0;       /* 3FD0: test [FF43] */
     const SwordGfx *sg = &h->sword;
@@ -181,9 +182,14 @@ static int sword_origin_f(const Game *g, const HeroGfx *h, int f, int *x0, int *
     int grp = kind + ((g->hero_flags & FACE_LEFT) ? 3 : 0);              /* 3E6C: test [C2],1 */
     if (f >= SWORD_FRAMES[kind]) f = SWORD_FRAMES[kind] - 1;
     if (f < 0) f = 0;
-    *x0 = PF_X + g->hero_scr_col * 8 + sg->delta[sec][grp][f][1] * 8;
-    *y0 = PF_Y + (g->hero_scr_row + sg->delta[sec][grp][f][0] + (g->crouching ? 1 : 0)) * 8;
+    *x0 = PF_X + hsc * 8 + sg->delta[sec][grp][f][1] * 8;
+    *y0 = PF_Y + (hsr + sg->delta[sec][grp][f][0] + (g->crouching ? 1 : 0)) * 8;
     return 1;
+}
+
+static int sword_origin_f(const Game *g, const HeroGfx *h, int f, int *x0, int *y0)
+{
+    return sword_origin_at(g, h, f, g->hero_scr_row, g->hero_scr_col, x0, y0);
 }
 
 /* 3EB7 draws frame [FF46] - 1 at each [3006]; the screen the 717F boundary
@@ -247,15 +253,33 @@ static void draw_sword(uint8_t *fb, const Game *g, const HeroGfx *h)
 static void draw_enemies(uint8_t *fb, const Game *g)
 {
     if (!g->egfx || !g->ai) return;
+    /* gfmcga 302C's row scan draws the ring's sprite markers (0x80|i) one by
+     * one, and 3468 saves the cell's old E900 bytes before writing the sprite's
+     * 2x2 block: 0xFE at the top-left and 0xFF at the rest (3472/347A).  356e
+     * draws a cell only when its saved E900 byte is not 0xFF/0xFC, so a sprite
+     * whose marker sits in an earlier sprite's 0xFF cells is skipped.  The
+     * bottom-left byte stays 0xFF only while the earlier sprite's own bottom-left
+     * cell is empty (an empty cell never overwrites it); the top-left's 0xFE
+     * never hides.  crab_fight f149: body part 9 (type 0x08, cells {0,0xC1,0,0xC2}
+     * -- an empty left column) hides the falling shot part 0x35 right below it,
+     * whose row-7 sprite edge is the residue. */
+    static uint8_t hidden[RING_SIZE];
+    memset(hidden, 0, sizeof hidden);
     for (int i = 0; i < g->nobj; i++) {
         const MapObj *o = &g->obj[i];
         if ((o->col >> 8) == 0xFF || o->rcol == 0xFF) continue;
         /* gfmcga 302C draws the ring's sprite markers (0x80|i), not the C010
          * records: an object whose marker is gone (overwritten, or a stale
          * record left by TORI's A647 death pass) is not on screen. */
-        if (g->ring[game_ring_index(g, o->row, o->rcol)] != (uint8_t)(0x80 | i)) continue;
+        int hp = game_ring_index(g, o->row, o->rcol);
+        if (g->ring[hp] != (uint8_t)(0x80 | i)) continue;
+        if (hidden[hp]) continue;
         const uint8_t *fr = ai_frame(g->ai, o->type, o->hit, o->phase);
         if (!fr) continue;
+        if (!fr[1] && !fr[3]) {                 /* the sprite's left column is empty */
+            hidden[hp] = 1;
+            hidden[game_ring_add(hp, RING_W)] = 1;
+        }
         int pal = fr[0];
         if ((o->hit & 0x20) && !g->boss_map) pal += 3;                  /* hit flash */
         if (pal < 0 || pal > 4) pal %= 5;
@@ -443,7 +467,13 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
      * landed on it), then 7147 redraws the blade.  Save here, restore below. */
     int sx0 = 0, sy0 = 0, have_sword = 0;
     static uint8_t sword_bg[32 * 32];
-    if (h && (have_sword = sword_origin_f(g, h, g->attack_var - 1, &sx0, &sy0))) {
+    /* The 7047 save runs *before* the hero is drawn (70D4), so [4FED] still
+     * holds the previous frame's hero screen cells: the block is at the
+     * previous frame's hero position, while the 7147 blade uses the current
+     * one.  (vista_fight f99/f102 differ by exactly this cell.) */
+    int shr = g->sword_blk_ok ? g->sword_blk_row : g->hero_scr_row;
+    int shc = g->sword_blk_ok ? g->sword_blk_col : g->hero_scr_col;
+    if (h && (have_sword = sword_origin_at(g, h, g->attack_var - 1, shr, shc, &sx0, &sy0))) {
         for (int r = 0; r < 32; r++) {
             int yy = sy0 + r;
             if (yy < 0 || yy >= FB_H) { memset(sword_bg + r * 32, 0, 32); continue; }

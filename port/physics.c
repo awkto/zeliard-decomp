@@ -934,6 +934,11 @@ static void frame(Game *g)
     hero_enemy_contact(g);                                              /* 751F */
     shots_update(g);                                                    /* 8422 */
     orbs_update(g);                                                     /* 86FC */
+    /* gfmcga 3E34 at 7047 saves the blade's 32x32 block (3F42) relative to
+     * [4FED], which still holds where the hero was drawn *last* frame (70D4
+     * has not run yet); render.c restores it over the death sparks (7136). */
+    g->sword_blk_ok = g->hero_drawn_ok;
+    g->sword_blk_row = g->hero_drawn_row; g->sword_blk_col = g->hero_drawn_col;
     sword_advance(g);                                                   /* 7047: [3006], first swing step */
     hazard_check(g);
     if (g->map->cavern == 7 && g->shoes != 5 && ((++g->heat_timer & 0x3F) == 0)) {   /* 704F */
@@ -963,6 +968,8 @@ static void frame_7094(Game *g)
      * 3159 did. */
     memcpy(g->bg_ring, g->ring, RING_SIZE);
     if (g->present) g->present(g);                                      /* draw + wait 4*speed ticks + poll input */
+    g->hero_drawn_ok = 1;                                               /* 70D4 drew the hero: [4FED] */
+    g->hero_drawn_row = g->hero_scr_row; g->hero_drawn_col = g->hero_scr_col;
     /* 70D9: the potion's +8 LIFE a frame, right after the 70D4 draw and before
      * the 717F boundary (it used to run after it, one frame late: #63) */
     if (!g->hero_dead && g->hp_regen_pending) {
