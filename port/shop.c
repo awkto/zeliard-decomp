@@ -765,6 +765,7 @@ static void armr_buy(Shop *s, int shields)
     if (old) s->g->page[(shields ? P_SHIELD_STOCK : P_SWORD_STOCK) + s->town_id - 1] |= BIT_OF_ID[old - 1];
     if (shields) {
         s->g->shield = (uint8_t)(id + 1);
+        s->g->hud_panels |= 2;                                  /* A69A: its [2004] trough */
         s->g->shield_hp = SHIELD_HP[id];
         s->g->page[P_SHIELD_MAX] = (uint8_t)s->g->shield_hp;
         s->g->page[P_SHIELD_MAX + 1] = (uint8_t)(s->g->shield_hp >> 8);
@@ -1479,6 +1480,7 @@ static void sage_action(Shop *s, uint8_t op)
     Game *g = s->g;
     if (op >= 7 && op <= 0x0D) {                                /* A957 teach spell 1..7 */
         int n = op - 6;
+        g->hud_panels |= 1;                                     /* A958: its [2004] trough */
         g->magic_sel = (uint8_t)n;
         g->page[P_SPELLS + n - 1] = 0xFF;
         return;

@@ -22,6 +22,7 @@ void hero_damage_shielded(Game *g, unsigned dmg)
     dmg = (dmg >> 1) >> ((g->shield + 1) >> 1);
     if (g->shield_hp <= dmg) {
         g->shield = 0; g->shield_hp = 0;
+        g->hud_panels &= (uint8_t)~2;   /* 761F: [2004] style 0xFF greys bh 0xC5 w 0x18 */
         game_message(g, fight_message(MSG_SHIELD_BROKEN));
     } else g->shield_hp = (uint16_t)(g->shield_hp - dmg);
     hero_damage(g, dmg); g->sfx_request = 8;

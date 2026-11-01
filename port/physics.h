@@ -187,6 +187,11 @@ struct Game {
     uint8_t  hero_crest;            /* [9C] */
     uint16_t hp_regen_pending;      /* [C6] */
     uint8_t  attack_bonus;          /* [E4] */
+    /* not game state: which HUD counter troughs ([2004] bh 0xAA / 0xC6) are on
+     * screen — bit 0 magic, bit 1 shield.  Drawn by town.bin 610F/6127 at a
+     * town entry, kenjpro A958 / armrpro A69A on a purchase; nothing clears the
+     * HUD strip, only fight.bin 761F's grey fill when the shield breaks. */
+    uint8_t  hud_panels;
 
     /* combat state (FF page + 9F0E..) */
     uint8_t  attacking;             /* FF43 */

@@ -42,6 +42,7 @@ void itemp_icon(uint8_t *fb, const ItemPics *p, int section, int index, int x4, 
 /* [201C] vid_icon_sword: 20x18 at (x8*8, y), `index` 0-based */
 void itemp_sword(uint8_t *fb, const ItemPics *p, int index, int x8, int y);
 /* the HUD's three boxes (GAME.BIN A19C/A1AE/A1C0): sword, magic, shield */
+void hud_town_panels(Game *g);                       /* town.bin 610F/6127 */
 void itemp_hud(uint8_t *fb, const ItemPics *p, const TextFont *f, const Game *g);
 
 /* ------------------------------------------------------------------ Status */

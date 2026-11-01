@@ -101,6 +101,39 @@ void itemp_sword(uint8_t *fb, const ItemPics *p, int index, int x8, int y)
     }
 }
 
+/* MCGA [2018] 23CC / [201A] 23F5: the HUD's two 3-digit counters.  Both go
+ * through to_digits_blank_leading (241B: vid_to_decimal's 7 digits, the first
+ * six zeros turned into 0xFF) and vid_draw_digits (24A3) with the last three
+ * digits, AH x4, AL 0xBB, CX 0x0103 (+2 px nudge), BX 0xFF01: every cell gets
+ * its 6x7 box of 0x05 (24F2), a blank cell no glyph, a digit PC-88 colour 1. */
+static void hud_count(uint8_t *fb, const TextFont *f, unsigned v, int x4)
+{
+    uint8_t d[7];
+    for (int i = 6; i >= 0; i--) { d[i] = (uint8_t)(v % 10); v /= 10; }
+    for (int i = 0; i < 6 && d[i] == 0; i++) d[i] = 0xFF;                   /* 2424 */
+    for (int i = 0; i < 3; i++) {
+        int x = x4 * 4 + 2 + i * 6;
+        for (int r = 0; r < 7; r++)
+            for (int c = 0; c < 6; c++) spx(fb, x + c, 0xBB + r, 0x05);     /* 24FB */
+        uint8_t n = d[4 + i];
+        if (n == 0xFF || !f || !f->loaded) continue;                        /* 2512 */
+        for (int r = 0; r < 7; r++)
+            for (int c = 0; c < 6; c++)
+                if ((f->digit[n][r] >> (5 - c)) & 1) spx(fb, x + c, 0xBB + r, PC88[1]);
+    }
+}
+
+/* town.bin 610F/6127, on every town entry (60B7..61B1, the edge-to-edge
+ * walk included): `test [9D]` / `test [93]`, and each set one gets its
+ * [2004] trough (6116 bh 0xAA / 612E bh 0xC6, bl 0x1C, ch 0x17) before its
+ * counter.  An unset one is left alone: town.bin never clears the HUD strip
+ * (2002 is the playfield only), so a trough drawn earlier stays. */
+void hud_town_panels(Game *g)
+{
+    if (g->magic_sel) g->hud_panels |= 1;
+    if (g->shield)    g->hud_panels |= 2;
+}
+
 /* GAME.BIN A19C/A1AE/A1C0: the HUD's three picture boxes and their counts.
  * docs/TOWN.md §12.6: [201E] is the *magic* icon (charges via [2018]) and
  * [2020] the *shield* icon (durability via [201A]). */
@@ -112,10 +145,16 @@ void itemp_hud(uint8_t *fb, const ItemPics *p, const TextFont *f, const Game *g)
     if (g->sword)     itemp_sword(fb, p, g->sword - 1, 0x18, 0xAB);        /* (192,171) */
     if (g->magic_sel) itemp_icon(fb, p, 3, g->magic_sel - 1, 0x37, 0xA4);  /* (222,164) */
     if (g->shield)    itemp_icon(fb, p, 1, g->shield - 1, 0x3E, 0xA4);     /* (250,164) */
+    /* [2018]/[201A] draw only the 6x7 boxes; the trough round each counter is
+     * whatever earlier code left in the HUD strip (Game.hud_panels): a
+     * [2004] style-0 trough, bh 0xAA / 0xC6, bl 0x1C, 0x17 columns — black
+     * column + top row, 0x05 fill, 0x2D lip at (218..241 / 246..269, 186..195). */
+    if ((g->hud_panels & 1) && g->magic_sel) vid_gauge_bar(fb, 0xAA, 0x1C, 0x17);
+    if ((g->hud_panels & 2) && g->shield)    vid_gauge_bar(fb, 0xC6, 0x1C, 0x17);
     if (g->magic_sel)                                                      /* [2018] */
-        vid_draw_digits_raw(fb, f, g->magic_count[g->magic_sel - 1], 3, 0x36, 0xBB, 1, 1, 1);
+        hud_count(fb, f, g->magic_count[g->magic_sel - 1], 0x37);          /* 23EA */
     if (g->shield)                                                         /* [201A] */
-        vid_draw_digits_raw(fb, f, g->shield_hp, 3, 0x3D, 0xBB, 1, 1, 1);
+        hud_count(fb, f, g->shield_hp, 0x3E);                              /* 2410 */
 }
 
 /* ======================================================================== */

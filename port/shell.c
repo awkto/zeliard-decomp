@@ -9,6 +9,7 @@
 #include "render.h"
 #include "player.h"
 #include "shop.h"
+#include "status.h"
 #include "boss.h"
 #include "audio.h"
 
@@ -59,6 +60,7 @@ int shell_enter_town(Game *g, int idx, int col, int died)
     if (town_load_banks(s)) return 0;
     audio_music(s->tmap.music);                                         /* town level record +0 bits 1-4 */
     town_init(&s->town, &s->tmap, &s->ttiles, &s->tspr, &s->thero, g);   /* 7B7F/99EF/6AAF load via [10C] and 60C3/60C6: the memset clears both edges */
+    hud_town_panels(g);                                                 /* 610F/6127 */
     s->town.user = s; s->town.present = s->town_present; s->town.frame_end = s->town_frame_end;
     s->town.font = &s->tfont; s->town.dir = s->dir; s->town.pics = &s->pics;
     s->town.back = &s->tback;
@@ -361,6 +363,7 @@ static void town_frame(Shell *s)
         /* 6D3D/6D58 load through [10C] (0CDC clears FF1D) and 60C3/60C6 clear
          * both edges: town_init's memset is both */
         town_init(t, &s->tmap, &s->ttiles, &s->tspr, &s->thero, g);
+        hud_town_panels(g);                                             /* 610F/6127 */
         t->back_steps = carried_steps;
         t->hero_anim = carried_anim;
         s->town_entry = 1;                                              /* 60B7 .. 61B1 */
