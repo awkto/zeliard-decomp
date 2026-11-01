@@ -24,8 +24,10 @@
 #include "tear.h"
 #include "trace.h"
 #include "savestate.h"
+#include "statekeys.h"
 #include "playthrough.h"
 #include "present.h"
+#include "config.h"
 #include <errno.h>
 #ifdef _WIN32
 #include <direct.h>
@@ -89,6 +91,17 @@ typedef struct {
     int       state_save_pending;       /* boundary N seen; save when its frame ends */
     unsigned  state_save_rng;           /* g->rng_calls at boundary N (the trace delta base) */
     const char *state_load;             /* --state-load FILE (NULL = off) */
+    /* #52 step 2: the player-facing save states.  `sk` owns the request queue,
+     * the slot file names and the OSD text (port/statekeys.c); a key press or an
+     * injected event queues a request and state_frame_done runs it at the true
+     * end of the frame, which is the only resumable point. */
+    StateKeys sk;
+    const char *state_dir_opt;          /* --state-dir DIR (tests, headless) */
+    int       sk_combo;                 /* a Ctrl/Alt save-load key fired: don't also attack/cast */
+    /* --state-inject save:N[:slot] / load:N[:slot]: queue a request at trace
+     * boundary N -- the headless equivalent of pressing the key, for the proof */
+    struct { int kind; unsigned frame; int slot; } st_ev[8];
+    int       n_st_ev;
     /* --pilot ROUTE: the autopilot (playthrough.c) answers the input at each
      * boundary instead of --script; --emit-script FILE writes what it fed,
      * run-length coded, as a --script that replays it exactly */
@@ -107,8 +120,13 @@ typedef struct {
 #endif
 } App;
 
+/* STICK's F1 / F2 hotkeys (docs/SERVICES.md 01E3).  Kept outside the SDL block
+ * because the config remembers them (#42): the exit path reads them whichever
+ * build this is. */
+static int music_on = 1, sfx_on = 1;
+
 #ifdef HAVE_SDL
-static int f1_was, f2_was, music_on = 1, sfx_on = 1;   /* the F1 / F2 hotkeys */
+static int f1_was, f2_was;
 
 static void dump_png(App *a, Game *g);
 static void title_apply(App *a);
@@ -127,6 +145,38 @@ static void toggle_fullscreen(App *a)
         fprintf(stderr, "[video] %s\n", a->fullscreen ? "fullscreen" : "windowed");
 }
 
+/* #52 step 2: the save/load confirmation, drawn over the picture in the
+ * presentation layer only.  The engine framebuffer is never touched, so
+ * `make verify` and the traces cannot see it. */
+static void osd_draw(App *a)
+{
+    const char *msg = statekeys_osd_text(&a->sk);
+    if (!msg || !*msg) return;
+    int ow = 0, oh = 0;
+    if (SDL_GetRendererOutputSize(a->ren, &ow, &oh) != 0 || ow <= 0) return;
+    int s = ow / 320;
+    if (s < 2) s = 2;
+    if (s > 6) s = 6;
+    int w = statekeys_text_width(msg, s);
+    int x0 = (ow - w) / 2, y0 = oh / 10;
+    SDL_Rect bar = { x0 - 4 * s, y0 - 3 * s, w + 8 * s, 7 * s + 6 * s };
+    SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(a->ren, 0, 0, 0, 190);
+    SDL_RenderFillRect(a->ren, &bar);
+    SDL_SetRenderDrawColor(a->ren, 255, 235, 120, 255);
+    int x = x0;
+    for (const char *p = msg; *p; p++, x += 6 * s) {
+        const uint8_t *gl = statekeys_glyph(*p);
+        for (int col = 0; col < 5; col++)
+            for (int row = 0; row < 7; row++)
+                if (gl[col] & (1 << row)) {
+                    SDL_Rect px = { x + col * s, y0 + row * s, s, s };
+                    SDL_RenderFillRect(a->ren, &px);
+                }
+    }
+    SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_NONE);
+}
+
 /* Blit the mode's RGB image (already uploaded to a->tex) through the selected
  * display filter and present it.  The content shape is the aspect-corrected
  * display size, or the framebuffer itself under --aspect 1:1; present.c owns
@@ -137,6 +187,7 @@ static void present_frame(App *a, int sw, int sh)
     if (!a->square) video_display_size(a->video, &dw, &dh);
     if (present_render(a->ren, a->tex, sw, sh, dw, dh, a->filter) != 0)
         fprintf(stderr, "[video] present: %s\n", SDL_GetError());
+    osd_draw(a);
     SDL_RenderPresent(a->ren);
 }
 
@@ -187,6 +238,30 @@ static void pump_events(App *a, Game *g)
                 else if (a->paused) { a->paused = 0; title_apply(a); }
                 break;
             case SDLK_F12:    if (a->shot_path && g) dump_png(a, g); break;
+            /* #52 step 2: realtime save states, the same keys as the wasm
+             * builds.  Ctrl+. quick-saves and Ctrl+\ quick-loads; Ctrl+1..9
+             * saves to a numbered slot and Alt+1..9 loads one.  The combo is
+             * remembered so the same Ctrl/Alt does not also swing the sword or
+             * cast the spell this frame.  `g` is NULL in a cutscene, where there
+             * is no engine state to save yet. */
+            case SDLK_PERIOD:
+                if (g && (e.key.keysym.mod & KMOD_CTRL)) {
+                    statekeys_request(&a->sk, &a->sh, STATE_REQ_SAVE, -1); a->sk_combo = 1;
+                }
+                break;
+            case SDLK_BACKSLASH:
+                if (g && (e.key.keysym.mod & KMOD_CTRL)) {
+                    statekeys_request(&a->sk, &a->sh, STATE_REQ_LOAD, -1); a->sk_combo = 1;
+                }
+                break;
+            case SDLK_1: case SDLK_2: case SDLK_3: case SDLK_4: case SDLK_5:
+            case SDLK_6: case SDLK_7: case SDLK_8: case SDLK_9:
+                if (g && (e.key.keysym.mod & KMOD_CTRL)) {
+                    statekeys_request(&a->sk, &a->sh, STATE_REQ_SAVE, (int)(e.key.keysym.sym - SDLK_0)); a->sk_combo = 1;
+                } else if (g && (e.key.keysym.mod & KMOD_ALT)) {
+                    statekeys_request(&a->sk, &a->sh, STATE_REQ_LOAD, (int)(e.key.keysym.sym - SDLK_0)); a->sk_combo = 1;
+                }
+                break;
             default: break;
             }
             {   /* FF29 (STICK 04D0): upper-case letters, digits, Backspace, Enter */
@@ -196,7 +271,7 @@ static void pump_events(App *a, Game *g)
                 else if (k >= SDLK_0 && k <= SDLK_9) c = (uint8_t)('0' + (k - SDLK_0));
                 else if (k == SDLK_BACKSPACE) c = 0x08;
                 else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) c = 0x0D;
-                if (c) a->sh.town.last_ascii = c;
+                if (c && !a->sk_combo) a->sh.town.last_ascii = c;   /* not the slot digit */
             }
             break;
         default: break;
@@ -301,7 +376,8 @@ static void usage(void)
         "               [--screenshot N out.png] [--script SCRIPT] [--scale N] [--aspect A] [--filter F] [--fullscreen] [--speed N]\n"
         "               [--frames N] [--sound] [--verbose]\n"
         "               [--no-music] [--speaker] [--music N] [--dump-audio FILE.wav]\n"
-        "  --dir       directory holding ZELRES1-3.SAR (default: zeliard/, ../zeliard/)\n"
+        "  --dir       directory holding ZELRES1-3.SAR (default: the folder the config\n"
+        "              remembered, else zeliard/, ../zeliard/, ./)\n"
         "  --map N     system map index (0 = MP10 .. 0x1E = MPA0; default 0)\n"
         "  --pos C R   hero top-left map cell (default: the MURALLA door in MP10, 61 7)\n"
         "  --town N    start in town N (0 cmap .. 9 esmp; 1 = Muralla) instead of a cavern\n"
@@ -351,6 +427,10 @@ static void usage(void)
         "              frame boundary N (a fight/town frame, not a menu poll) to FILE\n"
         "  --state-load FILE      start from a state written by --state-save-at; the trace\n"
         "              numbering continues at N+1 and the script resumes from that token\n"
+        "  --state-dir DIR        where the quick/slot states live (default: SDL_GetPrefPath\n"
+        "              \"awkto\"/\"zeliard\"/states, else <gamedir>/states)\n"
+        "  --state-inject SPEC    with --trace: queue save:N[:slot] or load:N[:slot] at trace\n"
+        "              boundary N (the key path without a keyboard); repeatable\n"
         "  --flag N[=V] set story-flag byte [N] (hex 0..48, docs/STATE_PAGE.md) to V (hex,\n"
         "              default FF) before the save is made / the game starts; repeatable\n"
         "  --pilot ROUTE          with --trace: the autopilot plays ROUTE instead of a\n"
@@ -360,7 +440,11 @@ static void usage(void)
         "              | keys TOKENS (fed as --script tokens, for a move it cannot find)\n"
         "  --pilot-tail N         idle frames after the route is done (default 10)\n"
         "  --emit-script FILE     with --pilot: write the input it fed as a --script\n"
-        "  --trace-fields         list every field name --trace can emit and exit\n");
+        "  --trace-fields         list every field name --trace can emit and exit\n"
+        "\n"
+        "Settings are remembered between runs in zeliard.ini (SDL_GetPrefPath, or\n"
+        "$XDG_CONFIG_HOME / $HOME/.config without SDL); command-line flags override it.\n"
+        "Headless runs take only the game folder from it.\n");
 }
 
 static int script_next(App *a)
@@ -532,23 +616,92 @@ static void harness_advance(App *a)
     }
 }
 
+/* Run one queued save/load at the true end of a frame.  `frame` is the trace
+ * boundary the state is the boundary of (or the engine's frame counter when not
+ * tracing).  Returns 0 on success. */
+static int state_execute(App *a, Shell *s, int kind, int slot, unsigned frame)
+{
+    char path[1200];
+    if (statekeys_path(&a->sk, slot, path, sizeof path) != 0) {
+        statekeys_osd(&a->sk, "NO STATE DIRECTORY");
+        a->sk.refused++;
+        return -1;
+    }
+    if (kind == STATE_REQ_SAVE) {
+        unsigned rng = a->sk.rng_set ? a->sk.rng : s->g.rng_calls;
+        if (savestate_save(s, path, frame, rng) == 0) {
+            statekeys_osd(&a->sk, slot < 0 ? "SAVED QUICK SAVE" : "SAVED SLOT %d", slot);
+            a->sk.saved++;
+            fprintf(stderr, "[state] saved %s (frame %u)\n", path, frame);
+            return 0;
+        }
+        statekeys_osd(&a->sk, "CANNOT SAVE HERE");
+        a->sk.refused++;
+        return -1;
+    }
+    SavestateMeta meta;
+    if (savestate_load(s, path, &meta) == 0) {
+        a->sk.last_rng = meta.rng_calls;
+        /* the score's position is not part of the state: restart the one the
+         * loaded map or town names, so the music agrees with the picture again */
+        audio_music_stop();
+        int idx = s->in_town ? s->town.map->music : (int)((s->g.map->lvl_flags >> 1) & 0x0F);
+        audio_music(idx);
+        statekeys_osd(&a->sk, slot < 0 ? "LOADED QUICK SAVE" : "LOADED SLOT %d", slot);
+        a->sk.loaded++;
+        fprintf(stderr, "[state] loaded %s (frame %u)\n", path, meta.frame);
+        return 0;
+    }
+    /* tell "there is no such slot" apart from "the file is not a state we can
+     * read", so the OSD says which */
+    FILE *f = fopen(path, "rb");
+    if (f) { fclose(f); statekeys_osd(&a->sk, "SAVE INCOMPATIBLE"); }
+    else statekeys_osd(&a->sk, slot < 0 ? "NO QUICK SAVE" : "NO SAVE IN SLOT %d", slot);
+    a->sk.refused++;
+    return -1;
+}
+
 /* shell.frame_done (#52): the frame whose boundary was N has fully run, so the
- * engine is at a resumable point -- write the state now. */
-static void state_save_hook(Shell *s)
+ * engine is at a resumable point.  Step 1's --state-save-at blob is written
+ * here, and so is any queued interactive save/load (step 2). */
+static void state_frame_done(Shell *s)
 {
     App *a = s->user;
-    if (!a->state_save || a->state_save_done || !a->state_save_pending) return;
-    a->state_save_pending = 0;
-    if (a->trace_n != a->state_save_at + 1) {           /* the frame opened a blocking screen (a shop/status poll): not resumable here */
-        fprintf(stderr, "[state] frame %u opened a blocking screen: not saved\n", a->state_save_at);
-        return;
+    if (a->state_save && !a->state_save_done && a->state_save_pending) {
+        a->state_save_pending = 0;
+        if (a->trace_n != a->state_save_at + 1) {       /* the frame opened a blocking screen (a shop/status poll): not resumable here */
+            fprintf(stderr, "[state] frame %u opened a blocking screen: not saved\n", a->state_save_at);
+        } else {
+            a->state_save_done = 1;
+            unsigned n = a->state_save_at;              /* the boundary just traced */
+            if (savestate_save(s, a->state_save, n, a->state_save_rng) == 0)
+                fprintf(stderr, "[state] saved frame %u -> %s\n", n, a->state_save);
+            else
+                fprintf(stderr, "[state] frame %u not saved\n", n);
+        }
     }
-    a->state_save_done = 1;
-    unsigned n = a->state_save_at;                      /* the boundary just traced */
-    if (savestate_save(s, a->state_save, n, a->state_save_rng) == 0)
-        fprintf(stderr, "[state] saved frame %u -> %s\n", n, a->state_save);
-    else
-        fprintf(stderr, "[state] frame %u not saved\n", n);
+    if (a->sk.q_n) {
+        int any_load = 0;
+        unsigned frame = a->trace_f ? a->trace_n - 1
+                       : (s->in_town ? s->town.frame_no : s->g.frame_no);
+        for (int i = 0; i < a->sk.q_n; i++) {
+            if (state_execute(a, s, a->sk.q_kind[i], a->sk.q_slot[i], frame) == 0
+                && a->sk.q_kind[i] == STATE_REQ_LOAD)
+                any_load = 1;
+        }
+        a->sk.q_n = 0;
+        a->sk.rng_set = 0;
+        if (any_load && a->trace_f) {
+            /* the boundary already applied the next frame's script token to the
+             * pre-load state; re-apply it to the loaded state, and rebase the
+             * RNG delta on the loaded state's own counter */
+            a->rng_mark = a->sk.last_rng;
+            trace_set_input(a, a->script_dirs,
+                            (uint8_t)((a->script_btns & 3) | (a->script_btns & 8 ? 4 : 0)),
+                            (uint8_t)(a->script_btns & 4 ? 1 : 0));
+            if (a->trace_char) a->sh.town.last_ascii = a->trace_char;
+        }
+    }
 }
 
 /* `site`: "717F" / "68ED" for the frame boundaries, else a wait loop's poll
@@ -580,6 +733,13 @@ static void trace_boundary_at(App *a, Game *g, Town *t, const char *site)
     }
     unsigned k = g->rng_calls - a->rng_mark;
     a->rng_mark = g->rng_calls;
+    /* #52 step 2: fire any --state-inject events scheduled for this boundary
+     * (the headless key path), then record the RNG base the queued request will
+     * save with -- the same value a keyboard press seen this frame gets. */
+    for (int i = 0; i < a->n_st_ev; i++)
+        if (a->st_ev[i].frame == a->trace_n)
+            statekeys_queue(&a->sk, a->st_ev[i].kind, a->st_ev[i].slot);
+    if (a->sk.q_n && !a->sk.rng_set) { a->sk.rng = g->rng_calls; a->sk.rng_set = 1; }
     trace_write_frame(a->trace_f, a->trace_n, site, k, in, g, t);
     if (a->png_every && a->trace_n % a->png_every == 0) {
         char path[1100];
@@ -680,6 +840,8 @@ static int run_cutscenes(App *a, const char *dir)
 static void present(Game *g)
 {
     App *a = app_of(g->user);
+    a->sk_combo = 0;                    /* a stale save/load combo must not suppress input */
+    statekeys_osd_tick(&a->sk);
     audio_advance_ms(a->frame_ms);
     if (a->verbose)
         fprintf(stderr, "frame %4u  hero map (%3d,%2d) scr (%2d,%2d) scroll (%3d,%2d) v=%02x anim=%02x flags=%02x "
@@ -743,8 +905,9 @@ static void present(Game *g)
     if (k[SDL_SCANCODE_RIGHT] || k[SDL_SCANCODE_D]) d |= DIR_RIGHT;
     g->dirs = d;
     uint8_t b = pad_btns(a);
-    if (k[SDL_SCANCODE_X] || k[SDL_SCANCODE_LCTRL] || k[SDL_SCANCODE_RCTRL]) b |= 1;
-    if (k[SDL_SCANCODE_C] || k[SDL_SCANCODE_LALT]) b |= 2;
+    int combo = a->sk_combo;
+    if (k[SDL_SCANCODE_X] || (!combo && (k[SDL_SCANCODE_LCTRL] || k[SDL_SCANCODE_RCTRL]))) b |= 1;
+    if (k[SDL_SCANCODE_C] || (!combo && k[SDL_SCANCODE_LALT])) b |= 2;
     set_buttons(g, b);
     g->menu_key = (uint8_t)(k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER] || pad_menu(a));   /* FF18 bit0 */
 #endif
@@ -754,6 +917,8 @@ static void present(Game *g)
 static void town_present(Town *t)
 {
     App *a = app_of(t->user);
+    a->sk_combo = 0;                    /* a stale save/load combo must not suppress input */
+    statekeys_osd_tick(&a->sk);
     audio_advance_ms(a->frame_ms);
     if (a->verbose)
         fprintf(stderr, "town frame %4u  hero map col %3d scr %3d scroll %3d anim %u flags %02x%s%s\n",
@@ -817,12 +982,67 @@ static void town_present(Town *t)
     if (k[SDL_SCANCODE_RIGHT] || k[SDL_SCANCODE_D]) d |= DIR_RIGHT;
     t->dirs = d;
     uint8_t b = pad_btns(a);
+    int combo = a->sk_combo;
     if (k[SDL_SCANCODE_SPACE] || k[SDL_SCANCODE_X]) b |= 1;
-    if (k[SDL_SCANCODE_C] || k[SDL_SCANCODE_LALT] || k[SDL_SCANCODE_RALT] || k[SDL_SCANCODE_BACKSPACE]) b |= 2;
+    if (k[SDL_SCANCODE_C] || (!combo && (k[SDL_SCANCODE_LALT] || k[SDL_SCANCODE_RALT])) || k[SDL_SCANCODE_BACKSPACE]) b |= 2;
     if ((b & 1) && !(t->buttons & 1)) t->btn1_edge = 0xFF;
     if ((b & 2) && !(t->buttons & 2)) t->btn2_edge = 0xFF;
     t->buttons = b;
     t->menu_key = (uint8_t)(k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER] || pad_menu(a));   /* FF18 bit0 */
+#endif
+}
+
+/* ------------------------------------------------------------- the config */
+/* #42: the settings file.  SDL_GetPrefPath is the player's data directory
+ * ("awkto"/"zeliard"), and its own fallback is a dotfile (config_default_path).
+ * Both are pure path computations; no SDL subsystem needs to be up. */
+static void config_resolve_path(char *out, size_t n, const char *argv0)
+{
+#ifdef HAVE_SDL
+    char *pref = SDL_GetPrefPath("awkto", "zeliard");
+    if (pref) { snprintf(out, n, "%szeliard.ini", pref); SDL_free(pref); return; }
+#endif
+    config_default_path(out, n, argv0);
+}
+
+/* Fold what the run actually used back into the config, so the in-game
+ * toggles (F3 filter, F11 fullscreen, F1/F2 audio) survive the exit.  The game
+ * folder is only remembered when it was named (--dir) or already known, not
+ * when one of the built-in probes happened to find a relative one. */
+static void config_capture(Config *c, const App *a, const char *dir, int backend,
+                           int remember_dir)
+{
+    if (remember_dir && dir) snprintf(c->dir, sizeof c->dir, "%s", dir);
+    c->scale = a->scale;
+    c->fullscreen = a->fullscreen;
+    snprintf(c->video, sizeof c->video, "%s", video_mode_name(a->video));
+    snprintf(c->filter, sizeof c->filter, "%s", present_filter_name(a->filter));
+    snprintf(c->aspect, sizeof c->aspect, "%s", a->square ? "1:1" : "4:3");
+    c->music = music_on; c->sfx = sfx_on;
+    c->speaker = backend == AUDIO_SPEAKER ? 1 : 0;
+}
+
+/* #42 first run: the game files are copyrighted and stay user-supplied, so say
+ * so and say where.  SDL builds get a real dialog; headless stays on stderr. */
+static void no_game_files(const char *cfgpath, int headless)
+{
+    char msg[2048];
+    snprintf(msg, sizeof msg,
+        "Zeliard's game data files were not found.\n\n"
+        "They are copyrighted and are not included with this port.  Put the\n"
+        "original files (ZELRES1.SAR, ZELRES2.SAR, ZELRES3.SAR, GAME.BIN, ...)\n"
+        "in one of these folders:\n"
+        "    zeliard/    ../zeliard/    ./\n"
+        "or point the port at them:  zeliard --dir /path/to/the/files\n\n"
+        "The folder that works is remembered in:\n    %s", cfgpath);
+    fprintf(stderr, "%s\n", msg);
+#ifdef HAVE_SDL
+    if (!headless && SDL_Init(SDL_INIT_VIDEO) == 0) {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Zeliard - game files not found", msg, NULL);
+        SDL_Quit();
+    }
+#else
+    (void)headless;
 #endif
 }
 
@@ -831,6 +1051,9 @@ int main(int argc, char **argv)
     static App a; memset(&a, 0, sizeof a);
     a.frame_ms = FRAME_MS_DEFAULT; a.scale = 3; a.video = VID_MCGA;
     a.filter = FILTER_SHARP;                    /* #53: the fidelity-first default */
+    Config cfg; char cfgpath[CONFIG_PATH_MAX];
+    config_resolve_path(cfgpath, sizeof cfgpath, argv[0]);
+    config_load(&cfg, cfgpath);                 /* #42: absent = all defaults */
     Shell *sh = &a.sh;
     const char *dir = NULL;
     int map_idx = 0, pos_col = -1, pos_row = -1, start_in_town = -1, town_col = -1, town_scr = -1, town_anim = -1, town_face = 0, npc_i = -1, npc_f = 0;
@@ -849,6 +1072,10 @@ int main(int argc, char **argv)
     const char *wav_path = NULL;
     const char *gd_art_name = NULL, *gd_art_path = NULL;
     int want_audio = 1, audio_backend = AUDIO_ADLIB, music_force = -2;
+    /* #42: which settings the command line named, so the config can fill in
+     * only the rest (a flag always wins). */
+    int have_scale = 0, have_fullscreen = 0, have_video = 0, have_filter = 0,
+        have_aspect = 0, have_music = 0, have_speaker = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--dir") && i + 1 < argc) dir = argv[++i];
         else if (!strcmp(argv[i], "--map") && i + 1 < argc) { map_idx = (int)strtol(argv[++i], NULL, 0); explicit_start = 1; }
@@ -856,13 +1083,14 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--headless")) { a.headless = 1; explicit_start = 1; }
         else if (!strcmp(argv[i], "--screenshot") && i + 2 < argc) { a.shot_frame = (unsigned)atoi(argv[++i]); a.shot_path = argv[++i]; a.headless = 1; explicit_start = 1; }
         else if (!strcmp(argv[i], "--script") && i + 1 < argc) { a.script = argv[++i]; explicit_start = 1; }
-        else if (!strcmp(argv[i], "--scale") && i + 1 < argc) a.scale = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--scale") && i + 1 < argc) { a.scale = atoi(argv[++i]); have_scale = 1; }
         /* the scaling filter (F3 cycles it); default sharp-bilinear */
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) {
             a.filter = present_filter_by_name(argv[++i]);
             if (a.filter < 0) { fprintf(stderr, "--filter: expected integer, sharp or smooth\n"); return 2; }
+            have_filter = 1;
         }
-        else if (!strcmp(argv[i], "--fullscreen")) a.fullscreen = 1;
+        else if (!strcmp(argv[i], "--fullscreen")) { a.fullscreen = 1; have_fullscreen = 1; }
         /* the drivers all drew for a 4:3 monitor, so their pixels are not
          * square; --aspect 1:1 turns the correction off for pixel-peeping
          * against docs/screenshots/, which are native framebuffer grabs */
@@ -871,10 +1099,12 @@ int main(int argc, char **argv)
             if (!strcmp(v, "1:1") || !strcmp(v, "square")) a.square = 1;
             else if (!strcmp(v, "4:3") || !strcmp(v, "crt")) a.square = 0;
             else { fprintf(stderr, "--aspect: expected 4:3 or 1:1\n"); return 1; }
+            have_aspect = 1;
         }
         else if (!strcmp(argv[i], "--video") && i + 1 < argc) {
             a.video = video_mode_by_name(argv[++i]);
             if (a.video < 0) { fprintf(stderr, "unknown --video %s (mcga cga cga2 ega hgc tandy)\n", argv[i]); return 2; }
+            have_video = 1;
         }
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) { a.max_frames = (unsigned)atoi(argv[++i]); explicit_start = 1; }
         else if (!strcmp(argv[i], "--speed") && i + 1 < argc) a.frame_ms = FRAME_MS_DEFAULT * atoi(argv[++i]) / 5.0;
@@ -884,8 +1114,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--town-npc") && i + 2 < argc) { npc_i = atoi(argv[++i]); npc_f = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--town-anim") && i + 2 < argc) { town_anim = atoi(argv[++i]); town_face = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--sound")) sound_set_log(1);
-        else if (!strcmp(argv[i], "--no-music")) want_audio = 0;
-        else if (!strcmp(argv[i], "--speaker")) audio_backend = AUDIO_SPEAKER;
+        else if (!strcmp(argv[i], "--no-music")) { want_audio = 0; have_music = 1; }
+        else if (!strcmp(argv[i], "--speaker")) { audio_backend = AUDIO_SPEAKER; have_speaker = 1; }
         else if (!strcmp(argv[i], "--dump-audio") && i + 1 < argc) wav_path = argv[++i];
         else if (!strcmp(argv[i], "--music") && i + 1 < argc) music_force = (int)strtol(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--sword") && i + 1 < argc) dbg_sword = atoi(argv[++i]);
@@ -911,6 +1141,24 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--trace") && i + 1 < argc) { a.trace_dir = argv[++i]; a.headless = 1; explicit_start = 1; }
         else if (!strcmp(argv[i], "--state-save-at") && i + 2 < argc) { a.state_save_at = (unsigned)atoi(argv[++i]); a.state_save = argv[++i]; explicit_start = 1; }
         else if (!strcmp(argv[i], "--state-load") && i + 1 < argc) { a.state_load = argv[++i]; explicit_start = 1; }
+        else if (!strcmp(argv[i], "--state-dir") && i + 1 < argc) a.state_dir_opt = argv[++i];
+        else if (!strcmp(argv[i], "--state-inject") && i + 1 < argc) {
+            /* #52 step 2: queue a save/load at trace boundary N, the headless
+             * equivalent of pressing the key.  save:N[:slot] / load:N[:slot]. */
+            char spec[64]; snprintf(spec, sizeof spec, "%s", argv[++i]);
+            char *p = spec, *e = NULL;
+            int kind = 0, slot = -1;
+            if (!strncmp(p, "save:", 5)) { kind = STATE_REQ_SAVE; p += 5; }
+            else if (!strncmp(p, "load:", 5)) { kind = STATE_REQ_LOAD; p += 5; }
+            unsigned frame = (unsigned)strtoul(p, &e, 10);
+            if (e && *e == ':') slot = (int)strtol(e + 1, NULL, 10);
+            if (!kind || !e || e == p || a.n_st_ev >= 8) {
+                fprintf(stderr, "--state-inject %s: want save:N[:slot] or load:N[:slot]\n", spec);
+                return 2;
+            }
+            a.st_ev[a.n_st_ev].kind = kind; a.st_ev[a.n_st_ev].frame = frame;
+            a.st_ev[a.n_st_ev].slot = slot; a.n_st_ev++;
+        }
         else if (!strcmp(argv[i], "--png-every") && i + 1 < argc) a.png_every = (unsigned)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--trace-fields")) { trace_list_fields(stdout); return 0; }
         else if (!strcmp(argv[i], "--flag") && i + 1 < argc) {
@@ -929,16 +1177,36 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--emit-script") && i + 1 < argc) emit_path = argv[++i];
         else { usage(); return 2; }
     }
+    /* #42: the config fills in whatever the command line did not name.  It is a
+     * player's window/audio preference, so a headless run (--screenshot,
+     * --script, --trace: the harness) ignores it -- there only the game folder
+     * is taken from it, keeping `make verify` independent of the developer's
+     * saved settings. */
+    if (!a.headless) {
+        if (!have_scale && cfg.scale > 0) a.scale = cfg.scale;
+        if (!have_fullscreen && cfg.fullscreen >= 0) a.fullscreen = cfg.fullscreen;
+        if (!have_video && cfg.video[0])   { int m = video_mode_by_name(cfg.video); if (m >= 0) a.video = m; }
+        if (!have_filter && cfg.filter[0]) { int f = present_filter_by_name(cfg.filter); if (f >= 0) a.filter = f; }
+        if (!have_aspect && cfg.aspect[0]) a.square = !strcmp(cfg.aspect, "1:1") || !strcmp(cfg.aspect, "square");
+        if (!have_music && cfg.music >= 0) music_on = cfg.music;
+        if (cfg.sfx >= 0) sfx_on = cfg.sfx;
+        if (!have_speaker && cfg.speaker >= 0) audio_backend = cfg.speaker ? AUDIO_SPEAKER : AUDIO_ADLIB;
+    }
     if (a.intro < 0) a.intro = !explicit_start;
     /* GAME.BIN comes back from the demo and starts a new game in the castle */
     if (a.intro && !a.intro_only && !explicit_start && start_in_town < 0) start_in_town = 0;
+    /* #42: resolve the game folder once, so a first run can say what is missing
+     * before anything tries to open it.  Order: --dir, the config's remembered
+     * folder, then zeliard/ ../zeliard/ ./. */
+    shell_set_config_dir(cfg.dir);
+    const char *gdir = shell_find_dir(dir);
+    if (!gdir) { no_game_files(cfgpath, a.headless); return 1; }
     /* --gd-art NAME OUT.png: render one intro/ending resource the way
      * tools/grp2png.py's render_gd does, so the two decoders can be diffed
      * (port/tools/compare_gdart.py, `make verify`). */
     if (gd_art_name) {
         const GdArt *art = gd_art_find(gd_art_name);
         if (!art) { fprintf(stderr, "unknown gd resource %s\n", gd_art_name); return 2; }
-        const char *gdir = shell_find_dir(dir);
         size_t rlen = 0;
         uint8_t *raw = sar_load(gdir, art->archive, art->res - 1, 1, &rlen);
         if (!raw) { fprintf(stderr, "cannot load %s\n", art->name); return 1; }
@@ -990,15 +1258,20 @@ int main(int argc, char **argv)
         if (!a.trace_f) { fprintf(stderr, "cannot write %s\n", path); return 1; }
         sh->frame_end = trace_fight_end; sh->town_frame_end = trace_town_end;
         wait_clock.fn = trace_wait;
-        if (a.state_save) sh->frame_done = state_save_hook;
     }
     if (a.state_save && !a.trace_f) { fprintf(stderr, "--state-save-at needs --trace DIR\n"); return 2; }
+    if (a.n_st_ev && !a.trace_f) { fprintf(stderr, "--state-inject needs --trace DIR\n"); return 2; }
+    /* #52 step 2: the frame_done hook runs at the true end of every frame; it
+     * writes a --state-save-at blob (step 1) and any queued interactive save or
+     * load (the keys, or --state-inject).  Installed whichever front end this is. */
+    sh->frame_done = state_frame_done;
     /* audio before shell_init: loading a map starts its score (shell.c).  A
      * headless run without --dump-audio never opens it, so `make verify` and
      * the scripted runs stay silent and do no extra work. */
     if (want_audio && (!a.headless || wav_path)) {
-        const char *gdir = shell_find_dir(dir);
         audio_init(gdir, audio_backend, wav_path == NULL && !a.headless);
+        if (!music_on) audio_music_enable(0);       /* #42: the config's F1 state */
+        if (!sfx_on)   audio_sfx_enable(0);         /* ... and F2 */
         if (wav_path) {
             if (audio_dump_open(wav_path)) { fprintf(stderr, "cannot write %s\n", wav_path); return 1; }
             a.dump_audio = 1;
@@ -1012,7 +1285,7 @@ int main(int argc, char **argv)
      * score (shell_load_enemy_banks -> fight.bin 7E93) would then play over the
      * demo (#37) -- hold it until the real level entry below. */
     audio_music_hold(1);
-    if (shell_init(sh, dir, map_idx)) return 1;
+    if (shell_init(sh, gdir, map_idx)) return 1;
     Game *g = &sh->g;
     if (a.trace_f) g->harness_rng = 1;                                  /* HARNESS §3: no +20 stir */
 
@@ -1118,6 +1391,27 @@ int main(int argc, char **argv)
 #else
     if (!a.headless) { fprintf(stderr, "built without SDL2: running headless (use --screenshot / --script)\n"); a.headless = 1; }
 #endif
+    /* #52 step 2: where the slot files live.  SDL builds use the player's data
+     * dir (SDL_GetPrefPath("awkto","zeliard")); a headless build, or one where
+     * SDL cannot name it, falls back to a states/ folder beside the game files.
+     * --state-dir overrides both (the tests use it). */
+    {
+        char pref[CONFIG_PATH_MAX]; pref[0] = 0;
+#ifdef HAVE_SDL
+        if (!a.headless) {
+            char *p = SDL_GetPrefPath("awkto", "zeliard");
+            if (p) { snprintf(pref, sizeof pref, "%s", p); SDL_free(p); }
+        }
+#endif
+        /* only touch the filesystem when save/load is actually in play: a plain
+         * headless run (make verify, a scenario) must not create directories */
+        if (!a.headless || a.state_dir_opt || a.n_st_ev) {
+            if (statekeys_dir(&a.sk, a.state_dir_opt, pref[0] ? pref : NULL, sh->dir) != 0)
+                fprintf(stderr, "[state] no states directory (save/load disabled)\n");
+            else if (a.verbose)
+                fprintf(stderr, "[state] states directory: %s\n", a.sk.dir);
+        }
+    }
     if (a.headless && a.shot_path && a.shot_frame == 0) a.shot_frame = 1;
     if (music_force >= -1) audio_music_force(music_force);     /* --music N: pin one score (-1 = effects only) */
 
@@ -1126,6 +1420,7 @@ int main(int argc, char **argv)
     if (a.intro && !save_now) {
         run_cutscenes(&a, sh->dir);
         if (a.intro_only) { audio_shutdown(); shell_free(sh);
+            /* --intro-act is a tool run: it never writes the player's config */
 #ifdef HAVE_SDL
             present_shutdown();
             if (a.tex) SDL_DestroyTexture(a.tex);
@@ -1184,6 +1479,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "[save] %s/%s.usr: map %02X, town column %d, LIFE %u/%u, level %u, EXP %u, GOLD %u\n",
                 sh->dir, save_now, g->page[0xC4], sh->in_town ? town_hero_col(&sh->town) : -1,
                 g->hp, g->max_hp, g->level, g->exp, (unsigned)g->gold);
+        /* --save is a tool run (scenario start saves): it never writes the player's config */
         audio_shutdown();
         shell_free(sh);
         return 0;
@@ -1249,6 +1545,7 @@ int main(int argc, char **argv)
     fprintf(stderr, "stopped after %u frames: hero map (%d,%d), LIFE %u/%u, EXP %u, GOLD %u, %u hazard frames, %u deaths\n",
             g->frame_no, game_hero_map_col(g), game_hero_map_row(g), g->hp, g->max_hp, g->exp, (unsigned)g->gold,
             g->hazard_frames, g->deaths);
+    if (!a.headless) { config_capture(&cfg, &a, sh->dir, audio_backend, dir != NULL || cfg.dir[0] != 0); config_save(&cfg); }
     audio_shutdown();
     shell_free(sh);
 #ifdef HAVE_SDL

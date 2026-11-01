@@ -15,15 +15,37 @@
 
 #define LOG(s, ...) do { if (!(s)->quiet) fprintf(stderr, __VA_ARGS__); } while (0)
 
+/* #42: the folder config.c remembered, consulted between the --dir hint and
+ * the built-in probes. */
+static char shell_cfg_dir[1024];
+void shell_set_config_dir(const char *dir)
+{
+    if (dir) snprintf(shell_cfg_dir, sizeof shell_cfg_dir, "%s", dir);
+    else shell_cfg_dir[0] = 0;
+}
+
+/* A folder is the game folder only when all three ZELRES*.SAR archives are
+ * there.  game_fopen (sar.c) tries the name as given and all-lower-case, which
+ * is the port's one case-insensitive helper (#57). */
+static int dir_has_game(const char *dir)
+{
+    static const char *names[] = {"ZELRES1.SAR", "ZELRES2.SAR", "ZELRES3.SAR"};
+    for (int i = 0; i < 3; i++) {
+        FILE *f = game_fopen(dir, names[i]);
+        if (!f) return 0;
+        fclose(f);
+    }
+    return 1;
+}
+
 const char *shell_find_dir(const char *hint)
 {
     static const char *cands[] = {"zeliard", "../zeliard", "./", NULL};
-    if (hint) return hint;
-    for (int i = 0; cands[i]; i++) {
-        FILE *f = game_fopen(cands[i], "ZELRES1.SAR");
-        if (f) { fclose(f); return cands[i]; }
-    }
-    return "zeliard";
+    if (hint && dir_has_game(hint)) return hint;
+    if (shell_cfg_dir[0] && dir_has_game(shell_cfg_dir)) return shell_cfg_dir;
+    for (int i = 0; cands[i]; i++)
+        if (dir_has_game(cands[i])) return cands[i];
+    return NULL;
 }
 
 /* town.bin 601E: (re)load the map's tile bank and NPC sprite set */
@@ -257,6 +279,11 @@ static int on_door(Game *g, const Door *d)
 int shell_init(Shell *s, const char *dir_hint, int map_idx)
 {
     s->dir = shell_find_dir(dir_hint);
+    if (!s->dir) {
+        fprintf(stderr, "zeliard: no game files found (ZELRES1-3.SAR in %s)\n",
+                dir_hint ? dir_hint : "zeliard/, ../zeliard/ or ./");
+        return -1;
+    }
     if (map_load_system(&s->maps[0], s->dir, map_idx)) {
         fprintf(stderr, "cannot load map %d from %s\n", map_idx, s->dir);
         return -1;

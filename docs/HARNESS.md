@@ -591,7 +591,8 @@ up → rope 32 up through the wrap into the bottom corridor → rope 7 down thro
 The wasm / DOSBox-X builds snapshot the whole machine.  The port cannot, so it lists
 its engine state explicitly and versions the format.  `port/savestate.c` is the
 serialiser; `--state-save-at N FILE` writes one, `--state-load FILE` starts from one.
-No UI, slots or keys yet — this is the core, and the oracle is not involved.
+`port/statekeys.c` is the player-facing layer on top: the quick key and the numbered
+slots, their files and the on-screen confirmation (see 9.4).
 
 ### 9.1 Format
 
@@ -631,12 +632,39 @@ several frame boundaries N, re-run with `--state-save-at N`; run a third time fr
 blob with the remaining script (`tools/harness/script_cut.py N SCRIPT`) and require its
 `--trace` to be identical, frame N+1 to the end, to the reference (`tools/harness/
 trace_eq.py`: fields, site, input and rng_calls).  The whole library passes at three N
-each.  It ends with a corruption check: truncations and bit-flips of a real blob must
-be refused cleanly (exit < 128), and `ZELIARD=/path/to/san/zeliard` runs the same proof
-under `make SAN=1`.
+each.  It then drives the **in-game request path** (9.4): one more run with
+`--state-inject save:N --state-inject load:N` saves and reloads the quick slot at the
+same boundary through the same queue a key press uses, and the whole trace must stay
+byte-identical (`trace_eq.py REF CAND -1`).  It ends with a corruption check:
+truncations and bit-flips of a real blob must be refused cleanly (exit < 128), and
+`ZELIARD=/path/to/san/zeliard` runs the same proof under `make SAN=1`.
 
 ### 9.3 Unit checks
 
 `port/test_playthrough.c` (`state_roundtrip_unit`) saves and reloads a shell in-process
 and asserts the player record and the ring survive, and that a garbage, truncated or
-bit-flipped blob is refused.
+bit-flipped blob is refused.  `statekeys_unit` pins the player-facing layer: the
+quick/slot file names, the request queue order and the overlay refusal.
+
+### 9.4 Keys, slots and the on-screen confirmation
+
+The player keys match the wasm builds: **Ctrl+.** quick-saves and **Ctrl+\\**
+quick-loads, **Ctrl+1..9** saves to a numbered slot and **Alt+1..9** loads one.  A
+request is never run where it is made — it is queued and the shell's `frame_done`
+hook runs it at the true end of the frame (the only point a fresh step can resume
+from), so a key press during the frame cannot capture a half-stepped engine.  While
+a shop, the status screen, a dialogue box or the Tear cutscene owns the loop the
+request is refused with the same message a player sees ("Cannot save here"), rather
+than serialising a cursor the state does not hold.
+
+The files live in `SDL_GetPrefPath("awkto","zeliard")/states/` (`quick.zst`,
+`slot1.zst` … `slot9.zst`); a headless build, or one where SDL cannot name it, uses
+`<gamedir>/states/`, and `--state-dir DIR` overrides both.  A successful save/load
+shows a short message over the picture ("Saved slot 3", "Loaded quick save", "No save
+in slot 5", "Save incompatible"), drawn by the presentation layer only — never into
+the engine framebuffer `make verify` diffs.  Loading restarts the map's or town's
+score, since the music position is not part of the state.
+
+The headless equivalent of a key press is `--state-inject save:N[:slot]` /
+`load:N[:slot]` (with `--trace`): it queues the same request at trace boundary N, and
+it is what 9.2's key-path check uses.

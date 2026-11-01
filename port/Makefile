@@ -15,6 +15,7 @@ CORE = sar.o gfx.o map.o physics.o render.o png.o enemy.o ai.o combat.o shots.o 
        boss.o boss_crab.o boss_tako.o boss_tori.o boss_zela.o boss_meda.o boss_lega.o \
        boss_drgn.o boss_akma.o boss_mao1.o boss_mao2.o boss_generic.o \
        text.o player.o shop.o status.o shell.o savestate.o nav.o playthrough.o opl2.o msd.o audio.o \
+       config.o statekeys.o \
        gd.o cutscene.o tear.o \
        video.o video_mcga.o video_cga.o video_ega.o video_hgc.o video_tandy.o
 ifneq ($(strip $(SDL_LIBS)),)
@@ -34,7 +35,7 @@ ifeq ($(SAN),1)
   LIBS   += -fsanitize=address,undefined
 endif
 
-all: zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_present
+all: zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config test_present
 
 # present.o is the SDL display-filter stage (#53).  It is *not* in CORE: the
 # engine test binaries must stay SDL-free, so only zeliard and test_present
@@ -72,12 +73,16 @@ test_cutscene: test_cutscene.o $(CORE)
 test_video: test_video.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
 
+# the settings-file parser/writer (#42); pure C, no game files needed
+test_config: test_config.o $(CORE)
+	$(CC) -o $@ $^ $(LIBS)
+
 # The display filters only exist on the SDL path, so this one is built (and run)
 # separately from `make test`; with no SDL it compiles to a "skipping" stub.
 test_present: test_present.o present.o
 	$(CC) -o $@ $^ $(LIBS)
 
-%.o: %.c sar.h gfx.h map.h physics.h render.h video.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h savestate.h nav.h playthrough.h opl2.h msd.h audio.h gd.h cutscene.h tear.h trace.h present.h
+%.o: %.c sar.h gfx.h map.h physics.h render.h video.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h savestate.h nav.h playthrough.h opl2.h msd.h audio.h gd.h cutscene.h tear.h trace.h present.h config.h statekeys.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Every binary's "N checks" line is collected so the last step can compare the
@@ -89,7 +94,7 @@ COUNTS = $(CURDIR)/.test_counts.txt
 
 test: SHELL := /bin/bash
 test: .SHELLFLAGS := -o pipefail -c
-test: test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video
+test: test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config
 	@rm -f $(COUNTS)
 	./test_physics 2>&1 | tee -a $(COUNTS)
 	./test_combat 2>&1 | tee -a $(COUNTS)
@@ -101,6 +106,7 @@ test: test_physics test_combat test_town test_boss test_shop test_status test_pl
 	./test_audio ../zeliard 2>&1 | tee -a $(COUNTS)
 	./test_cutscene ../zeliard 2>&1 | tee -a $(COUNTS)
 	./test_video ../zeliard 2>&1 | tee -a $(COUNTS)
+	./test_config 2>&1 | tee -a $(COUNTS)
 	tools/check_counts.sh $(COUNTS)
 
 # random-input soak test (tools/monkey.py): `make monkey N=50 FRAMES=600 SEED=1`

@@ -64,8 +64,14 @@ typedef struct Shell {
     unsigned  transitions;              /* doors + gates taken */
 } Shell;
 
-/* zeliard/, ../zeliard/ or ./ unless `hint` names one */
+/* The game folder, in the order `--dir`, the config's remembered folder (set
+ * with shell_set_config_dir), then zeliard/, ../zeliard/, ./.  A candidate only
+ * counts when ZELRES1-3.SAR are all there (game_fopen: upper- or lower-case).
+ * Returns NULL when none of them has the files. */
 const char *shell_find_dir(const char *hint);
+/* The folder `config.c` remembered, consulted by shell_find_dir between the
+ * --dir hint and the built-in probes.  NULL or "" clears it. */
+void shell_set_config_dir(const char *dir);
 /* load system map `map_idx` into slot 0, the fonts, the hero and item art, and
  * game_init() the player record (STDPLY.BIN).  Returns 0 on success. */
 int  shell_init(Shell *s, const char *dir_hint, int map_idx);

@@ -50,11 +50,11 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 
 ```
 cd port
-make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 11 test binaries
+make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 12 test binaries
 make test            # physics (147) + combat/AI (228) + town (160) + boss (641) + shop (189)
-                     #   + status (87) + playthrough (127) + audio (315) + cutscene (46)
-                     #   + video (70) = 2010 assertions.  Needs no game files: every
-                     #   binary skips its data half when zeliard/ is not there.
+                     #   + status (87) + playthrough (139) + audio (315) + cutscene (46)
+                     #   + video (70) + config (30) = 2052 assertions.  Needs no game files:
+                     #   every binary skips its data half when zeliard/ is not there.
 make verify          # 211 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
 make playthrough     # the same two routes as test_playthrough, with the step-by-step log
@@ -149,6 +149,32 @@ changes.
 | Up / Down | move the red menu cursor (or scroll the list) |
 | Space (or X, Enter) | select / advance the text a page |
 | C (or Alt, Backspace) | cancel — the same as picking "Go outside" |
+
+### Save states (anywhere the game is not in a menu)
+
+| key | action |
+|---|---|
+| Ctrl+. | **quick-save** to `quick.zst` |
+| Ctrl+\\ | **quick-load** `quick.zst` |
+| Ctrl+1 … Ctrl+9 | **save to slot N** (`slot1.zst` … `slot9.zst`) |
+| Alt+1 … Alt+9 | **load slot N** |
+
+These match the wasm / DOSBox-X builds' quick keys.  The files live in
+`SDL_GetPrefPath("awkto","zeliard")/states/` (`~/.local/share/awkto/zeliard/states/`
+on Linux); a headless build, or one where SDL cannot name that directory, falls
+back to a `states/` folder beside the game files, and `--state-dir DIR` overrides
+both.  A save or load only happens at a **frame boundary**: the key is remembered
+and the state is written or restored at the end of the frame, never mid-step, so
+the engine cannot be captured in an inconsistent state.  While a shop, the
+status screen, a dialogue box or the Tear cutscene owns the frame loop the
+request is refused (their cursor is not part of the state), with a message over
+the picture.  A successful save or load shows the same kind of short
+confirmation — "Saved slot 3", "Loaded quick save", "No save in slot 5",
+"Save incompatible" — drawn over the game picture by the presentation layer, so
+the engine framebuffer `make verify` diffs is never touched.  Loading restarts
+the map's or town's own score, because the music position is not part of the
+state.  The headless equivalent is `--state-inject save:N[:slot]` /
+`load:N[:slot]`, which queues the same request at trace boundary N.
 
 Command line: `--dir GAMEDIR`, `--map N` (system map index, 0 = MP10 … 0x1E = MPA0),
 `--pos COL ROW` (hero top-left map cell), `--town N` (start in town N: 0 cmap, 1 mrmp
@@ -539,6 +565,22 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   the `--script` feeder; the two-mode loop itself is `shell_frame()`.  The window is
   resizable and `--fullscreen` starts full-screen (F11 / Alt+Enter toggles); the
   letterbox and the display filter are `present.c`'s job.
+* `config.c` / `config.h` — **the player's settings file** (#42).  A small
+  `key=value` ini at `SDL_GetPrefPath("awkto","zeliard")/zeliard.ini` (or, without
+  SDL, `$XDG_CONFIG_HOME/zeliard/zeliard.ini`, `$HOME/.config/…`, or beside the
+  binary) remembers the game folder, `--scale`, `--fullscreen`, `--video`,
+  `--filter`, `--aspect` and the audio settings (`music`, `sfx`, `speaker`, and
+  `volume` if present).  Every command-line flag overrides it for that run, and
+  the in-game toggles (F3, F11, F1/F2) are written back on exit.  A headless run
+  (`--screenshot`, `--script`, `--trace`) takes only the game folder from it, so
+  `make verify` cannot be moved by a developer's saved window settings.  The save
+  is atomic (a sibling `.tmp` then `rename`).  `shell_find_dir` now resolves the game
+  folder in the order `--dir`, the config's remembered folder, then the old
+  `zeliard/` `../zeliard/` `./` probes, and only accepts a folder that really has
+  `ZELRES1-3.SAR` (via `game_fopen`'s case-insensitive open); when none is found
+  an SDL build shows a friendly first-run dialog naming the copyrighted files and
+  where to put them, instead of only a stderr line.  `test_config.c` unit-tests
+  the parser, the round trip and the atomic save.
 * `present.c` / `present.h` — **the display filters** (#53): `--filter integer|sharp|
   smooth` (default `sharp`), F3 cycling them.  *integer* is the largest integer
   multiple of the source framebuffer that fits, nearest and centred; *sharp-bilinear*
@@ -696,7 +738,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   `menu_result = 8`; selecting a spell into `[9D]` and wearing an item into
   `[9E]` through the real cursor; the row change; the Enter debounce; and the
   window frames and header colours in the rendered framebuffer.
-* `test_playthrough.c` — 127 assertions over two autopilot runs, two fixture
+* `test_playthrough.c` — 139 assertions over two autopilot runs, two fixture
   crossings and a survey of cavern 1's topology (`make playthrough` prints the
   routes step by step):
   * **route 1, the opening**, played end to end with nobody at the keyboard: the
@@ -752,6 +794,14 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     floorless gaps with the planner driving, westward over fix[2] (67 frames) and
     over fix[3] at row 53 (638 frames — the platform has to come back for him
     now that the executor waits for it instead of walking off its front).
+  * **the realtime save states (#52)**: `state_roundtrip_unit` round-trips a
+    state blob in-process (the player record and the ring survive; a garbage,
+    truncated or bit-flipped blob is refused), and `statekeys_unit` pins the
+    player-facing layer — the quick/slot file names, the request queue, and that
+    a shop refuses a save and says so on screen.  The cross-run trace proof is
+    `tools/harness/state_roundtrip.sh`, which now also drives the in-game
+    request path (`--state-inject save:N load:N`, the same queue the keys use)
+    and requires the whole trace to stay byte-identical.
 * `test_audio.c` — 315 assertions over the sound back end:
   * **the score parser against `tools/msd2mid.py`**: all 17 scores in all three
     blob-B arrangements (AdLib, Tandy, PC speaker) are run through `msd.c`, and the
@@ -785,6 +835,12 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     accounted for separately.
   * **silence and determinism**: the engine hooks are no-ops while audio is off, and
     the same `--dump-audio` script rendered twice is bit-identical.
+* `test_config.c` — 30 assertions over the settings file (#42): the sentinels
+  `config_init` leaves, a full `key=value` parse, the lines it ignores (junk, a
+  bare `=`, an unknown key, a bad boolean) and the whitespace/CRLF trimming, the
+  `on`/`off`/`true`/`no` spellings, a lossless render+parse round trip, the atomic
+  save (parent directory created, the `.tmp` gone, the file loading back, a missing
+  file being no error) and the XDG / `HOME` / next-to-the-binary default path.
 * `tools/compare_shot.py` — playfield diff against a DOSBox capture.
 
 Verification: `make verify` renders nine positions headlessly and compares them with

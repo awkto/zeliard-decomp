@@ -11,6 +11,7 @@
 #include "player.h"
 #include "town.h"
 #include "savestate.h"
+#include "statekeys.h"
 
 static int checks, failures;
 static void ck(int cond, const char *what, ...)
@@ -592,6 +593,45 @@ static void state_roundtrip_unit(const char *dir)
     shell_free(&ss);
 }
 
+/* #52 step 2: the player-facing layer -- the slot file names, the request
+ * queue and the overlay refusal.  Pure C, no game files needed. */
+static void statekeys_unit(void)
+{
+    StateKeys k;
+    statekeys_init(&k);
+    ck(statekeys_path(&k, -1, (char[16]){0}, 16) < 0, "statekeys: no states directory -> no path");
+
+    ck(statekeys_dir(&k, "/tmp/zel_statekeys_unit", NULL, NULL) == 0,
+       "statekeys: the states directory is created");
+    char path[160];
+    ck(statekeys_path(&k, -1, path, sizeof path) == 0 && !strcmp(path, "/tmp/zel_statekeys_unit/quick.zst"),
+       "statekeys: the quick slot is quick.zst (%s)", path);
+    ck(statekeys_path(&k, 3, path, sizeof path) == 0 && !strcmp(path, "/tmp/zel_statekeys_unit/slot3.zst"),
+       "statekeys: slot 3 is slot3.zst (%s)", path);
+
+    ck(k.q_n == 0, "statekeys: nothing is queued at first");
+    statekeys_queue(&k, STATE_REQ_SAVE, 2);
+    statekeys_queue(&k, STATE_REQ_LOAD, -1);
+    ck(k.q_n == 2 && k.q_kind[0] == STATE_REQ_SAVE && k.q_slot[0] == 2
+       && k.q_kind[1] == STATE_REQ_LOAD && k.q_slot[1] == -1,
+       "statekeys: requests queue in order (save slot 2, then load quick)");
+
+    static Shell s; memset(&s, 0, sizeof s);
+    statekeys_request(&k, &s, STATE_REQ_SAVE, -1);
+    ck(k.q_n == 3, "statekeys: a plain frame queues a request (%d)", k.q_n);
+    s.in_town = 1; s.town.shop = (struct Shop *)(void *)&s;      /* a shop owns the loop */
+    statekeys_request(&k, &s, STATE_REQ_SAVE, -1);
+    ck(k.q_n == 3 && k.refused == 1, "statekeys: a shop refuses it (%d queued, %u refused)", k.q_n, k.refused);
+    ck(strstr(statekeys_osd_text(&k), "CANNOT SAVE") != NULL,
+       "statekeys: and says so on screen (%s)", statekeys_osd_text(&k));
+
+    ck(statekeys_glyph('A') && statekeys_glyph('7') && statekeys_glyph(' '),
+       "statekeys: the font has the glyphs the OSD needs");
+    ck(statekeys_glyph('A')[0] == 0x7E, "statekeys: 'A' has the expected first column");
+    ck(statekeys_text_width("AB", 3) == 33, "statekeys: 'AB' at scale 3 is 33 px (%d)",
+       statekeys_text_width("AB", 3));
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -701,6 +741,7 @@ int main(int argc, char **argv)
     cavern_routes(dir, verbose);
     cavern_progression(dir, verbose);
     state_roundtrip_unit(dir);
+    statekeys_unit();
 
     /* teardown, so `make SAN=1 test` proves the load-once allocations all
      * have an owner and a shell_free that reaches them */

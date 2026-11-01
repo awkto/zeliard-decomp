@@ -25,3 +25,4 @@ oom-*
 timeout-*
 .test_counts.txt
 test_present
+test_config

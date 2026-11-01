@@ -94,7 +94,7 @@ PY
 )
   [ -n "$ns" ] || { printf 'ERROR\t-\tno frame boundary to sample\n' >"$d/result"; return; }
 
-  ok=0; tried=0; skipped=0; detail=
+  ok=0; tried=0; skipped=0; detail=; keyn=
   for N in $ns; do
     # 2. the run that writes the state
     (cd "$ROOT" && "$PORT" --dir zeliard --load "$load" --trace "$d/b$N" \
@@ -114,19 +114,38 @@ PY
     if (cd "$ROOT" && python3 "$EQ" "$d/ref/frames.jsonl" "$d/c$N/frames.jsonl" "$N") \
         >"$d/eq$N.txt" 2>&1; then
       ok=$((ok + 1))
+      [ -n "$keyn" ] || keyn=$N
       # keep one blob per scenario for the corruption check below
       if [ -f "$d/keep.bin" ]; then rm -f "$d/state_$N.bin"; else mv "$d/state_$N.bin" "$d/keep.bin"; fi
     else
       detail="$detail N=$N:$(sed -n '1p' "$d/eq$N.txt")"
     fi
   done
+
+  # 4. #52 step 2: the same save/load through the *in-game* request path -- a
+  # queued request run by the shell's frame_done hook, the code a Ctrl+. / Ctrl+\
+  # key press uses.  Save the quick slot at boundary N and load it back at the
+  # same boundary: the round trip must leave the whole trace byte-identical.
+  keyres=
+  if [ -n "$keyn" ]; then
+    (cd "$ROOT" && "$PORT" --dir zeliard --load "$load" --trace "$d/key" \
+        --state-dir "$d/states" --state-inject "save:$keyn" --state-inject "load:$keyn" \
+        --script "$script") >"$d/key.out" 2>&1
+    if (cd "$ROOT" && python3 "$EQ" "$d/ref/frames.jsonl" "$d/key/frames.jsonl" -1) \
+        >"$d/key_eq.txt" 2>&1; then
+      keyres=", key path clean (N=$keyn)"
+    else
+      keyres=", key path DIVERGES N=$keyn: $(sed -n '1p' "$d/key_eq.txt")"
+    fi
+  fi
+
   frames=$(wc -l < "$d/ref/frames.jsonl")
   if [ "$tried" -eq 0 ]; then
     printf 'SKIP\t%s\tno resumable frame boundary among the samples (%s skipped)\n' "$frames" "$skipped" >"$d/result"
-  elif [ "$ok" -eq "$tried" ]; then
-    printf 'clean\t%s\t%s N round-trips%s\n' "$frames" "$ok" "${skipped:+, $skipped skipped}" >"$d/result"
+  elif [ "$ok" -eq "$tried" ] && [ "${keyres#*, key path DIVERGES}" = "$keyres" ]; then
+    printf 'clean\t%s\t%s N round-trips%s%s\n' "$frames" "$ok" "${skipped:+, $skipped skipped}" "$keyres" >"$d/result"
   else
-    printf 'DIVERGES\t%s\t%s/%s N round-trips;%s\n' "$frames" "$ok" "$tried" "$detail" >"$d/result"
+    printf 'DIVERGES\t%s\t%s/%s N round-trips;%s%s\n' "$frames" "$ok" "$tried" "$detail" "$keyres" >"$d/result"
   fi
 }
 
