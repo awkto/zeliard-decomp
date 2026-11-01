@@ -144,21 +144,24 @@ Per-map summary (`tools/mdt2png.py --town OUT` prints the full tables):
 | cmap | 80 | Felishika's Castle | 114 | cpat / mman / mgt1 | 52 king, 95 omoya | — (right exit → mrmp) | 4 | patches on [49], [04] |
 | mrmp | 81 | Muralla Town | 215 | mpat / mman / mgt1 | 39 armour 59 church 111 drug 138 bank 172 sage 205 cave0 | (61,7,0,MP10) | 9 | left exit → cmap |
 | stmp | 82 | Satono Town | 215 | dpat / cman / ugm1 | 44 drug 92 sage 128 inn 148 bank 185 armour | (128,33,1,MP10) (6,62,0,MP20) | 7 | underground; edges → caves 0/1 |
-| bsmp | 83 | Bosque village | 152 | mpat / mman / mgt2 | 7 cave1 36 bank 61 sage 81 drug 96 armour 114 inn 142 cave0 | (185,19,0,MP31) (149,14,1,**MP31?**) | 12 | no edge exits; [12]&8 sentry |
+| bsmp | 83 | Bosque village | 152 | mpat / mman / mgt2 | 7 cave1 36 bank 61 sage 81 drug 96 armour 114 inn 142 cave0 | (185,19,0,MP30) (149,14,1,MP31) | 12 | no edge exits; [12]&8 sentry |
 | hlmp | 84 | Helada Town | 227 | dpat / cman / ugm1 | 44 sage 92 inn 111 armour 128 drug 148 bank | (86,22,1,MP40) (16,22,0,MP41) | 8 | underground; [1A]&10 |
 | tmmp | 85 | Tumba Town | 270 | dpat / cman / ugm2 | 44 armour 93 inn 128 sage 181 bank 231 drug | (94,11,1,MP50) (131,10,0,MP50) | 8 | underground; [22]&2, [24]&80/2 |
-| drmp | 86 | Dorado Town | 215 | dpat / mman / ugm2 | 47 armour 70 inn 92 sage 128 bank 184 drug | (31,6,1,MP62) (315,49,0,MP61) | 12 | underground; [2A]&4 |
-| llmp | 87 | Llama Town | 280 | mpat / cman / mgt2 | 8 cave1 39 armour 71 sage 104 drug 142 bank 176 inn 222 cave2 269 cave0 | (1,22,0,MP71) (152,7,1,MP71) (27,13,0,MP73) | 9 | no edge exits; [30], [34]&80/40 |
-| prmp | 88 | Pureza Town | 320 | dpat / cman / ugm1 | 49 drug 93 inn 128 sage 181 bank 231 armour **294 past** | (111,21,1,MP82) | 10 | underground; [42]&8, [2B]&10 |
-| esmp | 89 | Esco village | 215 | mpat / mman / mgt2 | 57 armour 111 drug 138 bank 171 church 205 cave0 | (123,6,0,MP90) | 7 | — |
+| drmp | 86 | Dorado Town | 215 | dpat / mman / ugm2 | 47 armour 70 inn 92 sage 128 bank 184 drug | (31,6,1,MP61) (315,49,0,MP60) | 12 | underground; [2A]&4 |
+| llmp | 87 | Llama Town | 280 | mpat / cman / mgt2 | 8 cave1 39 armour 71 sage 104 drug 142 bank 176 inn 222 cave2 269 cave0 | (1,22,0,MP70) (152,7,1,MP70) (27,13,0,MP73) | 9 | no edge exits; [30], [34]&80/40 |
+| prmp | 88 | Pureza Town | 320 | dpat / cman / ugm1 | 49 drug 93 inn 128 sage 181 bank 231 armour **294 past** | (111,21,1,MP80) | 10 | underground; [42]&8, [2B]&10 |
+| esmp | 89 | Esco village | 215 | mpat / mman / mgt2 | 57 armour 111 drug 138 bank 171 church 205 cave0 | (123,6,0,MP81) | 7 | — |
 
-(cavern map = record `map` of the kernel table: 0 MP10, 2 MP20, 5 MP31, 6 MP3D, 8 MP40, 9 MP41,
-0xB MP50, 0xE MP61, 0xF MP62, 0x12 MP71, 0x15 MP73, 0x17 MP82, 0x18 MP90 — docs/RESOURCES.md.)
+(cavern map = record `map` = the **system map index** n, loaded from ZELRES3[20+n] -- the 31-record
+table at STICK.BIN @0F68, `SYSMAP[]` in port/map.c: 0 MP10, 1 MP1D, 2 MP20, 3 MP21, 4 MP2D, 5 MP30,
+6 MP31, 7 MP3D, 8 MP40, 9 MP41, 0xA MP4D, 0xB MP50, 0xC MP51, 0xD MP5D, 0xE MP60, 0xF MP61,
+0x10 MP62, 0x11 MP6D, 0x12 MP70, 0x13 MP71, 0x14 MP72, 0x15 MP73, 0x16 MP7D, 0x17 MP80, 0x18 MP81,
+0x19 MP82, 0x1A MP83, 0x1B MP84, 0x1C MP8D, 0x1D MP90, 0x1E MPA0 -- docs/RESOURCES.md. An earlier
+version of this table was off by one from 0x5 up, and by two from 0xE.)
 
-**Open discrepancy:** bsmp's second cave record (the one Bosque's column-7 door leads to)
-is listed here as `MP3D`, but the door lists make it **system map 6 = the map whose (149,13)
-door returns to Bosque column 7**, with MP3D only reachable from that map's (174,4)/(188,20).
-Either this cell or `docs/RESOURCES.md`'s naming of system map 6 is wrong — unresolved.
+Bosque's second cave record (the one the column-7 door leads to) is system map 6 = **MP31**,
+which resolves the former "open discrepancy": its (149,13) door returns to Bosque column 7, and
+MP3D (map 7) is reachable only from that map's (174,4)/(188,20).
 
 ## 4. Graphics
 

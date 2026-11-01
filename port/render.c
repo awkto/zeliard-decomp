@@ -293,6 +293,27 @@ static void draw_magic(uint8_t *fb, const Game *g)
 
 /* video slot [0x2000] vid_window — text.c owns the implementation; this
  * wrapper keeps the pixel arguments the encounter card is written with. */
+/* gfmcga 379B: each live spark is a 16x16 picture at screen (48 + 8x, 14 + 8y),
+ * {x, y, life, kind}, shape life & 3, drawn straight to the screen (no clip, so
+ * x = 26 spills 8 px past the playfield).  4092 turns a pixel pair into
+ * mask/colour: value 3 is [4FF6], 1 and 2 are [4FF5], 0 leaves the screen alone. */
+static void draw_sparks(uint8_t *fb, const Game *g, const HeroGfx *h)
+{
+    if (!h || !h->spark.loaded || !g->boss_dying) return;
+    for (const uint8_t *e = g->spark_drawn; *e != 0xFF && e + 4 <= g->spark_drawn + sizeof g->spark_drawn; e += 4) {
+        int x0 = PF_X + e[0] * 8, y0 = PF_Y + e[1] * 8;
+        const uint8_t *col = h->spark.col[e[3] & 3];
+        for (int r = 0; r < 16; r++)
+            for (int k = 0; k < 16; k++) {
+                int v = h->spark.shape[e[2] & 3][r][k];
+                if (!v) continue;
+                int c = v == 3 ? col[1] : col[0];
+                int x = x0 + k, y = y0 + r;
+                if (x < FB_W && y < FB_H) fb[y * FB_W + x] = (uint8_t)c;
+            }
+    }
+}
+
 void render_window(uint8_t *fb, int x, int y, int w, int h, int framed)
 {
     vid_window(fb, framed, x / 4, y, w / 4, h);
@@ -346,6 +367,7 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
         }
     }
     draw_enemies(fb, g);
+    draw_sparks(fb, g, h);
     draw_shots(fb, g);
     draw_magic(fb, g);
     if (h) { draw_hero(fb, g, h); draw_sword(fb, g, h); }

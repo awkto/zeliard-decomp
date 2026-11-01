@@ -962,7 +962,7 @@ static void frame_7094(Game *g)
     if (g->hp == 0) { death_begin(g); return; }                         /* 718C: jmp 98FC */
     if (++g->regen_tick >= 0x10) {                                      /* 719E */
         g->regen_tick = 0;
-        if (g->hp < g->max_hp) { g->hp += 2; if (g->hp > g->max_hp) g->hp = g->max_hp; }
+        if (g->hp < g->max_hp) g->hp += 2;     /* 71B1 cmp/jnc, 71B7 add ax,2: no clamp, max_hp-1 -> max_hp+1 */
     }
     if (g->post_boss_pending) { post_boss_transition(g); return; }       /* 71C2 -> 72F1 */
     boss_rewards(g);                                                     /* 71CC */

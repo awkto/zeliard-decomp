@@ -178,6 +178,15 @@ int shell_enter_cavern(Shell *s, int sys_map, int col, int row, int face_left,
     shell_load_enemy_banks(s, &s->maps[slot]);
     cavern_score_idx(g, &s->maps[slot]);
     g->map = &s->maps[slot]; g->tiles = &s->tiles[slot];
+    if (s->in_town && s->tmap.raw) {
+        /* the town map was the last thing loaded to C000 (town.bin), so the
+         * bytes past a short cavern map's end are the town's: what a boss
+         * room entered straight from a town (MP73 from Llama) shows in its
+         * part records' +7..+F (paguro_fight; #71 for the cavern case) */
+        size_t n = s->tmap.rawlen < sizeof g->c000 ? s->tmap.rawlen : sizeof g->c000;
+        memcpy(g->c000, s->tmap.raw, n);
+        g->nobj = 0;
+    }
     if (from_cave_record) row = row - 10 + s->maps[slot].row_bias;       /* 7005 / 7D2D */
     game_place(g, col, row, face_left);
     if (g->boss_room) game_boss_room_intro(g);                          /* 61A8 */

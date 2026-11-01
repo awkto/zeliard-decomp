@@ -1,0 +1,4 @@
+# start: MILAGRO.usr
+# make: --town 9 --town-col 205 --level 16 --life 800 --sword 5 --shield 4 --save MILAGRO
+# what: Esco's column-205 door (cave0, system map 0x18 = MP81) -> MP81 (123,6) "Cavern of Milagro" (cavern 8, EAI8): the tall charger (109,5) charging into its wall, east through the (138,7) sentry gunner (killed, its ledge shuffle A590 reads the record's own byte +0, A5BA), down the slopes past the (153,38) flying chaser
+U3 .20 R8 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 RX1 R1 .5 R10 .5 R10 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 L6 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 R10 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 X1 .2 .10

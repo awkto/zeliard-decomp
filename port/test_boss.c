@@ -284,6 +284,25 @@ static void t_no_hit_flash(void)
     game_place(&G, (int)G.boss.start_col - 8, G.boss.start_row + 3, 0);
     enemies_load(&G);
     boss_update(&G);
+    /* A467 emits the 12 parts column by column (4 columns of 3 rows): the
+     * second record is one part DOWN, the fourth one part RIGHT */
+    if (G.nobj == 12)
+        CHECK(G.obj[1].col == G.obj[0].col && G.obj[1].row == (uint8_t)(G.obj[0].row + 2) &&
+              G.obj[3].col == G.obj[0].col + 2 && G.obj[3].row == G.obj[0].row &&
+              G.obj[1].phase == 1 && G.obj[3].phase == 3,
+              "ZELA: parts column-major, frame = index (A467)");
+    else CHECK(0, "ZELA: 12 parts on the ring (got %d)", G.nobj);
+    {   /* vec 27 (96A1) as the overlays read it: BL is written off the ring too */
+        uint8_t bl = 0; uint16_t sc = G.scroll_col;
+        G.scroll_col = 10;
+        int cf = boss_ring_col(&G, 20, &bl);
+        CHECK(!cf && bl == 10, "96A1: col 20, scroll 10 -> ring 10");
+        cf = boss_ring_col(&G, 50, &bl);
+        CHECK(cf && bl == 40, "96A1: col 50 -> CF, BL = col - scroll (40)");
+        cf = boss_ring_col(&G, 5, &bl);
+        CHECK(cf && bl == (uint8_t)(m.width - 10 + 5), "96A1: col 5 < scroll -> CF, BL = width - scroll + col");
+        G.scroll_col = sc;
+    }
     int z = -1;
     for (int k = 0; k < G.nobj; k++) if (!(G.obj[k].type & 0x20)) { z = k; break; }
     CHECK(z >= 0, "ZELA: a part to strike");

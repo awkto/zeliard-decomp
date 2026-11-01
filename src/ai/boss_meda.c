@@ -13,7 +13,10 @@
  *   right side A613/A623 at (1,8), 11 rows
  *   tentacles  [A62E + 2*A72F] / A682 at (4,3), 5 rows   (A72F = 0..5 by hero position, 5 = dead)
  *   attack     [A687 + 2*A730] / [A6C7 + 2*A730] at (4,7), 5 rows  (A730 = 0..4)
- * Part row = boss_row + r, col = boss_col + c (A4AA..A537).
+ * The buffer is 14 COLUMNS x 12 rows, column-major (A539 takes one bitmap
+ * byte per column, bit 7 = first row); part col = boss_col + c, row =
+ * boss_row + r (A4AA..A537).  port/boss_meda.c is the line-by-line version
+ * (vista_fight).
  *
  * State: A716 col, A718 row, A719 HP, A72F tentacle pose, A730 attack
  * frame, A732 hit source (|0x80 if the part had type bit 3), A733 death
@@ -40,7 +43,7 @@ void boss_entry(void)
         if (*boss_row == 7 && hero_col(16) > *boss_col + 4 && hero_col(16) <= *boss_col + 6) { delay = 3; vstate = 0xFF; }   /* A298: hero right below -> dive */
         if (!hdir) { if (step_left_0A())  hdir = 0xFF; }           /* A2D3: 1 cell/frame, col 0x0A..0x31 */
         else       { if (step_right_31()) hdir = 0; }
-        tentacle_pose_by_hero();                                    /* A317: A72F = A70D[boss_col - 9] ... (row table) */
+        tentacle_pose_by_hero();                                    /* A317: the ROW, A718 = A6ED[boss_col - 9] (0x0C..7..0x0C) */
     } else if (delay) delay--;
     else if (vstate & 0x80) { if (row_down_to_0B()) vstate = 0x7F; }   /* A2FF: dive 4 rows */
     else                    { if (row_up_to_07())   vstate = 0; }      /* A30B: back up */

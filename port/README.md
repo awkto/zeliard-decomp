@@ -51,9 +51,9 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 10 test binaries
-make test            # physics (147) + combat/AI (228) + town (160) + boss (634) + shop (187)
+make test            # physics (147) + combat/AI (228) + town (160) + boss (638) + shop (187)
                      #   + status (87) + playthrough (119) + audio (315) + cutscene (46)
-                     #   + video (70) = 1993 assertions.  Needs no game files: every
+                     #   + video (70) = 1997 assertions.  Needs no game files: every
                      #   binary skips its data half when zeliard/ is not there.
 make verify          # 211 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -615,7 +615,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   the sound stub; every eai overlay's A008/A010 tables and a 200-frame run of each
   cavern's AI; the tall (2×4) spawn**.  It also renders the DOSBox capture's scene
   for `make verify`.
-* `test_boss.c` — 634 assertions: the `[A002]` block of **all eleven** boss
+* `test_boss.c` — 638 assertions: the `[A002]` block of **all eleven** boss
   overlays against docs/ENEMIES.md §3 (HP, EXP, gold, camera column, knock-left,
   start cell, contact damage, the name record); mp1d's level record (boss bit 7,
   AI 1 = CRAB, bank +5, post-boss banks +6/+7, an *empty* C010 list and no door);
@@ -626,7 +626,8 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   player-page flag is set); and a 200-frame run of TAKO, TORI, ZELA, ZEL2 and
   the four generic overlays with their marker and reward checks; and the layer
   tables of MEDA (21 + 8 + 6 parts) and LEGA (the nine pose popcounts against
-  their byte-list run lengths) plus all four boss projectile templates; and the
+  their byte-list run lengths) plus all four boss projectile templates; ZELA's
+  column-major part order (A467) and vec 27's off-ring BL (96A1, #84); and the
   **part hit bit** — that an unstruck boss emits `hit = 0`, that the frame after a
   hit *every* part carries bit 5, that `sword_apply` then refuses them all so the
   boss takes no damage that frame, that the flag clears again the next frame and the

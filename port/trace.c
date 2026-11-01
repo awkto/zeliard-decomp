@@ -314,6 +314,12 @@ void trace_input_token(char out[12], uint8_t dirs, uint8_t buttons, uint8_t menu
     out[n] = 0;
 }
 
+void trace_write_exit(FILE *f, unsigned n, unsigned rng_calls, const char *input, unsigned code)
+{
+    fprintf(f, "{\"f\":%u,\"site\":\"exit\",\"rng_calls\":%u,\"input\":\"%s\",\"code\":%u}\n",
+            n, rng_calls, input, code);
+}
+
 void trace_write_frame(FILE *f, unsigned n, const char *site, unsigned rng_calls, const char *input, Game *g, const Town *t)
 {
     int mode = t ? M_TOWN : M_FIGHT;

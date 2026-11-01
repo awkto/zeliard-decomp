@@ -226,6 +226,7 @@ struct Game {
      * `boss_state` is its first byte (FF = empty), spark[] the rest. */
     uint8_t  boss_state;
     uint8_t  spark[0x81];
+    uint8_t  spark_drawn[0x81];     /* port: the list as 379B drew it this frame (render.c) */
     uint8_t  boss_knock_left;       /* 9F01 */
     uint8_t  post_boss_pending;     /* 9F1E */
     uint8_t  loop_restart;          /* port: 72F1 jumped to 6042, the rest of the 629C pass is skipped */

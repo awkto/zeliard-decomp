@@ -169,10 +169,11 @@ void boss_tori_entry(Game *g)
             else {
                 Shot egg;                                                  /* A766 */
                 boss_shot_template(g, 0xA766, &egg);
-                if (!ai_map_col_to_ring(g, (uint16_t)(b->col + 4), &egg.col)) {
-                    egg.row = (uint8_t)((b->row + 4) & 0x3F);
-                    shot_spawn(g, &egg);
-                }
+                /* A384..A3A0: vec 27's BL goes into the template whatever
+                 * its CF says -- the egg is laid even off the ring (#84) */
+                boss_ring_col(g, (uint16_t)(b->col + 4), &egg.col);
+                egg.row = (uint8_t)((b->row + 4) & 0x3F);
+                shot_spawn(g, &egg);
                 ST(S_LAYING) = 0;
             }
         }

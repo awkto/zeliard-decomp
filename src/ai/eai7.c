@@ -69,8 +69,8 @@ static void tallspit_update(struct enemy *e)            /* 0xA639 */
         tall_sync(e); return;
     }
     hero_dir5(e, &facing);
-    if (facing) { if (!(KRN_RANDOM() & 0xC0) && (e->phase & 1)) { e->next |= 1; e->phase = 4; tall_sync(e); return; } }
-    else if ((e->phase += 0x80) did not carry) { tall_sync(e); return; }
+    if (facing && !(KRN_RANDOM() & 0xC0) && (e->phase & 1)) { e->next |= 1; e->phase = 4; tall_sync(e); return; }   /* A69F */
+    if ((e->phase += 0x80) did not carry) { tall_sync(e); return; }  /* A661: facing or not (A6A6/A6AF jnz A661) */
     e->phase = (e->phase + 1) & 3;
     if (!(e->phase & 1)) {
         if (e->rcol <= 0x10) { if (!tall_step_right(e)) e->hit |= FACING_RIGHT; }
@@ -105,7 +105,7 @@ static void runner_update(struct enemy *e)              /* 0xA749 */
     if (cell_passable_ai(*p)) { e->phase = 0; e->next |= 8; return; }   /* gap ahead */
     e->phase = (e->phase + 1) & 3;
     if (!(e->next & 2) && (e->link += 0x10) carried) { e->next ^= 0x80; return; }   /* A7D2 (sic: flips next bit 7, not the facing) */
-    hero_dir6(e, &facing); if (!facing) e->next &= ~2;              /* A7DD */
+    hero_dir6(e, &facing); if (facing) e->next &= ~2;               /* A7DD; A7E0 jnc: cleared when CF = facing */
     if (e->hit & FACING_RIGHT) { fight_step_right(e); if (!fight_step_right(e)) return; }   /* A7EC: 2 cells/frame */
     else                       { fight_step_left(e);  if (!fight_step_left(e))  return; }
     e->phase = 0; e->next |= 0x10;                                  /* A7F9: wall -> jump */

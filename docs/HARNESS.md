@@ -123,6 +123,18 @@ scenario must not move that list or copy from it (Space) -- the names differ.
 - `DIR/frame_NNNNN.png` (optional, every `--png-every K` frames): the 320x200 screen
   from VGA memory + DAC.
 
+- **The exit record (#81).** When the game leaves for DOS (the Sage's "No", kenjpro A934
+  `jmp far [FF00]` -> INT 21h AH=4Ch, AL 0) the oracle's hook in `DOS_Terminate` writes one
+  last line and a last `base.bin` record (so the files stay the same length) and stops cleanly
+  (exit status 0, `oracle.log`: "program exited to DOS"):
+  `{"f":N,"site":"exit","base":"0x..","rng_calls":k,"input":"M","code":0}`.
+  N = the frame the program ended in (the number its next boundary would have had), `input` and
+  `rng_calls` as for a boundary line of that frame, `code` the DOS return code. The port's
+  `--trace` writes the same line (`code` 0, no `fields`) when it leaves through
+  `SHOP_EXIT_GAME`; `tracediff` compares `input`, `rng_calls` and `code` there (no fields, no
+  allow-list) and `contact_sheet` skips it (no screen). A script that ends first never reaches
+  it. Scenario: `sage_exit`.
+
 The oracle stays dumb on purpose: raw memory, no field names. Names live in the
 schema.
 
@@ -166,14 +178,14 @@ Exit status: `0` script consumed; `3` emulated-time watchdog (`ORACLE_MAX_MS`, d
 `4`/`5` the restore did not complete; `6` **stalled**: no boundary of any kind (frame or
 wait-loop) for `ORACLE_STALL_MS` (default 120 s emulated; the longest boundary-free stretch
 seen, death → sage text, is ≈4 s) — an input loop with no site (kernel F7/Ctrl+Q boxes,
-cutscenes). The last line of `DIR/oracle.log` names the CS:IP it stopped at; `DIR/final.png`
+cutscenes). (The game exiting to DOS is not a stall: §4, the exit record.) The last line of `DIR/oracle.log` names the CS:IP it stopped at; `DIR/final.png`
 has the screen on any failure. `ORACLE_MENU_TICKS` overrides the wait-loop rate (§1). `ORACLE_DEBUG_MS=N` writes `boot_<ms>.png` every N emulated ms
 until frame 0 (that is how the boot sequence was debugged).
 
-The patch is one file, `src/misc/zel_oracle.cpp`, plus four hook lines: a check at the top
+The patch is one file, `src/misc/zel_oracle.cpp`, plus five hook lines: a check at the top
 of the normal core's instruction loop (`ORACLE_Exec()` when `CS == BASE`), a call per
 emulated millisecond in `TIMER_AddTick`, a fixed RTC start in `CMOS_Init` (only when
-`ORACLE_OUT` is set), and the Makefile.am entry. Without `ORACLE_OUT` the binary is plain
+`ORACLE_OUT` is set), `ORACLE_DosExit()` at the top of `DOS_Terminate` (the exit record, §4), and the Makefile.am entry. Without `ORACLE_OUT` the binary is plain
 DOSBox-X.
 
 **Speed** (Debian 13 droplet, 8 vCPU, one core used): boot + intro skip + F7 restore = 1.6 s
@@ -384,10 +396,16 @@ through the Sage's text (`71EC`) back to Muralla; `status_cave`, `drug_buy`,
 `bank_menu`, `npc_talk` and `npc_yesno` cover the other wait loops (#64);
 `bank_deposit`, `bank_withdraw` (amount entry: repeat, clamp, cancel), `omoya_wait` and
 `sage_record` (typed name, Backspace, cursor step, the A862 write) the last three (#65).
+`sage_exit` ends the run in the game's exit to DOS (the Sage's "No"; the exit record, §4, #81).
 Caverns 4-6 (#49): `ice_crawler`, `ice_icicles` (EAI4), `water_slimes`, `water_current`
 (EAI5), `fire_fish`, `fire_beast` (EAI6); table at the end of §8.  Not reached yet: the
 cavern-5 tall spitter, the cavern-6 tall ghost in a fight (it is on screen in `fire_fish`),
-a hero standing in a current.
+a hero standing in a current.  Caverns 7-8 (#49): `heat_hedgehog`, `heat_spitter` (EAI7, heat),
+`absor_gunner`, `milagro_gunner` (EAI8).  Cavern 9 is MP90 only (Jashiin's room, reached
+from MP8D, no town mouth): the boss scenarios cover it.  Not reached yet: any B gate or
+C platform in caverns 7/8 (MP80's (72..78,29..31) gates are not reachable from the Pureza
+mouth on foot), the cavern-7 tall ranged walker, a cavern-8 tall charger in the open, the
+Asbestos cape (no `--worn` option).
 
 ## 8. Triage runbook (for agents) (#51)
 
@@ -492,3 +510,11 @@ put its script in a scenario file (`tests/scenarios/NAME.zs`, §7) and run it as
 | `water_current` | Tumba 265, LV 6, sword 4 (`TUMBAR`) | MP50: the water surface animation (gfmcga `315C`, FIGHT.md §2), ropes, deep water (hazard), diving floaters, turning charger; LIFE runs out: death, the Sage, Muralla |
 | `fire_fish` | Dorado 4, LV 8, sword 4 (`DORADO`) | MP61 (cavern 6): the glinting cells drawing KRN_RANDOM in the draw (`319E`), a falling rock, a charging beast killed, almas |
 | `fire_beast` | Dorado 210 (`DORADOR`) | MP60: down the rope onto a charging beast, then west under flying fish (one killed) and falling rocks (one crumbles) |
+| `heat_hedgehog` | Llama 269, LV 16, sword 5, LIFE 800 (`CALIR`) | MP70 (1,22) (cavern 7): the slope west onto two fast hedgehogs (`A7E0`: the "turned" bit clears when *facing* the hero), almas, the heat (`704F`, 15 LIFE + message every 64 frames), regen past max_hp (`71B1`, no clamp), off the ledge |
+| `heat_spitter` | Llama 8 (`CALI`) | MP70 (152,7): down the rope to the tall spitter: it walks in, spits (knock-backs); the sword meets only the lower record.  `A6A6/A6AF jnz A661`: a facing spitter that does not spit still waits the every-2nd-frame gate |
+| `absor_gunner` | Pureza 4 (`PUREZA`) | Pureza's left edge → MP80 (111,21): sentry gunners (left shots damage 1, `A673`), two killed; `A680` wraps any phase >= 3 to 0 (after a shot phase 4 → 0, not 2) |
+| `milagro_gunner` | Esco 205 (`MILAGRO`) | MP81 (123,6): the tall charger against its wall, the (138,7) gunner killed, walkers and the (153,38) flying chaser below; the gunner's ledge shuffle (`A5BA`/`A5E1`) tests the record's own byte +0, not the ring cell |
+| `agar_fight` | Tumba 4, LV 20, sword 5 (`AGAR`, `# pilot:`) | MP50's (25,14) door into MP4D from its far side; Agar to the kill (ZELA's column-major parts `A467`, poses `A4EA`, hop `A307`, walk `A371`, bolt `A4F2` with vec 27's BL regardless of CF, #84), reward, 72F1's door out |
+| `vista_fight` | Dorado 210, LV 20, sword 5 (`VISTA`, `# pilot:`) | MP60's (14,5) door into MP5D from its far side; Vista to the kill (MEDA's 14-column buffer `A539`/`A4AA`, row by column `A6ED`, drips `A3C1`), reward, out |
+| `paguro_fight` | Llama 200, LV 20, sword 6 (`PAGURO`, `# pilot:`) | Llama's column-222 door → MP73; Paguro (ZEL2) to the kill and the reward; the parts' +7..+F are the *town* map's bytes (`shell_enter_cavern` seeds `c000` from the town image).  The exit back to Llama is left out: the town re-entry diverges (NPC `saved`/`anim`, #85) |
+| `dragon_fight` | Pureza 4, LV 25, sword 6 (`DRAGONB`) | MP80's (57,5) door into MP7D from its far side: the hero lands inside the Dragon's body and dies of contact after ~80 frames of DRGN (no kill) |

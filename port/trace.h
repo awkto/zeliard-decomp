@@ -24,6 +24,12 @@ void trace_input_token(char out[12], uint8_t dirs, uint8_t buttons, uint8_t menu
  * (its page[] is used as a scratch copy and restored). */
 void trace_write_frame(FILE *f, unsigned n, const char *site, unsigned rng_calls, const char *input, Game *g, const Town *t);
 
+/* the last line of a run that leaves for DOS through the game's own exit (the
+ * Sage's "No", kenjpro A934; docs/HARNESS.md section 6): no fields, no frame
+ *   {"f":N,"site":"exit","rng_calls":k,"input":"M","code":0}
+ * N = the frame the program ended in (what the next boundary would have been) */
+void trace_write_exit(FILE *f, unsigned n, unsigned rng_calls, const char *input, unsigned code);
+
 /* every field name the port can emit, one per line (`zeliard --trace-fields`),
  * so tools/tracediff.py can check them against the schema */
 void trace_list_fields(FILE *f);

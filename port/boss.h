@@ -80,6 +80,12 @@ void boss_parts_end(Game *g);
  * image: {col, row, cell, age, life, flags(dir | 08 through walls | 40
  * scripted), damage, ...} — the bosses all keep theirs as data */
 void boss_shot_template(const Game *g, unsigned addr, Shot *out);
+/* vec 27 (fight.bin 96A1) as the overlays see it: BL = the ring column of
+ * map column `col` and CF (the return value, 1 = off the ring).  Off the
+ * ring BL is still written -- col - scroll when col >= scroll, else col
+ * itself when col > 0x23, else width - scroll + col -- and an overlay that
+ * ignores CF (ZELA A4F2, TORI A38A, ...) hands that byte on (#84). */
+int boss_ring_col(const Game *g, uint16_t col, uint8_t *bl);
 /* A796 etc.: HP -= d, redraw the bar, start the cutscene at 0 */
 void boss_damage(Game *g, unsigned d);
 /* the common 40-frame death: `sfx` every `every` frames for the first `n`

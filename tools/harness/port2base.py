@@ -50,8 +50,11 @@ def main():
             for addr, val in edits.get(n, []):
                 base[addr & 0xFFFF] = (base[addr & 0xFFFF] ^ 1) if val is None else (val & 0xFF)
             fb.write(base)
-            fj.write(json.dumps({"f": d["f"], "site": d["site"], "base": "0x0000",
-                                 "rng_calls": d["rng_calls"], "input": d["input"]}) + "\n")
+            rec = {"f": d["f"], "site": d["site"], "base": "0x0000",
+                   "rng_calls": d["rng_calls"], "input": d["input"]}
+            if "code" in d:                                 # the exit record (#81)
+                rec["code"] = d["code"]
+            fj.write(json.dumps(rec) + "\n")
             n += 1
     if not a.no_png:
         for name in os.listdir(a.port_dir):

@@ -12,8 +12,10 @@
 
 /* 0xA343 */
 static void anim6(MapObj *e) { if (++e->phase >= 6) e->phase = 0; }
-/* 0xA680 */
-static int anim3(MapObj *e) { e->phase = (uint8_t)((e->phase + 1) % 3); return e->phase == 0; }
+/* 0xA680  inc al; cmp al,3; jc A68B; xor al,al: any phase >= 3 wraps to 0, not
+ * mod 3 -- the gunner gets here with phase 4 after a shot (A62E), and 4+1 -> 0.
+ * Returns ZF: wrapped. */
+static int anim3(MapObj *e) { if (++e->phase >= 3) { e->phase = 0; return 1; } return 0; }
 
 /* 0xA2D2  Tall charger: never falls; charges 16 cells when the hero is within
  * 5 rows and 14 columns. */
@@ -101,11 +103,15 @@ static void gunner_update(Game *g, MapObj *e)
     anim3(e);
     if (++e->link != 8) return;                                         /* A590 */
     e->next |= 2;
-    int p = game_ring_index(g, e->row, e->rcol);
-    if (!(krn_random(g) & 0x80)) {
-        if (ai_cell_passable(g, g->ring[game_ring_add(p, 2 * RING_W + 2)])) STEP(e, 4); else STEP(e, 0);
+    /* A5A7/A5CE mean to test the cell 2 rows down and 2 right / 1 left (ring
+     * +0x4A / +0x47) but, unlike eai3 A58A, never swap SI/DI back after the
+     * ring_wrap_down call: `mov al,[di]` (A5BA/A5E1) reads the object record's
+     * own byte +0, the map column's low byte.  Both branches test that byte. */
+    uint8_t c = (uint8_t)e->col;
+    if (!(krn_random(g) & 0x80)) {                                      /* A5A3 js */
+        if (ai_cell_passable(g, c)) STEP(e, 4); else STEP(e, 0);        /* A5C2: jz 6010 */
     } else {
-        if (ai_cell_passable(g, g->ring[game_ring_add(p, 2 * RING_W - 1)])) STEP(e, 0); else STEP(e, 4);
+        if (ai_cell_passable(g, c)) STEP(e, 0); else STEP(e, 4);        /* A5E9: jz 6008 */
     }
 }
 

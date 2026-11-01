@@ -74,6 +74,10 @@ typedef struct {
     Cell2   cell[256];
     int     ncells;
     SwordGfx sword;                           /* loaded with the hero: the blade art */
+    /* gfmcga 3893 / 389B: the boss-death spark.  col[kind] = {[4FF5], [4FF6]}
+     * palette bytes; shape[life & 3] = 16x16 pixels (0 = not drawn, else the raw
+     * 2-bit value, 3 picks col[1], 1/2 col[0]); loaded with the hero from gfmcga. */
+    struct { uint8_t col[4][2]; uint8_t shape[4][16][16]; int loaded; } spark;
 } HeroGfx;
 int gfx_load_hero(HeroGfx *h, const char *dir);
 int gfx_load_sword(SwordGfx *s, const char *dir);

@@ -1125,6 +1125,19 @@ int main(int argc, char **argv)
         } else if (a.emit_f) fprintf(stderr, "[pilot] %u token-frames -> %s\n", a.trace_n - 1, emit_path);
     }
 
+    if (a.trace_f && shop_exit_request == SHOP_EXIT_GAME && !a.trace_done) {
+        /* the game exited to DOS (INT 21h/4Ch, AL 0) in the frame being played:
+         * the oracle's last line; the input is the token that frame was played with */
+        Town *tw = &a.sh.town;
+        char in[12];
+        trace_input_token(in, tw->dirs, tw->buttons, tw->menu_key);
+        if (a.trace_char) {
+            size_t n = in[0] == '.' ? 0 : strlen(in);
+            in[n] = '\''; in[n + 1] = a.trace_char == 0x08 ? '<' : (char)a.trace_char; in[n + 2] = 0;
+        }
+        trace_write_exit(a.trace_f, a.trace_n, g->rng_calls - a.rng_mark, in, 0);
+        a.trace_n++;
+    }
     if (a.trace_f) {
         fclose(a.trace_f);
         fprintf(stderr, "[trace] %u frames -> %s/frames.jsonl\n", a.trace_n, a.trace_dir);

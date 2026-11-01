@@ -9,9 +9,11 @@
  * and phase are swapped: record.type = POSE (0..4, frame tables A030[0..4]
  * = A03A/A08A/A0D0/A116/A166 with 16 entries each) and record.phase = PART
  * index 0..11 (A3C8: buffer A610 of {pose, part}).  Pose comes from
- * A4EA[A603 & 7] = { 1,2,3,0,3,2,1,0 }; attacks patch single parts to
+ * A4EA[A603 & 7] = { 2,1,0,3,4,3,0,1 }; attacks patch single parts to
  * frames 0xC..0xF (A431/A453: open mouth / raised arm).
- * Part row = boss_row + 2*r, col = boss_col + 2*c.
+ * The 12 words are emitted COLUMN-major (A467: 4 columns of 3 rows), so
+ * entry i is part col = boss_col + 2*(i/3), row = boss_row + 2*(i%3).
+ * port/boss_zela.c is the line-by-line version (agar_fight, paguro_fight).
  *
  * State: A5EE col, A5F0 row, A5F1 HP, A603 anim, A604 firing (1 = left
  * shot, 2 = right shot), A605 hopping, A606 hop direction, A607 pause,
@@ -22,7 +24,7 @@
 
 static struct shot bolt_l = { 0, 0, 0x15, 0, 50, 4, 80 };          /* A552: left, 50 cells, damage 80 */
 static struct shot bolt_r = { 0, 0, 0x14, 0, 50, 0, 80 };          /* A55F: right (cell 0x14) */
-static const u8 pose_of_anim[8] = { 1, 2, 3, 0, 3, 2, 1, 0 };     /* A4EA */
+static const u8 pose_of_anim[8] = { 2, 1, 0, 3, 4, 3, 0, 1 };     /* A4EA */
 
 /* 0xA1B6  Frame entry. */
 void boss_entry(void)
@@ -52,7 +54,7 @@ void boss_entry(void)
         else if (firing == 2) { part[7].frame = 0xC; part[10].frame = 0xD; if (pose == 0) fire(); }       /* A431 */
         else if (!(KRN_RANDOM() & 1)) {                             /* A3FA */
             if (*boss_col >= hero_col(18)) { if (pose == 2) firing = 1; }                                  /* A447: hero left -> left shot */
-            else if (*boss_col + 7 >= hero_col(16) && pose == 6) firing = 2;                               /* A419: hero right -> right shot */
+            else if (*boss_col + 7 < hero_col(16) && pose == 6) firing = 2;                                 /* A419: hero right -> right shot */
         }
     }
     draw_parts();                                                   /* A467 */

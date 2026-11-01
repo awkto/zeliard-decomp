@@ -97,16 +97,15 @@ static void tallspit_update(Game *g, MapObj *e)
         }
         ai_tall_sync(g, e); return;
     }
-    ai_hero_dir(g, e, 5, &facing);
-    if (facing) {
-        if (!(krn_random(g) & 0xC0) && (e->phase & 1)) {
-            e->next |= 1; e->phase = 4; ai_tall_sync(g, e); return;
-        }
-    } else {
-        unsigned t = (unsigned)e->phase + 0x80; e->phase = (uint8_t)t;
-        if (!(t & 0x100)) { ai_tall_sync(g, e); return; }
+    ai_hero_dir(g, e, 5, &facing);                                      /* A65C call A609 */
+    if (facing && !(krn_random(g) & 0xC0) && (e->phase & 1)) {          /* A69F..A6B5 */
+        e->next |= 1; e->phase = 4; ai_tall_sync(g, e); return;
     }
-    e->phase = (uint8_t)((e->phase + 1) & 3);
+    /* A6A6/A6AF jnz A661: a facing spitter that does not spit goes through the
+     * same every-2nd-frame gate as one not facing the hero */
+    unsigned t = (unsigned)e->phase + 0x80; e->phase = (uint8_t)t;      /* A661 */
+    if (!(t & 0x100)) { ai_tall_sync(g, e); return; }
+    e->phase = (uint8_t)((e->phase + 1) & 3);                           /* A66A */
     if (!(e->phase & 1)) {
         if (e->rcol <= 0x10) { if (!TALL(e, 0)) e->hit |= FACING_RIGHT; }
         else                 { if (!TALL(e, 4)) e->hit &= (uint8_t)~FACING_RIGHT; }
@@ -156,8 +155,8 @@ static void runner_update(Game *g, MapObj *e)
         unsigned t = (unsigned)e->link + 0x10; e->link = (uint8_t)t;    /* A7D2 */
         if (t & 0x100) { e->next ^= 0x80; return; }
     }
-    ai_hero_dir(g, e, 6, &facing);
-    if (!facing) e->next &= (uint8_t)~2;                                /* A7DD */
+    ai_hero_dir(g, e, 6, &facing);                                      /* A7DD call A882 */
+    if (facing) e->next &= (uint8_t)~2;                                 /* A7E0 jnc A7E6: CF = facing him */
     if (e->hit & FACING_RIGHT) { STEP(e, 0); if (!STEP(e, 0)) return; } /* A7EC */
     else                       { STEP(e, 4); if (!STEP(e, 4)) return; }
     e->phase = 0; e->next |= 0x10;                                      /* A7F9 */

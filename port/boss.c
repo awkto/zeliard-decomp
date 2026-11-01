@@ -122,6 +122,16 @@ uint8_t boss_readback(Game *g, int (*weak)(uint8_t type))
     return hit;
 }
 
+int boss_ring_col(const Game *g, uint16_t col, uint8_t *bl)
+{
+    uint16_t scroll = (uint16_t)g->scroll_col, d;
+    if (col >= scroll) d = (uint16_t)(col - scroll);                      /* 96A3 */
+    else if (col > 0x23) { *bl = (uint8_t)col; return 1; }                /* 96A9..96B0 */
+    else d = (uint16_t)((g->map ? g->map->width : 0) - scroll + col);     /* 96B1 */
+    *bl = (uint8_t)d;                                                       /* 96BA */
+    return d > 0x23;                                                        /* 96BB */
+}
+
 void boss_shot_template(const Game *g, unsigned addr, Shot *out)
 {
     memset(out, 0, sizeof *out);
@@ -261,6 +271,7 @@ void boss_sparks(Game *g)
                 if (game_ring_cell(g, c, r) & 0x80) spark_spawn(g, list, (uint8_t)c, (uint8_t)r);
     }
     if (g->boss_dying) {                                            /* 7114 -> [3010] = 379B */
+        memcpy(g->spark_drawn, list, sizeof g->spark_drawn);        /* what render.c draws */
         unsigned si = 0, di = 0;
         while (list[si] != 0xFF && si + 4 < sizeof g->spark) {
             /* (the spark is drawn here and its 2x2 E900 cells set to FE) */
@@ -268,7 +279,7 @@ void boss_sparks(Game *g)
             si += 4;
         }
         list[di] = 0xFF;
-    }
+    } else g->spark_drawn[0] = 0xFF;
     g->boss_state = list[0];
 }
 

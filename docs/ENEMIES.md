@@ -75,7 +75,7 @@ ring marker `0x80|i`); before rebuilding it reads back the pending-hit bits (`hi
 of last frame's parts, takes the first one (weak-point parts flag it `|0x80`), scales
 `damage_for_source()` by its own rule, subtracts from the HP word at `[A002]+3`, updates
 the bar, and at 0 sets `boss_cutscene`; a 40-frame death (`boss_dying`) ends with
-`boss_defeated`, after which fight.bin (`71DA`, needs `EDA0 == FF`) awards EXP and **almas** (`71E8` → 9715, `71F2` → 917C), never gold: the original's crab_fight scenario goes EXP 0 → 120, ALMAS 0 → 150, GOLD unchanged (#68). `EDA0` is the list of death sparks gfmcga `3729` spawns (one RNG draw per boss sprite drawn in viewport rows 0-15, columns 0-26, while FF34 and FF2F are set) and `379B` ages (4 frames each), so the reward comes 1-4 frames after the last spark.
+`boss_defeated`, after which fight.bin (`71DA`, needs `EDA0 == FF`) awards EXP and **almas** (`71E8` → 9715, `71F2` → 917C), never gold: the original's crab_fight scenario goes EXP 0 → 120, ALMAS 0 → 150, GOLD unchanged (#68). `EDA0` is the list of death sparks gfmcga `3729` spawns (one RNG draw per boss sprite drawn in viewport rows 0-15, columns 0-26, while FF34 and FF2F are set) and `379B` ages (4 frames each), so the reward comes 1-4 frames after the last spark. `379B` also draws each spark (#74, `render.c draw_sparks`): a 16x16 picture at screen (48+8x, 14+8y), shape `3963/3923/38E3/38A3` by `life & 3` (4 bytes a row, 2 bits a pixel, MSB first), colours the word `3893[kind]` (value 3 = the high byte, 1 and 2 = the low byte, 0 not drawn), written straight to the screen after the sprites and before the shots/hero; the death frames of `crab_fight` match the oracle pixel for pixel above the HUD strip.
 
 ## 2. Cavern enemies
 
@@ -164,8 +164,8 @@ individual hits.
 | class | name | frames | HP | contact | EXP | drops | behaviour |
 |---|---|---|---|---|---|---|---|
 | 0(+1) | tall ranged walker | `A0B0/A0D8` (8) + `A10F/A137` | 16 | 80 | 80 | {100 G ×3, 10 G} | The cavern-2 plant AI: distance 7..10 (`A491/A492`), fires a straight shot (cell 0x30/0x2F, 20 cells, damage 40) |
-| 2(+3) | tall spitter | `A16E/A196` (8) + `A1CD/A1F5` | 64 | 80 | 200 | {100 G ×3, 10 G} | The cavern-5 spitter: 25 % per odd frame to spit (cell 0x32/0x31, 20 cells, damage 40) when facing a hero within 5 rows |
-| 4 | fast hedgehog | `A22C/A240` (4) | 8 | 40 | 50 | {100 G, 10 G, 10 G, —} | The cavern-1 hedgehog at 2 cells/frame, no resting state (`A8B1` tables) |
+| 2(+3) | tall spitter | `A16E/A196` (8) + `A1CD/A1F5` | 64 | 80 | 200 | {100 G ×3, 10 G} | The cavern-5 spitter (but a facing spitter that does not spit still waits the every-2nd-frame gate, `A6A6 jnz A661`): 25 % per odd frame to spit (cell 0x32/0x31, 20 cells, damage 40) when facing a hero within 5 rows |
+| 4 | fast hedgehog | `A22C/A240` (4) | 8 | 40 | 50 | {100 G, 10 G, 10 G, —} | The cavern-1 hedgehog at 2 cells/frame, no resting state (`A8B1` tables); its "turned toward the hero" bit (next bit 1) is cleared at `A7E0` when it *faces* him (CF of `A882`) |
 
 ### Cavern 8 — EAI8 (ZELRES3[8]), ENP8.GRP, maps mp80..mp84 (every class 255 EXP)
 
@@ -173,7 +173,7 @@ individual hits.
 |---|---|---|---|---|---|---|---|
 | 0(+1) | tall charger | `A0B0/A0CE` (6) + `A0FB/A119` | 100 | 160 | 255 | {100 G ×4} | Never falls; idles facing the hero; facing him within 5 rows / 14 columns charges 16 cells at 1 cell/frame, stopping at walls (`A2D2`) |
 | 2 | walker | `A146/A16E` (8) | 48 | 60 | 255 | {10 G, 10 G, —, —} | 1 cell every 2nd frame, turning at walls; rushes every frame when facing a hero within 5 rows (`A483`) |
-| 3 | sentry gunner | `A1A5/A1BE` (5) | 64 | 80 | 255 | {100 G, 100 G, 10 G, 10 G} | Faces a hero within 5 rows, 1/8 per frame fires (cell 0x2A, 18 cells, damage **80** right / **1** left — the left template at `A673` has damage 1, a data bug); shuffles away from ledges (`A538`) |
+| 3 | sentry gunner | `A1A5/A1BE` (5) | 64 | 80 | 255 | {100 G, 100 G, 10 G, 10 G} | Faces a hero within 5 rows, 1/8 per frame fires (cell 0x2A, 18 cells, damage **80** right / **1** left — the left template at `A673` has damage 1, a data bug); after 8 idle frames shuffles one cell (`A590`); the intended ledge test reads the record's own byte +0 (map column low byte) instead of the ring cell (`A5B0`/`A5D7` `xchg si,di` with no swap back, unlike eai3 `A58A`), so the step direction is RNG bit 7 × that byte's passability. Its 3-frame idle animation `A680` wraps any phase >= 3 to 0 (`A538`) |
 | 4 | flying chaser | `A1E6` (4) | 96 | 80 | 255 | {100 G, 10 G, —, —} | The cavern-6 fish roaming logic run every 2nd frame, no flee (`A68F`) |
 
 ### Cross-cavern patterns
@@ -253,22 +253,49 @@ so a boss room's HUD reads `LIFE / ENEMY <bar> / <boss name>  ALMAS` with **no G
 Confirmed against `docs/screenshots/boss_cangrejo.png`.
 
 ### Agar (`boss_zela.c`) and Paguro (`boss_zel2.c`)
-4×3 parts, `type` = pose (0..4) and `phase` = part index (roles swapped).  Hops (1/16 per
-frame) toward the hero, columns 0x11..0x32; while a shot is pending walks toward him at half
-animation speed.  50 % per frame when facing him: shot from (col+1, row+3) left or (col+7,
-row+3) right — Agar: cells 0x15 (left) / 0x14 (right), 50 cells, **damage 80**, hit sound 0x25, damage ×½
-except magic 3 (source 4) ×2 with sound 0x24.  **Paguro** is the same code (13 bytes shorter:
-no magic-3 branch, always ×½ and sound 0x24), palette 0, bolts cell 0x05/0x04 **damage 120**,
-HP 600 / EXP 3000 / almas 1600.  Death: 40 frames, sound 0x28 every 4th frame for 21.
+4 columns × 3 rows of 2×2 parts, `type` = pose and `phase` = part index (roles swapped); the
+12 `{pose, frame}` words at `A610` are emitted **column-major** (`A467`: outer loop the column,
+`col += 2`; inner the row, `row += 2`), so entry i is part (2·(i/3), 2·(i%3)) — the port had
+them row-major (agar_fight f88).  Pose = `A4EA[anim]` = {2,1,0,3,4,3,0,1} (ZEL2 `A4DB`, the
+same bytes).  Each frame (`A263`): a pending attack, or no hop with `KRN_RANDOM & 0xF` ≠ 0
+(drawn even in the death), or the death, runs the **walk** `A371`: anim +1 every 2nd frame
+(`A60B`, image value 2), a step toward scroll+18 (left on anim 0, right on anim 4), limits
+`A543`/`A534` refuse only AT 0x11 / 0x32.  1/16 starts a **hop** (`A28A`): 4-frame pause, then
+the 10-step table `A307` = up, up+step ×3, step ×2, down+step ×3, down + end (`A31B`: another
+4-frame pause), the step (`A348`) toward `A606` (set toward scroll+14) unless blocked or on
+column scroll+12; anim += 2 per hop frame.  Hero columns are scroll + n wrapped once by the
+width.  Not hopping, no attack, `KRN_RANDOM & 1` = 0 (`A3FA`): hero left (col ≥ scroll+18)
+and anim 2 → left attack (parts 1/4 → frames 0xE/0xF, fires on anim 4); hero far right
+(col+7 < scroll+16) and anim 6 → right attack (parts 7/10 → 0xC/0xD, fires on anim 0).  Bolt
+`A4F2`: both templates get row+3 and vec 27's BL for col+1 / col+7 **without testing CF**
+(#84), template `A552 + 13·(firing−1)` — Agar: cells 0x15 / 0x14, 50 cells, **damage 80**.
+Hit (`A20F`): `AH >> 1`; Agar magic 3 (source 4) ×4 of that, sound 0x24, else 0x25; then two
+steps away from scroll+15.  `A56C`: HP floored at 0; **every** hit that leaves it at 0 sets
+FF2E, zeroes the death counter and the attack and clears the shots (vec 30), so a blow during
+the death restarts it.  Death `A59A`: count to 0x28 (then FF30, nothing drawn); below 0x15
+anim + 1 and sound 0x28 when the new count is a multiple of 4, then anim 2.  **Paguro** is the
+same code 15 bytes shorter from `A228` (no magic-3 branch: always ×½, sound 0x24), palette 0,
+bolts `A543`/`A550` cells 0x05/0x04 **damage 120**, HP 600 / EXP 3000 / almas 1600.
+Scenarios: `agar_fight` (entered from MP50's (25,14) door, its far side), `paguro_fight`.
 
 ### Vista (jellyfish, `boss_meda.c`)
-14×12 word image from layered bitmaps (`A5DC` body, `A613` right side, tentacles by hero
-position `A62E`, attack `A687`).  Cruises at row 7 between columns 0x0A..0x31 one cell/frame;
-when the hero is right below (col+5..col+6) dives 4 rows and back.  5-frame attack cycle
-with a 3-frame pause: two drips (fight.bin shots straight down, cell 0x30 — 0x32 is the
-50-cell life byte, not the cell — 50 cells, damage
-80) from (col+6, row+12) and (col+7, row+10).  Damage ×1/8, but a sword ≥ 4 hit ×4 (sound
-0x2D, else 0x2E).  Death: 40 frames, sound 0x23.
+A 14-**column** × 12-row buffer of `{type, frame}` words (`A738`, 24 bytes a column), column
+-major like every other overlay: `A539` pastes a layer with one bitmap byte per column (bit 7
+= the layer's first row) and di running on linearly, so rows past 11 spill into the next
+column — body `A5DC`/`A606` 13 columns at (0,0), right side `A613`/`A623` 11 at (1,8),
+tentacles `[A62E+2p]`/`A682` 5 at (4,3), attack `[A687+2f]`/`[A6C7+2f]` 5 at (4,7); `A4AA`
+emits column by column.  Weak parts: `type & 8` (`A22F`).  Cruise (`A291`): one cell a frame
+between columns 9..0x31 (`A42B` refuses only below 0x0A, `A41D` at ≥ 0x31), the **row** taken
+from `A6ED[col − 9]` (`A317`: 0x0C at the ends down to 7 mid-room); at row 7 with the hero
+(scroll+16) in col+5..col+6 a 3-frame delay then a dive to row 0x0B (`A2FF`) and back up to
+row 6 (`A30B`), the row table taking over again.  Tentacle pose `A358` by where scroll+16 is
+(2 under the body, 1/3 beside, 0/4 far).  Attack: 5 frames then a 3-frame pause; on frame 4
+two drips (`A3C1`, template `A6E0`: cell 0x30, straight down, 50 cells, damage 80) from
+(col+6, row+12) and (col+7, row+10), each **skipped** when vec 27 says off the ring (MEDA
+tests CF, #84).  Damage `AH >> 3`, ×32 for a sword hit with sword ≥ 4 (sound 0x2D, else
+0x2E); vec 30 only on the killing blow (`A58F`).  Death `A5A6`: 40 frames (then FF30, nothing
+drawn); while the new count is below 0x14 attack frame 0, tentacles follow, sound 0x23; then
+pose 5.  Scenario: `vista_fight` (entered from MP60's (14,5) door, the far side).
 
 ### Tarso (`boss_lega.c`)
 8×8 parts, poses 0..8 (`A744` bitmaps, `A6C8` lists), face patched in.  Walks LEFT (8-frame

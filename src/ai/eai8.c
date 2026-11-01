@@ -46,6 +46,9 @@ static void tallcharger_update(struct enemy *e)         /* 0xA2D2 */
     tall_sync(e);
 }
 /* 0xA343 */ static void anim6(struct enemy *e) { if (++e->phase >= 6) e->phase = 0; }
+/* 0xA680  inc; cmp al,3; jc; xor al,al: any phase >= 3 wraps to 0 (not mod 3: the
+ * gunner arrives here with phase 4 after a shot, A62E).  ZF = wrapped. */
+static bool anim3(struct enemy *e) { if (++e->phase >= 3) { e->phase = 0; return true; } return false; }
 
 /* ======================================================================== */
 /* Class 2 — walker.  HP 48, contact 60, EXP 255.  Walks in its facing      */
@@ -111,12 +114,12 @@ static void gunner_update(struct enemy *e)              /* 0xA538 */
     anim3(e);
     if (++e->link != 8) return;                                     /* A590 */
     e->next |= 2;
-    u8 *p = ring_addr(e->row, e->rcol);
-    if (!(KRN_RANDOM() & 0x80)) { if (cell_passable_ai(*ring_wrap_down(p + 0x4A))) fight_step_left(e);  else fight_step_right(e); }
-    else                        { if (cell_passable_ai(*ring_wrap_down(p + 0x47))) fight_step_right(e); else fight_step_left(e);  }
+    /* A5B0/A5D7 xchg si,di with no swap back (eai3 A58A has one): AL = [di] is the
+     * record's byte +0 (map column, low byte), not the ring cell at +0x4A / +0x47. */
+    u8 c = (u8)e->col;
+    if (!(KRN_RANDOM() & 0x80)) { if (cell_passable_ai(c)) fight_step_left(e);  else fight_step_right(e); }
+    else                        { if (cell_passable_ai(c)) fight_step_right(e); else fight_step_left(e);  }
 }
-/* 0xA680  phase = (phase+1) mod 3; returns true when it wrapped to 0 */
-static bool anim3(struct enemy *e);
 
 /* ======================================================================== */
 /* Class 4 — flying chaser.  HP 96, contact 80, EXP 255.  The cavern-6     */

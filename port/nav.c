@@ -169,11 +169,26 @@ static int fixture_row_in_span(const Map *m, const Fixture *f, int r)
     fixture_span(m, f, &up, &down);
     return d <= down || 64 - d <= up;
 }
-static void fixture_cols(const Fixture *f, int *lo, int *hi)
+/* A patrol whose right limit is below its left one runs across the map's
+ * seam: MP40's fix[5] starts at 312 and turns at 306 and at 0, so 8244 walks
+ * it 306..319, 0 (the mover wraps the column).  Taking min/max of the two
+ * limits instead gave it the whole map, 0..306, and the survey then promised
+ * rides on it beside every ledge of row 30 -- edges the live platform never
+ * made ready, so the hero waited at MP40 (104..107,27) for ever.  `hi` may
+ * therefore exceed the width; test a column with `cols_hold`. */
+static void fixture_cols(const Map *m, const Fixture *f, int *lo, int *hi)
 {
     if (f->kind != 2 || !f->var) { *lo = f->col; *hi = (int)f->col + 2; return; }
+    if (f->lim_r < f->lim_l && (f->col >= f->lim_l || f->col <= f->lim_r)) {
+        *lo = f->lim_l; *hi = (int)f->lim_r + m->width + 2; return;
+    }
     *lo = f->lim_l < f->lim_r ? f->lim_l : f->lim_r;                    /* 827B/8296 */
     *hi = (f->lim_l > f->lim_r ? f->lim_l : f->lim_r) + 2;
+}
+static int cols_hold(const Map *m, int bc, int lo, int hi, int slack)
+{
+    return (bc >= lo - slack && bc <= hi + slack) ||
+           (bc + m->width >= lo - slack && bc + m->width <= hi + slack);
 }
 /* which fixture can hold up the cell under a hero body column `bc` at row `r`? */
 static int fixture_at(const Map *m, int bc, int r)
@@ -186,8 +201,8 @@ static int fixture_at(const Map *m, int bc, int r)
         } else {
             if (!fixture_row_in_span(m, f, r & 0x3F)) continue;
         }
-        fixture_cols(f, &lo, &hi);
-        if (bc >= lo && bc <= hi) return i;
+        fixture_cols(m, f, &lo, &hi);
+        if (cols_hold(m, bc, lo, hi, 0)) return i;
     }
     return -1;
 }
@@ -265,9 +280,9 @@ static int probe_fixture_for(const Map *m, int c, int r)
         const Fixture *f = &m->fix[i];
         int lo, hi, frow = f->row & 0x3F;
         if (f->kind != 2 || !f->var) continue;
-        fixture_cols(f, &lo, &hi);
+        fixture_cols(m, f, &lo, &hi);
         if (frow < feet || frow > feet + 6) continue;
-        if (bc < lo - 3 || bc > hi + 3) continue;
+        if (!cols_hold(m, bc, lo, hi, 3)) continue;
         return i;
     }
     return -1;
@@ -299,9 +314,11 @@ static int probe_place_fixture(Nav *n, Game *p, int c, int r, uint8_t dirstate, 
     if (sup < 0) return -1;
     Fixture *f = &p->fix[sup];
     if (f->kind == 2) {
-        int lo = f->lim_l < f->lim_r ? f->lim_l : f->lim_r;
-        int hi = f->lim_l > f->lim_r ? f->lim_l : f->lim_r;
+        int lo, hi;
+        fixture_cols(m, f, &lo, &hi);
+        if (f->var) hi -= 2;                    /* the limits themselves */
         int col = bc - 1;
+        if (hi >= m->width && col < lo && col + m->width <= hi) col += m->width;   /* across the seam */
         if (col < lo) col = lo;
         if (col > hi) col = hi;
         /* A platform standing on one of its own limits is never going the way
@@ -323,6 +340,7 @@ static int probe_place_fixture(Nav *n, Game *p, int c, int r, uint8_t dirstate, 
             if (col == lo) dirstate = 0;
             else if (col == hi) dirstate = 0x80;
         }
+        if (col >= m->width) col -= m->width;
         f->col = (uint16_t)col;
         f->state = dirstate;
         /* the direction matters as much as the position: a platform going the
@@ -892,6 +910,15 @@ void nav_step(Nav *n, Game *g)
          * (column +1) reach the boss too. */
         if (hc < bc - 1)      d = DIR_RIGHT;
         else if (hc > bc + 3) d = DIR_LEFT;
+        /* A boss that hangs over the floor (Vista's body sits at rows 7..0x0B
+         * and only its tentacles come down) is out of a standing slash's
+         * reach: stand under its tentacle columns and jump-slash, a jump
+         * every sixteen frames. */
+        if (g->boss.active && g->boss.index == BOSS_MEDA) {
+            int tc = bc + 5;
+            d = hc < tc - 1 ? DIR_RIGHT : hc > tc + 1 ? DIR_LEFT : 0;
+            if ((g->frame_no & 15) < 2) d |= DIR_UP;
+        }
         nemit(n, g, d, (uint8_t)((g->frame_no & 1) ? 1 : 0));
         return;
     }
@@ -1224,7 +1251,10 @@ void nav_step(Nav *n, Game *g)
          * never arrives the patch gets expensive like any other dead end and
          * the fallback gets its turn. */
 #ifdef NAV_DEBUG
-        { fprintf(stderr, "   [gated] (%d,%d) fw%d fix7 %d/%02x |", hc, hr, n->fixwait, g->fix[7].col, g->fix[7].state);
+        { fprintf(stderr, "   [gated] (%d,%d) fw%d |", hc, hr, n->fixwait);
+          for (int e = n->efirst[here]; e < n->efirst[here+1]; e++)
+            if (n->efix[e] && n->efix[e] <= g->nfix) { const Fixture *f = &g->fix[n->efix[e] - 1];
+              fprintf(stderr, " fix%d k%d col%d row%d st%02x |", n->efix[e] - 1, f->kind, f->col, f->row, f->state); break; }
           for (int e = n->efirst[here]; e < n->efirst[here+1]; e++)
             if (n->dist[n->eto[e]] < n->dist[here])
               fprintf(stderr, " e%d m%d ->(%d,%d) pos%04x rdy%d ok%d f%d", e, n->emacro[e],

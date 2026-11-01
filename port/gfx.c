@@ -110,6 +110,27 @@ int gfx_load_tileset(Tileset *t, const char *dir, int mpp_index)
     return 0;
 }
 
+/* gfmcga 3893 (kind -> two palette bytes) and 389B (life & 3 -> 3963 / 3923 /
+ * 38E3 / 38A3, each 16 rows of two big-endian words, 8 pixels of 2 bits a word) */
+static void gfx_load_spark(HeroGfx *h, const char *dir)
+{
+    size_t glen;
+    uint8_t *gf = sar_load(dir, 1, 6, 1, &glen);
+    if (gf && glen >= 0x3A00 - 0x3000) {
+        const uint8_t *b = gf - 0x3000;
+        memcpy(h->spark.col, b + 0x3893, 8);
+        for (int i = 0; i < 4; i++) {
+            unsigned p = b[0x389B + 2 * i] | (b[0x389B + 2 * i + 1] << 8);
+            if (p < 0x3000 || p + 64 > 0x3000 + glen) continue;
+            for (int r = 0; r < 16; r++)
+                for (int k = 0; k < 16; k++)
+                    h->spark.shape[i][r][k] = (b[p + r * 4 + k / 4] >> (6 - 2 * (k & 3))) & 3;
+        }
+        h->spark.loaded = 1;
+    }
+    free(gf);
+}
+
 int gfx_load_hero(HeroGfx *h, const char *dir)
 {
     gfx_pal_init();
@@ -134,6 +155,7 @@ int gfx_load_hero(HeroGfx *h, const char *dir)
     }
     h->ncells = n;
     free(d);
+    gfx_load_spark(h, dir);
     /* The blade is part of the hero's frame: gfmcga's row hook draws the 3x3
      * fman sprite and then composites the sword block over it, so the two banks
      * are loaded together and a caller that has a HeroGfx has the sword too.

@@ -18,6 +18,20 @@ index 26d9f49..31836da 100644
  		LOADIP;
  		last_prefix=MP_NONE;
  		core.opcode_index=cpu.code.big*(Bitu)0x200u;
+diff --git a/src/dos/dos_execute.cpp b/src/dos/dos_execute.cpp
+index 4c356b9..7f07f25 100644
+--- a/src/dos/dos_execute.cpp
++++ b/src/dos/dos_execute.cpp
+@@ -105,7 +105,9 @@ void DOS_UpdatePSPName(void) {
+ 	GFX_SetTitle(-1,-1,-1,false);
+ }
+ 
++void ORACLE_DosExit(uint16_t psp, bool tsr, uint8_t code); /* zel oracle */
+ void DOS_Terminate(uint16_t pspseg,bool tsr,uint8_t exitcode) {
++	ORACLE_DosExit(pspseg, tsr, exitcode); /* zel oracle */
+ 
+ 	dos.return_code=exitcode;
+ 	dos.return_mode=tsr?(uint8_t)RETURN_TSR:(uint8_t)RETURN_EXIT;
 diff --git a/src/hardware/cmos.cpp b/src/hardware/cmos.cpp
 index 88f2976..b92fb31 100644
 --- a/src/hardware/cmos.cpp
@@ -59,10 +73,10 @@ index e31e63f..b521035 100644
 +libmisc_a_SOURCES = clipboard.cpp cross.cpp ethernet.cpp ethernet_pcap.cpp ethernet_slirp.cpp ethernet_ethnet.cpp ethernet_nothing.cpp messages.cpp programs.cpp setup.cpp support.cpp regionalloctracking.cpp savestates.cpp shiftjis.cpp iconvpp.cpp mkdir_p.cpp zel_oracle.cpp
 diff --git a/src/misc/zel_oracle.cpp b/src/misc/zel_oracle.cpp
 new file mode 100644
-index 0000000..5f75ab1
+index 0000000..603e584
 --- /dev/null
 +++ b/src/misc/zel_oracle.cpp
-@@ -0,0 +1,450 @@
+@@ -0,0 +1,466 @@
 +/*
 + * zel_oracle.cpp -- Zeliard differential-test oracle (decomp-zel docs/HARNESS.md).
 + *
@@ -447,6 +461,22 @@ index 0000000..5f75ab1
 +        restored = true;
 +        if (state == ST_WAIT_RESTORE) state = ST_WAIT_FRAME0;
 +    }
++}
++
++/* Called at the top of DOS_Terminate (INT 21h AH=4Ch / 31h / 00, INT 20h).  While
++ * tracing, the game leaving for DOS (the Sage's "No", kenjpro A934 `jmp far [FF00]`)
++ * is the end of the run: one last frames.jsonl line (and its base.bin record, so the
++ * two files stay the same length)
++ *   {"f":N,"site":"exit","base":..,"rng_calls":k,"input":"X","code":AL}
++ * N = the frame the program ended in (the number the next boundary would have had);
++ * rng_calls and input as for a boundary line of that frame.  Then a clean stop (0). */
++void ORACLE_DosExit(uint16_t psp, bool tsr, uint8_t code) {
++    if (state != ST_TRACE) return;
++    fprintf(f_jsonl, "{\"f\":%lu,\"site\":\"exit\",\"base\":\"0x%04X\",\"rng_calls\":%u,\"input\":\"%s\",\"code\":%u}\n",
++            frame, oracle_base_seg, rng_calls, cur_input.c_str(), (unsigned)code);
++    fwrite(base_ptr(0), 1, 65536, f_base);
++    logf("program terminated (PSP %04X, tsr=%d, code %u) at frame %lu", psp, (int)tsr, (unsigned)code, frame);
++    finish(0, "program exited to DOS");
 +}
 +
 +/* Called once per emulated millisecond (TIMER_AddTick). */

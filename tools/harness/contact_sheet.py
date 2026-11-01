@@ -60,7 +60,8 @@ def main():
     if not common:
         die("no aligned frames in %s and %s" % (a.oracle_dir, a.port_dir))
     # the span is taken in frame numbers; rows are the aligned frames inside it
-    rows = [f for f in common if a.frame - a.span <= f <= a.frame + a.span]
+    rows = [f for f in common if a.frame - a.span <= f <= a.frame + a.span
+            and orac[f].get("site") != "exit"]          # the exit record (#81) has no screen
     if not rows:
         die("no aligned frame within %d of %d (trace has %d..%d)" % (a.span, a.frame, common[0], common[-1]))
 

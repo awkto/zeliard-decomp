@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """tools/tracediff.py ORACLE_DIR PORT_DIR [--png] -- the harness diff (docs/HARNESS.md §4, #48).
 
-ORACLE_DIR: frames.jsonl ({"f","site","base","rng_calls","input"} per boundary)
+ORACLE_DIR: frames.jsonl ({"f","site","base","rng_calls","input"} per boundary; a run
+            that ends in the game exiting to DOS has a last {"f":N,"site":"exit",...,"code":C}
+            line, compared on input, rng_calls and code)
             + base.bin (65536 bytes of BASE per frame, frame f at f*65536)
             + optional frame_NNNNN.png
 PORT_DIR:   `zeliard --trace DIR` output (frames.jsonl with "fields")
@@ -129,6 +131,11 @@ def compare_frame(sch, rules, od, pd, base, members, mode):
     if od.get("site") != pd.get("site"):
         diffs.append(("site", od.get("site"), pd.get("site")))
         return diffs                            # different loops: fields are not comparable
+    if od.get("site") == "exit":               # the game left for DOS (#81): no fields, no allow-list
+        for k in ("input", "rng_calls", "code"):
+            if od.get(k) != pd.get(k):
+                diffs.append((k, od.get(k), pd.get(k)))
+        return diffs
     if mode is None:
         return diffs
     for k in ("input", "rng_calls"):
