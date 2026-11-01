@@ -260,6 +260,11 @@ Hero: screen column `hero_scr_col` (0..0x1B), rows 5-7; NPCs on row 5-7 too.  Di
   frame, then dest 0..7 → `run_shop` (6E7E: `music_fade = 4`, overlay raw → A000, dissolve, music
   stop, `shop_active = 0xFF`, `call [A000]`; on return 6EAF redraws the town, re-applies patches and
   restarts the music); dest ≥ 8 → `goto_cavern(dest-8)`; dest 0xFF → `doorway_to_the_past`.
+* **NPCs vanish on the exit frame** (#93): the door (6E61) and both edge exits (6CBC / 6CFA) lift
+  the NPC markers (6C4E) and flush one `68AF` frame, which has no NPC update (6B1C) to put them
+  back.  GT_FLUSH draws an NPC only through the 0xFD on row 5 (311A → 3350; the hero-column
+  compose 6A77 tests the same byte), so that frame repaints every NPC cell as its plain tile.
+  GT_FLUSH writes straight to A000 (no back buffer), so the `68ED` snapshot shows it.
 * **Space** (623F): scans the NPC row 1..3 columns ahead in the facing direction for 0xFD; the
   NPC answers only if `flags & 0xC0 == 0`; it is frozen (type 7), turned toward the hero and
   `dialogue_run(script)` is executed with the box on the hero's far side.

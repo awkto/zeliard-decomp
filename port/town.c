@@ -1196,11 +1196,18 @@ void town_render(uint8_t *fb, const Town *t)
             blit_cell8(fb, &t->tiles->cell[v], r < 3 ? t->tiles->sky[v] : NULL, bd, 48 + c * 8, TOWN_Y + r * 8);
         }
     }
-    /* NPCs: 2 columns x 3 rows on rows 5-7 (34EC: frame = (anim & 3) + 4*right) */
+    /* NPCs: 2 columns x 3 rows on rows 5-7 (34EC: frame = (anim & 3) + 4*right).
+     * The original draws an NPC only through its 0xFD marker on map row 5:
+     * GT_FLUSH's row-5 cell (311A -> 3350) and the hero-column compose (6A77
+     * tests the 7C7A copy of row 5 for 0xFD).  A door / edge exit lifts the
+     * markers (6E61 / 6CBC / 6CFA: 6C4E) and flushes a 68AF tail frame with
+     * no NPC update to put them back, so on that frame every NPC cell is
+     * redrawn as the plain tile and the NPCs vanish (#93). */
     for (int i = 0; i < t->map->nnpcs; i++) {
         const TownNpc *n = &t->map->npcs[i];
         int sc = (int)n->col - (t->scroll_col + 4);
         if (sc < -1 || sc >= TOWN_SCR_COLS) continue;
+        if (grid_cell(t, n->col, TOWN_NPC_ROW) != TOWN_MARK) continue;
         int sp = n->sprite & 0x7F;
         if (sp > 4) sp = 4;
         int f = (n->anim & 3) + ((n->sprite & 0x80) ? 0 : 4);
