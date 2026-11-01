@@ -1189,8 +1189,15 @@ static void blit_sprite(uint8_t *fb, const Cell2 *c, int x, int y)
 
 void town_render(uint8_t *fb, const Town *t)
 {
-    memset(fb, 0, FB_W * FB_H);
-    render_screen_frame(fb, t->g ? t->g->screen : NULL, 0, FB_H);   /* mole.bin */
+    /* mole.bin's furniture is painted once and never redrawn (gfx.h); keep it
+     * in the persistent fb so a draw on it (the status screen's stray magic
+     * name, #103) survives.  Clear only what the furniture does not cover and
+     * paint it only where the fb is still blank. */
+    const ScreenFrame *sf = t->g ? t->g->screen : NULL;
+    for (int i = 0; i < FB_W * FB_H; i++) {
+        if (!sf || !sf->loaded || !sf->on[i]) fb[i] = 0;
+        else if (!fb[i]) fb[i] = sf->px[i];
+    }
     const TownBackdrop *bd = (t->back && t->back->loaded) ? t->back : NULL;
     if (bd) {
         for (int y = bd->back_y0; y < bd->back_y1 && y < TOWN_Y; y++)

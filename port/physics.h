@@ -119,6 +119,7 @@ struct Game {
     const Map     *map;
     const Tileset *tiles;
     uint8_t  ring[RING_SIZE];       /* E000: row-major, stride 36; ring row == map row */
+    uint8_t  bg_ring[RING_SIZE];    /* the ring as 710F [3000] (gfmcga 302C) draws the background at 3159, i.e. before 315C animates each cell: render.c draws the background from this, so it lags only this frame's 315C step.  Refreshed from ring at the top of frame_7094 (after 6F9B's simulation, before the draw). */
 
     /* player record 0049-00E8 */
     int      scroll_col;            /* [80] map column in ring column 0 */
@@ -325,6 +326,7 @@ int  game_hero_map_col(const Game *g);
 int  game_hero_map_row(const Game *g);
 int  game_win(const Game *g);                      /* ring index of screen (0,0) */
 uint8_t game_ring_cell(const Game *g, int scr_col, int scr_row);   /* screen cell (28x19) */
+uint8_t game_bg_cell(const Game *g, int scr_col, int scr_row);     /* the same cell as 302C's 3159 draw saw it (bg_ring) */
 int  game_passable_wall(const Game *g, uint8_t v);
 int  game_passable_body(const Game *g, uint8_t v);
 int  game_cell_hazard(const Game *g, uint8_t v);  /* 73C0: one of the tileset's 4 hazard cells */

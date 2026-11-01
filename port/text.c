@@ -94,15 +94,38 @@ void vid_window(uint8_t *fb, int style, int x4, int y, int w4, int h)
     for (int i = 2; i <= w - 3; i++) px(fb, x + i, y + 3 + ih, v);   /* row h-1 */
 }
 
-/* 0x2022: one glyph, only the set bits are written (transparent background) */
+/* 0x2022: one glyph, only the set bits are written (transparent background).
+ * The driver indexes its glyph table at [F500] with `(ch-0x20)*8`, so a byte
+ * outside 0x20..0x7F reads past section 0 (into the digit and narrow sections,
+ * and the driver's zeroed data).  select.bin's magic-name draw relies on this
+ * (issue #103), so the port models it: 0x80..0x89 = the ten 6x7 digits,
+ * 0x8A..0xE9 = the narrow glyphs, 0xEA = the last byte of section 2 (0x0F)
+ * then zeros, everything else blank. */
 void vid_putchar(uint8_t *fb, const TextFont *f, uint8_t ch, int colour, int x, int y)
 {
-    if (!f || !f->loaded || ch < 0x20) return;
-    const uint8_t *g = f->glyph[ch - 0x20];
+    if (!f || !f->loaded) return;
+    uint8_t blank[8] = { 0 };
+    const uint8_t *g;
+    if (ch >= 0x20 && ch < 0x80) g = f->glyph[ch - 0x20];
+    else if (ch >= 0x80 && ch < 0x8A) {
+        for (int r = 0; r < 7; r++) blank[r] = f->digit[ch - 0x80][r];
+        g = blank;
+    } else if (ch >= 0x8A && ch < 0xEA) g = f->narrow[ch - 0x8A];
+    else if (ch == 0xEA) { blank[0] = 0x0F; g = blank; }
+    else g = blank;
     uint8_t v = PC88[colour & 7];
-    for (int r = 0; r < 8; r++)
+    /* the driver advances di linearly (di = 320*y + x, then +1 per pixel,
+     * +312 after each 8) and never clips x: a glyph past column 319 wraps
+     * into the next row (select.bin's stray magic-name string relies on it,
+     * #103).  Only the total index is bounded (the VGA window is 64000 B). */
+    int di = y * TEXT_W + x;
+    for (int r = 0; r < 8; r++) {
         for (int c = 0; c < 8; c++)
-            if (g[r] & (0x80 >> c)) px(fb, x + c, y + r, v);
+            if (g[r] & (0x80 >> c)) {
+                int p = di + r * TEXT_W + c;
+                if (p >= 0 && p < TEXT_W * TEXT_H) fb[p] = v;
+            }
+    }
 }
 
 /* 0x202A: colour 1 initially; 0x0D = newline; bytes >= 0x80 set colour b & 7 */

@@ -278,6 +278,24 @@ static void draw_magic_counts(Status *s)
         vid_putchar(s->fb, s->font, ')', 4, (x4 + 4) * 4 - 1, y2);  /* A9A0 */
     }
 }
+/* A904..A919 draw_magic_row's name print.  The original has no `test [9D]`
+ * guard: with magic_sel [9D] == 0, `mov bl,[9d]; dec bl` wraps to 0xFF,
+ * `xor bh,bh; add bx,bx` gives bx = 0x01FE, and `mov si,[bx-0x5548]` reads the
+ * word at BASE:0xAAB8+0x1FE = 0xACB6 — the "cero" bytes of the potion-name
+ * table, i.e. the pointer 0x6563 — then puts_shadow AA2B prints the byte
+ * string at BASE:0x6563 until NUL.  0x6563 lies in the engine overlay swapped
+ * at 6000 (fight.bin in a cavern, town.bin in a town), so the "string" is that
+ * overlay's code; the original never clears it.  The port keeps the two byte
+ * strings (ZELRES2[0] / ZELRES1[6] at offset 0x563) and prints them with the
+ * extended font, so the stray draw matches. */
+static const char STALE_MAGIC_CAVE[] =
+    "\x09\x9f\x3a\x06\x0d\x9f\x73\x4f\xe8\x43\x08\x83\xee\x23\xe8\x1a"
+    "\x08\x8a\x04\xe8\x6c\x08\x75\x2a\xc6\x06\xe7";
+static const char STALE_MAGIC_TOWN[] =
+    "\x47\x03\x5b\x59\xf6\x06\x5c\x7c\xff\x75\x08\xf6\x06\x1e\xff\xff"
+    "\x74\x01\xc3\xf6\x06\x1d\xff\xff\x74\xe0\xd1\xeb\xd1\xeb\x8a\xfb"
+    "\x8a\xd9\x32\xc0\xb9\x08\x02\x2e\xff\x16";
+
 /* A8AF draw_magic_row */
 static void draw_magic_row(Status *s)
 {
@@ -287,7 +305,9 @@ static void draw_magic_row(Status *s)
     draw_magic_counts(s);
     s->magic_cursor = index_of(s->magic_list, 7, s->g->magic_sel);           /* A8D7 */
     magic_cursor(s, 5);
+    /* A919 jmp AA2B: unconditional; magic_sel == 0 prints the overlay bytes */
     if (s->g->magic_sel) sputs(s, MAGIC_NAME[s->g->magic_sel - 1], 0x9E, 0x12, 1);
+    else sputs(s, s->in_town ? STALE_MAGIC_TOWN : STALE_MAGIC_CAVE, 0x9E, 0x12, 1);
 }
 /* A6D1 draw_item_row */
 static void draw_item_row(Status *s)

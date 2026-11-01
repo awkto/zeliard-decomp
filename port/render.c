@@ -324,8 +324,18 @@ void render_screen_frame(uint8_t *fb, const struct ScreenFrame *f, int y0, int y
 
 void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
 {
-    memset(fb, 0, FB_W * FB_H);
-    render_screen_frame(fb, g->screen, 0, FB_H);
+    /* mole.bin's furniture is painted once at boot and never redrawn (gfx.h);
+     * the original's VGA keeps it, so a draw on it (select.bin's stray magic
+     * name, #103) survives into later frames.  The port keeps it in the
+     * persistent fb too: clear only what the furniture does not cover and
+     * paint the furniture only where the fb is still blank. */
+    {
+        const struct ScreenFrame *sf = g->screen;
+        for (int i = 0; i < FB_W * FB_H; i++) {
+            if (!sf || !sf->loaded || !sf->on[i]) fb[i] = 0;
+            else if (!fb[i]) fb[i] = sf->px[i];
+        }
+    }
     if (g->encounter_frames) {                          /* 60E6: the encounter card */
         /* 60BC draws the card, then six {wait, clear, wait, draw} pairs, so
          * the twelve half-flashes start with the card up. */
@@ -346,7 +356,7 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
     }
     for (int sr = 0; sr < SCREEN_ROWS; sr++) {
         for (int sc = 0; sc < SCREEN_COLS; sc++) {
-            uint8_t v = game_ring_cell(g, sc, sr);
+            uint8_t v = game_bg_cell(g, sc, sr);        /* 3159: the cell before 315C animates it */
             if (v & 0x80) {                             /* a sprite marker hides the tile it covers;
                                                          * the background buffer (E900) keeps it */
                 int i = v & 0x7F;

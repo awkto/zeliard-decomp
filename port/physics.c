@@ -21,6 +21,7 @@ int game_hero_map_row(const Game *g) { return (g->scroll_row + g->hero_scr_row) 
 int game_ring_index(const Game *g, uint8_t row, uint8_t col) { (void)g; return (row & 0x3F) * RING_W + col; }   /* 6D6E */
 int game_ring_add(int p, int delta) { p += delta; while (p >= RING_SIZE) p -= RING_SIZE; while (p < 0) p += RING_SIZE; return p; }
 uint8_t game_ring_cell(const Game *g, int sc, int sr) { return g->ring[wrap_down(game_win(g) + sr * RING_W + sc + 4)]; }
+uint8_t game_bg_cell(const Game *g, int sc, int sr) { return g->bg_ring[wrap_down(game_win(g) + sr * RING_W + sc + 4)]; }
 
 /* 6DCB: plain cell -> (value, is_sprite=0); marker -> object type */
 static uint8_t cell_or_type(const Game *g, int p, int *is_sprite)
@@ -91,6 +92,10 @@ static void ring_fill(Game *g)                                                  
         ring_put_column(g, i, c);
         if (++c == g->map->width) c = 0;
     }
+    /* a map load (or a boss refill) replaces the whole ring; keep bg_ring in
+     * step so a render before the next frame's snapshot (the Tear cutscene,
+     * tear.c, draws right after shell_enter_cavern) is not blank/stale */
+    memcpy(g->bg_ring, g->ring, RING_SIZE);
 }
 /* 6771 / 68FF: after a scroll, every live record standing in the map column
  * that just came in gets its marker back in that ring column (the column
@@ -113,6 +118,7 @@ static void scroll_left(Game *g)                                                
     ring_put_column(g, 0, g->scroll_col);
     shots_shift(g, 1);                                                  /* 864E */
     remark_column(g, g->scroll_col, 0);                                 /* 676D */
+    memcpy(g->bg_ring, g->ring, RING_SIZE);
 }
 static void scroll_right(Game *g)                                                                       /* 68A0 */
 {
@@ -129,6 +135,7 @@ static void scroll_right(Game *g)                                               
     ring_put_column(g, 0x23, c);
     shots_shift(g, 0);                                                  /* 8639 */
     remark_column(g, c, 0x23);                                          /* 68FF */
+    memcpy(g->bg_ring, g->ring, RING_SIZE);
 }
 /* 6621 `dec byte [0x82]` / 6B2E `inc byte [0x82]`: the byte is never masked --
  * every reader takes `& 0x3F` -- so it runs on past 63 (seen as 0x40 by the
@@ -945,6 +952,16 @@ static void frame_7094(Game *g)
     g->frame_no++;
     if (!g->harness_rng) g->rng += 20;                                  /* FF1B: ticks per frame at speed 5 */
     sound_request(g);                                                   /* FF75 -> the sound stub */
+    /* gfmcga 302C draws each background cell at 3159 from the ring *before*
+     * 315C animates that cell, so the frame's picture holds the pre-animation
+     * cells while the ring holds the post-animation ones.  render.c draws the
+     * background from bg_ring, so snapshot the ring here -- after 6F9B's
+     * simulation (scroll/doors/fixtures/pickups have all written the ring) and
+     * before this frame's cell_anim below -- making bg_ring the ring with only
+     * the 315C step undone.  The snapshot precedes the draw, so the normal
+     * 70D4 presentation and the 717F trace PNG both see the same cells 302C's
+     * 3159 did. */
+    memcpy(g->bg_ring, g->ring, RING_SIZE);
     if (g->present) g->present(g);                                      /* draw + wait 4*speed ticks + poll input */
     /* 70D9: the potion's +8 LIFE a frame, right after the 70D4 draw and before
      * the 717F boundary (it used to run after it, one frame late: #63) */

@@ -492,7 +492,7 @@ static void trace_boundary_at(App *a, Game *g, Town *t, const char *site)
          * [FF46]-1; attack_var has been stepped past it since (combat.c) */
         int sw = !t && g->attacking && g->attack_var;
         if (sw) g->attack_var--;
-        if (t) fb_town(a, t); else fb_fight(a, g);
+        if (t) fb_town(a, t); else fb_fight(a, g);   /* render.c draws the background from bg_ring (302C's 3159 cells) */
         if (sw) g->attack_var++;
         fb_write_png(a, path);
     }
