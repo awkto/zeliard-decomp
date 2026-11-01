@@ -451,6 +451,7 @@ static int render_frog_shot(const char *dir, const char *out, int phase)
     game_first_frame(&G);
     MapObj *o = put_enemy(67, 8, 2, 0);           /* facing left in the capture */
     o->hp = 1; o->phase = (uint8_t)phase; o->rcol = 14;   /* 67 - scroll_col 53 */
+    G.ring[game_ring_index(&G, o->row, o->rcol)] = 0x80;  /* the enemy pass 8D38 marks the sprite cell */
     {   /* The second creature in the capture is a SNAIL (class 1, frame 0,
          * facing left) standing on the cave ceiling one row above the window,
          * so only its lower two cells (enp1 79/80) are visible.  DOSBOX_RECIPE
@@ -461,6 +462,7 @@ static int render_frog_shot(const char *dir, const char *out, int phase)
         b->col = 75; b->row = (uint8_t)((G.scroll_row - 1) & 0x3F); b->rcol = 22;
         b->type = 1; b->hp = 2; b->hit = 0; b->phase = SNAIL_PHASE;
         b->home_col = 0xFFFF;
+        G.ring[game_ring_index(&G, b->row, b->rcol)] = 0x81;
         G.nobj = 2;
     }
     render_frame(fb, &G, &hero);

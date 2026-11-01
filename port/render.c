@@ -223,6 +223,10 @@ static void draw_enemies(uint8_t *fb, const Game *g)
     for (int i = 0; i < g->nobj; i++) {
         const MapObj *o = &g->obj[i];
         if ((o->col >> 8) == 0xFF || o->rcol == 0xFF) continue;
+        /* gfmcga 302C draws the ring's sprite markers (0x80|i), not the C010
+         * records: an object whose marker is gone (overwritten, or a stale
+         * record left by TORI's A647 death pass) is not on screen. */
+        if (g->ring[game_ring_index(g, o->row, o->rcol)] != (uint8_t)(0x80 | i)) continue;
         const uint8_t *fr = ai_frame(g->ai, o->type, o->hit, o->phase);
         if (!fr) continue;
         int pal = fr[0];
