@@ -271,10 +271,15 @@ static uint8_t print_text(Shop *s)
     return 0xFF;
 }
 
-/* print a C string through the same box (the shops do this for names/numbers) */
+/* print a C string through the same box (the shops do this for names/numbers).
+ * The original points [FF4C] at the bytes and calls the printer 706C, so every
+ * byte costs the printer's 6-tick wait (7084) -- including the terminator it
+ * reads before stopping -- and the animation clock ([FF50], STICK 027F) runs
+ * for all of them. */
 static void print_str(Shop *s, const char *str)
 {
     for (const char *p = str; *p; p++) {
+        shop_wait(s, 6);                                        /* 7084 */
         uint8_t c = (uint8_t)*p;
         if (c < 0x20 || c >= 0x80) continue;
         if (s->tx + FONT_ADVANCE[c - 0x20] >= TEXT_WRAP) box_newline(s);
@@ -284,7 +289,7 @@ static void print_str(Shop *s, const char *str)
         if (s->last_len < (int)sizeof s->last_text - 1) s->last_text[s->last_len++] = (char)c;
         s->last_text[s->last_len] = 0;
     }
-    shop_wait(s, SHOP_TICKS_PER_FRAME);
+    shop_wait(s, 6);                                            /* the terminating byte */
 }
 
 static void print_name(Shop *s, int id)
@@ -325,6 +330,31 @@ static void menu_draw_items(Shop *s, unsigned addr, int count)  /* 751A */
     }
 }
 
+/* gtmcga 38B4/38DB (via 3805 GT_MENU_LINE): the price is six columns of the
+ * 6x7 digit font ([F502]), right-aligned with the leading zeros blanked (3911
+ * writes 0xFF, 38DB skips it), drawn into line-buffer row 2 (3DEF) at column
+ * [FF68]*4 (38BC) in colour 9.  GT_MENU_BLIT (37CB) copies row 2 to screen
+ * y+2, the buffer's 0 background clearing the row. */
+static void menu_draw_price(Shop *s, uint32_t price, int y)
+{
+    char num[16];
+    int n = format_number(price, num);
+    if (n > 6) n = 6;
+    int x0 = (s->mx4 + 3) * 4 + s->mpricex * 4;
+    for (int i = 6 - n; i < 6; i++) {
+        int d = num[i - (6 - n)] - '0';
+        if (d < 0 || d > 9) continue;
+        int gx = x0 + i * 6;
+        for (int r = 0; r < 7; r++)
+            for (int c = 0; c < 6; c++)
+                if ((s->font->digit[d][r] >> (5 - c)) & 1) {
+                    int xx = gx + c, yy = y + 2 + r;
+                    if (xx >= 0 && xx < TEXT_W && yy >= 0 && yy < TEXT_H)
+                        s->fb[yy * TEXT_W + xx] = 9;
+                }
+    }
+}
+
 /* 7539 + gtmcga 3805/37CC: one line per row — the item name in the narrow
  * font and, with menu_show_prices, its 24-bit price right-aligned. */
 static void menu_draw_icons(Shop *s, int first, int rows)
@@ -341,13 +371,12 @@ static void menu_draw_icons(Shop *s, int first, int rows)
             buf[n] = 0;
             vid_label_asciiz(s->fb, s->font, buf, s->mx4 + 3, y + 1, 0);   /* 383E: buffer row 1 (3D4F) */
         }
-        if (s->mprices) {
-            char num[16];
-            int n = format_number(shop_price(s, id), num);
-            int xend = (s->mx4 + 3) * 4 + s->mw4 * 4;
-            vid_label_narrow(s->fb, s->font, num, n, 0, y, xend - 5 * n, 1, -1);
-        }
+        if (s->mprices) menu_draw_price(s, shop_price(s, id), y);          /* 38B4: buffer row 2 (3DEF) */
     }
+    /* 7560 call [301C] GT_MENU_BLIT: the row copy runs long enough for the
+     * 236.7 Hz clock to tick, so the animation clock ([FF50], STICK 027F)
+     * steps once per row drawn. */
+    shop_wait(s, rows);
 }
 
 /* 747B / 74A7: the cursor slides one pixel per 4 ticks, ten steps */
@@ -381,13 +410,12 @@ static int menu_select(Shop *s, int *cursor)
         /* 735D / 7366 only test the edges: FF1D / FF1E stay set for whatever
          * runs next (the bank's amount entry shows it; 71DF / 7344 clear them
          * on entry) */
-        if (s->t && s->t->btn2_edge) { menu_cursor(s, row, 0); s->in_menu = 0; return 1; }
+        if (s->t && s->t->btn2_edge) { s->in_menu = 0; return 1; }   /* 7365: Alt, no erase */
         if (s->t && s->t->btn1_edge) {
             s->g->sfx_request = 0x1F;
-            menu_cursor(s, row, 0);
             *cursor = row;
             s->in_menu = 0;
-            return 0;
+            return 0;                                               /* 736D: Space, no erase */
         }
         uint8_t d = s->t ? (uint8_t)(s->t->dirs & 3) : 0;
         if (d == 1) {                                           /* 7380 up */
@@ -422,6 +450,7 @@ static int yes_no(Shop *s)
     vid_label_asciiz(s->fb, s->font, "Yes", s->mx4 + 3, s->my + 1, 0);
     vid_label_asciiz(s->fb, s->font, "No",  s->mx4 + 3, s->my + 11, 0);
     int row = 0;
+    shop_wait(s, 1);                                            /* 74D3: the two-label draw */
     int cancel = menu_select(s, &row);
     if (cancel) row = 1;
     s->mvis = sv; s->mtot = st; s->mscroll = ss;
@@ -909,10 +938,10 @@ static void drug_buy(Shop *s)                                   /* A1AA */
     s->mprices = 1; s->mw4 = 0x21; s->mpricex = 0x17;
     menu_draw_icons(s, s->mscroll, s->mvis);
     int row = s->cursor_list;
-    if (menu_select(s, &row)) { drug_clear_menu(s); s->mprices = 0; say(s, 0xA965); return; }
+    if (menu_select(s, &row)) { s->mprices = 0; say(s, 0xA965); return; }   /* A1FC: no clear */
     s->cursor_list = row;
     int id = s->ids[row + s->mscroll];
-    drug_clear_menu(s); s->mprices = 0;
+    s->mprices = 0;                                             /* A203: no clear; the text 0x0C clears the box */
     say(s, 0xA8C4); print_text(s); print_name(s, id); print_text(s);
     uint32_t price = shop_price(s, id);
     if (!gold_can_pay(s, price)) { say(s, 0xA928); print_text(s); }
@@ -985,10 +1014,9 @@ static void drug_action(Shop *s, uint8_t op)
         int row = s->cursor_main;
         if (menu_select(s, &row)) row = 0;
         s->cursor_main = row;
-        drug_clear_menu(s);
         switch (row) {
-        case 0: say(s, 0xAB0E); return;
-        case 1: say(s, 0xA88C); return;
+        case 0: drug_clear_menu(s); say(s, 0xAB0E); return;      /* A15D: 0xA5B2 clear, then the text */
+        case 1: say(s, 0xA88C); return;                          /* A167: the box stays until the buy menu */
         case 2: { int n = 0; for (int i = 0; i < 5; i++) if (s->g->page[P_POTIONS + i]) n++;
                   say(s, n ? 0xA98D : 0xAA79); return; }
         default: say(s, 0xAAA6); return;
