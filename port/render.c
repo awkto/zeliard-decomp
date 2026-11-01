@@ -164,6 +164,37 @@ static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
     draw_hero_frame(fb, h, pal, fr, crouch_n, crouch_s, hx, hy);
 }
 
+/* gfmcga 3E34/3FD0 compute the blade's pixel origin [4FF7] = [4FED] + the
+ * frame's {row,col} cell offset.  3F42/3F64 save and restore a 32x32 block
+ * there (0x20 rows of 0x20 bytes, stride 0x140: `rep movsw` advances 0x20 then
+ * `add si,0x120`), and GF_ERASE_SPRITES (3F29, fight.bin 7136, *after* the
+ * sparks) restores it, so a death spark under the blade's block is erased and
+ * the blade redrawn (3E34 at 7147) -- the cell clipping the port was missing. */
+static int sword_origin_f(const Game *g, const HeroGfx *h, int f, int *x0, int *y0)
+{
+    if (!g->attacking || g->hero_hidden || g->hero_dead) return 0;       /* 3FD0: test [FF43] */
+    const SwordGfx *sg = &h->sword;
+    if (!sg->loaded || !g->sword) return 0;                              /* [92] = 0: no blade */
+    int sw = g->sword > 6 ? 6 : g->sword;
+    int sec = SWORD_SECTION[sw - 1];                                     /* kernel mode 4 */
+    int kind = g->attack_type <= 2 ? g->attack_type : 0;                 /* [FF45] */
+    int grp = kind + ((g->hero_flags & FACE_LEFT) ? 3 : 0);              /* 3E6C: test [C2],1 */
+    if (f >= SWORD_FRAMES[kind]) f = SWORD_FRAMES[kind] - 1;
+    if (f < 0) f = 0;
+    *x0 = PF_X + g->hero_scr_col * 8 + sg->delta[sec][grp][f][1] * 8;
+    *y0 = PF_Y + (g->hero_scr_row + sg->delta[sec][grp][f][0] + (g->crouching ? 1 : 0)) * 8;
+    return 1;
+}
+
+/* 3EB7 draws frame [FF46] - 1 at each [3006]; the screen the 717F boundary
+ * leaves is 7147's, [FF46] + 1 - 1 with attack_var the post-7047 value.  The
+ * 302C row-pass blade (whose 32x32 block 7136 restores) is one [FF46] step
+ * earlier, hence `sword_origin_f(g, h, attack_var - 1, ...)`. */
+static int sword_origin(const Game *g, const HeroGfx *h, int *x0, int *y0)
+{
+    return sword_origin_f(g, h, g->attack_var, x0, y0);
+}
+
 /* gfmcga 3FD0: the sword block.  The blade is a 4x4-cell (32x32 px) sprite
  * whose origin is the hero's top-left plus the frame's own {row, col} cell
  * offset (3ED9/3EEE, one cell row lower while crouching, `test [FF38]` at
@@ -180,21 +211,17 @@ static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
  * Garland fought bare-handed (issue #35). */
 static void draw_sword(uint8_t *fb, const Game *g, const HeroGfx *h)
 {
-    if (!g->attacking || g->hero_hidden || g->hero_dead) return;         /* 3FD0: test [FF43] */
+    int x0, y0;
+    if (!sword_origin(g, h, &x0, &y0)) return;
     const SwordGfx *sg = &h->sword;
-    if (!sg->loaded || !g->sword) return;                                /* [92] = 0: no blade */
     int sw = g->sword > 6 ? 6 : g->sword;
     int sec = SWORD_SECTION[sw - 1];                                     /* kernel mode 4 */
     int kind = g->attack_type <= 2 ? g->attack_type : 0;                 /* [FF45] */
     int grp = kind + ((g->hero_flags & FACE_LEFT) ? 3 : 0);              /* 3E6C: test [C2],1 */
-    /* 3EB7 draws frame [FF46] - 1 at each [3006]; the screen the 717F boundary
-     * leaves is 7147's, [FF46] + 1 - 1 with attack_var the post-7047 value */
     int f = g->attack_var;
     if (f >= SWORD_FRAMES[kind]) f = SWORD_FRAMES[kind] - 1;
     if (f < 0) f = 0;
     const uint8_t *blk = sg->block[sec][grp][f];
-    int x0 = PF_X + g->hero_scr_col * 8 + sg->delta[sec][grp][f][1] * 8;
-    int y0 = PF_Y + (g->hero_scr_row + sg->delta[sec][grp][f][0] + (g->crouching ? 1 : 0)) * 8;
     uint8_t c12 = sg->colour[sw - 1][0], c3 = sg->colour[sw - 1][1];
     for (int cc = 0; cc < 4; cc++)
         for (int cr = 0; cr < 4; cr++) {
@@ -400,18 +427,46 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
         }
     }
     /* fight.bin's frame order: the hero (gfmcga 39B9/40F0) is drawn at 70D4,
-     * the enemies in 302C's row pass at 710F, then the projectiles (8366) at
-     * 713B, the spell sprites (896E) at 7141 and the blade (gfmcga 3FD0) at
-     * 7147.  The shots therefore land *over* the hero: 747C marks the hero's
-     * 3x3 cells 0xFF in the screen copy, but 302C's 3124 turns an FF cell into
-     * 0xFE (a protected, not-drawn cell) and 8366 only skips 0xFF/0xFC, so a
-     * shot is not blocked by the hero.  Drawing the hero last hid it (#104). */
+     * the enemies in 302C's row pass at 710F, then the death sparks (gfmcga
+     * 379B) at 711B, the projectiles (8366) at 713B, the spell sprites (896E) at
+     * 7141 and the blade (gfmcga 3FD0) at 7147.  The port draws the enemies
+     * first and the hero over them (the original's 747C marks the hero's 3x3
+     * cells 0xFF so 302C's 3124 skips them; the port has no screen copy, so it
+     * emulates that by drawing the hero later).  The hero is *before* the
+     * sparks, matching 70D4 < 711B, and before the blade's save block below.
+     * The shots land over the hero (8366 only skips 0xFF/0xFC), so they are
+     * drawn after it (#104). */
     draw_enemies(fb, g);
+    if (h) draw_hero(fb, g, h);                 /* 70D4 */
+    /* 3F42 saves the blade's 32x32 block before 302C's row pass draws the blade
+     * into it; 7136's GF_ERASE_SPRITES restores that block (erasing a spark that
+     * landed on it), then 7147 redraws the blade.  Save here, restore below. */
+    int sx0 = 0, sy0 = 0, have_sword = 0;
+    static uint8_t sword_bg[32 * 32];
+    if (h && (have_sword = sword_origin_f(g, h, g->attack_var - 1, &sx0, &sy0))) {
+        for (int r = 0; r < 32; r++) {
+            int yy = sy0 + r;
+            if (yy < 0 || yy >= FB_H) { memset(sword_bg + r * 32, 0, 32); continue; }
+            for (int k = 0; k < 32; k++) {
+                int xx = sx0 + k;
+                sword_bg[r * 32 + k] = (xx >= 0 && xx < FB_W) ? fb[yy * FB_W + xx] : 0;
+            }
+        }
+    }
     draw_sparks(fb, g, h);
-    if (h) draw_hero(fb, g, h);
-    draw_shots(fb, g);
-    draw_magic(fb, g);
-    if (h) draw_sword(fb, g, h);
+    if (have_sword) {                           /* 7136 GF_ERASE_SPRITES: restore the block */
+        for (int r = 0; r < 32; r++) {
+            int yy = sy0 + r;
+            if (yy < 0 || yy >= FB_H) continue;
+            for (int k = 0; k < 32; k++) {
+                int xx = sx0 + k;
+                if (xx >= 0 && xx < FB_W) fb[yy * FB_W + xx] = sword_bg[r * 32 + k];
+            }
+        }
+    }
+    draw_shots(fb, g);                          /* 713B */
+    draw_magic(fb, g);                          /* 7141 */
+    if (h) draw_sword(fb, g, h);                /* 7147 */
     draw_message_box(fb, g);
 }
 
