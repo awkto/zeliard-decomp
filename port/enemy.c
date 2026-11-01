@@ -279,7 +279,7 @@ void item_update(Game *g, MapObj *o)
         static const unsigned box[7] = {50, 100, 0, 500, 1000, 0, 0};   /* 8F33 */
         static const int msg[7] = {MSG_GOLD50, MSG_GOLD100, MSG_BOX_EMPTY, MSG_GOLD500,
                                    MSG_GOLD1000, MSG_GLORY_CREST, MSG_ENCHANT_SWORD};
-        game_message(g, fight_message(msg[i]));                         /* 9A1E table */
+        game_message_idx(g, msg[i]);                                   /* 9A1E table */
         if (box[i]) gold_add(g, box[i]);                                /* 916B */
         if (i == 5) g->page[P_GLORY_CREST] = 0xFF;                      /* 8F7D */
         if (i == 6) g->sword = 6;   /* 8F8F, then 8F94/8FA2 reload the blade's
@@ -294,24 +294,24 @@ void item_update(Game *g, MapObj *o)
          * treasure box (8F4A..8F74 `jmp 0x916b`) pays the 24-bit gold, so a
          * cavern's loose change is what the town bank exchanges for gold.
          * The port paid all of it into `[85..87]` and the ALMAS counter never
-         * moved (issue #36).  8FAB prints no message; the string here is a log
-         * line, not a message box (msg_box is left clear). */
+         * moved (issue #36).  8FAB prints no message and opens no box, so it
+         * must not touch g->message either: a 73E0 box already up keeps its
+         * own text for its 32 frames (the port used to overwrite it). */
         int lo = o->type & 0x0F;                                        /* 8FC0 */
         unsigned n = lo == 4 ? 1u : lo == 5 ? 10u : 100u;
         almas_add(g, n); g->sfx_request = 0x10;                         /* 8FCC/8FD9/8FE2 -> 917C */
-        snprintf(g->message, sizeof g->message, "%u A", n);
         enemy_remove(g, o);
         return; }
     /* 8FE8/8FF8 both go through 90D3, which sets sound **0x11**; the treasure
      * box is the one that uses 0x14 (8EFC).  The port had the two swapped. */
-    case 0x16: g->keys++;      g->sfx_request = 0x11; game_message(g, fight_message(MSG_KEY)); enemy_remove(g, o); return;
-    case 0x17: g->lion_keys++; g->sfx_request = 0x11; game_message(g, fight_message(MSG_LION_KEY)); enemy_remove(g, o); return;
+    case 0x16: g->keys++;      g->sfx_request = 0x11; game_message_idx(g, MSG_KEY); enemy_remove(g, o); return;
+    case 0x17: g->lion_keys++; g->sfx_request = 0x11; game_message_idx(g, MSG_LION_KEY); enemy_remove(g, o); return;
     /* 9008 and 901C write no sound at all -- the potions are silent; the port
      * gave them 0x13, which no arm of the item table ever asks for. */
     case 0x18: g->hp_regen_pending += 10;                       /* 9008: +80 HP */
-        game_message(g, fight_message(MSG_RECOVERED)); enemy_remove(g, o); return;
+        game_message_idx(g, MSG_RECOVERED); enemy_remove(g, o); return;
     case 0x19: g->hp_regen_pending = (uint16_t)(g->hp_regen_pending + g->max_hp / 8 + 1);   /* 901C */
-        game_message(g, fight_message(MSG_RECOVERED_FULL)); enemy_remove(g, o); return;
+        game_message_idx(g, MSG_RECOVERED_FULL); enemy_remove(g, o); return;
     case 0x1A: case 0x1E: {                                     /* 909D / 9090: a key item */
         /* 90B8 drops the item's id into the first free `[A1..A5]` slot and the
          * status screen decides what wearing it does; the port keeps the pair
@@ -324,11 +324,11 @@ void item_update(Game *g, MapObj *o)
         if (sh) {
             g->shoes = (uint8_t)sh;
             for (int i = 0; i < 5; i++) if (!g->page[0xA1 + i]) { g->page[0xA1 + i] = (uint8_t)sh; break; }
-            game_message(g, fight_message(sh == 1 ? MSG_FERUZA : msg[sh]));
+            game_message_idx(g, sh == 1 ? MSG_FERUZA : msg[sh]);
         }
         g->sfx_request = 0x11; enemy_remove(g, o); return; }    /* 90D3 */
     case 0x1D: g->hero_crest = 0xFF;                            /* 907F */
-        game_message(g, fight_message(MSG_HERO_CREST)); g->sfx_request = 0x11;
+        game_message_idx(g, MSG_HERO_CREST); g->sfx_request = 0x11;
         enemy_remove(g, o); return;
     case 0x1C:                                                  /* 903C: a chest with a message */
         /* the message comes from the map's own [C017] table, which the port

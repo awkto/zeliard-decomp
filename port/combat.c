@@ -23,7 +23,7 @@ void hero_damage_shielded(Game *g, unsigned dmg)
     if (g->shield_hp <= dmg) {
         g->shield = 0; g->shield_hp = 0;
         g->hud_panels &= (uint8_t)~2;   /* 761F: [2004] style 0xFF greys bh 0xC5 w 0x18 */
-        game_message(g, fight_message(MSG_SHIELD_BROKEN));
+        game_message_idx(g, MSG_SHIELD_BROKEN);
     } else g->shield_hp = (uint16_t)(g->shield_hp - dmg);
     hero_damage(g, dmg); g->sfx_request = 8;
 }
@@ -67,7 +67,8 @@ void hero_die(Game *g)
     g->cur_map = g->town_map ? g->town_map : 0x81;
     if (g->on_town) fprintf(stderr, "[death] hero died at frame %u (death %u); gold lost, almas halved\n", g->frame_no, g->deaths);
     if (g->on_town && g->on_town(g, g->cur_map & 0x7F, -1, 1)) return;  /* 99E0 */
-    game_message(g, "Garland died.");
+    /* port-only fallback when no town is hooked up; centre it in 73E0's box */
+    game_message(g, "Garland died.", 56 + (208 - 8 * (int)strlen("Garland died.")) / 2);
     game_place(g, g->entry_col, g->entry_row, g->entry_face);
 }
 

@@ -322,6 +322,34 @@ void render_screen_frame(uint8_t *fb, const struct ScreenFrame *f, int y0, int y
         }
 }
 
+/* fight.bin 73E0 / 7210: the cavern message box.  video [2000] (BX=0x0E1E,
+ * CX=0x3410, AL=0xFF) clears the interior and draws the 208x16 white frame at
+ * (56,30); [202A] (BX=record x + 0x3A, CL=0x22) prints the string at y 34.
+ * 7210 keeps it up for 32 frames (the original marks the cells 0xFC in the E900
+ * copy so gfmcga 312E leaves the box's pixels alone); the port paints it every
+ * frame on top of the playfield and sprites, which is what those markers do. */
+static void draw_message_box(uint8_t *fb, const Game *g)
+{
+    Game *gm = (Game *)g;                       /* the frozen region is a cache */
+    const int bx = 56, by = 30, bw = 208, bh = 16;
+    if (!g->msg_box) {                          /* keep the box-free frame's region */
+        for (int r = 0; r < bh; r++)
+            memcpy(gm->msg_bg + r * bw, fb + (by + r) * FB_W + bx, bw);
+        return;
+    }
+    for (int r = 0; r < bh; r++)                /* restore it: the box cells are frozen */
+        memcpy(fb + (by + r) * FB_W + bx, gm->msg_bg + r * bw, bw);
+    vid_window(fb, 0xFF, 0x0E, 0x1E, 0x34, 0x10);                       /* 73E2..73EA */
+    if (g->font && g->font->loaded && g->message[0]) {
+        /* vid_puts wants the original's 0xFF-terminated records, not a C string */
+        uint8_t line[sizeof g->message + 1];
+        size_t n = strlen(g->message);
+        if (n > sizeof g->message) n = sizeof g->message;
+        memcpy(line, g->message, n); line[n] = 0xFF;
+        vid_puts(fb, g->font, line, g->msg_x, 0x22);                    /* 73FF..7407 */
+    }
+}
+
 void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
 {
     /* mole.bin's furniture is painted once at boot and never redrawn (gfx.h);
@@ -367,11 +395,20 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
             blit8(fb, &g->tiles->cell[v], PF_X + sc * 8, PF_Y + sr * 8);
         }
     }
+    /* fight.bin's frame order: the hero (gfmcga 39B9/40F0) is drawn at 70D4,
+     * the enemies in 302C's row pass at 710F, then the projectiles (8366) at
+     * 713B, the spell sprites (896E) at 7141 and the blade (gfmcga 3FD0) at
+     * 7147.  The shots therefore land *over* the hero: 747C marks the hero's
+     * 3x3 cells 0xFF in the screen copy, but 302C's 3124 turns an FF cell into
+     * 0xFE (a protected, not-drawn cell) and 8366 only skips 0xFF/0xFC, so a
+     * shot is not blocked by the hero.  Drawing the hero last hid it (#104). */
     draw_enemies(fb, g);
     draw_sparks(fb, g, h);
+    if (h) draw_hero(fb, g, h);
     draw_shots(fb, g);
     draw_magic(fb, g);
-    if (h) { draw_hero(fb, g, h); draw_sword(fb, g, h); }
+    if (h) draw_sword(fb, g, h);
+    draw_message_box(fb, g);
 }
 
 /* ------------------------------------------------------------------- HUD */

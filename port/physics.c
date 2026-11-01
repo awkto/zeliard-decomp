@@ -387,7 +387,7 @@ static int door_check(Game *g)
         if (!g->door_msg_latch) {                                       /* 7B0D */
             g->door_msg_latch = 0xFF;
             g->sfx_request = 0x16;
-            game_message(g, fight_message(MSG_DOOR_LOCKED));            /* 9AC5 */
+            game_message_idx(g, MSG_DOOR_LOCKED);                      /* 9AC5 */
         }
         return 1;
     }
@@ -938,7 +938,7 @@ static void frame(Game *g)
     hazard_check(g);
     if (g->map->cavern == 7 && g->shoes != 5 && ((++g->heat_timer & 0x3F) == 0)) {   /* 704F */
         g->hero_hit_flash = 0xFF; g->sfx_request = 9; hero_damage(g, 0x0F);
-        game_message(g, fight_message(MSG_TOO_HOT));                    /* 9BB9 */
+        game_message_idx(g, MSG_TOO_HOT);                              /* 9BB9 */
     }
     message_tick(g);                                                    /* 7210 */
     if (g->hero_dead) { g->hero_hit_flash = 0; frame_7094(g); }          /* 7081..708D */
@@ -1224,39 +1224,47 @@ void game_boss_room_intro(Game *g)
 }
 
 /* ------------------------------------------------------------- messages */
-/* fight.bin's message table at 9A1E: {u16 x, chars, 0xFF} records.  The port
- * keeps the strings (the box renderer 740E/7210 is not ported) and the
- * 32-frame lifetime of msg_box_a (7210: the box is erased when the low 5 bits
- * of 9EED wrap). */
-static const char *const MESSAGES[MSG_COUNT] = {
-    "You get 50 golds.",            /* 9A1E */
-    "You get 100 golds.",           /* 9A32 */
-    "You get 500 golds.",           /* 9A47 */
-    "You get 1000 golds.",          /* 9A5C */
-    "You get a Key.",               /* 9A72 */
-    "You have recovered.",          /* 9A83 */
-    "You have recovered full.",     /* 9A99 */
-    "Shield broken.",               /* 9AB4 */
-    "Can't open this door.",        /* 9AC5 */
-    "Nothing in the box.",          /* 9ADD */
-    "You get the Hero's Crest.",    /* 9AF3 */
-    "You get the Ruzeria shoes.",   /* 9B0F */
-    "You get the Glory Crest.",     /* 9B2C */
-    "You get the Pirika shoes.",    /* 9B47 */
-    "You get the Feruza shoes.",    /* 9B63 */
-    "You get the Silkarn shoes.",   /* 9B7F */
-    "Get the Enchantment sword.",   /* 9B9C */
-    "It's too hot !!",              /* 9BB9 */
-    "Get the lion's head Key.",     /* 9BCB */
+/* fight.bin's message table at 9A1E: {u16 x, chars, 0xFF} records.  The strings
+ * and their x offsets (the original's record word; 73E0 draws the text at
+ * x + 0x3A), and the 32-frame lifetime of msg_box_a (7210: the box is erased
+ * when the low 5 bits of 9EED wrap).  The strings carry a plain apostrophe
+ * where the original stores 0x5C: font.grp's 0x5C glyph is identical to 0x27. */
+static const struct { uint16_t x; const char *s; } MESSAGES[MSG_COUNT] = {
+    { 38, "You get 50 golds." },            /* 9A1E */
+    { 34, "You get 100 golds." },           /* 9A32 */
+    { 34, "You get 500 golds." },           /* 9A47 */
+    { 30, "You get 1000 golds." },          /* 9A5C */
+    { 50, "You get a Key." },               /* 9A72 */
+    { 28, "You have recovered." },          /* 9A83 */
+    {  8, "You have recovered full." },     /* 9A99 */
+    { 60, "Shield broken." },               /* 9AB4 */
+    { 20, "Can't open this door." },        /* 9AC5 */
+    { 28, "Nothing in the box." },          /* 9ADD */
+    {  6, "You get the Hero's Crest." },    /* 9AF3 */
+    {  0, "You get the Ruzeria shoes." },   /* 9B0F */
+    {  8, "You get the Glory Crest." },     /* 9B2C */
+    {  6, "You get the Pirika shoes." },    /* 9B47 */
+    {  6, "You get the Feruza shoes." },    /* 9B63 */
+    {  0, "You get the Silkarn shoes." },   /* 9B7F */
+    {  0, "Get the Enchantment sword." },   /* 9B9C */
+    { 48, "It's too hot !!" },              /* 9BB9 */
+    {  8, "Get the lion's head Key." },     /* 9BCB */
 };
-const char *fight_message(int idx) { return (idx >= 0 && idx < MSG_COUNT) ? MESSAGES[idx] : ""; }
+const char *fight_message(int idx) { return (idx >= 0 && idx < MSG_COUNT) ? MESSAGES[idx].s : ""; }
+int fight_message_x(int idx) { return (idx >= 0 && idx < MSG_COUNT) ? MESSAGES[idx].x + 0x3A : 0x3A; }
 
-/* 0x73E0 */
-void game_message(Game *g, const char *text)
+/* 0x73E0: draw the 208x16 box at (56,30) (video [2000] BX=0x0E1E CX=0x3410
+ * AL=0xFF) and print the record's string at (x, 0x22) ([202A] BX=x CL=0x22);
+ * then arm the 32-frame close timer.  The box itself is painted every frame by
+ * render.c while msg_box is up (the original's 7210 writes 0xFC into the E900
+ * screen copy so gfmcga 312E skips redrawing those cells). */
+void game_message(Game *g, const char *text, int x)
 {
     snprintf(g->message, sizeof g->message, "%s", text);
+    g->msg_x = (uint16_t)x;
     g->msg_timer = 0; g->msg_box = 0xFF;
 }
+void game_message_idx(Game *g, int idx) { game_message(g, fight_message(idx), fight_message_x(idx)); }
 /* 0x7210  the box is erased 32 frames later. */
 static void message_tick(Game *g)
 {

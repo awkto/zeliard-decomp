@@ -279,6 +279,11 @@ struct Game {
     /* messages (7210/73E0): a box stays up for 32 frames */
     uint8_t  msg_timer;             /* 9EED */
     uint8_t  msg_box;               /* 9EEF */
+    uint16_t msg_x;                 /* text x of the 73E0 box (record x + 0x3A) */
+    /* the 208x16 box region frozen at the last box-free frame: the original's
+     * 7210 writes 0xFC into the E900 screen copy so gfmcga 312E never redraws
+     * those cells while the box is up (render.c) */
+    uint8_t  msg_bg[208 * 16];
 
     /* the 26-frame walk-in after a map transition (7C6E) */
     int      walk_in;               /* frames left */
@@ -334,8 +339,10 @@ int  game_ring_index(const Game *g, uint8_t row, uint8_t col);     /* 6D6E ring_
 int  game_ring_add(int p, int delta);                              /* 6D82/6D8E wrap */
 int  game_push_hero(Game *g, int left);      /* 66A5 / 684C try_move; 1 = blocked */
 void game_knock_fall(Game *g);               /* 64A2: one row of fall after a knockback */
-void game_message(Game *g, const char *text);/* 73E0: show a message box for 32 frames */
+void game_message(Game *g, const char *text, int x);   /* 73E0: show a message box for 32 frames */
+void game_message_idx(Game *g, int idx);     /* 73E0 with a 9A1E table record's x */
 const char *fight_message(int idx);          /* the 9A1E text table */
+int fight_message_x(int idx);                /* the record's x, +0x3A (the pixel the text is drawn at) */
 /* fight.bin 9A1E message indices */
 enum { MSG_GOLD50, MSG_GOLD100, MSG_GOLD500, MSG_GOLD1000, MSG_KEY, MSG_RECOVERED,
        MSG_RECOVERED_FULL, MSG_SHIELD_BROKEN, MSG_DOOR_LOCKED, MSG_BOX_EMPTY,

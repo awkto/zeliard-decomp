@@ -46,6 +46,7 @@ static void mao1_text(Game *g, unsigned n)
 {
     unsigned p = boss_img16(g, M1_TEXTS + 2u * n);
     if (!p) return;
+    unsigned x = boss_img16(g, p);                      /* the record's {u16 x} word */
     char buf[80];
     unsigned i = 0;
     for (unsigned a = p + 2; i < sizeof buf - 1; a++) {
@@ -54,7 +55,7 @@ static void mao1_text(Game *g, unsigned n)
         buf[i++] = (char)(c == '\\' ? '\'' : c);        /* the font's apostrophe */
     }
     buf[i] = 0;
-    game_message(g, buf);
+    game_message(g, buf, (int)(x + 0x3A));              /* A376: [202A] BX = x + 0x3A */
 }
 
 /* A2A1 */
