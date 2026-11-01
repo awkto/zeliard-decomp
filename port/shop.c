@@ -152,11 +152,12 @@ static void shop_wait_key(Shop *s)
 /* ------------------------------------------------------- the text box 706C */
 static void box_clear(Shop *s) { vid_window(s->fb, 0xFF, BOX_X4, BOX_Y, BOX_W4, BOX_H); }
 
-/* 718E: the box holds four 10-px lines; a fifth scrolls them up */
+/* 2024 vid_scroll_up_1 (bx 0x0762, cx 0x1A32): 50 rows from y 98, 208 px from
+ * x 56, each takes the row below; 718E runs it ten times = one 10-px line */
 static void box_scroll(Shop *s)
 {
     for (int n = 0; n < 10; n++)
-        for (int y = 98; y < 98 + 49; y++)
+        for (int y = 98; y < 98 + 50; y++)
             memmove(s->fb + y * TEXT_W + 56, s->fb + (y + 1) * TEXT_W + 56, 208);
 }
 
@@ -218,12 +219,24 @@ static int lines_pending(const Shop *s)
     return x ? n + 1 : n;                                       /* 72C0 */
 }
 
-static void box_newline(Shop *s)                                /* 7169 */
+/* 718E: the box has five 10-px rows ([FF4F] 0..4); a sixth scrolls them up */
+static void box_scroll_if_full(Shop *s)
+{
+    if (s->tline < 5) return;
+    s->tline--;
+    box_scroll(s);
+}
+
+/* 7169: [FF4E] x = 0, [7C52] lines since the last page mark +1, [FF4F] row +1.
+ * From the fourth line on the rest of the text is measured (7269) before the
+ * scroll, and two or more lines still to come end the page (71BC: the marker
+ * goes on the bottom row, which the text then carries on into). */
+static void box_newline(Shop *s)
 {
     s->tx = 0; s->lines++; s->tline++;
-    if (s->lines < 4) return;
+    if (s->lines < 4) { box_scroll_if_full(s); return; }
     int pending = lines_pending(s);
-    if (s->tline >= 4) { box_scroll(s); s->tline = 3; }
+    box_scroll_if_full(s);
     if (pending >= 2) box_wait_and_clear(s);
 }
 
@@ -250,8 +263,10 @@ static uint8_t print_text(Shop *s)
         s->tx += FONT_ADVANCE[c - 0x20];
         if (s->last_len < (int)sizeof s->last_text - 1) s->last_text[s->last_len++] = (char)(c == '\\' ? '\'' : c);
         s->last_text[s->last_len] = 0;
-        if (!s->mute && c != ' ') s->g->sfx_request = 5;
-        if (c == ' ' && s->tx + word_width(s, s->tp) >= TEXT_WRAP) box_newline(s);
+        if (!s->mute && c != ' ') { s->g->sfx_request = 5; continue; }  /* 7135..7145 */
+        /* 7148: after a space, or after any glyph while muted, the next word
+         * (from here: the rest of this one) must fit */
+        if (s->tx + word_width(s, s->tp) >= TEXT_WRAP) box_newline(s);
     }
     return 0xFF;
 }
@@ -324,7 +339,7 @@ static void menu_draw_icons(Shop *s, int first, int rows)
             int n = 0;
             while (n < 47 && p[n]) { buf[n] = (char)(p[n] == '\\' ? '\'' : p[n]); n++; }
             buf[n] = 0;
-            vid_label_asciiz(s->fb, s->font, buf, s->mx4 + 3, y, 0);
+            vid_label_asciiz(s->fb, s->font, buf, s->mx4 + 3, y + 1, 0);   /* 383E: buffer row 1 (3D4F) */
         }
         if (s->mprices) {
             char num[16];
@@ -1298,12 +1313,14 @@ static void kenj_find_files(Shop *s)
 }
 
 /* A528: GT_MENU_LINE(file `idx`) + GT_MENU_BLIT at [FF54]+0x300+10*row, 40 px
- * ([FF6A] = 0x0A) by 9 rows */
+ * ([FF6A] = 0x0A) by 9 rows.  gtmcga 3805 clears the 160x10 line buffer 3CAF
+ * and 383E draws the narrow glyphs from 3D4F = its row 1; 37CC blits rows
+ * 0..8, so the name lands one pixel below the row's y. */
 static void kenj_draw_row(Shop *s, int row, int idx)
 {
     int x4 = s->mx4 + 3, y = s->my + row * 10;
     vid_window(s->fb, 0, x4, y, 0x0A, 9);
-    if (idx >= 0 && idx < s->kj_nfiles) vid_label_asciiz(s->fb, s->font, s->kj_files[idx], x4, y, 0);
+    if (idx >= 0 && idx < s->kj_nfiles) vid_label_asciiz(s->fb, s->font, s->kj_files[idx], x4, y + 1, 0);
 }
 static void kenj_draw_rows(Shop *s)
 {
@@ -1691,15 +1708,24 @@ int shop_open(Shop *s, Town *t, int dest) { return shop_open_entry(s, t, dest, 0
 
 void shop_close(Shop *s) { free(s->img); s->img = NULL; }
 
-/* bankpro A063..A08F: the box is cleared, then the teller's idle runs for five
- * 0x3F-tick passes before the greeting.  (The two "scripts" A989 and A98B the
- * original prints there are `0C FF 2E` and `FF 2E`: a clear and a no-op whose
- * return value it throws away.)  The idle is off for the rest of the visit
- * unless a big deposit or the goodbye turns it back on. */
+/* bankpro A063..A08F: A989 `0C FF 2E` clears the box (the 2E it returns is
+ * thrown away), then five times A98B `2E FF 4F`: a '.' (six ticks before it and
+ * six before the FF, 7084), then the teller's hook until [FF1A] reaches 0x3F
+ * (A082..A08A; print_text left it at 6).  The greeting (A98D, the 4F those
+ * FFs return is its 'O') then goes on after the dots: ".....Oh, excuse me."
+ * The idle is off for the rest of the visit unless a big deposit or the
+ * goodbye turns it back on. */
 static void bank_entry(Shop *s)
 {
-    for (int i = 0; i < 5 && !s->leave; i++) shop_wait(s, 0x3F);
+    s->tp = 0xA989;
+    (void)print_text(s);                                        /* A063..A069 */
+    for (int i = 0; i < 5 && !s->leave; i++) {
+        s->tp = 0xA98B;
+        (void)print_text(s);                                    /* A072..A07D */
+        shop_wait(s, 0x3F - 6);                                 /* A082..A08A */
+    }
     s->hk.bank_on = 0;                                          /* A08F */
+    s->tp = 0xA98D;                                             /* A094: the greeting */
 }
 
 /* omoypro A03D..A055.  [49] == 0: wait for the sword button -- A044 clears

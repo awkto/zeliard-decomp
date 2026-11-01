@@ -543,16 +543,18 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# of the entry (A063..A08F) and after a 1000-gold deposit; his two cell
 	# maps are 0x28 bytes apart at [AD1F] and swap every 0x1E ticks.  Then op 0
 	# (A0C0) plays the four-map A82F "stands up" list at 0x28 ticks a frame.
+	# Each pass also prints its '.' (A98B, 2 x 6 ticks before the hook wait)
+	# after the A989 clear (12 ticks), so the idle ends near frame 20 (#96).
 	# Muralla's bank door is column 138.
 	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 22 /tmp/zel_bank0.png
+		--screenshot 19 /tmp/zel_bank0.png
 	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
 		--screenshot 14 /tmp/zel_bank1.png
 	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 30 /tmp/zel_bank2.png
+		--screenshot 31 /tmp/zel_bank2.png
 	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
 		--screenshot 38 /tmp/zel_bank3.png

@@ -192,19 +192,18 @@ void gt_draw_cell(uint8_t *fb, const Cell8 *bank, const uint8_t *present, int ce
         for (int c = 0; c < 8; c++) px(fb, x + c, y + r, bank[cell].px[r][c]);
 }
 
-/* gtmcga 3785 GT_CURSOR: the red menu arrow.  Measured off
- * docs/screenshots/shop_armour.png: 7 rows of 2,3,4,5,4,3,2 px starting one
- * pixel right and one pixel down from (BH*4, BL); the slot clears 9 rows. */
+/* gtmcga 3785 GT_CURSOR: the red menu arrow.  An 8x9 mask at 37C3 (00 60 70
+ * 78 7C 78 70 60 00) written opaque from (BH*4, BL): set bits colour 0x12,
+ * the rest 0, so the slot is exactly x4*4..x4*4+7 and touches nothing right
+ * of it (the menu text starts at x4+2).  `on == 0` is the port's erase of the
+ * same 8x9 slot. */
 void gt_cursor(uint8_t *fb, int x4, int y, int on)
 {
-    static const uint8_t arrow[7] = {0xC0, 0xE0, 0xF0, 0xF8, 0xF0, 0xE0, 0xC0};
-    int x = x4 * 4 + 1;
+    static const uint8_t arrow[9] = {0x00, 0x60, 0x70, 0x78, 0x7C, 0x78, 0x70, 0x60, 0x00};
+    int x = x4 * 4;
     for (int r = 0; r < 9; r++)
-        for (int c = 0; c < 8; c++) {
-            int set = (r >= 1 && r <= 7) && (arrow[r - 1] & (0x80 >> c));
-            if (on) { if (set) px(fb, x + c, y + r, PC88[2]); }
-            else px(fb, x + c, y + r, 0);
-        }
+        for (int c = 0; c < 8; c++)
+            px(fb, x + c, y + r, on && (arrow[r] & (0x80 >> c)) ? PC88[2] : 0);
 }
 
 /* [2030] video_mcga 24A3 verbatim: x = x4*4 (+2 when `nudge`), 6-px pitch, the

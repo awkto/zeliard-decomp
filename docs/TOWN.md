@@ -289,10 +289,17 @@ non-breaking space (it is just a glyph), `\` prints as an apostrophe.
 | `8B` | `[04] |= 0x80`, apply patches, end (664D) — no shipped text uses it |
 | `FF` | end: wait for release, then Space/Alt (65A1) |
 
-Shop text (`shop_print_text` 706C, used with `[FF4C]`): printable → 4-line box at (56,99), 10 px
-rows, wrap at 208 px, `sfx 5` per glyph, 6 ticks per glyph; `2F`/`0D` newline (a full box shows the
-`|` marker and waits); `0C` clear; `0F` wait + clear; `11` wait; `13`/`15` mute/unmute; `00` →
-returns 0 (shop action 0, normally lip-sync); `FF nn` → returns nn (shop action); `FF FF` end.
+Shop text (`shop_print_text` 706C, used with `[FF4C]`): printable → box at (56,99), five 10 px
+rows (`[FF4F]` 0..4), wrap at 208 px, `sfx 5` per glyph, 6 ticks per glyph; `2F`/`0D` newline;
+`0C` clear; `0F` page mark; `11` wait; `13`/`15` mute/unmute; `00` → returns 0 (shop action 0,
+normally lip-sync); `FF nn` → returns nn (shop action); `FF FF` end.  Newline (7169): x = 0,
+`[7C52]` (lines since the last page mark) and `[FF4F]` +1; a sixth row scrolls the 208x50 area
+at y 98 up 10 px (718E, ten 1-px `vid_scroll_up_1` steps) and leaves `[FF4F]` = 4.  From the
+fourth line on, 7269 first counts the lines still to come; two or more make a page mark (71BC):
+the red `|` at (156,139) on the bottom row, wait for Space/Alt, erase it, `[7C52]` = 0, and the
+text goes on on that bottom row.  After a space, or after any glyph while muted, the next word
+must fit (7148).  bankpro's entry (A063) prints A989 `0C FF 2E` (clear) and five times A98B
+`2E FF 4F` (a dot, then the teller's idle to `[FF1A]` 0x3F), so its greeting reads ".....Oh,".
 
 **Out-of-range widths (#73).** The page-break counter `7269` does `sub bl,0x20` as a *byte* op and
 indexes `DS:7BE2+bl` with no check, so a control byte `c` (< 0x20, other than `00 0C 0D`) reads

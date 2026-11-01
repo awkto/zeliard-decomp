@@ -1831,7 +1831,7 @@ The hooks are gated by flags the shops' own script opcodes set, so those are in
 too: kingpro's op 3 (`A092`, arm the blink) / 4 (`A084`, lip-sync on) / 5 (`A08A`,
 off) / 0 (`A0E4`, the twelve-frame face), armrpro's op 3 (`A6CB`, back to the
 anvil), 5 (`A716`, the repair) and 9 (`A8FD`), bankpro's entry idle (`A063..A08F`:
-five 0x3F-tick passes before the greeting, then off) and its A82F/A839 stand-up
+five passes, each a '.' of A98B and the idle up to 0x3F ticks, before the greeting, then off) and its A82F/A839 stand-up
 and sit-down lists, drugpro's keeper walking in and out (`A708`), innapro's op 2
 (`A114`, the keeper turns in) and kenjpro's raise/lower (`A1D1`/`A200`).
 
@@ -1857,7 +1857,7 @@ of them are pixel-exact:
   `A69C`'s first row in it.
 * **bankpro** (`shop_bank*.png`, column 138): both frames of the entry idle *and*
   the third and fourth frames of the `A82F` stand-up, which is what pins the
-  entry loop's length (five 0x3F-tick passes) and the list's 0x28-tick step.
+  entry loop's length (five passes of a '.' and the idle to 0x3F ticks, after the A989 clear) and the list's 0x28-tick step.
 * **innapro** (`shop_inn*.png`, Satono column 128) and **kenjpro**
   (`shop_sage*.png`, Muralla column 172): both blink cells.
 * **kingpro** (`shop_king*.png`, Felishika column 52): both mouth cells and all
