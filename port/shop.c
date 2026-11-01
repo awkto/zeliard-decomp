@@ -91,14 +91,15 @@ static void shop_frame(Shop *s)
     if (s->t && s->t->present) { s->t->frame_no++; s->t->present(s->t); }
 }
 
-static void shop_tick(Shop *s)
+static void shop_tick_hook(Shop *s, int run_hook)
 {
     /* tests: stop after `headless_guard` frames, i.e. exactly 20x that many ticks */
     if (s->headless_guard && (int)s->frames >= s->headless_guard) { s->leave = 1; return; }
-    shop_hook_tick(s);
+    if (run_hook) shop_hook_tick(s);
     wait_tick();
     if (++s->tick_acc >= SHOP_TICKS_PER_FRAME) { s->tick_acc = 0; shop_frame(s); }
 }
+static void shop_tick(Shop *s) { shop_tick_hook(s, 1); }
 
 /* the shops' timed waits, in 236.7 Hz ticks: no boundary, no input */
 static void shop_wait(Shop *s, int ticks)
@@ -203,12 +204,14 @@ static void box_wait_and_clear(Shop *s)
  * count there is 2, not 1) but a scan of every shop text (all 0x0C-led runs,
  * both widths) found no place where that flips the `pending >= 2` test of
  * 7169, so no page break differs on the shipped data.  Kept faithful anyway. */
-static int lines_pending(const Shop *s)
+static int lines_pending(const Shop *s, int *scan_len)
 {
     int n = 0, x = 0;
     unsigned p = s->tp;
+    int scan = 0;
     for (int guard = 0; guard < 2048; guard++) {
         uint8_t c = img8(s, p++);
+        scan++;
         if (c == 0 || c == 0x0C) break;                         /* 7272 / 7281 */
         if (c == 0xFF) { if (img8(s, p++) == 0xFF) break; continue; }   /* 7276..727F */
         if (c == '/' || c == 0x0D) { n++; x = 0; continue; }    /* 7285 / 728E */
@@ -216,6 +219,7 @@ static int lines_pending(const Shop *s)
         else if (c < 0x20) x += s->resid[c];                    /* 7299: wraps to 7CC2+c, see above */
         if (c == ' ' && x + word_width(s, p) >= TEXT_WRAP) { x = 0; n++; }   /* 72A4..72BD */
     }
+    if (scan_len) *scan_len = scan;
     return x ? n + 1 : n;                                       /* 72C0 */
 }
 
@@ -235,7 +239,15 @@ static void box_newline(Shop *s)
 {
     s->tx = 0; s->lines++; s->tline++;
     if (s->lines < 4) { box_scroll_if_full(s); return; }
-    int pending = lines_pending(s);
+    int scan = 0;
+    int pending = lines_pending(s, &scan);
+    /* 7269 walks the rest of the text byte by byte (lodsb, the two width
+     * tables, the wrap test); that walk takes real CPU time, and the
+     * animation clock [FF50] (STICK 027F) advances with it exactly as the
+     * printer's 6-tick glyph waits do (706C/7084, #101).  The port charged
+     * nothing for it, which left the Sage's portrait blink two animation
+     * steps behind (#106).  ~40 cycles a byte at cycles=3000 (12675 a tick). */
+    shop_wait(s, scan / 240);
     box_scroll_if_full(s);
     if (pending >= 2) box_wait_and_clear(s);
 }
@@ -1405,7 +1417,10 @@ static int kenj_release_wait(Shop *s, uint8_t bit)
     for (long guard = 0; guard < 8000L * SHOP_TICKS_PER_FRAME && !s->leave; guard++) {
         if (shop_poll(s, "kenj:A597")) return 1;
         if (!(s->t && (s->t->dirs & bit))) break;
-        shop_tick(s);
+        /* A66A/A67F spin on int 61h with no idle_poll, so the [A002] hook does
+         * not run here (it would advance the portrait blink); the clock still
+         * advances and the screen still presents. */
+        shop_tick_hook(s, 0);
     }
     if (s->t) s->t->last_ascii = 0;                             /* A670 / A685 */
     return s->leave;
@@ -1726,6 +1741,15 @@ static int shop_open_entry(Shop *s, Town *t, int dest, int death)
         s->hk.armr_on = (s->tp == 0xB2A2) ? 0 : 0xFF; break;
     case SHOP_INN:    s->hk.inn_on = 0xFF; break;               /* A06F */
     case SHOP_BANK:   s->hk.bank_on = 0xFF; s->hk.bank_map = 0xA773;  /* A058 */
+                      /* [FF50] is a free-running tick (STICK 027F, one per 236.7 Hz
+                       * tick), not a per-visit counter: it is never cleared on shop
+                       * entry, so at A730 the first A728 call already sees it past
+                       * the 0x1E threshold and takes a step at once (A738).  The
+                       * boot + the walk to the door are far more than 30 ticks, so
+                       * the seed is always >= 0x1E; a fresh 0 would delay the first
+                       * step by 30 ticks and leave the teller's animation one frame
+                       * behind the original (#105). */
+                      s->hk.ff50 = 0x1E;
                       s->bank_delay = img8(s, 0xAD2F); break;   /* whatever the image holds until A2F2 sets it */
     default: break;
     }

@@ -546,12 +546,15 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# Each pass also prints its '.' (A98B, 2 x 6 ticks before the hook wait)
 	# after the A989 clear (12 ticks), so the idle ends near frame 20 (#96).
 	# Muralla's bank door is column 138.
+	# [FF50] is free-running (STICK 027F) and already past 0x1E at entry, so the
+	# teller swaps at once (A738) and the idle's phase 0 lands on frame 14, phase
+	# 1 on frame 19 (#105).  The A82F stand-up below is on its own 0x28-tick wait.
 	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 19 /tmp/zel_bank0.png
+		--screenshot 14 /tmp/zel_bank0.png
 	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
-		--screenshot 14 /tmp/zel_bank1.png
+		--screenshot 19 /tmp/zel_bank1.png
 	./zeliard --dir ../zeliard --town 1 --town-col 138 --level 12 --life 600 --sword 3 \
 		--shield 4 --gold 20000 --headless --frames 200 --script "U2 .200" \
 		--screenshot 31 /tmp/zel_bank2.png

@@ -542,7 +542,9 @@ static void t_hooks(void)
     if (hook_run(&s, 1, SHOP_BANK, 8) == 0) {
         CHECK(s.hk.bank_map == 0xA773, "the entry idle uses the A773 map pair (%04X)",
               s.hk.bank_map);
-        CHECK(s.hk.bank_phase == 5, "160 ticks / 0x1E = 5 swaps of it (%u)", s.hk.bank_phase);
+        /* [FF50] is free-running (STICK 027F) and already past 0x1E when the
+         * overlay opens, so A730..A738 swaps at once; 160 ticks then add 5 more */
+        CHECK(s.hk.bank_phase == 6, "an immediate swap then 160 / 0x1E = 5 more (%u)", s.hk.bank_phase);
         hook_done(&s);
     } else CHECK(0, "bankpro runs (entry)");
     fresh_player();
