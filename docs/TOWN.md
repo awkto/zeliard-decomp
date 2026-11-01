@@ -286,6 +286,17 @@ rows, wrap at 208 px, `sfx 5` per glyph, 6 ticks per glyph; `2F`/`0D` newline (a
 `|` marker and waits); `0C` clear; `0F` wait + clear; `11` wait; `13`/`15` mute/unmute; `00` →
 returns 0 (shop action 0, normally lip-sync); `FF nn` → returns nn (shop action); `FF FF` end.
 
+**Out-of-range widths (#73).** The page-break counter `7269` does `sub bl,0x20` as a *byte* op and
+indexes `DS:7BE2+bl` with no check, so a control byte `c` (< 0x20, other than `00 0C 0D`) reads
+`7BE2+0xE0+c = 7CC2+c`, past town.bin's end (`7C7D`). Those bytes are what opdemo.bin (13865 b, loaded
+at 6000 at boot) left there: `opdemo[1CC2..]` = "startling transformation began t". So `0F` adds 102 px,
+`11` 114, `13` 97, `15` 105 (the oracle's `base.bin` confirms, constant over a whole run; the
+town<->cavern swap moves 6000..9FFF as a block, so it never changes). The word measurer `7224` skips
+bytes < 0x20 (`jc`), so only the line counter is affected. Messages that reach it: every `...\x11\xff\xff`
+ending, the Sage's `\x0F` page mark and `\r\x15`. Checked against every shop text: the extra px change the
+counted lines (e.g. inn "again./" 1 -> 2) but never the `pending >= 2` test at `7169`, so no shipped page
+break differs. The port models it anyway (`port/shop.c` `lines_pending`, `Shop.resid`; test_shop).
+
 ## 7. The shops (src/shops.c)
 
 Common prologue (A006..A04E in king/armr/bank/chur/drug/inna): portrait `.grp` → `arena:8000`,

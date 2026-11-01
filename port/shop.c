@@ -190,8 +190,18 @@ static void box_wait_and_clear(Shop *s)
 /* 7269: how many more lines the rest of this text will take.  Counted from
  * x = 0 up to FF FF / 00 / 0C -- an FF op pair is skipped, not an end -- with
  * the wrap tested only at a space (like the printer's own 7148).  A control
- * byte below 0x20 indexes the width table out of range in the original
- * (bx = al - 0x20 into 7BE2); the port counts it as 0 px. */
+ * byte below 0x20 indexes the width table out of range in the original:
+ * bl = al - 0x20 is a *byte* op (7299), so it wraps to 0xE0+al and reads
+ * DS:7BE2+0xE0+al = 7CC2+al (#73).  That is past town.bin's end (7C7D): it is
+ * what opdemo.bin left there at boot (town.bin is loaded over its first 0x1C7D
+ * bytes), i.e. opdemo[0x1CC2+al] = the intro narration "startling
+ * transformation began t".  The slot-A swap with fight.bin moves the whole
+ * 6000..9FFF region, so the bytes survive every town<->cavern trip.  So 0x0F
+ * (page wait) is 102 px, 0x11 (wait) 114, 0x13 (mute) 97, 0x15 (unmute) 105.
+ * Shipped messages do hit it ("...again./\x11\xff\xff" ends at x = 114, so the
+ * count there is 2, not 1) but a scan of every shop text (all 0x0C-led runs,
+ * both widths) found no place where that flips the `pending >= 2` test of
+ * 7169, so no page break differs on the shipped data.  Kept faithful anyway. */
 static int lines_pending(const Shop *s)
 {
     int n = 0, x = 0;
@@ -202,6 +212,7 @@ static int lines_pending(const Shop *s)
         if (c == 0xFF) { if (img8(s, p++) == 0xFF) break; continue; }   /* 7276..727F */
         if (c == '/' || c == 0x0D) { n++; x = 0; continue; }    /* 7285 / 728E */
         if (c >= 0x20 && c < 0x80) x += FONT_ADVANCE[c - 0x20]; /* 7297 */
+        else if (c < 0x20) x += s->resid[c];                    /* 7299: wraps to 7CC2+c, see above */
         if (c == ' ' && x + word_width(s, p) >= TEXT_WRAP) { x = 0; n++; }   /* 72A4..72BD */
     }
     return x ? n + 1 : n;                                       /* 72C0 */
@@ -1626,6 +1637,11 @@ static int shop_open_entry(Shop *s, Town *t, int dest, int death)
     s->img = sar_load(dir, 1, SHOPS[dest].ovl, 1, &len);
     if (!s->img) return -1;
     s->imglen = len;
+    {   size_t olen = 0;                                        /* 7CC2..7CE1: opdemo's residue (#73) */
+        uint8_t *od = sar_load(dir, 0, 0, 1, &olen);
+        if (od && olen >= 0x1CC2 + sizeof s->resid) memcpy(s->resid, od + 0x1CC2, sizeof s->resid);
+        free(od);
+    }
     /* the portrait bank: 256 PC-88 cells to arena:8000 */
     size_t plen;
     uint8_t *p = sar_load(dir, 1, SHOPS[dest].grp, 1, &plen);

@@ -84,6 +84,7 @@ typedef struct Shop {
     int      tick_acc;              /* ticks since the last presented frame (shop_tick) */
     int      kj_x8;                 /* kenjpro BB12 high byte: the portrait's x8, 7 or 0x0E (death entry) */
     int      headless_guard;        /* abort after this many frames (tests) */
+    uint8_t  resid[32];             /* DS:7CC2..7CE1: opdemo.bin[1CC2..] left past town.bin's end (#73) */
     char     last_text[512];        /* everything printed since the last clear */
     int      last_len;
     /* port-side instrumentation, for the playthrough driver (nav/playthrough.c):

@@ -186,6 +186,12 @@ static void t_prices(void)
         CHECK(TMAP.town_id == id, "%s has [C006] = %u (want %d)", TMAP.label, TMAP.town_id, id);
         if (shop_open(&s, &TOWN, SHOP_ARMOUR) == 0) {
             int bad = 0;
+            /* #73: DS:7CC2+c is what 7269 adds for a control byte c: opdemo's residue "startling..." */
+            if (id == 1) {
+                CHECK(!memcmp(s.resid, "startling transformation began t", 32), "7CC2 residue = opdemo[1CC2..]");
+                CHECK(s.resid[0x11] == 114 && s.resid[0x0F] == 102 && s.resid[0x13] == 97 && s.resid[0x15] == 105,
+                      "widths of 0F/11/13/15 = 102/114/97/105");
+            }
             for (int i = 0; i < 12; i++) if (shop_price(&s, i) != ARMR_PRICES[id - 1][i]) bad++;
             CHECK(bad == 0, "town %d armour prices: %d of 12 wrong (Training %u, want %u)",
                   id, bad, shop_price(&s, 0), ARMR_PRICES[id - 1][0]);

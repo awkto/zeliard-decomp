@@ -51,9 +51,9 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 10 test binaries
-make test            # physics (147) + combat/AI (228) + town (160) + boss (641) + shop (187)
+make test            # physics (147) + combat/AI (228) + town (160) + boss (641) + shop (189)
                      #   + status (87) + playthrough (119) + audio (315) + cutscene (46)
-                     #   + video (70) = 2000 assertions.  Needs no game files: every
+                     #   + video (70) = 2002 assertions.  Needs no game files: every
                      #   binary skips its data half when zeliard/ is not there.
 make verify          # 211 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -635,7 +635,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   `or byte [si+5],0x20` — never sets it while still taking the hit; and MAO2's
   phase-1 draws on the real MPA0 — exactly two `KRN_RANDOM` per teleport, the side
   from AL bit 0 (`A483`) and the throw/cast variant from AL bit 7 (`A3EC`) (#61).
-* `test_shop.c` — 187 assertions: the font metrics and `format_number`; the
+* `test_shop.c` — 189 assertions: the font metrics and `format_number`; the
   STDPLY record and the page <-> Game mapping; the NAME.USR round trip (exactly
   256 bytes); **all nine rows of both the armour and the drug price tables**
   read out of the overlays and compared with docs/TOWN.md §7; the shield

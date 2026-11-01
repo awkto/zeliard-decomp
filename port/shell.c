@@ -58,7 +58,7 @@ int shell_enter_town(Game *g, int idx, int col, int died)
     int np = town_apply_patches(&s->tmap, g->page);                     /* 6AED */
     if (town_load_banks(s)) return 0;
     audio_music(s->tmap.music);                                         /* town level record +0 bits 1-4 */
-    town_init(&s->town, &s->tmap, &s->ttiles, &s->tspr, &s->thero, g);
+    town_init(&s->town, &s->tmap, &s->ttiles, &s->tspr, &s->thero, g);   /* 7B7F/99EF/6AAF load via [10C] and 60C3/60C6: the memset clears both edges */
     s->town.user = s; s->town.present = s->town_present; s->town.frame_end = s->town_frame_end;
     s->town.font = &s->tfont; s->town.dir = s->dir; s->town.pics = &s->pics;
     s->town.back = &s->tback;
@@ -357,6 +357,8 @@ static void town_frame(Shell *s)
          * Muralla's entry frame is 8 columns along, which is cmap's 78-30). */
         int carried_steps = t->back_steps;
         uint8_t carried_anim = t->hero_anim;                            /* 60B7 is past 6050: [E7] stays */
+        /* 6D3D/6D58 load through [10C] (0CDC clears FF1D) and 60C3/60C6 clear
+         * both edges: town_init's memset is both */
         town_init(t, &s->tmap, &s->ttiles, &s->tspr, &s->thero, g);
         t->back_steps = carried_steps;
         t->hero_anim = carried_anim;
@@ -407,6 +409,9 @@ void shell_frame(Shell *s)
     if (was_intro && !s->g.boss_room && !s->g.hero_dead) {
         s->g.boss_intro = 0;
         LOG(s, "[boss] the [E6] walk-in is over: loading MPA0 at (0x18,0x0D)\n");
+        /* 61DD loads MPA0 through [10C]: STICK 0CDC drops a Space latched at
+         * the last intro boundary (FF1E stays; 628A after 624A's frame is not modelled) */
+        s->g.btn1_edge = 0;
         shell_enter_cavern(s, 0x1E, 0x18, 0x0D + 1, 0, 0);   /* 7DC1 puts him a row below the entry cell */
     }
 }
