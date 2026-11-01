@@ -50,10 +50,10 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 
 ```
 cd port
-make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 10 test binaries
+make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 11 test binaries
 make test            # physics (147) + combat/AI (228) + town (160) + boss (641) + shop (189)
-                     #   + status (87) + playthrough (119) + audio (315) + cutscene (46)
-                     #   + video (70) = 2002 assertions.  Needs no game files: every
+                     #   + status (87) + playthrough (127) + audio (315) + cutscene (46)
+                     #   + video (70) = 2010 assertions.  Needs no game files: every
                      #   binary skips its data half when zeliard/ is not there.
 make verify          # 211 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -100,6 +100,7 @@ config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`
 | C (or Alt) | **cast the selected spell** (`magic_sel`, picked on the status screen) |
 | Enter | **the status / inventory screen** (select.bin): pick a spell, wear a key item, drink a potion |
 | F1 / F2 | toggle the music / the sound effects (STICK's own hotkeys) |
+| F3 | **cycle the display filter**: integer → sharp-bilinear → smooth (presentation only) |
 | F12 | dump the framebuffer to the `--screenshot` file |
 | F11 / Alt+Enter | toggle fullscreen (the window is resizable; `--fullscreen` starts there) |
 | Esc | **pause** — Esc or Enter resumes, **Q** quits |
@@ -113,6 +114,7 @@ config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`
 | Space (or X) | talk to an NPC 1-3 columns ahead: the **dialogue box** opens; Space turns the page, Alt cancels |
 | Enter | **the status / inventory screen** (select.bin); the potion row is disabled in town, as in the original |
 | F1 / F2 | toggle the music / the sound effects |
+| F3 | cycle the display filter (integer → sharp-bilinear → smooth) |
 | F11 / Alt+Enter | toggle fullscreen |
 | Esc | **pause** — Esc or Enter resumes, **Q** quits |
 
@@ -151,6 +153,9 @@ changes.
 Command line: `--dir GAMEDIR`, `--map N` (system map index, 0 = MP10 … 0x1E = MPA0),
 `--pos COL ROW` (hero top-left map cell), `--town N` (start in town N: 0 cmap, 1 mrmp
 Muralla, … 9 esmp), `--speed N` (FF33 speed, default 5 = 84.5 ms/frame), `--scale N`,
+`--aspect 4:3|1:1` (the driver's 4:3 display shape, or square pixels for
+pixel-peeping), `--filter integer|sharp|smooth` (display scaling, default
+`sharp`; F3 cycles it — presentation only, the framebuffer is untouched),
 `--headless`, `--sword N`/`--shield N`/`--level N`/`--life N`/`--gold N` (write the
 player record directly; the shops do it properly), `--name NAME` (the NAME.USR the
 sage's "Record Experience" writes), `--save NAME` (write NAME.usr for the state the
@@ -530,8 +535,19 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   `on_door` (7A83 → 7B32), the level record's bank loads (7EBB / 6117), the post-boss
   bank swap (7305) and the town frame with its cavern / town / shop / doorway
   actions (61FC).  `main.c` and `playthrough.c` are two front ends over it.
-* `main.c` — SDL2 window (×3 nearest), 4×speed-tick frame pacing, keyboard, headless
-  PNG dump and the `--script` feeder; the two-mode loop itself is `shell_frame()`.
+* `main.c` — SDL2 window, 4×speed-tick frame pacing, keyboard, headless PNG dump and
+  the `--script` feeder; the two-mode loop itself is `shell_frame()`.  The window is
+  resizable and `--fullscreen` starts full-screen (F11 / Alt+Enter toggles); the
+  letterbox and the display filter are `present.c`'s job.
+* `present.c` / `present.h` — **the display filters** (#53): `--filter integer|sharp|
+  smooth` (default `sharp`), F3 cycling them.  *integer* is the largest integer
+  multiple of the source framebuffer that fits, nearest and centred; *sharp-bilinear*
+  is an integer pre-scale of the source into an intermediate render target, then a
+  linear pass to the 4:3 (or `--aspect 1:1`) display rectangle; *smooth* is plain
+  linear.  Pure presentation — the framebuffer is untouched, so `make verify` (which
+  renders through `video_to_rgb`) cannot see any of it.  The SDL-only half is
+  exercised by `test_present` (SDL offscreen/dummy driver + software renderer), which
+  is built and run separately from `make test`.
 * `nav.c` / `nav.h` — **the autopilot** (not part of the original).  "Can Garland get
   from here to there" is a question about fight.bin's own rules, so rather than model
   them a second time the navigator *asks the engine*: every cell he can stand on is a
@@ -680,7 +696,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   `menu_result = 8`; selecting a spell into `[9D]` and wearing an item into
   `[9E]` through the real cursor; the row change; the Enter debounce; and the
   window frames and header colours in the rendered framebuffer.
-* `test_playthrough.c` — 119 assertions over two autopilot runs, two fixture
+* `test_playthrough.c` — 127 assertions over two autopilot runs, two fixture
   crossings and a survey of cavern 1's topology (`make playthrough` prints the
   routes step by step):
   * **route 1, the opening**, played end to end with nobody at the keyboard: the

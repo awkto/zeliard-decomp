@@ -18,6 +18,10 @@ static const uint8_t arc_l[] = {3,3,3, 4,4, 5,5,5,5,5,5, 0xFF};
 
 static uint8_t dist_r = 8, dist_l = 8;                                  /* A6D6 / A6D7 */
 
+/* the save state's view of the mutable A6D6/A6D7 shot range */
+void eai2_priv_get(uint8_t *dr, uint8_t *dl) { *dr = dist_r; *dl = dist_l; }
+void eai2_priv_set(uint8_t dr, uint8_t dl) { dist_r = dr; dist_l = dl; }
+
 /* A4FD..A524: the four 13-byte shot templates */
 static Shot shot_of(int right, int straight)
 {

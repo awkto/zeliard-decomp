@@ -585,3 +585,58 @@ drop into MP71's bottom-left room through the (48..70,51..55) current/updraft at
 (untested).  MP72 itself is fine: from (25,40), rope 40 down → rope 66 up → rope 58 up → rope 40
 up → rope 32 up through the wrap into the bottom corridor → rope 7 down through the wrap → west to
 (126,9); every other entry is fenced by the corridor currents.
+
+## 9. Save states (#52, Phase B)
+
+The wasm / DOSBox-X builds snapshot the whole machine.  The port cannot, so it lists
+its engine state explicitly and versions the format.  `port/savestate.c` is the
+serialiser; `--state-save-at N FILE` writes one, `--state-load FILE` starts from one.
+No UI, slots or keys yet — this is the core, and the oracle is not involved.
+
+### 9.1 Format
+
+All integers little-endian, written field by field (no struct dumps, no padding):
+
+    offset 0    8    magic "ZELSTATE"
+    offset 8    4    version (1)
+    offset 12   4    payload length N
+    offset 16   N    payload
+    offset 16+N 4    CRC-32 (IEEE) of the payload
+
+The payload holds, in order: the trace frame and RNG-call base (the meta), the shell
+mode (`in_town`, live map / town index, `town_entry`, the town walk-in) and the
+256-byte player page; then the whole dynamic cavern `Game` (both rings, the `[C010]`
+object list, `under_sprite`, `BASE:C000-DFFF`, the live decompressed map image with
+its `72F1` pokes, every `fight.bin` local, the player record, combat, the `EB80`
+shots / `EB15` magic / `EB60` orbs, the boss protocol including `EDA0`'s sparks, the
+RNG, deaths, the message box and the map-transition walk-in); then the town `Town`
+(scroll/backdrop phase, hero pose, input, the dialogue state, the `E000` screen copy)
+and the town map's mutable bytes (the `grid` and the `NPC` records).  Resource
+pointers (map, tileset, AI overlay, fonts, art) are **not** stored: the loader calls
+the shell's own entry points to rebuild them and then overwrites the dynamic fields.
+
+A state is only written at a **plain `717F` / `68ED` frame boundary**, after that
+frame's post-boundary tail has run, so a fresh `game_step` / `town_step` resumes from
+it exactly.  A boundary whose frame opens a shop, the status screen or a dialogue box
+is refused (the blocking loop's own cursor is not in the structs).  `--state-load`
+continues the trace numbering at N+1 and re-applies boundary N's token (idempotent)
+before the first resumed frame.
+
+### 9.2 Proof
+
+    tools/harness/state_roundtrip.sh [-j N] [--out DIR] [--saves K] [--no-fuzz] [NAME ...]
+
+Port only, no oracle.  For every `tests/scenarios/*.zs`: run the reference trace; for
+several frame boundaries N, re-run with `--state-save-at N`; run a third time from the
+blob with the remaining script (`tools/harness/script_cut.py N SCRIPT`) and require its
+`--trace` to be identical, frame N+1 to the end, to the reference (`tools/harness/
+trace_eq.py`: fields, site, input and rng_calls).  The whole library passes at three N
+each.  It ends with a corruption check: truncations and bit-flips of a real blob must
+be refused cleanly (exit < 128), and `ZELIARD=/path/to/san/zeliard` runs the same proof
+under `make SAN=1`.
+
+### 9.3 Unit checks
+
+`port/test_playthrough.c` (`state_roundtrip_unit`) saves and reloads a shell in-process
+and asserts the player record and the ring survive, and that a garbage, truncated or
+bit-flipped blob is refused.

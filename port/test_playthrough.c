@@ -10,6 +10,7 @@
 #include "playthrough.h"
 #include "player.h"
 #include "town.h"
+#include "savestate.h"
 
 static int checks, failures;
 static void ck(int cond, const char *what, ...)
@@ -545,6 +546,52 @@ static void cavern_progression(const char *dir, int verbose)
     }
 }
 
+/* #52: the realtime save state, exercised in-process -- a blob round-trips the
+ * engine fields, and a garbage / truncated / bit-flipped blob is refused
+ * without being trusted.  (The cross-run trace proof is
+ * tools/harness/state_roundtrip.sh.) */
+static void state_roundtrip_unit(const char *dir)
+{
+    static Shell ss;
+    shell_free(&ss); memset(&ss, 0, sizeof ss);
+    if (shell_init(&ss, dir, 0)) { ck(0, "state: shell_init for the save-state test"); return; }
+    Game *g = &ss.g;
+    if (!shell_enter_cavern(&ss, 0, 61, 7, 0, 0)) { ck(0, "state: entering MP10 for the save-state test"); shell_free(&ss); return; }
+    g->hp = 123; g->gold = 4567; g->exp = 89; g->level = 3;
+    g->dirs = DIR_RIGHT; g->ring[100] = 0xAB;
+    const char *good = "/tmp/zel_state_unit.bin";
+    ck(savestate_save(&ss, good, 42, 7) == 0, "state: a blob is written");
+
+    g->hp = 0; g->gold = 0; g->level = 0; g->dirs = 0; g->ring[100] = 0;
+    SavestateMeta meta;
+    ck(savestate_load(&ss, good, &meta) == 0, "state: the blob loads");
+    ck(meta.frame == 42 && meta.rng_calls == 7, "state: meta round-trips (%u, %u)",
+       meta.frame, meta.rng_calls);
+    ck(g->hp == 123 && g->gold == 4567 && g->level == 3 && g->dirs == DIR_RIGHT,
+       "state: the player record round-trips (hp %u gold %u level %u dirs %u)",
+       g->hp, (unsigned)g->gold, g->level, g->dirs);
+    ck(g->ring[100] == 0xAB, "state: the ring round-trips (%02X)", g->ring[100]);
+
+    /* a garbage file, a truncated copy and a flipped byte must all be refused */
+    FILE *f = fopen("/tmp/zel_state_bad.bin", "wb");
+    if (f) { fputs("this is not a state blob at all", f); fclose(f); }
+    ck(savestate_load(&ss, "/tmp/zel_state_bad.bin", &meta) != 0, "state: a garbage file is refused");
+
+    uint8_t blob[64 * 1024]; size_t n = 0;
+    f = fopen(good, "rb");
+    if (f) { n = fread(blob, 1, sizeof blob, f); fclose(f); }
+    f = fopen("/tmp/zel_state_trunc.bin", "wb");
+    if (f) { fwrite(blob, 1, n / 2, f); fclose(f); }
+    ck(savestate_load(&ss, "/tmp/zel_state_trunc.bin", &meta) != 0, "state: a truncated blob is refused");
+
+    if (n > 24) blob[20] ^= 0x01;                   /* a byte inside the payload */
+    f = fopen("/tmp/zel_state_flip.bin", "wb");
+    if (f) { fwrite(blob, 1, n, f); fclose(f); }
+    ck(savestate_load(&ss, "/tmp/zel_state_flip.bin", &meta) != 0, "state: a bit-flipped blob is refused");
+
+    shell_free(&ss);
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -653,6 +700,7 @@ int main(int argc, char **argv)
     fixture_rides(dir, verbose);
     cavern_routes(dir, verbose);
     cavern_progression(dir, verbose);
+    state_roundtrip_unit(dir);
 
     /* teardown, so `make SAN=1 test` proves the load-once allocations all
      * have an owner and a shell_free that reaches them */

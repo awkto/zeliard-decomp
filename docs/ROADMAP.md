@@ -46,7 +46,7 @@ Method per overlay: run ghidra_dump_c.py, then rename functions/globals against 
 3. Milestone gates: ~~(a) walk cavern 1 with correct collision~~ (#23); ~~(b) kill an enemy with correct damage~~ (#24); ~~(c) full cavern 1 + town loop~~ (#25); ~~(d) caverns + bosses~~ (#26: all 11 boss overlays, 8 shops, status screen, saves); ~~(e) audio~~ (#27: own OPL2 core; all 51 score streams match tools/msd2mid.py).
 4. Also done beyond the original plan: the intro/title/ending cutscenes (#30), so `./zeliard` boots like the real game; and an autonomous playthrough (`make playthrough`) that walks caverns 1-3 and their bosses with no assisted legs (#28, #31).
 
-**Where the port stands:** `make test` = 2002 assertions in 10 binaries; `make verify` = 211 pixel comparisons against the DOSBox captures, **all at 100%**, eight of them whole-screen 320×200; `make playthrough` = two autonomous routes.
+**Where the port stands:** `make test` = 2010 assertions in 10 binaries; `make verify` = 211 pixel comparisons against the DOSBox captures, **all at 100%**, eight of them whole-screen 320×200; `make playthrough` = two autonomous routes.
 
 Play-test fixes since the roadmap closed: #35 (the sword was never drawn), #36 (cavern coins paid gold, not almas), #37 (music started before the intro), #38 (a town lost its backdrop at an edge exit), #39 (the treasure-box prize was one place out and two of its seven outcomes unreachable), #40 (the autopilot entered the castle at the death return), and #41 — **`ai_step`'s carry is the refusal, not the move**, so every ground enemy from cavern 2 on returned before acting and the caverns were full of statues.
 
@@ -75,8 +75,8 @@ never goes near the SDL presentation path, so presentation work cannot cost fide
 - **#43 — presentation.** ~~Every mode was shown square-pixel at 16:10~~ DONE: `video.c`
   carries a per-mode display aspect (all six drivers drew for a 4:3 monitor, so none of
   these framebuffers is square-pixel), `main.c` presents at it, `--aspect 1:1` opts out for
-  pixel-peeping, and `test_video.c` asserts the six shapes.  Sharp-bilinear scaling is left
-  until fullscreen lands with #42.
+  pixel-peeping, and `test_video.c` asserts the six shapes.  Sharp-bilinear scaling landed
+  with fullscreen, as #53's `present.c` (integer / sharp-bilinear / smooth, F3).
 - **#44 — other platforms.** The C itself is portable — no POSIX headers in shipping code,
   binary `fopen` modes, byte-wise little-endian reads, no packed structs or struct-punning,
   no VLAs or GNU extensions.  The work is shells and build scaffolding: Windows/mingw, macOS

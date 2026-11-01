@@ -23,6 +23,13 @@ typedef struct AiOverlay {
     uint16_t drops;           /* [A006] -> u16[8] -> u8[4] */
 } AiOverlay;
 
+/* Cavern 2 (EAI2) and cavern 7 (EAI7) keep a mutable per-overlay shot range
+ * (A6D6/A6D7, A491/A492) as a file-static, outside Game; the save state carries
+ * it.  The getter reports the image's initial 8/8 when the live overlay has
+ * none (every other AI). */
+void ai_priv_get(const Game *g, uint8_t *dr, uint8_t *dl);
+void ai_priv_set(Game *g, uint8_t dr, uint8_t dl);
+
 /* ZELRES3[index+1] (request table fight.bin 9CBC: 0 EAI1, 2 EAI2, ... ) */
 int  ai_load(AiOverlay *o, const char *dir, int ai_index);
 void ai_unload(AiOverlay *o);

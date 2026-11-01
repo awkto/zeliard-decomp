@@ -14,7 +14,7 @@ CORE = sar.o gfx.o map.o physics.o render.o png.o enemy.o ai.o combat.o shots.o 
        ai_eai1.o ai_eai2.o ai_eai3.o ai_eai4.o ai_eai5.o ai_eai6.o ai_eai7.o ai_eai8.o town.o \
        boss.o boss_crab.o boss_tako.o boss_tori.o boss_zela.o boss_meda.o boss_lega.o \
        boss_drgn.o boss_akma.o boss_mao1.o boss_mao2.o boss_generic.o \
-       text.o player.o shop.o status.o shell.o nav.o playthrough.o opl2.o msd.o audio.o \
+       text.o player.o shop.o status.o shell.o savestate.o nav.o playthrough.o opl2.o msd.o audio.o \
        gd.o cutscene.o tear.o \
        video.o video_mcga.o video_cga.o video_ega.o video_hgc.o video_tandy.o
 ifneq ($(strip $(SDL_LIBS)),)
@@ -34,9 +34,12 @@ ifeq ($(SAN),1)
   LIBS   += -fsanitize=address,undefined
 endif
 
-all: zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video
+all: zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_present
 
-zeliard: main.o trace.o $(CORE)
+# present.o is the SDL display-filter stage (#53).  It is *not* in CORE: the
+# engine test binaries must stay SDL-free, so only zeliard and test_present
+# link it.
+zeliard: main.o trace.o $(CORE) present.o
 	$(CC) -o $@ $^ $(LIBS)
 
 test_physics: test_physics.o $(CORE)
@@ -69,7 +72,12 @@ test_cutscene: test_cutscene.o $(CORE)
 test_video: test_video.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
 
-%.o: %.c sar.h gfx.h map.h physics.h render.h video.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h nav.h playthrough.h opl2.h msd.h audio.h gd.h cutscene.h tear.h trace.h
+# The display filters only exist on the SDL path, so this one is built (and run)
+# separately from `make test`; with no SDL it compiles to a "skipping" stub.
+test_present: test_present.o present.o
+	$(CC) -o $@ $^ $(LIBS)
+
+%.o: %.c sar.h gfx.h map.h physics.h render.h video.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h savestate.h nav.h playthrough.h opl2.h msd.h audio.h gd.h cutscene.h tear.h trace.h present.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Every binary's "N checks" line is collected so the last step can compare the

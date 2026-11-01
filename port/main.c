@@ -23,7 +23,9 @@
 #include "cutscene.h"
 #include "tear.h"
 #include "trace.h"
+#include "savestate.h"
 #include "playthrough.h"
+#include "present.h"
 #include <errno.h>
 #ifdef _WIN32
 #include <direct.h>
@@ -55,6 +57,7 @@ typedef struct {
     double   frame_ms;
     int      scale;
     int      square;                /* --aspect 1:1: present the framebuffer unscaled in shape */
+    int      filter;                /* --filter: FILTER_INTEGER / SHARP / SMOOTH (#53) */
     int      quit;
     int      verbose;
     int      dump_audio;
@@ -76,6 +79,16 @@ typedef struct {
     unsigned rng_mark;                  /* g->rng_calls at the previous boundary */
     int      trace_done;                /* script exhausted: the run is stopping */
     unsigned trace_idle;                /* presents since the last boundary (shops, status) */
+    /* --state-save-at N FILE / --state-load FILE: realtime save states (#52).
+     * The save fires once, at trace frame boundary N, once that frame's
+     * post-boundary tail has run (shell.frame_done); the load re-enters the
+     * saved map/town and continues the trace numbering at N+1. */
+    const char *state_save;             /* --state-save-at FILE (NULL = off) */
+    unsigned  state_save_at;            /* --state-save-at N */
+    int       state_save_done;
+    int       state_save_pending;       /* boundary N seen; save when its frame ends */
+    unsigned  state_save_rng;           /* g->rng_calls at boundary N (the trace delta base) */
+    const char *state_load;             /* --state-load FILE (NULL = off) */
     /* --pilot ROUTE: the autopilot (playthrough.c) answers the input at each
      * boundary instead of --script; --emit-script FILE writes what it fed,
      * run-length coded, as a --script that replays it exactly */
@@ -112,6 +125,19 @@ static void toggle_fullscreen(App *a)
         fprintf(stderr, "[video] fullscreen: %s\n", SDL_GetError());
     else if (a->verbose)
         fprintf(stderr, "[video] %s\n", a->fullscreen ? "fullscreen" : "windowed");
+}
+
+/* Blit the mode's RGB image (already uploaded to a->tex) through the selected
+ * display filter and present it.  The content shape is the aspect-corrected
+ * display size, or the framebuffer itself under --aspect 1:1; present.c owns
+ * the sampling.  Presentation only: `make verify` never reaches this path. */
+static void present_frame(App *a, int sw, int sh)
+{
+    int dw = sw, dh = sh;
+    if (!a->square) video_display_size(a->video, &dw, &dh);
+    if (present_render(a->ren, a->tex, sw, sh, dw, dh, a->filter) != 0)
+        fprintf(stderr, "[video] present: %s\n", SDL_GetError());
+    SDL_RenderPresent(a->ren);
 }
 
 static void pad_open(App *a, int which)
@@ -151,6 +177,11 @@ static void pump_events(App *a, Game *g)
             case SDLK_ESCAPE: a->esc_edge = 1; break;
             case SDLK_q:      if (a->paused) a->quit = 1; break;
             case SDLK_F11:    toggle_fullscreen(a); break;
+            /* F3 cycles the display filter: integer -> sharp-bilinear -> smooth */
+            case SDLK_F3:
+                a->filter = (a->filter + 1) % FILTER_COUNT;
+                fprintf(stderr, "[video] filter: %s\n", present_filter_name(a->filter));
+                break;
             case SDLK_RETURN: case SDLK_KP_ENTER:
                 if (e.key.keysym.mod & KMOD_ALT) toggle_fullscreen(a);   /* Alt+Enter */
                 else if (a->paused) { a->paused = 0; title_apply(a); }
@@ -267,7 +298,7 @@ static void usage(void)
 {
     fprintf(stderr,
         "usage: zeliard [--dir GAMEDIR] [--map N] [--pos COL ROW] [--town N] [--headless]\n"
-        "               [--screenshot N out.png] [--script SCRIPT] [--scale N] [--aspect A] [--fullscreen] [--speed N]\n"
+        "               [--screenshot N out.png] [--script SCRIPT] [--scale N] [--aspect A] [--filter F] [--fullscreen] [--speed N]\n"
         "               [--frames N] [--sound] [--verbose]\n"
         "               [--no-music] [--speaker] [--music N] [--dump-audio FILE.wav]\n"
         "  --dir       directory holding ZELRES1-3.SAR (default: zeliard/, ../zeliard/)\n"
@@ -284,6 +315,8 @@ static void usage(void)
         "  --speed N   FF33 speed (frame = 4*N ticks; default 5 = 84.5 ms)\n"
         "  --scale N   window scale (default 3)\n"
         "  --aspect A  4:3 (default: the shape the driver's monitor had) or 1:1\n"
+        "  --filter F  display scaling: integer, sharp (sharp-bilinear, default) or smooth;\n"
+        "              F3 cycles them (presentation only, the framebuffer is untouched)\n"
         "  --fullscreen  start full-screen (F11 or Alt+Enter toggles; Esc pauses, Q quits)\n"
         "  --video M   render through one of the five original drivers:\n"
         "              mcga (default) cga cga2 ega hgc tandy — the RESOURCE.CFG\n"
@@ -314,6 +347,10 @@ static void usage(void)
         "              harness RNG, and --script advanced one token-frame per boundary.\n"
         "              --frames N stops after N traced frames\n"
         "  --png-every K          with --trace: DIR/frame_NNNNN.png every K traced frames\n"
+        "  --state-save-at N FILE with --trace: write a realtime engine state (#52) at trace\n"
+        "              frame boundary N (a fight/town frame, not a menu poll) to FILE\n"
+        "  --state-load FILE      start from a state written by --state-save-at; the trace\n"
+        "              numbering continues at N+1 and the script resumes from that token\n"
         "  --flag N[=V] set story-flag byte [N] (hex 0..48, docs/STATE_PAGE.md) to V (hex,\n"
         "              default FF) before the save is made / the game starts; repeatable\n"
         "  --pilot ROUTE          with --trace: the autopilot plays ROUTE instead of a\n"
@@ -468,11 +505,70 @@ static int pilot_next(App *a)
     return 1;
 }
 
+/* Take the next token-frame from --script / --pilot and install it as the
+ * input for the frame after this boundary.  Also used by --state-load, which
+ * resumes mid-script and must apply the boundary's own token before its first
+ * frame runs. */
+static void harness_advance(App *a)
+{
+    int more = a->pilot ? pilot_next(a) : script_next(a);
+    if (!more && a->max_frames) { a->script_dirs = a->script_btns = 0; more = 1; }   /* --frames: idle on */
+    if ((a->max_frames && a->trace_n >= a->max_frames) || !more) {
+        a->trace_done = 1; a->quit = 1;
+        Town *tw = &a->sh.town;
+        tw->quit = 1;                               /* out of any blocking box, shop or menu */
+        if (tw->status) tw->status->done = 1;
+        if (tw->shop) tw->shop->leave = 1;
+        if (a->sh.g.status) a->sh.g.status->done = 1;
+        trace_set_input(a, 0, 0, 0);
+        return;
+    }
+    trace_set_input(a, a->script_dirs, (uint8_t)((a->script_btns & 3) | (a->script_btns & 8 ? 4 : 0)),
+                    (uint8_t)(a->script_btns & 4 ? 1 : 0));
+    a->trace_char = 0;
+    if (a->script_char_new) {                       /* STICK INT 9 kbd_scan_to_ascii -> FF29 */
+        a->sh.town.last_ascii = a->trace_char = a->script_char;
+        a->script_char_new = 0;
+    }
+}
+
+/* shell.frame_done (#52): the frame whose boundary was N has fully run, so the
+ * engine is at a resumable point -- write the state now. */
+static void state_save_hook(Shell *s)
+{
+    App *a = s->user;
+    if (!a->state_save || a->state_save_done || !a->state_save_pending) return;
+    a->state_save_pending = 0;
+    if (a->trace_n != a->state_save_at + 1) {           /* the frame opened a blocking screen (a shop/status poll): not resumable here */
+        fprintf(stderr, "[state] frame %u opened a blocking screen: not saved\n", a->state_save_at);
+        return;
+    }
+    a->state_save_done = 1;
+    unsigned n = a->state_save_at;                      /* the boundary just traced */
+    if (savestate_save(s, a->state_save, n, a->state_save_rng) == 0)
+        fprintf(stderr, "[state] saved frame %u -> %s\n", n, a->state_save);
+    else
+        fprintf(stderr, "[state] frame %u not saved\n", n);
+}
+
 /* `site`: "717F" / "68ED" for the frame boundaries, else a wait loop's poll
  * site (docs/HARNESS.md §1); `t` NULL = fight.bin's field set */
 static void trace_boundary_at(App *a, Game *g, Town *t, const char *site)
 {
     if (a->trace_done) return;
+    /* --state-save-at: mark boundary N.  The blob is written by frame_done,
+     * once this frame's post-boundary tail has run, so the shell is at a point
+     * a fresh game_step can resume from; the trace delta base is the RNG
+     * counter as this boundary saw it.  Only a plain 717F/68ED frame, not a
+     * dialogue/shop/status poll, is eligible. */
+    if (a->state_save && !a->state_save_done && !a->state_save_pending && a->trace_n == a->state_save_at) {
+        int clean = (strcmp(site, "717F") == 0 || strcmp(site, "68ED") == 0)
+                    && !(t && (t->dlg.active || t->status || t->shop))
+                    && !g->status && !g->tear;
+        if (!clean)
+            fprintf(stderr, "[state] frame %u (%s): not a plain frame boundary, not saved\n", a->trace_n, site);
+        else { a->state_save_pending = 1; a->state_save_rng = g->rng_calls; }
+    }
     wait_reset();                                   /* any boundary restarts the wait-loop clock */
     if (a->trace_n == 0) { g->rng = 0; a->rng_mark = g->rng_calls; }    /* HARNESS §3: seed 0 */
     char in[12];
@@ -498,25 +594,7 @@ static void trace_boundary_at(App *a, Game *g, Town *t, const char *site)
     }
     a->trace_n++;
     a->trace_idle = 0;
-    int more = a->pilot ? pilot_next(a) : script_next(a);
-    if (!more && a->max_frames) { a->script_dirs = a->script_btns = 0; more = 1; }   /* --frames: idle on */
-    if ((a->max_frames && a->trace_n >= a->max_frames) || !more) {
-        a->trace_done = 1; a->quit = 1;
-        Town *tw = &a->sh.town;
-        tw->quit = 1;                               /* out of any blocking box, shop or menu */
-        if (tw->status) tw->status->done = 1;
-        if (tw->shop) tw->shop->leave = 1;
-        if (g->status) g->status->done = 1;
-        trace_set_input(a, 0, 0, 0);
-        return;
-    }
-    trace_set_input(a, a->script_dirs, (uint8_t)((a->script_btns & 3) | (a->script_btns & 8 ? 4 : 0)),
-                    (uint8_t)(a->script_btns & 4 ? 1 : 0));
-    a->trace_char = 0;
-    if (a->script_char_new) {                       /* STICK INT 9 kbd_scan_to_ascii -> FF29 */
-        a->sh.town.last_ascii = a->trace_char = a->script_char;
-        a->script_char_new = 0;
-    }
+    harness_advance(a);
 }
 static void trace_fight_end(Game *g) { trace_boundary_at(app_of(g->user), g, NULL, "717F"); }
 static void trace_town_end(Town *t)  { trace_boundary_at(app_of(t->user), t->g, t, "68ED"); }
@@ -549,9 +627,7 @@ static void cutscene_present(Cutscene *c)
 #ifdef HAVE_SDL
     cutscene_to_rgb(c, rgb);
     SDL_UpdateTexture(a->tex, NULL, rgb, FB_W * 3);
-    SDL_RenderClear(a->ren);
-    SDL_RenderCopy(a->ren, a->tex, NULL, NULL);
-    SDL_RenderPresent(a->ren);
+    present_frame(a, FB_W, FB_H);
     static Uint64 next = 0;
     Uint64 now = SDL_GetPerformanceCounter(), freq = SDL_GetPerformanceFrequency();
     if (next == 0 || now > next + freq) next = now;
@@ -646,9 +722,7 @@ static void present(Game *g)
     int vw, vh;
     const uint8_t *rgb = video_out(a, &vw, &vh);
     SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
-    SDL_RenderClear(a->ren);
-    SDL_RenderCopy(a->ren, a->tex, NULL, NULL);
-    SDL_RenderPresent(a->ren);
+    present_frame(a, vw, vh);
     char title[256];
     snprintf(title, sizeof title, "Zeliard - %s  (%d,%d)  LIFE %u/%u  EXP %u  GOLD %u  %s", g->map->name,
              game_hero_map_col(g), game_hero_map_row(g), g->hp, g->max_hp, g->exp, (unsigned)g->gold, g->message);
@@ -726,9 +800,7 @@ static void town_present(Town *t)
     int vw, vh;
     const uint8_t *rgb = video_out(a, &vw, &vh);
     SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
-    SDL_RenderClear(a->ren);
-    SDL_RenderCopy(a->ren, a->tex, NULL, NULL);
-    SDL_RenderPresent(a->ren);
+    present_frame(a, vw, vh);
     char title[768];
     snprintf(title, sizeof title, "Zeliard - %s  col %d  LIFE %u/%u  GOLD %u  %.400s", t->map->label,
              town_hero_col(t), t->g->hp, t->g->max_hp, (unsigned)t->g->gold, t->message);
@@ -758,6 +830,7 @@ int main(int argc, char **argv)
 {
     static App a; memset(&a, 0, sizeof a);
     a.frame_ms = FRAME_MS_DEFAULT; a.scale = 3; a.video = VID_MCGA;
+    a.filter = FILTER_SHARP;                    /* #53: the fidelity-first default */
     Shell *sh = &a.sh;
     const char *dir = NULL;
     int map_idx = 0, pos_col = -1, pos_row = -1, start_in_town = -1, town_col = -1, town_scr = -1, town_anim = -1, town_face = 0, npc_i = -1, npc_f = 0;
@@ -784,6 +857,11 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--screenshot") && i + 2 < argc) { a.shot_frame = (unsigned)atoi(argv[++i]); a.shot_path = argv[++i]; a.headless = 1; explicit_start = 1; }
         else if (!strcmp(argv[i], "--script") && i + 1 < argc) { a.script = argv[++i]; explicit_start = 1; }
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) a.scale = atoi(argv[++i]);
+        /* the scaling filter (F3 cycles it); default sharp-bilinear */
+        else if (!strcmp(argv[i], "--filter") && i + 1 < argc) {
+            a.filter = present_filter_by_name(argv[++i]);
+            if (a.filter < 0) { fprintf(stderr, "--filter: expected integer, sharp or smooth\n"); return 2; }
+        }
         else if (!strcmp(argv[i], "--fullscreen")) a.fullscreen = 1;
         /* the drivers all drew for a 4:3 monitor, so their pixels are not
          * square; --aspect 1:1 turns the correction off for pixel-peeping
@@ -831,6 +909,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--cutscene-frames") && i + 1 < argc) a.cs_frames = (unsigned)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--verbose") || !strcmp(argv[i], "-v")) a.verbose = 1;
         else if (!strcmp(argv[i], "--trace") && i + 1 < argc) { a.trace_dir = argv[++i]; a.headless = 1; explicit_start = 1; }
+        else if (!strcmp(argv[i], "--state-save-at") && i + 2 < argc) { a.state_save_at = (unsigned)atoi(argv[++i]); a.state_save = argv[++i]; explicit_start = 1; }
+        else if (!strcmp(argv[i], "--state-load") && i + 1 < argc) { a.state_load = argv[++i]; explicit_start = 1; }
         else if (!strcmp(argv[i], "--png-every") && i + 1 < argc) a.png_every = (unsigned)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--trace-fields")) { trace_list_fields(stdout); return 0; }
         else if (!strcmp(argv[i], "--flag") && i + 1 < argc) {
@@ -910,7 +990,9 @@ int main(int argc, char **argv)
         if (!a.trace_f) { fprintf(stderr, "cannot write %s\n", path); return 1; }
         sh->frame_end = trace_fight_end; sh->town_frame_end = trace_town_end;
         wait_clock.fn = trace_wait;
+        if (a.state_save) sh->frame_done = state_save_hook;
     }
+    if (a.state_save && !a.trace_f) { fprintf(stderr, "--state-save-at needs --trace DIR\n"); return 2; }
     /* audio before shell_init: loading a map starts its score (shell.c).  A
      * headless run without --dump-audio never opens it, so `make verify` and
      * the scripted runs stay silent and do no extra work. */
@@ -1029,8 +1111,8 @@ int main(int argc, char **argv)
                                  lw * vscale, lh * vscale, wflags);
         a.ren = SDL_CreateRenderer(a.win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
         if (!a.ren) a.ren = SDL_CreateRenderer(a.win, -1, 0);
-        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
-        SDL_RenderSetLogicalSize(a.ren, lw, lh);
+        /* no SDL_RenderSetLogicalSize: present.c computes the letterbox rect
+         * itself so the integer and sharp-bilinear filters can differ (#53) */
         a.tex = SDL_CreateTexture(a.ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, vw, vh);
     }
 #else
@@ -1045,6 +1127,7 @@ int main(int argc, char **argv)
         run_cutscenes(&a, sh->dir);
         if (a.intro_only) { audio_shutdown(); shell_free(sh);
 #ifdef HAVE_SDL
+            present_shutdown();
             if (a.tex) SDL_DestroyTexture(a.tex);
             if (a.ren) SDL_DestroyRenderer(a.ren);
             if (a.win) SDL_DestroyWindow(a.win);
@@ -1117,6 +1200,17 @@ int main(int argc, char **argv)
         a.pilot = &pilot;
         if (emit_path && !(a.emit_f = fopen(emit_path, "w"))) { fprintf(stderr, "cannot write %s\n", emit_path); return 1; }
     }
+    /* --state-load: rebuild the saved engine state, continue the trace at N+1
+     * and apply the boundary's own token before the first continued frame. */
+    if (a.state_load) {
+        if (!a.trace_f) { fprintf(stderr, "--state-load needs --trace (it continues the trace numbering)\n"); return 2; }
+        SavestateMeta meta;
+        if (savestate_load(sh, a.state_load, &meta)) return 1;
+        a.trace_n = meta.frame + 1;
+        a.rng_mark = meta.rng_calls;
+        fprintf(stderr, "[state] loaded %s: continues at frame %u\n", a.state_load, a.trace_n);
+        harness_advance(&a);
+    }
     while (!a.quit) {
         shell_frame(sh);
         if (shop_exit_request) a.quit = 1;      /* sage "No" (kenjpro A934) / the ending (omoypro A0A9) */
@@ -1158,6 +1252,7 @@ int main(int argc, char **argv)
     audio_shutdown();
     shell_free(sh);
 #ifdef HAVE_SDL
+    present_shutdown();
     if (a.tex) SDL_DestroyTexture(a.tex);
     if (a.ren) SDL_DestroyRenderer(a.ren);
     if (a.win) SDL_DestroyWindow(a.win);

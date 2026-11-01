@@ -411,7 +411,12 @@ static void town_frame(Shell *s)
 
 void shell_frame(Shell *s)
 {
-    if (s->in_town) { town_frame(s); return; }
+    /* #52: frame_done runs at the true end of the frame, after any door, gate,
+     * shop or transition the frame asked for, so a save state captured here
+     * resumes with the next frame's own step.  (A frame that opened a shop or
+     * the status screen has run their wait boundaries by now, so the trace
+     * counter no longer matches and the save is refused as non-resumable.) */
+    if (s->in_town) { town_frame(s); if (s->frame_done) s->frame_done(s); return; }
     int was_intro = s->g.boss_room != 0;
     game_step(&s->g);
     /* 61BE/61DB: the [E6] intro ends when the boss overlay clears [E6]
@@ -425,4 +430,5 @@ void shell_frame(Shell *s)
         s->g.btn1_edge = 0;
         shell_enter_cavern(s, 0x1E, 0x18, 0x0D + 1, 0, 0);   /* 7DC1 puts him a row below the entry cell */
     }
+    if (s->frame_done) s->frame_done(s);                /* #52: the frame is complete */
 }

@@ -10,6 +10,10 @@
 
 static uint8_t dist_r = 8, dist_l = 8;                                  /* A491 / A492 */
 
+/* the save state's view of the mutable A491/A492 shot range */
+void eai7_priv_get(uint8_t *dr, uint8_t *dl) { *dr = dist_r; *dl = dist_l; }
+void eai7_priv_set(uint8_t dr, uint8_t dl) { dist_r = dr; dist_l = dl; }
+
 /* 0xA41E  the walker's attack: frames 4..7, shot at phase 6 */
 static void tallwalker_attack(Game *g, MapObj *e)
 {

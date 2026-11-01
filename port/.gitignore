@@ -24,3 +24,4 @@ leak-*
 oom-*
 timeout-*
 .test_counts.txt
+test_present

@@ -255,3 +255,25 @@ void ai_tall_take_hit_own(Game *g, MapObj *e)
     e->hit = a; e[1].hit = (uint8_t)(a | 0x60);
     enemy_take_damage(g, e);
 }
+
+/* The two overlays with a mutable per-frame static (cavern 2 / 7's shot
+ * range); everything else has none.  Declared in enemy.h. */
+void eai2_priv_get(uint8_t *dr, uint8_t *dl);
+void eai2_priv_set(uint8_t dr, uint8_t dl);
+void eai7_priv_get(uint8_t *dr, uint8_t *dl);
+void eai7_priv_set(uint8_t dr, uint8_t dl);
+
+void ai_priv_get(const Game *g, uint8_t *dr, uint8_t *dl)
+{
+    *dr = 8; *dl = 8;                               /* the image's initial value */
+    if (!g->ai) return;
+    if (g->ai->index == 2) eai2_priv_get(dr, dl);
+    else if (g->ai->index == 12) eai7_priv_get(dr, dl);
+}
+
+void ai_priv_set(Game *g, uint8_t dr, uint8_t dl)
+{
+    if (!g->ai) return;
+    if (g->ai->index == 2) eai2_priv_set(dr, dl);
+    else if (g->ai->index == 12) eai7_priv_set(dr, dl);
+}

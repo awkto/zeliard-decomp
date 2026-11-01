@@ -55,6 +55,11 @@ typedef struct Shell {
     TownPresentFn town_present;         /* installed as town.present */
     FrameEndFn    frame_end;            /* installed as g.frame_end (--trace; NULL normally) */
     TownFrameEndFn town_frame_end;      /* installed as town.frame_end */
+    /* called once per shell_frame right after the engine's step completes (the
+     * true end of a frame, after the mid-frame 717F/68ED boundary's own tail)
+     * and before any transition the frame asked for.  Used by --state-save-at
+     * (#52); NULL normally. */
+    void        (*frame_done)(struct Shell *s);
     /* set by the shell for the front end / the tests */
     unsigned  transitions;              /* doors + gates taken */
 } Shell;
