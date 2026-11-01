@@ -346,7 +346,14 @@ void item_update(Game *g, MapObj *o)
 
 /* 0x94FF  Respawn attempt: inactive, a home column inside the ring but not at
  * ring col 0/35, off screen (row more than 24 rows below the window top, or
- * ring col outside 3..0x1F), and no sprite in the 3x3 around it. */
+ * ring col outside 3..0x1F), and no sprite in the 3x3 around it.  The ring
+ * column goes into +3 *before* the sprite test (9550 / 95BD, and the lower
+ * record's +13h too), so a record that is refused still carries it: the
+ * port left 0xFF there (tarso_fight f1345, MP61's (244,55) spawner, #90).
+ * A tall pair (95B6): only from its upper record (home_type bit 0 clear),
+ * the test covers rows -1..+3 (cx = 5), and the lower record's flags lose
+ * their low nibble (9648).  ED20 (the cell under the marker) is set to 0,
+ * not to the cell (95B0 / 9652). */
 void enemy_spawn(Game *g, MapObj *o)
 {
     int idx = (int)(o - g->obj);
@@ -358,24 +365,28 @@ void enemy_spawn(Game *g, MapObj *o)
     if (r == 0 || r == 0x23) return;
     uint8_t dy = (uint8_t)((o->home_row - (g->scroll_row - 2)) & 0x3F);
     if (dy < 0x18 && r >= 3 && r < 0x20) return;                        /* 953B: would pop up on screen */
+    int tall = (o->flags & 0x10) && idx + 1 < g->nobj;
+    if (tall && (o->home_type & 1)) return;                             /* 95B6 */
+    o->rcol = r;                                                        /* 9550 / 95BD */
+    if (tall) o[1].rcol = r;                                            /* 95C0 */
     int p = game_ring_index(g, o->home_row, r);
-    int rows = (o->flags & 0x10) ? 5 : 1;                               /* a tall enemy is 4 rows */
-    for (int dr = -1; dr < rows + 1; dr++)
+    int rows = tall ? 5 : 3;                                            /* 9566 / 95D6: cx */
+    for (int dr = -1; dr < rows - 1; dr++)
         for (int dc = -1; dc <= 1; dc++)
             if (g->ring[game_ring_add(p, dr * RING_W + dc)] & 0x80) return;
-    o->rcol = r;
     o->col = o->home_col; o->row = o->home_row; o->type = o->home_type;
     o->phase = 0x10; o->hit = 0; o->next = 0; o->link = 0; o->hp = 0;
-    g->under_sprite[idx] = g->ring[p];
+    g->under_sprite[idx] = 0;
     g->ring[p] = (uint8_t)(0x80 | idx);
-    if ((o->flags & 0x10) && idx + 1 < g->nobj) {                       /* the lower half of a 2x4 sprite */
+    if (tall) {                                                         /* the lower half of a 2x4 sprite */
         MapObj *lo = &o[1];
-        lo->col = o->col; lo->rcol = r;
+        lo->col = o->col;
         lo->row = (uint8_t)((o->row + 2) & 0x3F);
         lo->type = (uint8_t)(o->home_type + 1);
         lo->phase = 0x10; lo->hit = 0; lo->next = 0; lo->link = 0; lo->hp = 0;
+        lo->flags &= 0xF0;                                              /* 9648 */
         int q = game_ring_add(p, 2 * RING_W);
-        g->under_sprite[idx + 1] = g->ring[q];
+        g->under_sprite[idx + 1] = 0;
         g->ring[q] = (uint8_t)(0x80 | (idx + 1));
     }
 }
@@ -538,14 +549,17 @@ static void cell_anim_one(Game *g, uint8_t *p)
 void cell_anim(Game *g)
 {
     g->gf_frame++;                                                      /* 3038 */
+    g->spark[0] = g->boss_state;            /* EDA0 is the spark list: whoever reset it to FF emptied it */
     int cav = g->map->cavern;
-    if (cav < 5 || cav > 8) return;                                     /* 315C..3168 */
+    int anim = cav >= 5 && cav <= 8;                                    /* 315C..3168 */
+    int sparks = g->boss_map && g->boss_dying;
+    if (!anim && !sparks) return;
     for (int r = 0; r < 0x12; r++) {
         uint8_t row = (uint8_t)((g->scroll_row + r) & 0x3F);
         for (int c = 4; c < 0x20; c++) {
             uint8_t *p = &g->ring[game_ring_index(g, row, (uint8_t)c)];
-            if (*p & 0x80) continue;                                    /* 3127 / 30FF: a sprite marker -> 3468 / 34E3 */
-            cell_anim_one(g, p);
+            if (*p & 0x80) { boss_spark_cell(g, c - 4, r); continue; }  /* 3127 / 30FF: a sprite marker -> 3468 / 34E3 */
+            if (anim) cell_anim_one(g, p);
         }
     }
 }

@@ -528,7 +528,7 @@ static void probe_reset(Nav *n, const Game *g)
     Game *p = &n->probe;
     memcpy(p, g, sizeof *p);
     p->present = NULL; p->frame_end = NULL; p->on_door = NULL; p->on_town = NULL; p->post_boss = NULL;
-    p->status = NULL; p->menu_key = 0; p->user = NULL;
+    p->status = NULL; p->menu_key = 0; p->user = NULL; p->step_begin = NULL;
     p->map = &n->navmap;
     p->hp = p->max_hp = 9999;                   /* the probe must not die */
     p->boss_map = p->boss_room = 0; p->boss.active = 0; p->encounter_frames = 0;
@@ -890,7 +890,233 @@ static int step_walks_off(const Game *g, uint8_t dirs)
     return 1;
 }
 
+
+/* ------------------------------------------------------ live prediction */
+/* The survey's probes start every move from `game_place`: the hero at rest,
+ * hero_anim 0x80, [9F07] restarted, the fixture wherever probe_place_fixture
+ * put it -- and at the *top* of a main-loop pass.  The live hero is asked at a
+ * boundary half-way through one (717F, or `present` just above it), with the
+ * platforms already moved for this frame, [9F07] at whatever parity the map
+ * has reached and hero_anim wherever the last walk left it.  Every attempt to
+ * close that gap with a tolerance or an offset fitted one fixture and broke
+ * another (MP61's fix[15], fix[13] and fix[10] each wanted a different one,
+ * #86).  So do not model it at all: `snap_hook` keeps a copy of the live game
+ * at the top of every pass (Game.step_begin), and `predict` replays the pass
+ * from it with the inputs already fed, checks that the replay has reached the
+ * live state at this boundary, then feeds the move the executor would feed and
+ * reads off where the hero settles.  That is the live outcome, frame for
+ * frame: same code, same platforms, same phase, same enemies (#90). */
+static Nav *snap_nav;
+static void snap_hook(Game *g)
+{
+    Nav *n = snap_nav;
+    if (!n) return;
+    memcpy(&n->snap, g, sizeof n->snap);
+    n->snap_ok = 1; n->snap_nin = 0;
+}
+/* which boundary of the pass is this (0 = the first)?  Every boundary of it
+ * must have been answered by nav_step, so the inputs fed are all known. */
+static int pred_available(const Nav *n, const Game *g)
+{
+    return n->snap_ok && n->snap.map == g->map &&
+           (int)(g->frame_no - n->snap.frame_no) - 1 == n->snap_nin && n->snap_nin < 16;
+}
+typedef struct {
+    Nav *n; const Game *live;
+    int b, k, nseq, done, bad, node;
+    int fixed;                      /* stop after the sequence, wherever he is */
+    const uint8_t *sd, *sb;
+} Pred;
+static Pred PR;
+/* has the replay reached the state the live game is in at this boundary? */
+static int pred_in_step(const Game *p, const Game *g)
+{
+    if (p->scroll_col != g->scroll_col || p->scroll_row != g->scroll_row ||
+        p->hero_scr_col != g->hero_scr_col || p->hero_scr_row != g->hero_scr_row ||
+        p->vstate != g->vstate || p->on_ladder != g->on_ladder || p->hero_anim != g->hero_anim ||
+        p->hero_flags != g->hero_flags || p->crouching != g->crouching ||
+        p->fixture_anim != g->fixture_anim || p->nfix != g->nfix) return 0;
+    for (int i = 0; i < g->nfix; i++)
+        if (p->fix[i].col != g->fix[i].col || p->fix[i].row != g->fix[i].row ||
+            p->fix[i].state != g->fix[i].state) return 0;
+    return 1;
+}
+/* the replay's boundary: the inputs already fed, then the move, then idle
+ * until the hero settles -- exactly what nav_step does with a macro */
+static void pred_boundary(Game *p)
+{
+    Pred *c = &PR;
+    p->menu_key = 0;
+    if (c->done) { p->dirs = 0; set_btn(p, 0); return; }
+    int b = c->b++;
+    if (b < c->k) { p->dirs = c->n->snap_dirs[b]; set_btn(p, c->n->snap_btn[b]); return; }
+    if (b == c->k && !pred_in_step(p, c->live)) { c->done = 1; c->bad = 1; return; }
+    int j = b - c->k;
+    if (c->fixed && j >= c->nseq) { c->done = 1; return; }
+    if (j >= c->nseq && (settled(p) || j >= c->nseq + SETTLE)) {
+        c->done = 1;
+        int col = game_hero_map_col(p), row = game_hero_map_row(p);
+        if (settled(p) && col >= 0 && col < p->map->width && row >= 0 && row < MAP_ROWS)
+            c->node = c->n->node_of[col][row];
+        return;
+    }
+    p->dirs = j < c->nseq ? c->sd[j] : 0;
+    set_btn(p, j < c->nseq ? c->sb[j] : 0);
+}
+/* Feed `sd`/`sb` from this boundary on and return the node the hero settles
+ * on (-1: none, or he died), or -2 when there is no telling (no snapshot of
+ * this pass, or the replay does not reach the live state). */
+static int predict_run(Nav *n, const Game *g, const uint8_t *sd, const uint8_t *sb, int nseq, int fixed)
+{
+    if (!pred_available(n, g)) return -2;
+    memcpy(&n->predmap, g->map, sizeof n->predmap);     /* a door may unlock */
+    Game *p = &n->probe;
+    memcpy(p, &n->snap, sizeof *p);
+    p->map = &n->predmap;
+    p->step_begin = NULL; p->on_door = NULL; p->on_town = NULL; p->post_boss = NULL;
+    p->status = NULL; p->user = NULL;
+    if (g->frame_end) { p->frame_end = pred_boundary; p->present = NULL; }
+    else              { p->present = pred_boundary; p->frame_end = NULL; }
+    memset(&PR, 0, sizeof PR);
+    PR.n = n; PR.live = g; PR.k = n->snap_nin; PR.nseq = nseq; PR.sd = sd; PR.sb = sb; PR.node = -1;
+    PR.fixed = fixed;
+    for (int s = 0; s < 2 * (nseq + SETTLE) + 8 && !PR.done && !p->hero_dead; s++) {
+        game_step(p);
+        n->steps++;
+    }
+    n->preds++;
+    if (PR.bad) { n->pred_bad++; return -2; }
+    return PR.done ? PR.node : -1;
+}
+static int predict(Nav *n, const Game *g, const uint8_t *sd, const uint8_t *sb, int nseq)
+{
+    return predict_run(n, g, sd, sb, nseq, 0);
+}
+
+/* Tarso (LEGA) fights with his whole body: 160 LIFE a frame for contact with
+ * any of classes 0..5, the bolt 80, and every hit knocks the hero left, so
+ * the plain "stand a column off and swing" of nav_step's boss rule is pinned
+ * against the room's west wall and juggled to death after two blows of the
+ * three it takes (#90).  With the live state in hand the fight is a search:
+ * try each way of holding the stick for FIGHT_H frames, swinging or not, on
+ * the replay, and play the first frame of whichever costs the boss most LIFE
+ * for the least of the hero's.  -1: no prediction (the caller falls back). */
+#define FIGHT_H 12
+static int fight_lookahead(Nav *n, Game *g)
+{
+    static const uint8_t D[6] = {0, DIR_LEFT, DIR_RIGHT, DIR_UP, UL, UR};
+    if (!pred_available(n, g)) return -1;
+    long bests = -(1L << 40); int bd = -1, bx = 0;
+    for (int x = 0; x < 2; x++)
+        for (int di = 0; di < 6; di++) {
+            uint8_t sd[FIGHT_H], sb[FIGHT_H];
+            for (int f = 0; f < FIGHT_H; f++) { sd[f] = D[di]; sb[f] = (uint8_t)(x && !(f & 1)); }
+            if (predict_run(n, g, sd, sb, FIGHT_H, 1) == -2) return -1;
+            const Game *p = &n->probe;
+            long sc = 4L * ((long)g->boss.hp - (long)p->boss.hp) - ((long)g->hp - (long)p->hp);
+            if (p->hero_dead || !p->hp) sc -= 100000;
+            /* nothing happens either way: close in, a column short of its front */
+            int gap = game_hero_map_col(p) - ((int)p->boss.col - 2);
+            sc = sc * 64 - (gap < 0 ? -gap : gap);
+            if (sc > bests) { bests = sc; bd = di; bx = x; }
+        }
+    nemit(n, g, D[bd], (uint8_t)bx);
+    return 0;
+}
+/* What the executor feeds for edge `e` from here: a turn first if he faces
+ * the wrong way (see the facing rule in nav_step), then the macro. */
+static int edge_seq(const Nav *n, const Game *g, int e, uint8_t *sd, uint8_t *sb)
+{
+    int k = 0;
+    if (((g->hero_flags & FACE_LEFT) != 0) != (n->eface[e] != 0)) {
+        sd[k] = (uint8_t)(n->eface[e] ? DIR_LEFT : DIR_RIGHT); sb[k++] = 0;
+    }
+    const Macro *m = &MACRO[n->emacro[e]];
+    for (int f = 0; f < m->n; f++) { sd[k] = macro_dir(m, f); sb[k++] = m->btn; }
+    return k;
+}
+/* Is edge `e` good *now*, on the live state?  1 yes (n->pred_to is where it
+ * lands: its own target or anything closer to the goal), -1 no, 0 no telling
+ * (the caller falls back on edge_ok). */
+static int edge_live(Nav *n, const Game *g, int e, int here)
+{
+    if (macro_has_up(n->emacro[e]) && on_foreign_door(n, g)) return -1;
+    uint8_t sd[48], sb[48];
+    int k = edge_seq(n, g, e, sd, sb);
+    int to = predict(n, g, sd, sb, k);
+    if (to == -2) return 0;
+    if (to >= 0 && (to == n->eto[e] || n->dist[to] < n->dist[here])) { n->pred_to = to; return 1; }
+    return -1;
+}
+/* Every way on is waiting on the live state, but standing still is not
+ * always safe while it does: a platform carries him off its trailing end,
+ * which a ride edge -- one that lands on a node no closer to the goal, so
+ * never a candidate -- would have avoided (MP10's fix[2]/fix[3] gaps in
+ * test_playthrough).  So predict waiting and every move from here and take
+ * whichever lands nearest the goal; waiting wins a tie.  -1: wait. */
+static int hold_on(Nav *n, const Game *g, int here)
+{
+    uint8_t sd[48], sb[48];
+    sd[0] = 0; sb[0] = 0;
+    int w = predict(n, g, sd, sb, 1);
+    if (w == -2) return -1;
+    unsigned bestd = w >= 0 ? n->dist[w] : NAV_INF + 1u;
+    int best = -1, bto = -1;
+    for (int e = n->efirst[here]; e < n->efirst[here + 1]; e++) {
+        if (macro_has_up(n->emacro[e]) && on_foreign_door(n, g)) continue;
+        int k = edge_seq(n, g, e, sd, sb);
+        int to = predict(n, g, sd, sb, k);
+        if (to < 0 || n->dist[to] >= bestd) continue;
+        bestd = n->dist[to]; best = e; bto = to;
+    }
+    if (best >= 0) { n->pred_to = bto; n->cur_pred = 1; }
+    return best;
+}
+/* The cheapest improving edge that works now (see the candidate rule in
+ * nav_step), -1 none; *gated is set when one exists but is not ready. */
+static int pick_edge(Nav *n, const Game *g, int here, int *gated, int ignore_fail)
+{
+    int cand[256], nc = 0;
+    unsigned cd[256];
+    for (int e = n->efirst[here]; e < n->efirst[here + 1] && nc < 256; e++) {
+        int j = n->eto[e];
+        if (!ignore_fail && n->efail[e] >= 3) continue;
+        if (n->dist[j] >= n->dist[here]) continue;
+        unsigned d = (unsigned)n->dist[j] + n->ecost[e];
+        int k = nc++;
+        while (k > 0 && cd[k - 1] > d) { cd[k] = cd[k - 1]; cand[k] = cand[k - 1]; k--; }
+        cd[k] = d; cand[k] = e;
+    }
+    for (int i = 0; i < nc; i++) {
+        int e = cand[i], r = edge_live(n, g, e, here);
+#ifdef NAV_DEBUG
+        fprintf(stderr, "   [live] f%u (%d,%d) e%d m%d face%d ->(%d,%d) r%d to(%d,%d) bad%u/%u\n", g->frame_no,
+                game_hero_map_col(g), game_hero_map_row(g), e, n->emacro[e], n->eface[e],
+                n->ncol[n->eto[e]], n->nrow[n->eto[e]], r,
+                PR.node >= 0 ? n->ncol[PR.node] : -1, PR.node >= 0 ? n->nrow[PR.node] : -1, n->pred_bad, n->preds);
+#endif
+        if (r > 0) { n->cur_pred = 1; return e; }
+        if (r < 0) { *gated = 1; continue; }
+        if (!edge_ok(n, g, e, here)) { *gated = 1; continue; }
+        n->cur_pred = 0; n->pred_to = n->eto[e];
+        return e;
+    }
+    return -1;
+}
+
+static void nav_step_live(Nav *n, Game *g);
 void nav_step(Nav *n, Game *g)
+{
+    if (g->step_begin != snap_hook || snap_nav != n) { g->step_begin = snap_hook; snap_nav = n; n->snap_ok = 0; }
+    nav_step_live(n, g);
+    /* what was fed at this boundary, for the replay */
+    if (n->snap_ok && pred_available(n, g)) {
+        n->snap_dirs[n->snap_nin] = g->dirs; n->snap_btn[n->snap_nin] = (uint8_t)(g->buttons & 3);
+        n->snap_nin++;
+    } else n->snap_ok = 0;
+}
+
+static void nav_step_live(Nav *n, Game *g)
 {
     if (g->walk_in || g->encounter_frames) { nemit(n, g, 0, 0); return; }
 
@@ -903,6 +1129,11 @@ void nav_step(Nav *n, Game *g)
          * contact the whole time just trades HP away.  Back off and let the
          * 719E regeneration run when the fight is going badly, and close again
          * once there is life to spend. */
+#ifdef NAV_DEBUG
+        fprintf(stderr, "   [fight] f%u hero %d hp %u boss col %d row %d hp %u pose %u st %02x%02x%02x\n", g->frame_no, hc, g->hp,
+                (int)g->boss.col, (int)g->boss.row, g->boss.hp, g->boss.pose, g->boss.st[0], g->boss.st[2], g->boss.st[4]);
+#endif
+        if (g->boss.active && g->boss.index == BOSS_LEGA && !g->boss_cutscene && fight_lookahead(n, g) == 0) return;
         if (g->hp * 3 < g->max_hp) n->stall = 1;                /* retreat */
         else if (g->hp * 3 >= g->max_hp * 2) n->stall = 0;
         uint8_t d = 0;
@@ -989,7 +1220,8 @@ void nav_step(Nav *n, Game *g)
             uint8_t d = macro_dir(m, n->cur_frame);
             /* same rule as edge_ok: only a move the survey saw stay level is
              * worth aborting when the ground under the next cell has gone */
-            int guard = !(n->cur_edge >= 0 && n->cur_edge < n->nedge && n->expect_node >= 0 &&
+            /* (a move predicted from the live state needs no guard) */
+            int guard = !(n->cur_pred && n->cur_edge >= 0) && !(n->cur_edge >= 0 && n->cur_edge < n->nedge && n->expect_node >= 0 &&
                           !edge_self_moving(n, g, n->cur_edge) && !hero_carried(g) &&
                           n->nrow[n->expect_node] != game_hero_map_row(g));
             if (guard && step_walks_off(g, d)) { n->cur_macro = -1; n->cur_edge = -1; nemit(n, g, 0, 0); return; }
@@ -1087,6 +1319,16 @@ void nav_step(Nav *n, Game *g)
      * walks with it; do the same whenever he is on the last cell the platform
      * still covers on the side it is leaving. */
     int rf = carried_fixture(g);
+    /* ... unless the live prediction says a way on is open *now*: a jump off
+     * the platform's middle, a climb onto a rope it passes under.  MP61's
+     * fix[15] is left only by the hop at (49,49) and fix[10] only by the climb
+     * at (2,39) onto the column-4 rope, each on the one frame of a patrol the
+     * platform is there (#86/#90). */
+    if (rf >= 0 && pred_available(n, g) && hc >= 0 && hc < g->map->width && hr >= 0 && hr < MAP_ROWS &&
+        n->node_of[hc][hr] >= 0) {
+        int gt = 0;
+        if (pick_edge(n, g, n->node_of[hc][hr], &gt, 0) >= 0 && n->cur_pred) rf = -1;
+    }
     if (rf >= 0) {
         const Fixture *f = &g->fix[rf];
         int left = (f->state & 0x80) != 0, bc = hc + 1;
@@ -1166,7 +1408,7 @@ void nav_step(Nav *n, Game *g)
      * Asbestos cape), which outruns the regeneration: resting there only
      * burns the hero down where he stands (#87, MP71 (143,35)). */
     int heat = g->map->cavern == 7 && g->shoes != 5;
-    if (g->hp * 3 < g->max_hp * 2 && ea > 8 && !g->on_hazard && !heat) {
+    if (g->hp * 3 < g->max_hp * 2 && ea > 8 && !g->on_hazard && !heat && !n->no_rest) {
         if (g->hp * 4 < g->max_hp * 3) {
             /* Resting is not being stuck: without this the anti-stuck counter
              * above bumped the resting cell's penalty every 60 frames, and a
@@ -1214,16 +1456,9 @@ void nav_step(Nav *n, Game *g)
      * edge the field was built from, because `build_field` sets
      * `dist[here] = dist[to] + cost` exactly wherever the anti-stuck penalty
      * is still zero — which is everywhere the hero has not been stuck yet.) */
-    int best = -1, gated = 0; unsigned bestd = 2u * NAV_INF;
-    for (int e = n->efirst[here]; e < n->efirst[here + 1]; e++) {
-        int j = n->eto[e];
-        if (n->efail[e] >= 3) continue;
-        if (n->dist[j] >= n->dist[here]) continue;
-        unsigned d = (unsigned)n->dist[j] + n->ecost[e];
-        if (d >= bestd) continue;
-        if (!edge_ok(n, g, e, here)) { gated = 1; continue; }
-        bestd = d; best = e;
-    }
+    int gated = 0;
+    int best = pick_edge(n, g, here, &gated, 0);
+    unsigned bestd;
     if (best < 0) {
         /* Every improving edge has been dropped as unrepeatable.  On a moving
          * platform that verdict is usually about *phase*, not about the move:
@@ -1236,17 +1471,7 @@ void nav_step(Nav *n, Game *g)
         int dropped = 0;
         for (int e = n->efirst[here]; e < n->efirst[here + 1]; e++)
             if (n->efail[e] >= 3 && n->dist[n->eto[e]] < n->dist[here]) { n->efail[e] = 0; dropped = 1; }
-        if (dropped) {
-            bestd = 2u * NAV_INF;
-            for (int e = n->efirst[here]; e < n->efirst[here + 1]; e++) {
-                int j = n->eto[e];
-                if (n->dist[j] >= n->dist[here]) continue;
-                unsigned d = (unsigned)n->dist[j] + n->ecost[e];
-                if (d >= bestd) continue;
-                if (!edge_ok(n, g, e, here)) { gated = 1; continue; }
-                bestd = d; best = e;
-            }
-        }
+        if (dropped) best = pick_edge(n, g, here, &gated, 0);
     }
     if (best < 0 && gated) {
         /* The improving edges exist; they are only waiting on a platform that
@@ -1277,7 +1502,7 @@ void nav_step(Nav *n, Game *g)
             n->fixwait = 0;
             if (n->pen[hc][hr] < 60) n->pen[hc][hr] = (uint8_t)(n->pen[hc][hr] + 12);
             build_field(n, g);
-        } else {
+        } else if ((best = hold_on(n, g, here)) < 0) {
             nemit(n, g, 0, 0);
             return;
         }
@@ -1297,6 +1522,7 @@ void nav_step(Nav *n, Game *g)
             if (!edge_ok(n, g, e, here)) continue;
             bestd = d; best = e;
         }
+        n->cur_pred = 0; n->pred_to = best >= 0 ? n->eto[best] : -1;
     }
     n->fixwait = 0;
     if (best < 0) { n->cur_macro = MACRO_WAIT; n->cur_frame = 1; n->cur_edge = -1; nemit(n, g, 0, 0); return; }
@@ -1314,7 +1540,10 @@ void nav_step(Nav *n, Game *g)
      * 65C5's "walk onto the ladder beside you"), so a macro started in that
      * window does something else entirely.  Two idle frames clear it (6B41's
      * [9F0A] counter). */
-    if (g->crouching) { nemit(n, g, 0, 0); return; }
+    /* (A move predicted from the live state already starts from the crouch:
+     * waiting it out loses the frame a platform gives -- MP61's hop off
+     * fix[15] at (49,49) comes straight out of the "climb down" ride.) */
+    if (g->crouching && !n->cur_pred) { nemit(n, g, 0, 0); return; }
 #ifdef NAV_DEBUG
     fprintf(stderr, "   [pick] (%d,%d) e%d m%d -> (%d,%d) d%d->%d pos%04x fail%d\n", hc, hr, best,
             n->emacro[best], n->ncol[n->eto[best]], n->nrow[n->eto[best]],
@@ -1325,6 +1554,6 @@ void nav_step(Nav *n, Game *g)
     n->last_macro = n->cur_macro;
     n->cur_frame = 1;
     n->cur_edge = best;
-    n->expect_node = n->eto[best];
+    n->expect_node = n->pred_to >= 0 ? n->pred_to : n->eto[best];
     nemit(n, g, macro_dir(m, 0), m->btn);
 }

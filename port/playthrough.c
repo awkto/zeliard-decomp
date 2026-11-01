@@ -99,6 +99,7 @@ static void set_goal(Play *p)
     Game *g = &p->s->g;
     const PStep *st = cur(p);
     if (p->s->in_town) return;
+    p->nav.no_rest = 0;
     switch (st->kind) {
     case P_CAV_DOOR: {
         /* a < 0 = "the door this map has": 72F1 puts the post-boss exit door
@@ -108,6 +109,10 @@ static void set_goal(Play *p)
         if (!d) { snprintf(p->msg, sizeof p->msg, "step %d (%s): %s has no door at (%d,%d)",
                            p->step, st->what, g->map->name, st->a, st->b); p->failed = 1; return; }
         nav_goal_door(&p->nav, g, d);
+        /* 72F1's exit door: the boss is dead and the room empty, so there is
+         * nothing to rest up for -- walk out (a rest there was 4000 frames
+         * of 719E's regeneration at the end of tarso_fight, #90) */
+        p->nav.no_rest = st->a < 0;
         break; }
     case P_CAV_BREAK:
     case P_CAV_CELL:

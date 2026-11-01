@@ -1116,7 +1116,7 @@ as it is reached:
 [play] step 0 done in 128 frames (LIFE 80/80, EXP 0, GOLD 1000, keys 0)
 ...
 [boss] defeated: 4 pokes applied, exit door at column 39, post-boss AI 0 / bank 0
-route 2 (caverns 1-3 and their bosses): 14008 frames, 3731273 probe frames, 3 bosses, 23 doors, 3 shops
+route 2 (caverns 1-3 and their bosses): 14765 frames, 4752470 probe frames, 3 bosses, 26 doors, 3 shops
 ```
 
 `./test_playthrough ../zeliard [--route 1|2] [-v] [--quiet] [--budget N]` runs them

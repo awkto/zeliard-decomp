@@ -1097,6 +1097,7 @@ static void death_step(Game *g)
 
 void game_step(Game *g)
 {
+    if (g->step_begin) g->step_begin(g);
     if (g->encounter_frames) { encounter_step(g); return; }             /* 60E6 */
     if (g->hero_dead) { death_step(g); return; }                        /* 98FC's own loops */
     if (g->walk_in) { walk_in_step(g); return; }                        /* 7C6E */

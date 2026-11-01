@@ -40,6 +40,7 @@ void boss_rewards(Game *g);
 /* fight.bin 710F/7114: the frame renderer's boss-death sparks (gfmcga 3729
  * spawn per drawn sprite, 379B age) -- RNG calls and the EDA0 list. */
 void boss_sparks(Game *g);
+void boss_spark_cell(Game *g, int c, int r);   /* gfmcga 3468 -> 3729, from the 302C scan */
 /* 72F1: swap in the post-boss AI/enemy banks, clear FF34, apply the level
  * record's pokes and move the exit door to the hero's column.  The port asks
  * the shell to reload the banks through this callback. */

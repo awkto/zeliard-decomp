@@ -77,9 +77,21 @@ typedef struct Nav {
     int      fixwait;               /* frames spent waiting for a platform */
     uint16_t best_dist;
     int      rebase;                /* knock-back re-baselines left this goal */
+    int      no_rest;               /* never stop to regenerate (the way out of a boss room) */
+
+    /* live prediction (#90): the state at the top of the live game_step this
+     * boundary belongs to, and what was fed at the boundaries since, so a move
+     * can be replayed from exactly the live state (nav.c, `predict`) */
+    Game     snap;
+    int      snap_ok, snap_nin;
+    uint8_t  snap_dirs[16], snap_btn[16];
+    int      cur_pred;              /* the macro in flight was predicted from the live state */
+    int      pred_to;               /* where the last successful prediction landed */
+    unsigned preds, pred_bad;       /* predictions run / refused as out of step with the live game */
 
     /* scratch */
     Map      navmap;                /* private copy: probes may unlock doors */
+    Map      predmap;               /* ... and the prediction's own */
     Game     probe;
     unsigned steps;                 /* simulated frames, for the report */
     unsigned builds;

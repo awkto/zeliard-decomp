@@ -119,13 +119,17 @@ static void fish_update(Game *g, MapObj *e)
 
 /* 0xA927 */
 static void beast_bounce(MapObj *e) { e->next |= 2; e->hit ^= FACING_RIGHT; e->phase = 5; }
-/* 0xA947 */
+/* 0xA947: blocked ahead -- does it turn round?  CF is [6014]'s own (A94D
+ * `jmp`): it turns when the step down is refused too, i.e. it stands on
+ * ground at a wall; one that can drop goes on.  The 4 branch (A952) always
+ * returns CF clear (`or` at A95A).  The port had the step's result inverted,
+ * so a beast at MP61's (40,32) wall charged on into it instead of bouncing
+ * (tarso_fight f793, #90). */
 static int beast_climb(Game *g, MapObj *e)
 {
-    if (!(e->next & 4)) return !STEP(e, 6);
-    if (STEP(e, 2)) return 0;
-    e->next |= 4;
-    return 1;
+    if (!(e->next & 4)) return STEP(e, 6);
+    if (STEP(e, 2)) e->next |= 4;
+    return 0;
 }
 
 /* 0xA857  Charging beast. */
@@ -154,7 +158,8 @@ static void beast_update(Game *g, MapObj *e)
     if (e->hit & FACING_RIGHT) { STEP(e, 0); if (STEP(e, 0) && beast_climb(g, e)) { beast_bounce(e); return; } }
     else                       { STEP(e, 4); if (STEP(e, 4) && beast_climb(g, e)) { beast_bounce(e); return; } }
     e->link++;                                                          /* A8FE */
-    if ((e->link & 0xF) == 0xF) beast_bounce(e);
+    /* A901..A90A: `and al,0Fh / inc al / jnz` -- never zero, so the bounce
+     * call at A90A is dead code (the port bounced on every 15th step) */
     if (e->link & 0x1F) return;
 recheck:
     ai_hero_dir(g, e, 8, &facing);                                      /* A914 */

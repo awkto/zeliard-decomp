@@ -285,6 +285,11 @@ struct Game {
     unsigned hazard_frames;         /* frames spent on hazard tiles (damage is stubbed) */
     PresentFn present;
     FrameEndFn frame_end;           /* --trace: the 717F boundary hook (NULL normally) */
+    /* the top of every main-loop pass (game_step), before anything moves: the
+     * autopilot keeps a copy of the state here so it can replay the pass up to
+     * the boundary it is asked at and predict a move from the live state
+     * (nav.c, "live prediction", #90).  NULL normally. */
+    void    (*step_begin)(Game *g);
     DoorFn    on_door;
     void     *user;
     char      message[64];          /* last game message ("Can't open this door.") */

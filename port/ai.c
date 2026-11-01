@@ -215,8 +215,17 @@ int ai_tall_step(Game *g, MapObj *e, int dir)
     int dc = right ? 2 : -1;
     for (int r = 0; r < 4; r++)                                         /* A56F / A5F4 */
         if (!ai_cell_passable(g, rcell(g, p, D(r, dc)))) return 1;
-    for (int r = 1; r <= 4; r++)                                        /* the column above must be sprite-free */
-        if (rcell(g, p, D(-r, dc)) & 0x80) return 1;
+    /* ... and free of sprite markers from the row above it down to its
+     * fourth row: after the loop DI is at row+4, and A595..A5CB `sub si,24h`
+     * five times, ORing rows +3, +2, +1, 0, -1 (`add al,al`: bit 7).  The
+     * port tested rows -1..-4, so a sprite three rows over a cavern-6 ghost's
+     * head stopped it (MP61 (251,53), tarso_fight f1490, #90).  The same
+     * bytes in EAI2/EAI5/EAI6/EAI7/EAI8.  Going left the column is one
+     * further out (A626 `dec di`): a marker sits on its sprite's left column,
+     * and a 2-wide one at rcol-2 covers rcol-1. */
+    int sc = right ? 2 : -2;
+    for (int r = -1; r <= 3; r++)
+        if (rcell(g, p, D(r, sc)) & 0x80) return 1;
     if (right) { if (++e->col >= g->map->width) e->col = 0; e->rcol++; }
     else       { e->col = (uint16_t)(e->col ? e->col - 1 : g->map->width - 1); e->rcol--; }
     lo->col = e->col; lo->rcol = e->rcol;

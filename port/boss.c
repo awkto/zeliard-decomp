@@ -235,6 +235,21 @@ void boss_update(Game *g)
 /* gfmcga 3729: one spawn attempt for a sprite whose top-left cell is drawn
  * at viewport (x, y).  The list lives at EDA0: {x, y, life 3, kind}, FF-ended,
  * at most 32. */
+static void spark_spawn(Game *g, uint8_t *list, uint8_t x, uint8_t y);
+/* 302C's row loop reaches 3124 -> 3468 for every sprite marker it meets, in
+ * the same scan as the 315C cell animation (enemy.c cell_anim), so the two
+ * draw KRN_RANDOM interleaved, cell by cell: cell_anim calls this for each
+ * marker.  (Run as a second pass after the animation instead, a cavern-6
+ * boss's first spark drew the value a lava cell further down the screen had
+ * in the original: tarso_fight f2982, #90.)  The rows and columns that spawn:
+ * 3468 spawns unless it is the last row (34C0), 3729 only for rows < 0x10;
+ * the inner columns 0..26 only -- the edge paths 33E3 / 34E3 never do. */
+void boss_spark_cell(Game *g, int c, int r)
+{
+    if (!(g->boss_map && g->boss_dying)) return;
+    if (r >= 0x10 || c < 0 || c >= 27) return;
+    spark_spawn(g, g->spark, (uint8_t)c, (uint8_t)r);
+}
 static void spark_spawn(Game *g, uint8_t *list, uint8_t x, uint8_t y)
 {
     if ((krn_random(g) & 0xF) < 0xE) return;                       /* 3733..373E */
@@ -259,17 +274,9 @@ static void spark_spawn(Game *g, uint8_t *list, uint8_t x, uint8_t y)
 void boss_sparks(Game *g)
 {
     uint8_t *list = g->spark;
-    list[0] = g->boss_state;               /* whoever reset EDA0 to FF emptied the list */
-    if (g->boss_map && g->boss_dying) {
-        /* 302C's row loop: [4FF1] = 0x12..1, [4FF3] = 0x12-[4FF1] = the row;
-         * the inner columns 0..26 go through 3124 -> 3468 for every sprite
-         * marker (E900 holds FE under a sprite, so it always differs); 3468
-         * spawns (34D5) unless it is the last row (34C0), 3729 only for rows
-         * < 0x10.  The edge paths 33E3 / 34E3 / the row above never spawn. */
-        for (int r = 0; r < 0x10; r++)
-            for (int c = 0; c < 27; c++)
-                if (game_ring_cell(g, c, r) & 0x80) spark_spawn(g, list, (uint8_t)c, (uint8_t)r);
-    }
+    /* the spawns were made in the draw's own scan (boss_spark_cell, from
+     * cell_anim: 302C's row loop, [4FF1] = 0x12..1, [4FF3] = 0x12-[4FF1] =
+     * the row; E900 holds FE under a sprite, so a marker always differs) */
     if (g->boss_dying) {                                            /* 7114 -> [3010] = 379B */
         memcpy(g->spark_drawn, list, sizeof g->spark_drawn);        /* what render.c draws */
         unsigned si = 0, di = 0;

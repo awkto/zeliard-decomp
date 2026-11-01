@@ -76,7 +76,8 @@ test_video: test_video.o $(CORE)
 # totals against the counts port/README.md and docs/ROADMAP.md quote -- they
 # drifted once (#45), and now `make test` itself goes red when they do again.
 # bash + pipefail so a failing binary is not masked by its tee.
-COUNTS = /tmp/zel_test_counts.txt
+# per-tree, so parallel make test runs in other trees do not mix
+COUNTS = $(CURDIR)/.test_counts.txt
 
 test: SHELL := /bin/bash
 test: .SHELLFLAGS := -o pipefail -c

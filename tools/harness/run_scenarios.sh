@@ -80,8 +80,18 @@ run_one() {
   if ! (cd "$ROOT" && tools/oracle.sh "$script" --load "$load" --out "$d/o" --png-every $pe) >"$d/oracle.out" 2>&1; then
     printf 'ERROR\t-\toracle exit %s (%s/oracle.out, o/oracle.log)\n' "$?" "$d" >"$d/result"; return
   fi
+  # isolated game dir, as tools/oracle.sh stages for the oracle: the original files plus
+  # only this scenario's start save, so screens that list saves (the Sage's name entry)
+  # match, and any save the port writes lands here, not in the shared zeliard/ (#100)
+  pd="$d/pdir"; mkdir -p "$pd"
+  for g in "$ROOT"/zeliard/*; do
+    case "$g" in *.usr|*.USR) ;; *) ln -s "$g" "$pd/" ;; esac
+  done
+  for g in "$ROOT/zeliard/$save" "$ROOT/zeliard/$load.usr" "$ROOT/zeliard/$load.USR"; do
+    [ -f "$g" ] && { cp "$g" "$pd/"; break; }
+  done
   pargs=; [ "$PE" != 0 ] && pargs="--png-every $PE"
-  if ! (cd "$ROOT" && "$PORT" --dir zeliard --load "$load" --trace "$d/p" --script "$script" $pargs) >"$d/port.out" 2>&1; then
+  if ! (cd "$ROOT" && "$PORT" --dir "$pd" --load "$load" --trace "$d/p" --script "$script" $pargs) >"$d/port.out" 2>&1; then
     printf 'ERROR\t-\tport exit %s (%s/port.out)\n' "$?" "$d" >"$d/result"; return
   fi
   dargs=--first-only; [ "$PNG" = 1 ] && dargs=--png
