@@ -386,7 +386,8 @@ harness boundary (`play_pilot`), and writes exactly what it fed as a run-length 
 (`--pilot-tail N` idle frames after the route, default 10). Replaying that script with
 `--trace` gives a byte-identical `frames.jsonl`. ROUTE is `;`-separated steps:
 `town-cave C`, `town-shop C [MENU]`, `town-edge 0|1`, `door C,R` (`door -1` = the exit
-door 72F1 puts down), `cell C,R`, `break C,R`, `boss`. `tools/harness/pilot_scenario.sh
+door 72F1 puts down), `cell C,R`, `break C,R`, `boss`, `keys TOKENS` (fed verbatim in `--script`
+syntax, for a move the autopilot cannot find; #87). `tools/harness/pilot_scenario.sh
 NAME` makes the start save if missing and rewrites the scenario's script line from its
 `# pilot:` line; rerun it whenever a port fix changes what the autopilot sees (it is the
 port's view: the oracle then checks it).
@@ -400,12 +401,12 @@ through the Sage's text (`71EC`) back to Muralla; `status_cave`, `drug_buy`,
 Caverns 4-6 (#49): `ice_crawler`, `ice_icicles` (EAI4), `water_slimes`, `water_current`
 (EAI5), `fire_fish`, `fire_beast` (EAI6); table at the end of §8.  Not reached yet: the
 cavern-5 tall spitter, the cavern-6 tall ghost in a fight (it is on screen in `fire_fish`),
-a hero standing in a current.  Caverns 7-8 (#49): `heat_hedgehog`, `heat_spitter` (EAI7, heat),
+a hero standing in a current.  Caverns 7-8 (#49): `heat_hedgehog`, `heat_spitter`, `heat_current` (EAI7, heat),
 `absor_gunner`, `milagro_gunner` (EAI8).  Cavern 9 is MP90 only (Jashiin's room, reached
 from MP8D, no town mouth): the boss scenarios cover it.  Not reached yet: any B gate or
 C platform in caverns 7/8 (MP80's (72..78,29..31) gates are not reachable from the Pureza
 mouth on foot), the cavern-7 tall ranged walker, a cavern-8 tall charger in the open, the
-Asbestos cape (no `--worn` option).
+Asbestos cape (`--worn 5` now sets it, #86: not used by a scenario yet).
 
 ## 8. Triage runbook (for agents) (#51)
 
@@ -516,5 +517,16 @@ put its script in a scenario file (`tests/scenarios/NAME.zs`, §7) and run it as
 | `milagro_gunner` | Esco 205 (`MILAGRO`) | MP81 (123,6): the tall charger against its wall, the (138,7) gunner killed, walkers and the (153,38) flying chaser below; the gunner's ledge shuffle (`A5BA`/`A5E1`) tests the record's own byte +0, not the ring cell |
 | `agar_fight` | Tumba 4, LV 20, sword 5 (`AGAR`, `# pilot:`) | MP50's (25,14) door into MP4D from its far side; Agar to the kill (ZELA's column-major parts `A467`, poses `A4EA`, hop `A307`, walk `A371`, bolt `A4F2` with vec 27's BL regardless of CF, #84), reward, 72F1's door out |
 | `vista_fight` | Dorado 210, LV 20, sword 5 (`VISTA`, `# pilot:`) | MP60's (14,5) door into MP5D from its far side; Vista to the kill (MEDA's 14-column buffer `A539`/`A4AA`, row by column `A6ED`, drips `A3C1`), reward, out |
-| `paguro_fight` | Llama 200, LV 20, sword 6 (`PAGURO`, `# pilot:`) | Llama's column-222 door → MP73; Paguro (ZEL2) to the kill and the reward; the parts' +7..+F are the *town* map's bytes (`shell_enter_cavern` seeds `c000` from the town image).  The exit back to Llama is left out: the town re-entry diverges (NPC `saved`/`anim`, #85) |
+| `paguro_fight` | Llama 200, LV 20, sword 6 (`PAGURO`, `# pilot:`) | Llama's column-222 door → MP73; Paguro (ZEL2) to the kill and the reward; the parts' +7..+F are the *town* map's bytes (`shell_enter_cavern` seeds `c000` from the town image). |
+| `paguro_return` | same | `paguro_fight` on through 72F1's exit door to Llama (#85): the 0x80 NPC at 222 auto-talks (62ED), the Elf Crest opcode 0x83 (6685) runs 6AED mid-visit and pokes only its bytes (the live NPC records and 0xFD markers stay: `town_sync_raw`); a second talk, and a held Left ends the 65A1 wait (65DE: any FF17 direction) |
 | `dragon_fight` | Pureza 4, LV 25, sword 6 (`DRAGONB`) | MP80's (57,5) door into MP7D from its far side: the hero lands inside the Dragon's body and dies of contact after ~80 frames of DRGN (no kill) |
+| `heat_current` | Llama 8, LV 25, one Key (`CALIK`) | MP70 (176,43) → MP72 (cavern 7): into the bottom corridor's rope gap, the fall through the ring, the (116,11) rope hole, then west into the (88..90,25) current that pushes the hero back.  Current cells are one-way walls (`67A3`/`6942`) in every cavern **but** 7 (#87) |
+
+**The Dragon's front door (#87).**  No kill scenario yet: MP70's locked (199,33) door sits in
+a region (the rows 32-36 corridor, the cols 0-37 room with the (26,39)/(29,38)/(32,36) B gates
+and the col-14/16/35 ropes, the rows 41-48 band east of col 192) that, as far as the autopilot's
+survey sees, is entered only through MP72's (127,8) door → (205,45); the (195,49) A elevator
+only takes the hero *down* out of it.  MP72's (127,8) is reached only from its (25,40) entry
+(MP71's (20,9) door): the (101,57) and (76,9) entries are cut off by the floor gaps and the
+one-way currents (`heat_current`), and MP71's (20,9) is not reachable in the survey from its
+(171,32) entry (C platforms, spikes).  All of that under the 704F heat.

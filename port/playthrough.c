@@ -130,6 +130,7 @@ static void step_enter(Play *p)
     const PStep *st = cur(p);
     p->step_start = p->frames;
     p->shop_seen = 0; p->menu_pos = 0; p->menu_press = 0; p->farm_end = 0; p->boss_seen = 0;
+    p->keys_pos = 0; p->keys_left = 0; p->keys_done = 0;
     p->town_at_start = p->s->in_town ? p->s->tmap.index : -1;
     p->step_map = g->map;
     p->step_exp = g->exp; p->step_almas = g->almas; p->step_gold = (long)g->gold;
@@ -176,6 +177,7 @@ static int step_done(Play *p)
     case P_BOSS:      return p->boss_seen && !g->post_boss_pending && !g->boss_dying;
     case P_GOTO:      return !p->s->in_town && g->map == p->step_map;
     case P_TOWN_GOTO: return p->s->in_town;
+    case P_KEYS:      return !p->pilot || p->keys_done;
     case P_FARM: {
         /* walk the safe stretch back and forth, killing what wanders in, until
          * the sage has something to work with */
@@ -215,8 +217,9 @@ static void play_after_frame(Play *p)
         }
         if (st->kind == P_CAV_DOOR || st->kind == P_TOWN_CAVE) p->doors_taken++;
         if (st->kind == P_TOWN_SHOP) p->shops_visited++;
-        VLOG(p, "[play] step %d done in %u frames (LIFE %u/%u, EXP %u, GOLD %u, keys %u)\n",
-             p->step, p->frames - p->step_start, g->hp, g->max_hp, g->exp, (unsigned)g->gold, g->keys);
+        VLOG(p, "[play] step %d done in %u frames at (%d,%d) (LIFE %u/%u, EXP %u, GOLD %u, keys %u)\n",
+             p->step, p->frames - p->step_start, p->s->in_town ? town_hero_col(&p->s->town) : game_hero_map_col(g),
+             p->s->in_town ? 0 : game_hero_map_row(g), g->hp, g->max_hp, g->exp, (unsigned)g->gold, g->keys);
         p->step++;
         step_enter(p);
         if (!p->pilot) return;          /* play_loop: one step change per frame, as before */
@@ -264,6 +267,35 @@ int play_attach(Play *p, Shell *sh, const PStep *route, unsigned budget)
     return p->failed ? -1 : 0;
 }
 
+/* P_KEYS: the next token-frame of the step's string, as main.c's
+ * script_next reads a --script (dirs U/D/L/R, buttons X/M, '.' idle, then a
+ * count).  0 when the string is used up. */
+static int keys_next(Play *p)
+{
+    const char *s = cur(p)->menu;
+    while (p->keys_left == 0) {
+        while (s[p->keys_pos] == ' ' || s[p->keys_pos] == ',') p->keys_pos++;
+        if (!s[p->keys_pos]) return 0;
+        uint8_t d = 0, b = 0;
+        for (;; p->keys_pos++) {
+            char c = s[p->keys_pos];
+            if (c == 'U') d |= DIR_UP;
+            else if (c == 'D') d |= DIR_DOWN;
+            else if (c == 'L') d |= DIR_LEFT;
+            else if (c == 'R') d |= DIR_RIGHT;
+            else if (c == 'X') b |= 1;
+            else if (c == 'M') b |= 2;
+            else if (c != '.') break;
+        }
+        int n = 0;
+        while (s[p->keys_pos] >= '0' && s[p->keys_pos] <= '9') n = n * 10 + (s[p->keys_pos++] - '0');
+        if (!n && s[p->keys_pos] && s[p->keys_pos] != ' ' && s[p->keys_pos] != ',') p->keys_pos++;  /* junk */
+        p->keys_dirs = d; p->keys_btns = b; p->keys_left = n ? n : 1;
+    }
+    p->keys_left--;
+    return 1;
+}
+
 int play_pilot(Play *p, uint8_t *dirs, uint8_t *btns)
 {
     Game *g = &p->s->g; Town *t = &p->s->town;
@@ -273,6 +305,12 @@ int play_pilot(Play *p, uint8_t *dirs, uint8_t *btns)
     if (g->boss_defeated) p->boss_seen = 1;     /* 72F1 clears it again */
     play_after_frame(p);
     if (p->done || p->failed) return p->failed ? -1 : 1;
+    if (cur(p)->kind == P_KEYS) {
+        if (keys_next(p)) { *dirs = p->keys_dirs; *btns = p->keys_btns; return 0; }
+        p->keys_done = 1;                       /* used up: on to the next step now */
+        play_after_frame(p);
+        if (p->done || p->failed) return p->failed ? -1 : 1;
+    }
     if (p->s->in_town) {
         if (t->status || g->status) return 0;   /* the route never opens it */
         uint8_t od = t->dirs, ob = t->buttons, om = t->menu_key, e1 = t->btn1_edge, e2 = t->btn2_edge;
@@ -299,7 +337,10 @@ int play_parse_route(const char *s, PStep *out, int max, char *err, size_t errle
     static const struct { const char *name; PKind kind; int nargs; } K[] = {
         {"town-shop", P_TOWN_SHOP, 1}, {"town-cave", P_TOWN_CAVE, 1}, {"town-edge", P_TOWN_EDGE, 1},
         {"door", P_CAV_DOOR, 2}, {"cell", P_CAV_CELL, 2}, {"break", P_CAV_BREAK, 2}, {"boss", P_BOSS, 0},
+        {"keys", P_KEYS, 0},
     };
+    static char keys[8][128];
+    int nk = 0;
     static char menus[16][16];
     int n = 0, nm = 0;
     while (*s) {
@@ -336,6 +377,17 @@ int play_parse_route(const char *s, PStep *out, int max, char *err, size_t errle
                 menus[nm][ml] = 0;
                 st.menu = ml ? menus[nm++] : "c";
             }
+        }
+        if (st.kind == P_KEYS) {                /* "keys U4 R4 .20": the rest up to ';' */
+            int kl = 0;
+            if (nk >= 8) { snprintf(err, errlen, "too many keys steps"); return -1; }
+            while (*s && *s != ';') {
+                if (kl >= 127) { snprintf(err, errlen, "keys: string too long"); return -1; }
+                keys[nk][kl++] = *s++;
+            }
+            keys[nk][kl] = 0;
+            if (!kl) { snprintf(err, errlen, "keys: wants tokens"); return -1; }
+            st.menu = keys[nk++];
         }
         out[n++] = st;
     }

@@ -156,9 +156,12 @@ static void stop_rising(Game *g) { g->conveyor = 0; g->vstate = V_FALL; }       
 static void turn_around(Game *g) { g->hero_flags ^= FACE_LEFT; if (!g->on_ladder) g->hero_anim = 0x80; }   /* 6824 */
 static void stop_walking(Game *g) { g->hero_flags &= (uint8_t)~WALKING; if (!g->on_ladder && g->vstate == V_GROUND) g->hero_anim = 0x80; }  /* 6837 */
 
-/* 67A3 / 6942: cavern 7 one-way current walls */
-static int current_blocks_left(const Game *g, uint8_t v)  { return g->map->cavern == 7 && special_tile(g, v) == 2; }
-static int current_blocks_right(const Game *g, uint8_t v) { return g->map->cavern == 7 && special_tile(g, v) == 1; }
+/* 67A3 / 6942: a current cell is a one-way wall against the current --
+ * everywhere *but* cavern 7: `cmp byte [C012],7 / clc / jnz` runs the 76F6
+ * test only when the cavern is not 7, and returns "not blocked" (CF clear) in
+ * cavern 7 (#87: MP72's floor gaps, where the port refused the step) */
+static int current_blocks_left(const Game *g, uint8_t v)  { return g->map->cavern != 7 && special_tile(g, v) == 2; }
+static int current_blocks_right(const Game *g, uint8_t v) { return g->map->cavern != 7 && special_tile(g, v) == 1; }
 
 /* 66A5: returns 1 when blocked.  Destination = the hero's own left column. */
 static int try_move_left(Game *g)

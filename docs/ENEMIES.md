@@ -298,13 +298,28 @@ drawn); while the new count is below 0x14 attack frame 0, tentacles follow, soun
 pose 5.  Scenario: `vista_fight` (entered from MP60's (14,5) door, the far side).
 
 ### Tarso (`boss_lega.c`)
-8×8 parts, poses 0..8 (`A744` bitmaps, `A6C8` lists), face patched in.  Walks LEFT (8-frame
-cycle, one cell on poses 1,2,3,7, limit column 0x0E); a hit before column 0x2F makes it
-retreat right for 20 frames (limit 0x32), sound 0x2F.  On pose 6, 50 %, HP ≥ 20 and no shot
-out: 3-step attack (sound 0x30) launching a projectile PART (class 6, immune, contact 80)
-from (col+4, row) along the 17-entry path `A5D8` (sounds 0x31), exploding at column < 0x12
-(0x32).  No movement while the shot is on its way.  Damage: sword ×2, orb ×1, magic ×1/8.
-Death: 40 frames, sound 0x33.
+An 8-**column** × 10-row buffer of part bytes (`A7C9`, 10 bytes a column), column-major like
+every other overlay: `A44C` pastes pose `A7B9` (0..8) with one bitmap byte per column
+(`[A744+2p]`, bit 7 first) and the byte list `[A6C8+2p]` into rows 2..9, then the face
+(column 4 row 0, row 1 on poses 6 and ≥ 8: frame 2·face; column 6: 2·face+1).  `A4AA` emits
+column by column; byte bit 7 → type |= 0x60, bits 4-6 the class, the byte the frame; bit 5 of
+`[si+5]` while hit (`A501`).  Walk (`A2DA`): pose +1 mod 8, a step left on poses
+{2,5,6,7,0} (`A41F`), two on 7; `A429` stores col − 1 regardless and flags "retreat" once
+col ≤ 0x0E.  A hit while col < 0x2F also starts a 20-frame retreat (`A2A4`).  Retreat
+(`A323`): pose backwards (0 → 7, 6 → 3), a step right on {1,3,6,7} (`A424`, limit 0x32), two
+on 6 and 3, and poses 1/7 loop round again (up to 3 columns a frame); it ends when the timer
+(60 from the walk, 20 from a hit) runs out or the right step is refused.  Attack (`A35F`):
+not retreating, pose 6, `KRN_RANDOM` bit 0 clear, no shot out and **col** ≥ 0x14 (`A37D`;
+not HP), sound 0x30; three steps (`A3C7`) — face 6 / pose 8 launching a projectile PART
+(type 0x26: class 6, immune, contact 80, no hit bit) from (col+4, row), face 7 / pose 6, face
+0 / pose 6 — none of them run the face timer (`A39F`: `A41B` {0,1,2,1}).  No movement while
+the shot's path index is below 13.  The shot moves *after* it is drawn (`A54B`): path
+`A5D8` (17 {dcol, drow}, index sticks at 16, low byte of the column only), frame mod 3, sound
+0x31 at indices 9/12/15; column < 0x12 → explosion frames 3..5 (sound 0x32).  Damage: sword
+×2, orb ×1, the rest /8 (`A28A`); every hit at HP 0 restarts the death (`A65E`).  Death
+`A66E`: 40 frames (then FF30, nothing drawn); below 10 the pose is `A69B[n]` (sound 0x33 from
+pose 3) and the face runs on, then face 6.  Scenario: `tarso_fight` (MP60's (309,41) door
+from the corridor above it, via MP61).
 
 ### Dragon (`boss_drgn.c`)
 29×10 cell buffer from 5 layers (pose/neck+head 12 cols, body 11, front legs, hind legs,

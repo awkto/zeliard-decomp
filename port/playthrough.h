@@ -22,7 +22,8 @@ typedef enum {
     P_BOSS,         /* fight the boss in this room until it is defeated */
     P_FARM,         /* patrol between map columns a and b until EXP reaches c */
     P_GOTO,         /* enter system map a at the door destination (b, c) */
-    P_TOWN_GOTO     /* enter town a at column b */
+    P_TOWN_GOTO,    /* enter town a at column b */
+    P_KEYS          /* --pilot only: feed `menu` as literal --script tokens (#87) */
 } PKind;
 
 typedef struct {
@@ -30,7 +31,8 @@ typedef struct {
     int         a, b;
     const char *menu;   /* P_TOWN_SHOP: one char per menu the shop opens —
                          * '0'..'9' = pick that row, 'c' = cancel, 'y' = Yes,
-                         * 'n' = No; the driver pages the text itself */
+                         * 'n' = No; the driver pages the text itself.
+                         * P_KEYS: the --script tokens to feed */
     const char *what;
     int         c;      /* P_FARM: the EXP to stop at */
 } PStep;
@@ -69,6 +71,8 @@ typedef struct {
     int      entry_col, entry_scroll;   /* where the castle put the hero on frame 0 */
     unsigned last_deaths;
     int      pilot;     /* play_attach: input is asked for per boundary (play_pilot) */
+    int      keys_pos, keys_left, keys_done;    /* P_KEYS: where in the token string */
+    uint8_t  keys_dirs, keys_btns;
 } Play;
 
 /* run `route` to the end (or until the frame budget runs out).
@@ -84,7 +88,9 @@ int  play_continue(Play *p, const PStep *route, unsigned budget);
 int  play_attach(Play *p, Shell *sh, const PStep *route, unsigned budget);
 int  play_pilot(Play *p, uint8_t *dirs, uint8_t *btns);
 /* "town-cave C; town-shop C [MENU]; town-edge 0|1; door C,R | door -1;
- *  cell C,R; break C,R; boss" -> PStep[] with P_END; returns the count or -1 */
+ *  cell C,R; break C,R; boss; keys TOKENS" -> PStep[] with P_END; returns the
+ *  count or -1.  `keys` feeds TOKENS (--script syntax: U/D/L/R, X, M, '.', a
+ *  count) verbatim, for the odd move the autopilot cannot find (#87). */
 int  play_parse_route(const char *s, PStep *out, int max, char *err, size_t errlen);
 /* the two routes test_playthrough.c drives */
 extern const PStep PLAY_ROUTE_START[];

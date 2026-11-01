@@ -447,6 +447,40 @@ static void t_boss_reward(void)
     }
 }
 
+/* LEGA (MP6D): A44C's buffer is 8 columns x 10 rows, column-major; pose 1
+ * (the first frame's) fills columns 4..6 only, the face sits at column 4 and
+ * column 6, row 0 (frames 2*face, 2*face+1; face A41B[1] = 1 on frame 1) */
+static void t_lega_layout(void)
+{
+    static Map m; static Tileset t; static AiOverlay o;
+    memset(&m, 0, sizeof m); memset(&t, 0, sizeof t);
+    if (map_load_system(&m, G_DIR, 17) || gfx_load_tileset(&t, G_DIR, m.tileset) || ai_load(&o, G_DIR, m.ai)) {
+        CHECK(0, "LEGA: cannot load MP6D"); return;
+    }
+    game_init(&G, &m, &t);
+    G.present = present; G.ai = &o;
+    G.boss_map = (uint8_t)((m.lvl_flags & 0x80) ? 0xFF : 0);
+    boss_init(&G);
+    G.encounter_frames = 0;
+    game_place(&G, (int)G.boss.start_col - 8, G.boss.start_row + 3, 0);
+    enemies_load(&G);
+    boss_update(&G);
+    uint16_t c0 = G.boss.col; uint8_t r0 = G.boss.row;
+    int out = 0, f4 = -1, f6 = -1;
+    for (int k = 0; k < G.nobj; k++) {
+        const MapObj *q = &G.obj[k];
+        if (q->col < c0 + 4 || q->col > c0 + 6 || q->row < r0 || q->row > r0 + 9) out++;
+        if (q->col == c0 + 4 && q->row == r0) f4 = q->phase;
+        if (q->col == c0 + 6 && q->row == r0) f6 = q->phase;
+    }
+    CHECK(G.boss.pose == 1 && G.nobj == 9 + 2, "LEGA frame 1: pose %u, %d parts (want pose 1, 9 + the face's 2)",
+          G.boss.pose, G.nobj);
+    CHECK(out == 0, "LEGA pose 1: %d parts outside columns 4..6 / rows 0..9 (column-major A44C)", out);
+    CHECK(f4 == 2 && f6 == 3, "LEGA face at (4,0)/(6,0): frames %d/%d (want 2/3)", f4, f6);
+    ai_unload(&o);
+    map_free(&m);
+}
+
 /* -------------------------------------------------- TAKO / TORI / ZELA runs */
 static void run_overlay(int ai_index, int sysmap, const char *name)
 {
@@ -869,7 +903,7 @@ int main(int argc, char **argv)
         {"info blocks", t_info}, {"mp1d", t_map}, {"init", t_init}, {"crab parts", t_parts},
         {"crab damage", t_damage}, {"hit flash", t_hit_flash}, {"zela no flash", t_no_hit_flash}, {"crab death", t_death}, {"post-boss", t_post_boss}, {"boss reward", t_boss_reward},
         {"tako", t_tako}, {"tori", t_tori}, {"zela", t_zela}, {"zel2", t_zel2},
-        {"meda", t_meda}, {"lega", t_lega}, {"layer tables", t_layers},
+        {"meda", t_meda}, {"lega", t_lega}, {"lega layout", t_lega_layout}, {"layer tables", t_layers},
         {"drgn tables", t_drgn}, {"akma tables", t_akma},
         {"mao1 script", t_mao1}, {"mao2 tables", t_mao2}, {"mao2 rng", t_mao2_rng},
         {"boss banks", t_boss_banks},

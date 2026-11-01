@@ -224,7 +224,7 @@ u8   boss_state;                   /* EDA0  0xFF = boss defeated (71DA) */
 #define CONVEYOR_R_LIST ((u8 far *)0x801C)  /* 4 entries: push right */
 #define HAZARD_LIST     ((u8 far *)0x8020)  /* 4 entries: damaging cells (lava/spikes) */
 #define UPDRAFT_LIST    ((u8 far *)0x8024)  /* 4 entries: lifts the hero 1 row/frame */
-#define CURRENT_L_LIST  ((u8 far *)0x8028)  /* 4 entries: pushes 2 cells/frame left (one-way wall in cavern 7) */
+#define CURRENT_L_LIST  ((u8 far *)0x8028)  /* 4 entries: pushes 2 cells/frame left (one-way wall except in cavern 7) */
 #define CURRENT_R_LIST  ((u8 far *)0x802C)  /* 4 entries: pushes 2 cells/frame right */
 
 #define LADDER(v)   ((u8)((v) - 1) < 2)     /* 6BBD: cell values 1 and 2 are ladder cells */
@@ -668,7 +668,7 @@ void stop_walking(void) { hero_flags &= ~WALKING; if (!on_ladder && vstate == V_
  * column is the hero's own left column (hero_cell col+0).
  *   1. ring col-1, rows -1..+2 : a sprite whose object.type has bit7 blocks    (66B0)
  *   2. col+0 row 0 (head)     : passable_wall(), skipped while crouching       (66CD)
- *      cavern 7: a CURRENT_R cell here is a one-way wall (67A3)
+ *      not cavern 7: a CURRENT_R cell here is a one-way wall (67A3)
  *   3. col+0 rows +1,+2       : passable_body()                                 (66DC)
  *   4. otherwise scroll_left() (the hero stays on the same screen column).      (66F8) */
 bool try_move_left(void)
@@ -706,10 +706,11 @@ bool try_move_right(void)
     scroll_right(); return false;                                         /* 68A0 */
 }
 
-/* 0x67A3 / 0x6942  In cavern 7 the CURRENT_R (8028 list, CL==2) / CURRENT_L
- * (802C list, CL==1) cells act as one-way walls.  CF=1 = blocked. */
-bool current_blocks_left(u8 *s)  { return MAP_CAVERN == 7 && special_tile(*s) == 2; }   /* 67A3..67BB */
-bool current_blocks_right(u8 *s) { return MAP_CAVERN == 7 && special_tile(*s) == 1; }   /* 6942..6959 */
+/* 0x67A3 / 0x6942  Outside cavern 7 the CURRENT_R (CL==2) / CURRENT_L (CL==1)
+ * cells act as one-way walls; `cmp [C012],7 / clc / jnz` skips the test (not
+ * blocked) in cavern 7 (#87).  CF=1 = blocked. */
+bool current_blocks_left(u8 *s)  { return MAP_CAVERN != 7 && special_tile(*s) == 2; }   /* 67A3..67BB */
+bool current_blocks_right(u8 *s) { return MAP_CAVERN != 7 && special_tile(*s) == 1; }   /* 6942..6959 */
 
 /* 0x6537  "up": doors, elevators, ladders, then jump. */
 void jump_up(void)

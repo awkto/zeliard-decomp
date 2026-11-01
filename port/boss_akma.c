@@ -21,8 +21,10 @@
  * Parts (A59A): {col + c, row + r, type = class, hit = 0x80 while flying
  * right (so the A070 mirrored frame tables are used), phase = the byte}.
  *
- * Damage (A38C): the FULL damage_for_source(), no scaling and no weak point,
- * sound 0x22.
+ * Damage (A38C): AH of damage_for_source() (vec 28) subtracted as is (A97E),
+ * no scaling, sound 0x22.  A370 tags a type-5 hit with bit 7, which only keeps
+ * it against later hits in the A339 scan; A397 masks it off (verified against
+ * the ndisasm listing at org A000, #88).
  */
 #include "boss.h"
 #include <string.h>
@@ -53,6 +55,11 @@ static void part_facing(Game *g, uint16_t col, uint8_t row, uint8_t type, uint8_
     if (g->nobj > before) g->obj[g->nobj - 1].hit = hit;
 }
 
+/* A370: a hit on a type-5 part is kept (bit 7) against later ones; any
+ * other hit is overwritten by the next part's.  Only the source survives
+ * (A397 masks 0x1F), so it picks which source is applied, nothing more. */
+static int akma_weak(uint8_t type) { return type == 5; }
+
 /* A4F7 */
 static void akma_draw(Game *g)
 {
@@ -82,8 +89,11 @@ static void akma_draw(Game *g)
         for (int r = 0; r < AK_H; r++) {
             uint8_t v = buf[c * AK_H + r];
             if (v == 0xFF) continue;
+            /* A5C9..A5D8: hit = facing, then | 0x20 while [AA1F] is set (the
+             * beam's A7A1 writes the facing only) */
             part_facing(g, (uint16_t)(b->col + c), (uint8_t)(b->row + r),
-                        (uint8_t)((v >> 4) & 0x0F), v, (uint8_t)(right ? 0x80 : 0));
+                        (uint8_t)((v >> 4) & 0x0F), v,
+                        (uint8_t)((right ? 0x80 : 0) | b->part_hit));
         }
 }
 
@@ -152,7 +162,7 @@ static void akma_death(Game *g)
 void boss_akma_entry(Game *g)
 {
     if (!ST(S_INIT)) { ST(S_INIT) = 1; ST(S_DIR) = 0xFF; }          /* AA21 starts 0xFF */
-    uint8_t hit = boss_readback(g, NULL);                           /* A32F */
+    uint8_t hit = boss_readback(g, akma_weak);                      /* A32F */
     boss_hit_flash(g, hit != 0);   /* A5D1: every part this frame carries hit bit 5 */
 
     if (hit) {                                                      /* A38C: no scaling */
@@ -167,17 +177,22 @@ void boss_akma_entry(Game *g)
     if (ST(S_ANIM) == 1) g->sfx_request = 0x2B;
     ST(S_FRAME)++;
 
+    /* A3D5 / A42E: a step sets the row from the path (A47A); at the end it
+     * climbs 2 rows a frame, and on reaching 0x3D turns, fires, and *also*
+     * falls into A47A, taking the new direction's row for this column. */
+    int path = 1;
     if (!ST(S_DIR)) {                                               /* A3D5: flying left */
-        if (!step_left2(g)) g->boss.row = path_row(g, 0);
-        else if ((g->boss.row = (uint8_t)((g->boss.row - 2) & 0x3F)) == 0x3D) {
-            ST(S_DIR) = 0xFF; start_beam(g); ST(S_STEEP) = (uint8_t)(akma_hero_col(g) < 40);
+        if (step_left2(g)) {
+            if ((g->boss.row = (uint8_t)((g->boss.row - 2) & 0x3F)) != 0x3D) path = 0;
+            else { ST(S_DIR) = 0xFF; start_beam(g); ST(S_STEEP) = (uint8_t)(akma_hero_col(g) < 40); }
         }
     } else {                                                        /* A42E: flying right */
-        if (!step_right2(g)) g->boss.row = path_row(g, 1);
-        else if ((g->boss.row = (uint8_t)((g->boss.row - 2) & 0x3F)) == 0x3D) {
-            ST(S_DIR) = 0; start_beam(g); ST(S_STEEP) = (uint8_t)(akma_hero_col(g) >= 20);
+        if (step_right2(g)) {
+            if ((g->boss.row = (uint8_t)((g->boss.row - 2) & 0x3F)) != 0x3D) path = 0;
+            else { ST(S_DIR) = 0; start_beam(g); ST(S_STEEP) = (uint8_t)(akma_hero_col(g) >= 20); }
         }
     }
+    if (path) g->boss.row = path_row(g, ST(S_DIR) != 0);           /* A47A */
 
     if (ST(S_ATTACK)) {                                             /* A492 */
         ST(S_FACE) = (uint8_t)(ST(S_STEEP) + 2);

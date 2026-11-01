@@ -51,9 +51,9 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 10 test binaries
-make test            # physics (147) + combat/AI (228) + town (160) + boss (638) + shop (187)
+make test            # physics (147) + combat/AI (228) + town (160) + boss (641) + shop (187)
                      #   + status (87) + playthrough (119) + audio (315) + cutscene (46)
-                     #   + video (70) = 1997 assertions.  Needs no game files: every
+                     #   + video (70) = 2000 assertions.  Needs no game files: every
                      #   binary skips its data half when zeliard/ is not there.
 make verify          # 211 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -615,7 +615,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   the sound stub; every eai overlay's A008/A010 tables and a 200-frame run of each
   cavern's AI; the tall (2×4) spawn**.  It also renders the DOSBox capture's scene
   for `make verify`.
-* `test_boss.c` — 638 assertions: the `[A002]` block of **all eleven** boss
+* `test_boss.c` — 641 assertions: the `[A002]` block of **all eleven** boss
   overlays against docs/ENEMIES.md §3 (HP, EXP, gold, camera column, knock-left,
   start cell, contact damage, the name record); mp1d's level record (boss bit 7,
   AI 1 = CRAB, bank +5, post-boss banks +6/+7, an *empty* C010 list and no door);

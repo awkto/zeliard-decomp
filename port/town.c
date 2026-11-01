@@ -230,17 +230,23 @@ static int dlg_menu(Town *t, const char *a, const char *b, int x4, int y, int w4
 }
 
 /* 65A1 dialogue_end: wait for the button to be released, then for Space/Alt */
+/* 0x65A1  the end-of-text wait: FF1D/FF1E cleared, then frames (6743 + 68AC)
+ * while a direction key is still held (65C1: FF17, the held *dirs*), then
+ * frames until a press edge or any direction key (65DE `jz 65C8`: a held
+ * direction ends the wait too -- #85, paguro_return: Left closes "Thanks
+ * again. Really." and the hero walks on the same frame run). */
 static void dlg_wait_key(Town *t)
 {
-    t->btn1_edge = t->btn2_edge = 0;
-    for (int i = 0; i < 3000 && !t->quit; i++) {
+    t->btn1_edge = t->btn2_edge = 0;                                    /* 65A1/65A6 */
+    for (int i = 0; i < 3000 && !t->quit; i++) {                        /* 65AB */
         dlg_frame(t);
-        if (t->btn1_edge || t->btn2_edge) return;
-        if (!(t->buttons & 3)) break;
+        if (t->btn1_edge || t->btn2_edge) return;                       /* 65B1/65B9 */
+        if (!t->dirs) break;                                            /* 65C1 */
     }
-    for (int i = 0; i < 6000 && !t->quit; i++) {
+    for (int i = 0; i < 6000 && !t->quit; i++) {                        /* 65C8 */
         dlg_frame(t);
-        if (t->btn1_edge || t->btn2_edge) return;
+        if (t->btn1_edge || t->btn2_edge) return;                       /* 65CE/65D6 */
+        if (t->dirs) return;                                            /* 65DE */
     }
 }
 /* 64E6 newline: advance a line, scroll when the 8th is reached, and pause with
@@ -389,9 +395,34 @@ const char *town_dialogue(const TownMap *m, int script)
 
 /* 0x6AED  the same shape as the cavern list but with byte pokes:
  * {u16 flag_ptr, u8 mask, {u16 ptr, u8 val}.. FFFF}.. FFFF */
+/* In the original the map at C000 *is* the live state: the NPC records at
+ * [C00F] (col, sprite, saved, anim, type, ... -- 6B1C moves them every frame)
+ * and the grid at C017 (6C2B's 0xFD markers) are the same bytes 6AED pokes, so
+ * a patch run mid-visit (dialogue opcode 0x83 at 6685, 0x8B 664D, 0x89 6703,
+ * the shop return 6EDE) changes only the poked bytes.  The port parses the map
+ * into `grid`/`npcs`, so write those back into the image before poking it and
+ * re-parsing: without this the re-parse brought the file's records back
+ * (#85: Llama's Elf Crest dialogue right after the MP73 exit door -- every
+ * npc[].saved 0, the walkers a step back). */
+static void town_sync_raw(TownMap *m)
+{
+    uint8_t *d = m->raw;
+    size_t len = m->rawlen;
+    for (int c = 0; c < m->width && 0x17 + (size_t)(c + 1) * TOWN_ROWS <= len; c++)
+        memcpy(d + 0x17 + (size_t)c * TOWN_ROWS, m->grid[c], TOWN_ROWS);
+    size_t o = off_in(u16(d, 0xF), len);
+    for (int i = 0; i < m->nnpcs && o + 8 <= len; i++, o += 8) {
+        const TownNpc *n = &m->npcs[i];
+        d[o] = (uint8_t)n->col; d[o + 1] = (uint8_t)(n->col >> 8);
+        d[o + 2] = n->sprite; d[o + 3] = n->saved; d[o + 4] = n->anim;
+        d[o + 5] = n->type; d[o + 6] = n->flags; d[o + 7] = n->script;
+    }
+}
+
 int town_apply_patches(TownMap *m, const uint8_t page[256])
 {
     if (!m->raw || !m->patches) return 0;
+    town_sync_raw(m);
     uint8_t *d = m->raw;
     size_t len = m->rawlen, o = off_in(m->patches, len);
     int applied = 0, guard = 0;

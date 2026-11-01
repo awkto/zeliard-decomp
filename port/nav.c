@@ -104,7 +104,10 @@ static int settled(const Game *g)
 static int passable_here(const Game *g, int c, int r, int body)
 {
     const Map *m = g->map;
-    if (c < 0 || c >= m->width) return 0;
+    /* ... and so are the columns: a hero at the last column has his body
+     * column (c+1) on column 0 (#87: MP72's (127,8) door, MP70's corridor) */
+    if (c < -m->width || c >= 2 * m->width) return 0;
+    if (c < 0) c += m->width; else if (c >= m->width) c -= m->width;
     uint8_t v = m->grid[c][r & 0x3F];
     return body ? game_passable_body(g, v) : game_passable_wall(g, v);
 }
@@ -116,7 +119,8 @@ static int fits(const Game *g, int bc, int r)
 static int is_ladder(const Game *g, int bc, int r)
 {
     const Map *m = g->map;
-    if (bc < 0 || bc >= m->width) return 0;
+    if (bc < -m->width || bc >= 2 * m->width) return 0;
+    if (bc < 0) bc += m->width; else if (bc >= m->width) bc -= m->width;
     return (uint8_t)(m->grid[bc][r & 0x3F] - 1) < 2;                    /* 6BBD */
 }
 /* ------------------------------------------------------------- fixtures */
@@ -318,7 +322,11 @@ static int probe_place_fixture(Nav *n, Game *p, int c, int r, uint8_t dirstate, 
         fixture_cols(m, f, &lo, &hi);
         if (f->var) hi -= 2;                    /* the limits themselves */
         int col = bc - 1;
-        if (hi >= m->width && col < lo && col + m->width <= hi) col += m->width;   /* across the seam */
+        /* across the seam: `hi + 2`, not `hi` -- a platform at its right
+         * limit still holds the hero's body over its third cell, and MP61's
+         * fix[10]/fix[26] (lim 248..12 / 248..3) were put at lim_l instead
+         * for every node over their last two columns (the route to Tarso) */
+        if (hi >= m->width && col < lo && col + m->width <= hi + 2) col += m->width;
         if (col < lo) col = lo;
         if (col > hi) col = hi;
         /* A platform standing on one of its own limits is never going the way
@@ -1154,7 +1162,11 @@ void nav_step(Nav *n, Game *g)
      * hero overlaps one, which is far more than 719E gives back, so resting
      * there is suicide -- MP30's (135,42) burned 560 LIFE off him in 180
      * frames while the rule held him in place. */
-    if (g->hp * 3 < g->max_hp * 2 && ea > 8 && !g->on_hazard) {
+    /* Nor in cavern 7's heat (704F: 15 LIFE every 64 frames without the
+     * Asbestos cape), which outruns the regeneration: resting there only
+     * burns the hero down where he stands (#87, MP71 (143,35)). */
+    int heat = g->map->cavern == 7 && g->shoes != 5;
+    if (g->hp * 3 < g->max_hp * 2 && ea > 8 && !g->on_hazard && !heat) {
         if (g->hp * 4 < g->max_hp * 3) {
             /* Resting is not being stuck: without this the anti-stuck counter
              * above bumped the resting cell's penalty every 60 frames, and a

@@ -78,7 +78,7 @@ Scrolling is cell-granular: **8 px per step, no sub-cell positions anywhere**.
 | 801C | 4 | conveyor: pushes hero **right** | `6BC4` (DL=1) |
 | 8020 | 4 | hazard (damage every frame) | `73C0` |
 | 8024 | 4 | updraft (lifts 1 row per loop) | `76F6` CL=0 |
-| 8028 | 4 | current: pushes 2 cells/frame left; one-way wall in cavern 7 | `76F6` CL=1 |
+| 8028 | 4 | current: pushes 2 cells/frame left; one-way wall except in cavern 7 (#87) | `76F6` CL=1 |
 | 802C | 4 | current: pushes 2 cells/frame right | `76F6` CL=2 |
 
 Cell-value classes used by the collision tests:
@@ -101,8 +101,8 @@ The sprite is 3×3 cells but the **solid body is the middle column only**
 * Walking left tests the hero's own *left* column (the body moves into it);
   walking right tests the *right* column. Test order for moving left:
   1. sprites at ring col−1, rows −1..+2: an object with `type&0x80` blocks;
-  2. (not crouching) head cell (row 0, col 0): `passable_wall`; in cavern 7 a
-     CURRENT_R cell here or below blocks (`67A3`);
+  2. (not crouching) head cell (row 0, col 0): `passable_wall`; outside cavern 7
+     a CURRENT_R cell here or below blocks (`67A3` skips the test when `[C012]` is 7);
   3. rows +1, +2 of col 0: `passable_body`;
   4. else scroll. Mirror for right with col +2.
 * Crouching (`FF38`) skips the head-row test → the hero can walk through

@@ -292,6 +292,8 @@ static void usage(void)
         "  --sound     log every FF75 sound request the engine produces\n"
         "  --sword N --shield N --level N --life N --gold N --bank N --keys N\n"
         "              set the player record directly (the shops do it properly)\n"
+        "  --worn N    wear key item N ([9E], also put in the [A1..A5] bag): 1 Feruza shoes\n"
+        "              (jump 4), 2 Pirika, 3 Silkarn, 4 Ruzeria shoes, 5 Asbestos cape\n"
         "  --potions L comma list of drug ids 0..7 into the five [A6..AA] slots (Enter -> USE:)\n"
         "  --spells L  comma list of spell numbers 1..7 to mark learned at [BB..C1]\n"
         "  --name NAME the NAME.USR the sage's \"Record Experience\" writes\n"
@@ -318,6 +320,7 @@ static void usage(void)
         "              --script, deciding the input at every boundary.  ROUTE is ';'-separated:\n"
         "              town-cave C | town-shop C [MENU] | town-edge 0|1 | door C,R | door -1\n"
         "              (the exit door 72F1 puts down) | cell C,R | break C,R | boss\n"
+        "              | keys TOKENS (fed as --script tokens, for a move it cannot find)\n"
         "  --pilot-tail N         idle frames after the route is done (default 10)\n"
         "  --emit-script FILE     with --pilot: write the input it fed as a --script\n"
         "  --trace-fields         list every field name --trace can emit and exit\n");
@@ -759,7 +762,7 @@ int main(int argc, char **argv)
     const char *dir = NULL;
     int map_idx = 0, pos_col = -1, pos_row = -1, start_in_town = -1, town_col = -1, town_scr = -1, town_anim = -1, town_face = 0, npc_i = -1, npc_f = 0;
     int dbg_sword = -1, dbg_shield = -1, dbg_level = -1, dbg_life = -1;
-    long dbg_gold = -1, dbg_keys = -1, dbg_bank = -1;
+    long dbg_gold = -1, dbg_keys = -1, dbg_bank = -1, dbg_worn = -1;
     const char *dbg_potions = NULL, *dbg_spells = NULL;
     const char *save_name = "ZELIARD", *load_name = NULL, *save_now = NULL;
     const char *pilot_route = NULL, *emit_path = NULL;
@@ -814,6 +817,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--gold") && i + 1 < argc) dbg_gold = atol(argv[++i]);
         else if (!strcmp(argv[i], "--bank") && i + 1 < argc) dbg_bank = atol(argv[++i]);
         else if (!strcmp(argv[i], "--keys") && i + 1 < argc) dbg_keys = atol(argv[++i]);
+        else if (!strcmp(argv[i], "--worn") && i + 1 < argc) dbg_worn = atol(argv[++i]);
         else if (!strcmp(argv[i], "--potions") && i + 1 < argc) dbg_potions = argv[++i];
         else if (!strcmp(argv[i], "--spells") && i + 1 < argc) dbg_spells = argv[++i];
         else if (!strcmp(argv[i], "--name") && i + 1 < argc) save_name = argv[++i];
@@ -961,6 +965,12 @@ int main(int argc, char **argv)
     if (dbg_gold >= 0)   g->gold = (uint32_t)dbg_gold;                   /* [85..87] */
     if (dbg_bank >= 0)   page_set_gold24(g->page, P_BANK_HI, (uint32_t)dbg_bank & 0xFFFFFF);   /* [88..8A] */
     if (dbg_keys >= 0)   g->keys = (uint8_t)dbg_keys;                    /* [98] */
+    if (dbg_worn >= 1 && dbg_worn <= 5) {                               /* [9E] worn, [A1..A5] the bag */
+        int k, have = 0;
+        g->shoes = (uint8_t)dbg_worn;
+        for (k = 0; k < 5; k++) if (g->page[0xA1 + k] == dbg_worn) have = 1;
+        for (k = 0; k < 5 && !have; k++) if (!g->page[0xA1 + k]) { g->page[0xA1 + k] = (uint8_t)dbg_worn; have = 1; }
+    }
     if (dbg_potions) {                                                  /* [A6..AA] = drug id + 1 */
         int n = 0;
         for (const char *c = dbg_potions; *c && n < 5; ) {
