@@ -246,7 +246,7 @@ static void box_newline(Shop *s)
      * animation clock [FF50] (STICK 027F) advances with it exactly as the
      * printer's 6-tick glyph waits do (706C/7084, #101).  The port charged
      * nothing for it, which left the Sage's portrait blink two animation
-     * steps behind (#106).  ~40 cycles a byte at cycles=3000 (12675 a tick). */
+     * steps behind (#106).  ~53 cycles a byte at cycles=3000 (12675 a tick). */
     shop_wait(s, scan / 240);
     box_scroll_if_full(s);
     if (pending >= 2) box_wait_and_clear(s);
