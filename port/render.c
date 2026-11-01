@@ -28,7 +28,8 @@ static void blit8t(uint8_t *fb, const Cell8 *c, int x, int y)
     }
 }
 
-static void blit2(uint8_t *fb, const Cell2 *c, int x, int y)
+/* gfmcga 3599/366E: one 2-bpp cell through the frame's 16-entry colour table */
+static void blit2r(uint8_t *fb, const Cell2R *c, const uint8_t *pal16, int x, int y)
 {
     for (int r = 0; r < 8; r++) {
         int yy = y + r;
@@ -37,7 +38,7 @@ static void blit2(uint8_t *fb, const Cell2 *c, int x, int y)
             if (!c->mask[r][k]) continue;
             int xx = x + k;
             if (xx < PF_X || xx >= PF_X + PF_W) continue;
-            fb[yy * FB_W + xx] = c->px[r][k];
+            fb[yy * FB_W + xx] = pal16[c->idx[r][k]];
         }
     }
 }
@@ -49,14 +50,14 @@ static void blit2(uint8_t *fb, const Cell2 *c, int x, int y)
  * verify boxes covered (the walk and idle maps all use cells < 0x80) and wrong
  * for exactly the ones that do not: the attack and cast overlays (35..42,
  * 53..60, cells 0x88..0x9F) and the door-entry frame 30. */
-static void draw_hero_frame(uint8_t *fb, const HeroGfx *h, int fr, int count, int slot0, int hx, int hy)
+static void draw_hero_frame(uint8_t *fb, const HeroGfx *h, const uint8_t *pal16, int fr, int count, int slot0, int hx, int hy)
 {
     if (fr < 0 || fr >= HERO_FRAMES) return;
     for (int i = 0; i < count; i++) {
         int cell = h->frame[fr][i];                     /* 3CDD/3CE0: 0 = empty slot */
         if (!cell || cell >= h->ncells) continue;
         int slot = slot0 + i;
-        blit2(fb, &h->cell[cell], hx + (slot % 3) * 8, hy + (slot / 3) * 8);
+        blit2r(fb, &h->cell[cell], pal16, hx + (slot % 3) * 8, hy + (slot / 3) * 8);
     }
 }
 
@@ -96,10 +97,15 @@ static int hero_blade_frame(const Game *g, int base)
  * frames per shield class and the same variant. */
 static int hero_guard_frame(const Game *g, int base) { return base + shield_class(g) * 4 + hero_anim_var(g); }
 
-/* gfmcga @3A95: three passes — overlay behind, body, overlay in front */
+/* gfmcga @3A95: three passes — overlay behind, body, overlay in front.
+ * 3A95..3AA5 first picks the colour table every hero cell goes through (366E
+ * `add bx,[4FE9]`): word [4F8C + 2*([FF36] & 3)].  The hit flash is 0 or 0xFF,
+ * so a hit frame draws Garland with table 3 (4FC8, the yellow/blue/magenta
+ * one enemies use for their own hit flash) instead of table 0. */
 static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
 {
     if (g->hero_hidden) return;
+    const uint8_t *pal = PAL2BPP[g->hero_hit_flash & 3];
     int hx = PF_X + g->hero_scr_col * 8, hy = PF_Y + g->hero_scr_row * 8;
     int left = g->hero_flags & FACE_LEFT;
     int ovl = left ? 49 : 31;                           /* 61B9 / 6117 */
@@ -112,14 +118,14 @@ static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
             /* facing right the shield arm is the far one and goes behind
              * (3ADA); facing left it is the sword arm (3AF4). */
             int fr = left ? hero_blade_frame(g, 49) : hero_guard_frame(g, 79);
-            draw_hero_frame(fb, h, fr, crouch_n, crouch_s, hx, hy);
+            draw_hero_frame(fb, h, pal, fr, crouch_n, crouch_s, hx, hy);
         } else if (sh && !left) {                       /* 3B18..3B3F: shield behind when facing right */
             int fr = ovl + 12 + (g->crouching ? 1 : 0) + (sh - 1 ? 3 : 0);
-            draw_hero_frame(fb, h, fr, crouch_n, crouch_s, hx, hy);
+            draw_hero_frame(fb, h, pal, fr, crouch_n, crouch_s, hx, hy);
         } else if (!sh || left) {                       /* 3B43 */
             if (!g->crouching && g->hero_anim != 0x80) {
                 int a = (g->hero_anim + 2) & 3;
-                if (!(a & 1)) draw_hero_frame(fb, h, ovl + a, 9, 0, hx, hy);
+                if (!(a & 1)) draw_hero_frame(fb, h, pal, ovl + a, 9, 0, hx, hy);
             }
         }
     }
@@ -138,7 +144,7 @@ static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
         else if (g->hero_anim == 0x80) fr += 4;
         else fr += g->hero_anim & 3;
     }
-    draw_hero_frame(fb, h, fr, 9, 0, hx, hy);
+    draw_hero_frame(fb, h, pal, fr, 9, 0, hx, hy);
     if (g->hero_dead) return;
 
     /* pass 3 (3C05): in front of the body */
@@ -146,7 +152,7 @@ static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
         int sh = shield_class(g);
         if (!sh) return;
         fr = ovl + 14 + (((sh - 1) & 1) ? 3 : 0);
-        draw_hero_frame(fb, h, fr, crouch_n, crouch_s, hx, hy);
+        draw_hero_frame(fb, h, pal, fr, crouch_n, crouch_s, hx, hy);
         return;
     }
     int sh = shield_class(g);
@@ -155,7 +161,7 @@ static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
     else if (left && sh) fr = ovl + 12 + (g->crouching ? 1 : 0) + (sh - 1 ? 3 : 0); /* 3C86 */
     else if (g->crouching || g->hero_anim == 0x80) fr = ovl + 3;                    /* 3CA5 */
     else fr = ovl + (g->hero_anim & 3);
-    draw_hero_frame(fb, h, fr, crouch_n, crouch_s, hx, hy);
+    draw_hero_frame(fb, h, pal, fr, crouch_n, crouch_s, hx, hy);
 }
 
 /* gfmcga 3FD0: the sword block.  The blade is a 4x4-cell (32x32 px) sprite
@@ -206,21 +212,6 @@ static void draw_sword(uint8_t *fb, const Game *g, const HeroGfx *h)
                 }
             }
         }
-}
-
-/* gfmcga 3599/366E: one 2-bpp cell through the frame's 16-entry colour table */
-static void blit2r(uint8_t *fb, const Cell2R *c, const uint8_t *pal16, int x, int y)
-{
-    for (int r = 0; r < 8; r++) {
-        int yy = y + r;
-        if (yy < PF_Y || yy >= PF_Y + PF_H) continue;
-        for (int k = 0; k < 8; k++) {
-            if (!c->mask[r][k]) continue;
-            int xx = x + k;
-            if (xx < PF_X || xx >= PF_X + PF_W) continue;
-            fb[yy * FB_W + xx] = pal16[c->idx[r][k]];
-        }
-    }
 }
 
 /* gfmcga 3336/33AB: every live object is a 2x2-cell sprite at its ring
@@ -350,7 +341,7 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
         if (!h) return;
         int fr = (g->hero_flags & FACE_LEFT) ? 13 : 0;
         fr += g->hero_anim & 3;
-        draw_hero_frame(fb, h, fr, 9, 0, g->walk_in_x, 110);
+        draw_hero_frame(fb, h, PAL2BPP[0], fr, 9, 0, g->walk_in_x, 110);
         return;
     }
     for (int sr = 0; sr < SCREEN_ROWS; sr++) {
@@ -451,6 +442,22 @@ void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
     vid_gauge_bar(fb, 0x02, 0x10, 0x88);            /* PLACE / ENEMY */
     vid_gauge_bar(fb, 0x02, 0x1C, 0x42);            /* GOLD */
     vid_gauge_bar(fb, 0x48, 0x1C, 0x42);            /* ALMAS */
+    int boss = (g->boss_map || g->boss_room) && g->boss.active;
+    if (tf) hud_label(fb, tf, HUD_LIFE);
+    if (boss) {
+        /* fight.bin 6C55, on a boss-room entry (6082/6237) in place of [2012]:
+         * the ENEMY trough is only 0x21 columns (bx 0x0210 — the 0x88 one under
+         * it is the same up to x83), 6C61 [2004] style 0x80 bx 0x2310 ch 0x67
+         * clears x84..186 of its ten rows to black (2215: the first, ax=0
+         * column at x83 is and-ed with FF, untouched), and 6C76 [202C] (MCGA
+         * 296F: BX is the source, DX the destination) copies x80..191 rows
+         * 169..171 — the LIFE line's bottom, its scale ticks — to rows
+         * 181..183.  Nothing else draws there in the fight: [200A]/[200C]
+         * cover rows 175..180 only. */
+        for (int y = 174; y <= 183; y++) memset(fb + y * FB_W + 84, 0, 0x67);
+        for (int r = 0; r < 3; r++)
+            memcpy(fb + (181 + r) * FB_W + 80, fb + (169 + r) * FB_W + 80, 14 * 8);
+    }
     unsigned wmax = g->max_hp / 8, wcur = g->hp / 8;
     if (wmax > 100) wmax = 100;
     if (wcur > wmax) wcur = wmax;
@@ -459,8 +466,8 @@ void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
         if (x < wcur) for (int r = 0; r < 5; r++) fb[(163 + r) * FB_W + 84 + x] = 0x1B;  /* green */
     }
     /* docs/VIDEO_DRIVERS.md [2012]/[200A]/[200C]: in a boss room the ENEMY
-     * line carries the boss HP — a blue trough at (50,174) 136 px wide with
-     * the same red/white pair at (84,175), [A002]+3 full scale. */
+     * line carries the boss HP — the same red/white pair at (84,175) on the
+     * black 6C55 left, [A002]+3 full scale. */
     if ((g->boss_map || g->boss_room) && g->boss.active && g->boss.hp0) {
         unsigned bmax = g->boss.hp0 / 8, bcur = g->boss.hp / 8;
         if (bmax > 100) bmax = 100;
@@ -470,14 +477,12 @@ void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
             if (x < bcur) for (int r = 0; r < 5; r++) fb[(175 + r) * FB_W + 84 + x] = 0x1B;
         }
     }
-    int boss = (g->boss_map || g->boss_room) && g->boss.active;
     /* 6C55/6150: a boss room has no GOLD line — the boss's [A002]+9 name record
      * sits in the GOLD box (its own y is 0xBB) and the PLACE label becomes
      * ENEMY (6C8F).  ALMAS and the LIFE bar are the same either way. */
     if (!boss) hud_digits(fb, font, (unsigned)g->gold, 76, 187, 6);
     hud_digits(fb, font, g->almas, 152, 187, 5);
     if (tf) {
-        hud_label(fb, tf, HUD_LIFE);
         hud_label(fb, tf, HUD_ALMAS);
         if (!boss) hud_label(fb, tf, HUD_GOLD);
         hud_label(fb, tf, boss ? HUD_ENEMY : HUD_PLACE);

@@ -139,19 +139,26 @@ int gfx_load_hero(HeroGfx *h, const char *dir)
     uint8_t *d = sar_load(dir, 2, FMAN_RES, 1, &len);
     if (!d || len < 0x333) { free(d); return -1; }
     memcpy(h->frame, d, sizeof h->frame);
-    /* fman.grp's last cell is two bytes short of a full 32-byte cell (the
+    /* fman.grp's last cell is three bytes short of a full 32-byte cell (the
      * resource ends at 0x1FF0, and cell 0xE5 -- which frames 80..82, the
-     * no-shield attack overlay facing right, do use -- would need 0x1FF2).
-     * The game reads it out of the arena regardless, so pad instead of
-     * dropping it: rounding the count down cost two pixels of Garland's
-     * sleeve on every swing. */
+     * no-shield attack overlay facing right, do use -- runs to 0x1FF2).
+     * gfmcga 4EDD copies all 0xE6 cells out of the arena regardless, so its
+     * row 7 is the three arena bytes after the file, arena:7FF0..7FF2.  They
+     * are not zero: the oracle draws one pixel of that row in colour index 8
+     * at x+7 standing (red in table 0, yellow in the hit table 3; contact_snail
+     * f55/f81) and one at x+0 crouching (sword_kinds f62), which is
+     * {00, 80, 02} -- plane A low byte clear, plane B 0x8002 (#94).  Rounding
+     * the count down instead cost two pixels of Garland's sleeve per swing. */
+    static const uint8_t ARENA_TAIL[3] = {0x00, 0x80, 0x02};   /* arena:7FF0.. */
     int n = (int)((len - 0x333 + 31) / 32);
     if (n > 256) n = 256;
     for (int i = 0; i < n; i++) {
         uint8_t raw[32] = {0};
         size_t off = 0x333 + (size_t)i * 32, avail = len > off ? len - off : 0;
         memcpy(raw, d + off, avail < 32 ? avail : 32);
-        gfx_decode32(raw, PAL2BPP[0], &h->cell[i]);
+        for (size_t k = avail; k < 32; k++)
+            if (off + k >= len && off + k - len < sizeof ARENA_TAIL) raw[k] = ARENA_TAIL[off + k - len];
+        gfx_decode32_raw(raw, &h->cell[i]);
     }
     h->ncells = n;
     free(d);

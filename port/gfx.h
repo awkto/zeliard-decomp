@@ -71,7 +71,7 @@ extern const int SWORD_SECTION[6];
 #define HERO_FRAMES 91
 typedef struct {
     uint8_t frame[HERO_FRAMES][9];            /* 1-based cell index, bit7 = flip, 0 = empty */
-    Cell2   cell[256];
+    Cell2R  cell[256];                        /* palette-free: gfmcga 3A95 picks the table per frame */
     int     ncells;
     SwordGfx sword;                           /* loaded with the hero: the blade art */
     /* gfmcga 3893 / 389B: the boss-death spark.  col[kind] = {[4FF5], [4FF6]}
