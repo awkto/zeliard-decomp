@@ -199,6 +199,7 @@ hero_home_row	9F00	1	fight
 boss_knock_left	9F01	1	fight	
 music_restart	9F02	1	fight	not modelled
 fixture_anim	9F07	1	fight	
+gf_frame	4FFF	1	fight	gfmcga frame counter (inc at 3038); parity paces the cavern 5/7/8 cell animation (315C)
 fall_rows	9F08	1	fight	
 rise_rows	9F09	1	fight	
 crouch_release	9F0A	1	fight	

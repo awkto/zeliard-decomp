@@ -247,6 +247,7 @@ static void spell_screen_wide(Game *g)
     }
     g->magic_active = 0;                                                /* 8954 */
     g->sfx_request = 0x19;
+    g->gf_frame = 0;            /* 895E gfmcga [3018] 42F7: [4FFF] = 0x36, then 0 (4314 / 431C) */
 }
 
 /* 0x87B0  the magic button: a 6-frame cast, the charge spent on frame 4. */
@@ -410,5 +411,25 @@ void orbs_arm(Game *g, int n, uint8_t speed, uint8_t hits)
     for (int i = 0; i < n && i < 4; i++) {
         g->orbs[i].phase = (uint8_t)(i * 4);
         g->orbs[i].speed = speed; g->orbs[i].hits = hits;
+    }
+}
+
+/* 0x8366  the shot pass of the frame's second half (713B, between the orb
+ * pass 7133 and sword_apply 7144).  After erasing last frame's cell (83F3)
+ * it records where the shot is drawn now -- +B = its ring column (8376),
+ * +C = its screen row (838C) -- and kills (col = 0, 83D2) one outside the
+ * window: ring column - 4 >= 0x1C (8379) or screen row >= 0x12 (8388).
+ * The drawing itself is render.c's draw_shots.  (#75: a fresh Pollo egg
+ * carried +B/+C = 10/0C in the original and 0 here, pollo_fight f113.) */
+void shots_draw_pass(Game *g)
+{
+    for (int i = 0; i <= MAX_SHOTS; i++) {
+        Shot *s = &g->shots[i];
+        if (s->col == 0xFF) break;                                      /* 8369 */
+        s->last_col = s->col;                                           /* 8376 */
+        if ((uint8_t)(s->col - 4) >= 0x1C) { s->col = 0; continue; }    /* 8379 / 83D2 */
+        uint8_t r = (uint8_t)((s->row - g->scroll_row) & 0x3F);         /* 837F */
+        if (r >= 0x12) { s->col = 0; continue; }                        /* 8388 */
+        s->last_row = r;                                                /* 838C */
     }
 }

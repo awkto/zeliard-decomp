@@ -352,8 +352,15 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# (315,49), where walking off Dorado's right edge lands
 	./zeliard --dir ../zeliard --map 0x0e --pos 315 49 --level 28 --life 1300 --sword 5 \
 		--shield 5 --gold 40000 --headless --frames 3 --screenshot 2 /tmp/zel_cav6.png
+	# rows 95..98 at x 56..60 are left out: that brick is a glinting cell
+	# (0x1D..0x20), which gfmcga's draw advances at random every frame
+	# (319E, KRN_RANDOM), so the capture's phase of it is arbitrary
 	python3 tools/compare_shot.py /tmp/zel_cav6.png ../docs/screenshots/cavern6.png \
-		--box 56 14 26 120 --label "MP60 (MPP7 brick tileset), left of the first chain"
+		--box 56 14 26 81 --label "MP60 (MPP7 brick tileset), left of the first chain (top)"
+	python3 tools/compare_shot.py /tmp/zel_cav6.png ../docs/screenshots/cavern6.png \
+		--box 61 95 21 4 --label "MP60 left of the first chain (beside the glinting brick)"
+	python3 tools/compare_shot.py /tmp/zel_cav6.png ../docs/screenshots/cavern6.png \
+		--box 56 99 26 35 --label "MP60 left of the first chain (bottom)"
 	python3 tools/compare_shot.py /tmp/zel_cav6.png ../docs/screenshots/cavern6.png \
 		--box 106 14 50 78 --label "MP60 above the DORADO door"
 	python3 tools/compare_shot.py /tmp/zel_cav6.png ../docs/screenshots/cavern6.png \
@@ -432,8 +439,10 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# reaches (docs/DOSBOX_RECIPE.md 9.1).  The sparkles in MP70's sky and the
 	# three hanging enemies at the top of MP81 are at a different animation
 	# phase than the capture, so they are outside the boxes.
+	# frame 8, not 2: the lava cells cycle on every odd gfmcga [4FFF] (31D4,
+	# four advances = one full turn), and the capture shows them at rest
 	./zeliard --dir ../zeliard --map 0x12 --pos 152 7 --level 34 --life 1800 --sword 6 \
-		--shield 6 --gold 60000 --headless --frames 4 --screenshot 2 /tmp/zel_cav7.png
+		--shield 6 --gold 60000 --headless --frames 10 --screenshot 8 /tmp/zel_cav7.png
 	python3 tools/compare_shot.py /tmp/zel_cav7.png ../docs/screenshots/cavern7.png \
 		--box 48 14 224 78 --label "MP70 playfield above the sparkles (MPP7 lava tileset)"
 	python3 tools/compare_shot.py /tmp/zel_cav7.png ../docs/screenshots/cavern7.png \

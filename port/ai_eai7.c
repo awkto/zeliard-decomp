@@ -33,7 +33,7 @@ static void tallwalker_update(Game *g, MapObj *e)
     int facing;
     if (!e->hp) e->hp = 16;
     if ((e->hit & HIT_STUN) || (e[1].hit & 0x40)) { ai_tall_take_hit(g, e); return; }   /* A5F5 */
-    if (TALL(e, 6)) return;
+    if (!TALL(e, 6)) return;            /* A326 call A59D / jc A32C / ret: it fell a row */
     if (e->next & 1) { tallwalker_attack(g, e); return; }
     uint8_t f = ai_hero_dir(g, e, 5, &facing);
     if (!facing) {
@@ -80,7 +80,7 @@ static void tallspit_update(Game *g, MapObj *e)
     if (!e->hp) e->hp = 0x40;
     if (e->hit & HIT_STUN) { ai_tall_take_hit_own(g, e); return; }      /* A71E */
     e[1].hit &= (uint8_t)~0x40;
-    if (TALL(e, 6)) return;
+    if (!TALL(e, 6)) return;            /* A650 call A59D / jc A656 / ret: it fell a row */
     if (e->next & 1) {                                                  /* A6BB */
         unsigned t = (unsigned)e->phase + 0x80; e->phase = (uint8_t)t;
         if (t & 0x100) {

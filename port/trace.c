@@ -97,6 +97,7 @@ static const TField FIELDS[] = {
     G("hero_home_row",     0x9F00, 1, hero_home_row),
     G("boss_knock_left",   0x9F01, 1, boss_knock_left),
     G("fixture_anim",      0x9F07, 1, fixture_anim),
+    G("gf_frame",          0x4FFF, 1, gf_frame),
     G("fall_rows",         0x9F08, 1, fall_rows),
     G("rise_rows",         0x9F09, 1, rise_rows),
     G("crouch_release",    0x9F0A, 1, crouch_release),

@@ -3,10 +3,10 @@
  *
  *   [A002] = AA80: col 0x24, row 0x10, HP 250, EXP 200, camera column 7,
  *   knockback always left, name "Pulpo", gold 200.  Contact A010 = 10.
- *   Pose p (0..0x1F): 7-byte bitmap at [A9AF + 2p] (one bit per part column,
- *   bit 7 = column 0) plus a list of {type, frame} words at [A57D + 2p]
- *   consumed for every set bit, top to bottom, left to right.  Part cell =
- *   (boss_col + 2*bit, boss_row + 2*bitrow).
+ *   Pose p (0..0x1F): 7-byte bitmap at [A9AF + 2p], one byte per part
+ *   COLUMN (bit 7 = the top row) plus a list of {type, frame} words at
+ *   [A57D + 2p] consumed for every set bit, top to bottom, left to right.
+ *   Part cell = (boss_col + 2*byte, boss_row + 2*bit) (A401..A487, #75).
  *   Pose = stage (0 / 8 / 0x10, one step per clean hit) + frame (0..7); the
  *   final stage adds 8 for the attack pose.
  */
@@ -30,12 +30,17 @@ static void tako_draw(Game *g, uint8_t pose)
     boss_parts_begin(g);
     unsigned bm = boss_img16(g, A9AF + 2u * (pose & 0x1F));
     unsigned ls = boss_img16(g, A57D + 2u * (pose & 0x1F));
+    /* A401: the OUTER loop is 7 part columns (`add ax,2` at A487 on the map
+     * column, one bitmap byte each, A486), the inner 8 rows (row + 2*cl,
+     * A42B): {type, phase} pairs off the list, one per set bit; a column
+     * outside the ring (A412) skips its pairs.  (#75: the port read the
+     * bytes as rows -- pulpo_fight f120.) */
     if (bm && ls) {
         unsigned k = 0;
-        for (int r = 0; r < 7; r++) {
-            uint8_t bits = boss_img8(g, bm + (unsigned)r);
-            for (int c = 0; c < 8; c++) {
-                if (!(bits & (0x80 >> c))) continue;
+        for (int c = 0; c < 7; c++) {
+            uint8_t bits = boss_img8(g, bm + (unsigned)c);
+            for (int r = 0; r < 8; r++) {
+                if (!(bits & (0x80 >> r))) continue;
                 uint8_t type  = boss_img8(g, ls + 2 * k);
                 uint8_t frame = boss_img8(g, ls + 2 * k + 1);
                 k++;
@@ -43,29 +48,40 @@ static void tako_draw(Game *g, uint8_t pose)
             }
         }
     }
-    /* 0xA492: four ink parts (class 0x10 = sword-immune 0x30, contact 10) */
+    /* 0xA492: four ink parts (class 0x10 = sword-immune 0x30, contact 10).
+     * A4D4 writes their hit byte as 0 -- no A44D bit 5 on the ink. */
     if (ST(S_ATTACK) & 0x80) {
         unsigned n = (unsigned)(ST(S_ATTACK) & 0x1F);
+        uint8_t ph = g->boss.part_hit;
+        g->boss.part_hit = 0;
         if (n >= 1 && n <= 24)
             for (int i = 0; i < 4; i++) {
                 uint8_t f = boss_img8(g, AA20 + (n - 1) * 4 + (unsigned)i);
                 if (!f) continue;
                 boss_part(g, (uint16_t)(INKCOL + i), ST(S_INKROW), 0x30, (uint8_t)(f - 1));
             }
+        g->boss.part_hit = ph;
     }
     boss_parts_end(g);
 }
 
-/* 0xA530  Death: 40 frames; the first 20 flicker stage/stage+8 with sound
- * 0x28, then the pose settles on stage + 8. */
+/* 0xA530  Death: [AA99] (the attack) is dropped at once; [AA9E] counts 40
+ * frames.  The first 20 (A549) advance the pose frame [AA96], flicker
+ * stage / stage + 8 on the counter's parity *after* its increment and
+ * request sound 0x28 every frame; then (A56B) stage + 8 with the frame
+ * held.  At 0x28 A577 sets FF30 and returns without drawing. */
 static void tako_death(Game *g)
 {
+    ST(S_ATTACK) = 0;                                                      /* A530 */
     uint8_t t = g->boss.death_cnt;
     if (boss_death_tick(g) >= 0x28) { boss_parts_begin(g); boss_parts_end(g); return; }
-    uint8_t p = ST(S_STAGE);
-    if (t < 0x14) { if (!(t & 1)) g->sfx_request = 0x28; if (t & 2) p = (uint8_t)(p + 8); }
-    else p = (uint8_t)(p + 8);
-    tako_draw(g, (uint8_t)(p + (t & 7)));
+    uint8_t p;
+    if (t < 0x14) {
+        ST(S_FRAME) = (uint8_t)((ST(S_FRAME) + 1) & 7);                    /* A550 */
+        p = (uint8_t)(ST(S_STAGE) + (((t + 1) & 1) ? 8 : 0));              /* A555..A55D */
+        g->sfx_request = 0x28;                                             /* A563 */
+    } else p = (uint8_t)(ST(S_STAGE) + 8);                                 /* A56D */
+    tako_draw(g, (uint8_t)(p + ST(S_FRAME)));
 }
 
 /* 0xA27D  Frame entry. */

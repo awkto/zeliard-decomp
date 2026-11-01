@@ -34,6 +34,7 @@ const uint8_t *ai_drop_list(const AiOverlay *o, int cls);
 /* ------------------------------------------------ the per-frame enemy pass */
 void enemies_load(Game *g);          /* copy the map's C010 records (map load / transition) */
 void enemies_update(Game *g);        /* 8D19 */
+void cell_anim(Game *g);             /* gfmcga 302C: [4FFF]++ and the cavern 5-8 cell animation (315C) */
 void enemy_dying(Game *g, MapObj *o);/* 90E6 */
 void enemy_remove(Game *g, MapObj *o);/* 914C */
 void enemy_spawn(Game *g, MapObj *o);/* 94FF */
@@ -74,6 +75,7 @@ void exp_add(Game *g, unsigned n);                      /* 9715 */
 void    shots_clear(Game *g);                           /* vec 30 83DB */
 void    shot_spawn(Game *g, const Shot *tmpl);          /* vec 29 8611 */
 void    shots_update(Game *g);                          /* 8422 */
+void    shots_draw_pass(Game *g);                       /* 8366: +B/+C, off-window kill */
 void    shots_shift(Game *g, int right);                /* 8639 / 864E */
 uint8_t shot_draw_cell(const Shot *s);                  /* 83AD anim mask */
 void    magic_input(Game *g);                           /* 87B0 */

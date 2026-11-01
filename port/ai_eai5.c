@@ -17,7 +17,7 @@ static void tallspit_update(Game *g, MapObj *e)
     if (!e->hp) e->hp = 0x18;
     if (e->hit & HIT_STUN) { ai_tall_take_hit_own(g, e); return; }      /* A35A -> A435 */
     e[1].hit &= (uint8_t)~0x40;                                         /* A363 */
-    if (TALL(e, 6)) return;                                             /* A367 */
+    if (!TALL(e, 6)) return;            /* A367 call A56A / jc A36D / ret: it fell a row, nothing else this frame */
     if (e->next & 1) {                                                  /* A3D2 */
         unsigned t = (unsigned)e->phase + 0x80; e->phase = (uint8_t)t;
         if (t & 0x100) {
@@ -51,36 +51,45 @@ static void tallspit_update(Game *g, MapObj *e)
     ai_tall_sync(g, e);
 }
 
-/* 0xA641  The copy starts immune and harmless and grows through frames 4..7. */
-static void slime_split(Game *g, MapObj *e)
+/* 0xA641  Split: claim a spare record (vec 31) and put the copy two cells
+ * ahead (behind when facing right), immune and harmless in frames 4..7.
+ * Returns 0 when refused (go on at A780), 1 when placed and done (A77B ret),
+ * 2 when placed with a copy index above ours: A77C sets *this* slime's skip
+ * bit and falls into A780, so only the current ride can still move it. */
+static int slime_split(Game *g, MapObj *e)
 {
-    int idx = ai_find_spare(g);
-    if (idx < 0) return;
+    int idx = ai_find_spare(g);                                         /* A641 */
+    if (idx < 0) return 0;
     MapObj *s = &g->obj[idx];
     int i = (int)(e - g->obj);
-    int p = game_ring_index(g, e->row, e->rcol);
+    int p = game_ring_index(g, e->row, e->rcol);                        /* A64F: vec 20 */
     int dst;
     if (!(e->hit & FACING_RIGHT)) {
-        if (e->rcol >= 0x20) return;
-        for (int r = -1; r <= 1; r++)
+        if (e->rcol & 0x80) return 0;                                   /* A662 jns */
+        if (e->rcol >= 0x20) return 0;                                  /* A667 */
+        for (int r = -1; r <= 1; r++)                                   /* A66E: rows -1..1, cols +2/+3 */
             for (int c = 2; c <= 3; c++)
-                if (!ai_cell_passable(g, g->ring[game_ring_add(p, r * RING_W + c)])) return;
-        dst = game_ring_add(p, 2);
-        s->col = (uint16_t)((e->col + 2) % g->map->width); s->rcol = (uint8_t)(e->rcol + 2);
+                if (!ai_cell_passable(g, g->ring[game_ring_add(p, r * RING_W + c)])) return 0;
+        dst = game_ring_add(p, 2);                                      /* A6A5 */
+        s->col = (uint16_t)((e->col + 2) % g->map->width); s->rcol = (uint8_t)(e->rcol + 2);   /* A6BE / A6CF */
     } else {
-        if (e->rcol < 4) return;
-        for (int r = -1; r <= 1; r++)
-            for (int c = -2; c >= -1; c--)
-                if (!ai_cell_passable(g, g->ring[game_ring_add(p, r * RING_W + c)])) return;
-        dst = game_ring_add(p, -2);
-        s->col = (uint16_t)((e->col + g->map->width - 2) % g->map->width); s->rcol = (uint8_t)(e->rcol - 2);
+        if (e->rcol & 0x80) return 0;                                   /* A6DE jns */
+        if (e->rcol < 4) return 0;                                      /* A6E3 */
+        for (int r = -1; r <= 1; r++)                                   /* A6EA: si = cell-2-0x25: cols -3/-2 */
+            for (int c = -3; c <= -2; c++)
+                if (!ai_cell_passable(g, g->ring[game_ring_add(p, r * RING_W + c)])) return 0;
+        dst = game_ring_add(p, -2);                                     /* A71B */
+        s->col = (uint16_t)((e->col + g->map->width - 2) % g->map->width); s->rcol = (uint8_t)(e->rcol - 2);   /* A734 / A741 */
     }
-    g->under_sprite[idx] = g->ring[dst];
+    g->under_sprite[idx] = g->ring[dst];                                /* A6B3 / A6B8 */
     g->ring[dst] = (uint8_t)(0x80 | idx);
-    s->type = (uint8_t)((e->type & 0x1F) | 0x60);
-    s->hit = (uint8_t)(e->hit & 0x80);
-    s->row = e->row; s->phase = 4; s->flags = e->flags; s->hp = 0; s->link = 0;
-    s->next = (uint8_t)(2 | (i < idx ? 1 : 0));
+    s->row = e->row;                                                    /* A749 */
+    s->type = (uint8_t)(e->type | 0x60);                                /* A74F: not masked */
+    s->hit = (uint8_t)(e->hit & 0x80);                                  /* A757 */
+    s->phase = 4; s->flags = e->flags; s->hp = 0;                       /* A75F-A769 */
+    s->next = 2; s->link = 0;                                           /* A76D / A771 */
+    if (i < idx) { e->next |= 1; return 2; }                            /* A775 / A77C: our own skip bit, on to A780 */
+    return 1;                                                           /* A77B ret */
 }
 
 /* 0xA5F1 */
@@ -91,7 +100,7 @@ static void slime_update(Game *g, MapObj *e)
         uint8_t src = (uint8_t)(e->hit & 0x1F);
         if (src == 4 || src == 5 || src == 8 || (src == 1 && g->sword == 6)) { enemy_take_damage(g, e); return; }   /* A604 */
         e->hit &= (uint8_t)~HIT_STUN;
-        if (!(e->next & 2)) slime_split(g, e);                          /* A638 */
+        if (!(e->next & 2) && slime_split(g, e) == 1) return;           /* A638 */
     }
     if (ai_ride_current(g, e)) return;                                  /* A780: vec 32 */
     int skip = e->next & 1;

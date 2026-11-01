@@ -405,7 +405,7 @@ static void hud_label(uint8_t *fb, const struct TextFont *tf, const uint8_t *r)
  *   GOLD  (town 60DB / fight 6C7B: 02 1C 42)   ALMAS (town 60E7: 48 1C 42)
  * fight.bin only redraws the ENEMY/GOLD ones — the other two survive from the
  * town, because nothing ever clears the HUD strip. */
-static void vid_gauge_bar(uint8_t *fb, int bh, int bl, int w)
+void vid_gauge_bar(uint8_t *fb, int bh, int bl, int w)
 {
     int x0 = 48 + bh + 1, y0 = 158 + bl;
     /* "the column before x is cleared first" (docs/VIDEO_DRIVERS.md [2004]):

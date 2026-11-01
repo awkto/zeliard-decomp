@@ -89,7 +89,8 @@ static void shell_wall_jump(struct enemy *e)
     e->next += 0x20;
     if (!(e->next & 0xE0)) { e->link = 0; e->next = 2; }            /* A433: arc finished */
     if (!fight_step_dir(((e->hit & FACING_RIGHT) ? jump_r : jump_l)[idx])) return;
-    if ((e->next & 0xE0) >= 0xC0) e->hit ^= FACING_RIGHT;           /* A444..A451 */
+    u8 k = e->next & 0xE0;                                          /* A444..A451: blocked mid-arc */
+    if (k && k < 0xC0) e->hit ^= FACING_RIGHT;                      /* jz ret / cmp 0xC0, jnc ret */
 }
 
 /* ======================================================================== */
@@ -119,7 +120,7 @@ static void slime_update(struct enemy *e)               /* 0xA466 */
     bool skip = e->next & 1; e->next &= ~1; if (skip) return;       /* A4EC */
     if (e->flags & 0x40) {                                          /* A56C: about to split */
         e->phase = (e->phase & 0xF0) | ((e->phase + 1) & 7);
-        if ((e->phase & 7) == 6) { slime_split(e); return; }
+        if ((e->phase & 7) == 6 && slime_split(e)) return;          /* A57D; refused -> A512 */
     } else
         e->phase = (e->phase & 0xF0) | ((e->phase + 1) & 3);        /* A4FF */
     if (!fight_step_down(e)) return;                                /* A514 */
@@ -138,22 +139,25 @@ static void slime_update(struct enemy *e)               /* 0xA466 */
  * passable (A679); marker written directly into the ring, under_sprite[]
  * updated.  Parent frame 0x16, copy 0x17 (or vice versa).  If the copy's
  * index is above ours it gets next bit0 so it skips the update fight.bin
- * will still give it this frame. */
-static void slime_split(struct enemy *e)
+ * will still give it this frame.  Returns false when refused: every refusal
+ * (A5AC/A5B3/A5BE/A603/A60A/A615) is `jmp A512`, the ordinary step-down and
+ * walk, so the slime keeps moving and retries at the next frame 6. */
+static bool slime_split(struct enemy *e)
 {
     struct enemy *s = &MAP_OBJECTS[e->link];
     u8 *p = ring_addr(e->row, e->rcol);
     if (!(e->hit & FACING_RIGHT)) {
-        if ((s8)e->rcol < 0 || e->rcol >= 0x21 || !block3x3_free(p - 0x23)) return;   /* A5A5: (row-1, rcol+1).. */
+        if ((s8)e->rcol < 0 || e->rcol >= 0x21 || !block3x3_free(p - 0x23)) return false;   /* A5A5: (row-1, rcol+1).. */
         p += 2; s->col = wrap(e->col + 2); s->rcol = e->rcol + 2; e->phase = 0x16; s->phase = 0x17;   /* A5C1..A5F6 */
     } else {
-        if ((s8)e->rcol < 0 || e->rcol < 3 || !block3x3_free(p - 0x27)) return;       /* A5FC: (row-1, rcol-3).. */
+        if ((s8)e->rcol < 0 || e->rcol < 3 || !block3x3_free(p - 0x27)) return false;   /* A5FC: (row-1, rcol-3).. */
         p -= 2; s->col = wrap(e->col - 2); s->rcol = e->rcol - 2; e->phase = 0x17; s->phase = 0x16;
     }
     u8 old = *p; *p = 0x80 | e->link; under_sprite[e->link] = old;  /* A5C3 / A657 */
     s->type = e->type & 0x1F; s->row = e->row; s->flags = 0; s->hp = 0; s->next = 0;   /* A5CE..A663 */
     e->flags &= ~0x40;
     if (obj_index < e->link) s->next |= 1;                          /* A66B */
+    return true;
 }
 /* 0xA679  three rows x three cells from SI (after ring_wrap_up) all passable -> CF=0 */
 

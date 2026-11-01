@@ -107,12 +107,17 @@ typedef struct Shop {
 /* town.bin 6E7E run_shop: load the overlay + portrait, run it, return when it
  * does.  `dest` is the door's dest byte 0..7.  Returns 0 when it ran. */
 int  shop_run(Town *t, int dest);
+/* why a shop ended the run (the original never returns to the town) */
+enum { SHOP_EXIT_NONE = 0, SHOP_EXIT_GAME = 1, SHOP_EXIT_ENDING = 2 };
+extern int shop_exit_request;
 /* town.bin 616B..61A0: the death return.  kenjpro's [A004] entry (A006): the
  * sage's portrait moved right and the "While you were unconscious" text
  * (BA67), with its 0xFF 0x04 pauses and page waits; then back to 6EAF. */
 int  shop_run_death(Town *t);
 /* what the shop has on screen (the town renderer shows this while it runs) */
 const uint8_t *shop_framebuffer(const struct Shop *s);
+/* HUD PLACE box as the shop's prologue leaves it ([2012] + its label, #78) */
+void shop_hud_place(uint8_t *fb, const TextFont *tf, const struct Shop *s);
 
 /* --- exposed for the tests -------------------------------------------- */
 int  shop_open(Shop *s, Town *t, int dest);     /* load, draw the first screen */

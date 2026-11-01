@@ -92,12 +92,14 @@ static void slime_update(struct enemy *e)               /* 0xA5F1 */
     e->hit |= FACING_RIGHT; if (!fight_step_right(e)) return;
     e->hit &= ~FACING_RIGHT; fight_step_left(e);
 }
-/* 0xA641  spare = vec 31; facing left: needs rcol < 0x20 and cells
- * (row-1..row+1, rcol+2..rcol+3) passable, copy at col+2; facing right:
- * rcol >= 4, cells (row-1..row+1, rcol-2..rcol-1), copy at col-2.  Marker
- * 0x80|idx written at (row, rcol+-2), old cell -> under_sprite[idx].
- * Copy: type | 0x60, hit = our facing, phase 4, flags = ours, hp 0, next 2
- * (| 1 when its index is above ours), link 0. */
+/* 0xA641  spare = vec 31 (none -> A780); facing left: needs rcol in 0..0x1F
+ * (A662 jns, A667) and cells (row-1..row+1, rcol+2..rcol+3) passable, copy at
+ * col+2; facing right: rcol in 4..0x7F and cells (row-1..row+1, rcol-3..rcol-2)
+ * (A6EE: cell-2-0x25), copy at col-2.  Any refusal -> A780.  Marker 0x80|idx
+ * written at (row, rcol+-2), old cell -> under_sprite[idx].  Copy: type | 0x60
+ * (unmasked), hit = our facing, phase 4, flags = ours, hp 0, next 2, link 0.
+ * Then if our index [FF4A] < idx: OUR next |= 1 (A77C) and on to A780 (ride a
+ * current, then A785 eats that skip bit); else ret (A77B). */
 static void slime_split(struct enemy *e);
 
 /* ======================================================================== */

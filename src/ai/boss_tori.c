@@ -6,15 +6,18 @@
  * Contact A010: 56 for part class 0 (the beak/head), 18 for all others.
  * Frame tables A030[0..0xE] = A04E..A1C5 (part classes 0..14).
  *
- * Image: 9 rows x 8 columns of 2x2 parts; the pose buffer A79C (72 bytes,
- * FF = empty) is composed from up to four layers (A552: layer n = bitmap
- * A6CB[n] (9 bytes, one bit per column) + byte list A64D[n]; each set bit
- * takes a byte {type<<4 | frame}).  Layers drawn each frame (A467..A4B9):
+ * Image: 9 columns x 8 rows of parts, column-major; the pose buffer A79C (72
+ * bytes, FF = empty) is composed from up to four layers (A552: layer n =
+ * bitmap A6CB[n] (9 bytes, one per column, bit 7 = row 0) + byte list
+ * A64D[n]; each set bit takes a byte {type<<4 | frame}).  Layers drawn each frame (A467..A4B9):
  *   normal: body A78B (0, or 1 = flinch), wings 6+A78A (4 frames), legs
  *           0xA+A78F (3), head 2+A790 (4);
  *   diving: 0xD + (A78D&3), with the body shifted down one row on odd frames;
  *   rising/dead: 0x11 + (A78D&1).
- * Part row = boss_row + row, col = boss_col + col (A4C1..A54B).
+ * Part col = boss_col + column (the OUTER loop, A545 `inc ax`), row =
+ * boss_row + row (inner, A4E8); type = byte >> 4, phase = the whole byte
+ * (A506/A509).  A231 ends last frame's list with 0x0FFF, not FFFF, so on
+ * the death frames that draw nothing (A647) the old records stay (#75).
  *
  * State: A773 col, A775 row, A776 HP, A78A wings, A78B body, A78C diving,
  * A78D dive frame, A78E rising, A78F legs (0..2 = 3-frame timer, A57B),
@@ -71,4 +74,4 @@ void boss_entry(void)
 /* 0xA57B  legs/flap timer: legs = (legs+1) mod 3, true when it wraps */
 /* 0xA58F step_left_0D (col-1 if >= 0xD)  0xA59D step_left_11 (col-1 if >= 0x11, CF=1 at the limit)  0xA5AB step_right (col+1 if < 0x30) */
 /* 0xA5BA  boss_damage: HP (A776) -= d, bar; at 0: cutscene, shots cleared (vec 30), flap/egg cleared; if diving: death counter 0, rising */
-/* 0xA60A  Death: 40 frames of boss_dying with the flinch body; first 20 frames legs+head animate with sound 0x2C, then the fallen pose (0x11/0x12); then boss_defeated */
+/* 0xA60A  Death: 40 frames of boss_dying with the flinch body; first 20 frames legs+head animate with sound 0x2C every frame, then [A799]=FF, [A78D]=1: the fallen pose 0x12; then boss_defeated (A647, no draw) */

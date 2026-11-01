@@ -245,7 +245,7 @@ Hero: screen column `hero_scr_col` (0..0x1B), rows 5-7; NPCs on row 5-7 too.  Di
   hero moves (columns 0x0B..0x10 are the free zone; `6781` tests `hero_scr_col >= 0x0B`
   *before* decrementing, so walking left settles the hero on **0x0A**) or the map scrolls (`scroll_col`, `FF2A ±8`,
   near/far parallax strips).  Scrolling stops at `scroll_col == 0` / `width-0x24`; beyond that the
-  hero walks to the edge and `hero_scr_col` becomes 0xFF or 0x1C.
+  hero walks to the edge and `hero_scr_col` becomes 0xFF or 0x1B (6CB5 tests `[83]+1 == 0x1C`).
 * **Edge exit** (6CB5): pick the exit record; town→town: `change_town_map` (6D30: `[C4] = 0x80|dest`,
   map raw to C000, NPC set → arena:4000, tile bank if it changed) then reappear at the far end
   (`hero_scr_col` 0x1A / 0, `scroll_col` width−0x24 / 0) via the 60B7 restart — the music is **not**

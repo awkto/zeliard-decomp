@@ -132,16 +132,20 @@ int ai_step(Game *g, MapObj *o, int dir)
 int ai_step_dir(Game *g, MapObj *o, uint8_t dir)  { return ai_step(g, o, dir & 7); }    /* vec 2  9723 */
 int ai_probe_dir(Game *g, MapObj *o, uint8_t dir) { return ai_probe(g, o, dir & 7); }   /* vec 3  973F */
 
-/* 0x98C5  vec 31: the first record with home_col == 0xFFFF that is either
- * inactive with row 0x7F or active, inside the ring and not an item. */
+/* 0x98C5  vec 31: the first C010 record with home_col == 0xFFFF (98D2) that is
+ * either parked (col high byte 0xFF, 98D8) with row != 0x7F (98F4: row 0x7F =
+ * already claimed by a splitting slime, A4E1), or a live record *outside* the
+ * ring (96A1 CF=1, 98E5) that is not an item (98E7).  None: CF=1 at the
+ * 0xFFFF terminator (98CB-98D1), -1 here. */
 int ai_find_spare(Game *g)
 {
     for (int i = 0; i < g->nobj; i++) {
         MapObj *o = &g->obj[i];
         if (o->home_col != 0xFFFF) continue;
-        if ((o->col >> 8) == 0xFF) { if (o->row == 0x7F) return i; continue; }
-        if (o->rcol == 0xFF) continue;
-        if (o->type & 0x10) continue;
+        if ((o->col >> 8) == 0xFF) { if (o->row != 0x7F) return i; continue; }
+        uint8_t rc;
+        if (!ai_map_col_to_ring(g, o->col, &rc)) continue;             /* 98E5: on the ring */
+        if (o->type & 0x10) continue;                                   /* 98E7: an item */
         return i;
     }
     return -1;

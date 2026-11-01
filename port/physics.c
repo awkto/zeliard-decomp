@@ -334,6 +334,7 @@ void game_town_entry_reset(Game *g)
 {
     g->msg_timer = 0; g->msg_box = 0; g->hero_home_row = 0; g->boss_knock_left = 0;      /* 9EED..9F01 */
     g->fixture_anim = 0; g->fall_rows = 0; g->rise_rows = 0; g->crouch_release = 0;      /* 9F07..9F0A */
+    g->gf_frame = 0;            /* gfmcga is loaded afresh over town.bin's driver: its [4FFF] image byte is 0 */
     g->diag_jump = 0; g->conveyor_kick = 0; g->max_rise = 0;                             /* 9F0B..9F0D */
     memset(g->hit_side, 0, sizeof g->hit_side); g->contact_damage = 0; g->hero_hit = 0;  /* 9F0E..9F14 */
     g->on_updraft = 0; g->conveyor_phase = 0; g->on_hazard = 0; g->regen_tick = 0;       /* 9F15..9F18 */
@@ -395,6 +396,7 @@ static int door_check(Game *g)
     frame_tail(g);                                                      /* 7B41 */
     if (g->hero_dead) return 1;                                         /* 718C jumped to 98FC */
     g->page[0xC3] = (uint8_t)(d->letter & 0x40);                        /* 7B5F..7B64 */
+    g->gf_frame = (uint8_t)(d->letter & 7);     /* 7B4D push (letter & 7) -> 7BBF/7BF5 gfmcga [301E] 4614: [4FFF] = AL */
     if (g->on_door) g->on_door(g, d);
     return 1;
 }
@@ -948,8 +950,10 @@ static void frame_7094(Game *g)
         if (g->hp > g->max_hp) { g->hp = g->max_hp; g->hp_regen_pending = 0; }   /* 70F3..70FF */
         g->sfx_request = 0x13;                                          /* 7105 */
     }
+    cell_anim(g);                                                       /* 710F [3000]: gfmcga 302C's 315C hook */
     boss_sparks(g);                                                     /* 710F [3000] / 7114 [3010] */
     orbs_update(g);                                                     /* 7133: the second orb pass */
+    shots_draw_pass(g);                                                 /* 713B: 8366 */
     sword_apply(g);                                                     /* 7144: 6F07, second half of the frame */
     sword_advance(g);                                                   /* 7147: [3006], second swing step */
     sound_request(g);
@@ -1008,8 +1012,9 @@ static void ladder_step(Game *g)
         if (is_ladder(g->ring[wrap_down(tl + 1)])) return;
         if (is_ladder(g->ring[wrap_down(tl + 1 + RING_W)])) return;
     }
-    g->hero_flags &= (uint8_t)~WALKING; g->on_ladder = 0;
-    g->ice_slide = g->ice_steps = 0; g->hero_anim = 0x7F;
+    g->hero_flags &= (uint8_t)~WALKING; g->on_ladder = 0;               /* 631D / 6322 */
+    g->btn1_edge = g->btn2_edge = 0;    /* 6327/632C: a Space pressed on the ladder does not slash on leaving it */
+    g->ice_slide = g->ice_steps = 0; g->hero_anim = 0x7F;               /* 6331 / 6336 / 633B */
 }
 
 /* 60E6: the six flashes of the ENCNT.GRP encounter card, 0x41 ticks apart.

@@ -364,11 +364,30 @@ port + `tracediff --first-only` for each, makes any missing start save from its
 `# make:` line, prints a table and exits non-zero on any divergence or failure.
 It builds nothing: run it on the droplet after building the port.
 
+**Story flags and long routes (#75).** `--flag N[=V]` (hex, repeatable) sets story-flag
+byte `[N]` (0-48, docs/STATE_PAGE.md) to V (default FF) before the save is made, e.g.
+`--flag 12=08` for the Hero's Crest that moves Bosque's sentry. A scenario may carry
+`# pilot: ROUTE`: its script is then *generated*, not hand-written:
+`port/zeliard --load START --trace DIR --pilot ROUTE --emit-script FILE` lets the
+playthrough autopilot (`playthrough.c` / `nav.c`) play ROUTE, asked for its input once per
+harness boundary (`play_pilot`), and writes exactly what it fed as a run-length `--script`
+(`--pilot-tail N` idle frames after the route, default 10). Replaying that script with
+`--trace` gives a byte-identical `frames.jsonl`. ROUTE is `;`-separated steps:
+`town-cave C`, `town-shop C [MENU]`, `town-edge 0|1`, `door C,R` (`door -1` = the exit
+door 72F1 puts down), `cell C,R`, `break C,R`, `boss`. `tools/harness/pilot_scenario.sh
+NAME` makes the start save if missing and rewrites the scenario's script line from its
+`# pilot:` line; rerun it whenever a port fix changes what the autopilot sees (it is the
+port's view: the oracle then checks it).
+
 Every scenario must be clean. `death_sage` goes on from the dying `717F` frames
 through the Sage's text (`71EC`) back to Muralla; `status_cave`, `drug_buy`,
 `bank_menu`, `npc_talk` and `npc_yesno` cover the other wait loops (#64);
 `bank_deposit`, `bank_withdraw` (amount entry: repeat, clamp, cancel), `omoya_wait` and
 `sage_record` (typed name, Backspace, cursor step, the A862 write) the last three (#65).
+Caverns 4-6 (#49): `ice_crawler`, `ice_icicles` (EAI4), `water_slimes`, `water_current`
+(EAI5), `fire_fish`, `fire_beast` (EAI6); table at the end of §8.  Not reached yet: the
+cavern-5 tall spitter, the cavern-6 tall ghost in a fight (it is on screen in `fire_fish`),
+a hero standing in a current.
 
 ## 8. Triage runbook (for agents) (#51)
 
@@ -465,3 +484,11 @@ put its script in a scenario file (`tests/scenarios/NAME.zs`, §7) and run it as
 | `cave_door` | same | MP10 (141,32) → MP1D: door frame, `[C4]`, walk-in |
 | `crab_fight` | Satono 4, LV 8, sword 3, one Key | MP1D: Cangrejo to the kill (#71: part records' +7..+F are the previous map's bytes past MP1D's end at C238, the scroll re-mark `6771`/`68FF`, `A5C0` turn on landing, `A510` part 0x14 phase, gfmcga `3729`/`379B` death sparks in `EDA0` with their RNG draws), the `71DA` reward (EXP +120, ALMAS +150, no gold: #68), `72F1`'s exit door and its `jmp 6042` restart (`628A` drops the press edges), out to MP10 |
 | `elevator` | `TOUGH` | MP10's (48,24) A elevator up and down (`8024`/`80AF` 0-erase) and `8009`'s hit on a frog under it |
+| `pulpo_fight` | Bosque 138, LV 16, sword 4, one Key (`# pilot:`) | the column-142 mouth → MP30 → (21,6) → MP20 (205,47) → the locked (171,54) → MP2D: Pulpo to the kill (#75: TAKO's 7-column pose layout `A401`, ink hit byte 0 `A4D4`, death `A530`; EAI2 plant fall test `A3A0`, frog coin `A7FD`/`A823`; door restart `7D61`→`6049` 9F20..22 and `628A` edges), the reward, out through 72F1's door |
+| `pollo_fight` | Bosque 12, LV 16, one Key, `--flag 12=08` (`# pilot:`) | past the sentry (dialogue), column-7 door → MP31 → the boss door (188,20) → MP3D: Pollo to the kill (#75: TORI's 9-column layout `A4C1`, phase = whole byte, hover on the hero's column `A3FD`, step limits `A58F`/`A59D`, death `A60A`, `A231` 0FFF list end; the egg's `+B/+C` from fight.bin's shot pass `8366`; EAI3 spider `A300`/`A420`/`A441`; town→cave `701C` FF1D clear), the reward, out through 72F1's door |
+| `ice_crawler` | Helada 4, LV 2, sword 1, LIFE 800 (`ICE`) | MP40 (cavern 4): shell crawler, ice slide, a rope (Space pressed on it is dropped on leaving, `6327`), spinning blade (`A756/A7CE` frame column), dividing slime: spare claim (vec 31 `98C5`), split refused → walks on (`A512`), split, copies, almas |
+| `ice_icicles` | Helada 222 (`ICER`) | Helada's right exit at `[83] == 0x1B` (`6CB5`), MP41: both icicle classes fall (RNG), the crawler's curl/dash and wall-jump turn (`A444`) |
+| `water_slimes` | Tumba 4, LV 4, sword 2 (`TUMBA`) | MP50 (cavern 5): the floor block that gives way under the hero (item 0x11, `8E8D`), dividing slimes split again and again (`A641..A77C`) |
+| `water_current` | Tumba 265, LV 6, sword 4 (`TUMBAR`) | MP50: the water surface animation (gfmcga `315C`, FIGHT.md §2), ropes, deep water (hazard), diving floaters, turning charger; LIFE runs out: death, the Sage, Muralla |
+| `fire_fish` | Dorado 4, LV 8, sword 4 (`DORADO`) | MP61 (cavern 6): the glinting cells drawing KRN_RANDOM in the draw (`319E`), a falling rock, a charging beast killed, almas |
+| `fire_beast` | Dorado 210 (`DORADOR`) | MP60: down the rope onto a charging beast, then west under flying fish (one killed) and falling rocks (one crumbles) |

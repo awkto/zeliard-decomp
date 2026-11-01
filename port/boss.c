@@ -338,6 +338,7 @@ int post_boss_transition(Game *g)
     for (int i = 0; i < 4; i++) g->magic[i].live = 0;               /* 6061: EB15 = FFFF */
     g->boss_knock_left = 0;                                         /* 6073: 9F01 */
     game_ring_refill(g);                                            /* 623D -> 6C98 */
+    g->gf_frame = 0;            /* 7395 gfmcga [3012] 4192 (the fade-in redraw) counts [4FFF] 8 -> 0 */
     g->btn1_edge = g->btn2_edge = 0;                                /* 628A: FF1D / FF1E */
     g->loop_restart = 1;
     fprintf(stderr, "[boss] defeated: %d pokes applied, exit door at column %u, "

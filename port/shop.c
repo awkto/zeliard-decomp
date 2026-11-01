@@ -106,6 +106,17 @@ static void shop_wait(Shop *s, int ticks)
     for (int n = 0; n < ticks && !s->leave; n++) shop_tick(s);
 }
 
+/* The original leaves for DOS (kenjpro A936 `jmp far [FF00]`) or hands over to
+ * enddemo.bin (omoypro A0A9 `jmp [6000]`) and never comes back; the port ends
+ * the town loop and records why in `shop_exit_request` for main(). */
+int shop_exit_request;
+static void shop_request_exit(Shop *s, int why)
+{
+    shop_exit_request = why;
+    if (s->t) s->t->quit = 1;
+    s->leave = 1;
+}
+
 /* a poll site of a wait loop: the boundary rule, and out if the run ended */
 static int shop_poll(Shop *s, const char *site)
 {
@@ -657,15 +668,27 @@ static void shop_hook_tick(Shop *s)
 }
 
 /* ---------------------------------------------------------- the prologue */
+/* The shop's own place label (issue #78): every shop prologue does
+ * `call [2012]` (the PLACE trough, which wipes the town's name and the
+ * "PLACE" text) then `si = label; call [2010]` (bank A036..A043: label A8EE;
+ * the others likewise, table SHOPS[].label; the sage's is the per-town
+ * pointer table ACBD).  main.c redraws the HUD strip every frame, so it calls
+ * this after render_hud to keep the shop's label instead of the town's. */
+void shop_hud_place(uint8_t *fb, const TextFont *tf, const Shop *s)
+{
+    unsigned label = SHOPS[s->dest].label;
+    if (s->dest == SHOP_SAGE) label = img16(s, 0xACBD + 2u * (unsigned)(s->town_id - 1));
+    vid_gauge_bar(fb, 0x02, 0x10, 0x88);        /* [2012] */
+    if (label) vid_label_text(fb, tf, imgp(s, label));
+}
+
 static void shop_prologue(Shop *s)
 {
     /* [2002] vid_clear_playfield clears the *playfield* only — rows 14..157,
      * x 48..271 — and everything around it is mole.bin's boot-time frame. */
     for (int y = 14; y < 158; y++) memset(s->fb + y * TEXT_W + 48, 0, 224);
     render_screen_frame(s->fb, s->g ? s->g->screen : NULL, 0, TEXT_H);
-    unsigned label = SHOPS[s->dest].label;
-    if (s->dest == SHOP_SAGE) label = img16(s, 0xACBD + 2u * (unsigned)(s->town_id - 1));
-    if (label) vid_label_text(s->fb, s->font, imgp(s, label));
+    shop_hud_place(s->fb, s->font, s);          /* [A03B] call [2012]; [A040..A043] label */
     draw_portrait(s);
     s->tx = s->tline = s->lines = 0;
     if (s->dest != SHOP_OMOYA) box_clear(s);    /* omoypro (A028..A03A) draws no text box */
@@ -1411,6 +1434,31 @@ static int kenj_pick_name(Shop *s)
     return 1;
 }
 
+/* kenjpro A8B2..A8FF: the disk-error box.  The rect (64,73) 200x38 is saved
+ * ([2026] to staging 0), a framed window goes over it, the text B5AC is put at
+ * (0x4C,0x50), then FF1D is cleared and a bare busy-wait spins until it is set
+ * (a Space edge; no idle_poll, no poll site) before [2028] puts the rect back
+ * and the text box is cleared again. */
+static void sage_disk_error(Shop *s)
+{
+    enum { RX = 64, RY = 0x49, RW = 200, RH = 0x26 };
+    static uint8_t keep[RW * RH];
+    for (int r = 0; r < RH; r++) memcpy(keep + r * RW, s->fb + (RY + r) * TEXT_W + RX, RW);
+    vid_window(s->fb, 0xFF, 0x10, 0x49, 0x32, 0x26);            /* A8BF */
+    const uint8_t *msg = imgp(s, 0xB5AC);
+    if (msg) vid_puts(s->fb, s->font, msg, 0x4C, 0x50);         /* A8CC..A8D4 */
+    if (s->t) s->t->btn1_edge = 0;                              /* A8D9 */
+    wait_arm();
+    for (long guard = 0; guard < 4000L * SHOP_TICKS_PER_FRAME && !s->leave; guard++) {
+        if (shop_poll(s, "kenj:A8DE")) break;
+        if (!s->t || s->t->btn1_edge) break;                    /* A8DE test [FF1D] */
+        shop_tick(s);
+    }
+    if (s->t) s->t->btn1_edge = 0;                              /* A8E5 */
+    for (int r = 0; r < RH; r++) memcpy(s->fb + (RY + r) * TEXT_W + RX, keep + r * RW, RW);   /* A8F2 */
+    vid_window(s->fb, 0xFF, 0x0D, 0x60, 0x36, 0x37);            /* A8FF: the text box again */
+}
+
 static void sage_action(Shop *s, uint8_t op)
 {
     Game *g = s->g;
@@ -1444,11 +1492,14 @@ static void sage_action(Shop *s, uint8_t op)
         } }
     case 3:                                                     /* A862: write NAME.USR */
         if (s->t) town_page_push(s->t);          /* [80]/[83]/[C2]: the page is the file */
-        /* 256 bytes from BASE:0000.  A failed create/write shows the disk-error
-         * box (A8B2..A8FF, a Space wait with no poll site) and goes back to
-         * A178; the port reports it and carries on with the script. */
-        if (player_save_usr(g, s->dir, g->player_name) == 0) s->saved = 1;
-        else fprintf(stderr, "[sage] cannot write %s.usr\n", g->player_name);
+        /* 256 bytes from BASE:0000.  A failed create (A897) or write (A8AF)
+         * falls to A8B2: the disk-error box, a Space wait, and `jmp A178` --
+         * the name dialog again, then the script goes on from AF7C/ADBF. */
+        if (player_save_usr(g, s->dir, g->player_name) == 0) { s->saved = 1; return; }
+        fprintf(stderr, "[sage] cannot write %s.usr\n", g->player_name);
+        sage_disk_error(s);
+        vid_window(s->fb, 0, 0x27, 0x17, 0x1D, 0x41);           /* A178 call A983 */
+        say(s, kenj_pick_name(s) ? 0xAF7C : 0xADBF);            /* A17B..A18D */
         return;
     case 1: {                                                   /* A18E See Power */
         s->bought = 1;
@@ -1477,9 +1528,11 @@ static void sage_action(Shop *s, uint8_t op)
         return; }
     case 2:                                                     /* A914 "continue your quest?" */
         menu_box(s, 0x2F, 0x2B, 0x0C, 0x19, 0x30, 0x2E);        /* A913: bx = 2F2B */
-        /* No = `jmp far [FF00]` (A934), back to DOS; the port stays in the game */
-        yes_no(s);
-        vid_window(s->fb, 0, 0x27, 0x17, 0x1D, 0x41);           /* A92D call A983 */
+        {   /* A927 call [6008]: CF set = No / Alt -> A934 `jmp far [FF00]`, back to DOS */
+            int yes = yes_no(s);
+            vid_window(s->fb, 0, 0x27, 0x17, 0x1D, 0x41);       /* A92D call A983 */
+            if (!yes) shop_request_exit(s, SHOP_EXIT_GAME);
+        }
         return;
     case 4: shop_wait(s, 140); return;
     case 5: sage_level_up(s); return;                           /* A2B4 */
@@ -1631,11 +1684,13 @@ static void bank_entry(Shop *s)
  * FF1D (the arm point), A049 idle_poll, A04E the poll site, and only the
  * Space edge ends it (Alt does nothing) -- then [2040], the dissolve back to
  * town.bin.  [49] != 0 is the ending instead (A05A..A0A9: enddemo.bin over
- * town.bin, never to return), which the port does not start from here. */
+ * town.bin, never to return): the port asks main() to run cutscene_ending
+ * and stop (shop_exit_request), the way `--ending` does. */
 static void omoy_wait(Shop *s)
 {
     if (s->g->jashiin_defeated) {
-        fprintf(stderr, "[omoya] [49] is set: the original starts the ending here (not wired)\n");
+        fprintf(stderr, "[omoya] [49] is set: starting the ending (omoypro A05A..A0A9)\n");
+        shop_request_exit(s, SHOP_EXIT_ENDING);
         return;
     }
     if (s->t) s->t->btn1_edge = 0;                              /* A044 */

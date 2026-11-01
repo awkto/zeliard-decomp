@@ -35,7 +35,7 @@ static void ghost_update(Game *g, MapObj *e)
         e->hit &= 0x9F;                                                 /* A42E: magic is ignored */
     }
     e[1].hit &= (uint8_t)~0x40;                                         /* A432 */
-    if (TALL(e, 6)) return;                                             /* A436 */
+    if (!TALL(e, 6)) return;            /* A436 call A660 / jc A43C / ret: it fell a row, nothing else this frame */
     if (e->next & 1) {                                                  /* A48D */
         e->phase = (uint8_t)((e->phase + 1) & 0xF);
         if (!e->phase) { e->next &= (uint8_t)~1; e->phase = 1; e->type |= 0x60; }   /* A496 */

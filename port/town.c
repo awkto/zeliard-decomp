@@ -794,7 +794,7 @@ static void walk_right(Town *t)
     t->hero_anim = (uint8_t)((t->hero_anim + 1) & 3);
     t->hero_flags &= (uint8_t)~1;
     if (t->hero_scr_col < 0x10) { t->hero_scr_col++; return; }          /* 6832 */
-    if (t->scroll_col + 1 == t->map->width - 0x23) { t->hero_scr_col++; return; }   /* 683E: can reach 0x1C */
+    if (t->scroll_col + 1 == t->map->width - 0x23) { t->hero_scr_col++; return; }   /* 683E: up to 0x1B, where 6CB5 takes the right exit */
     t->scroll_col++; t->back_steps++;                                   /* GT_SCROLL_*_RIGHT */
 }
 
@@ -865,7 +865,7 @@ static void check_edge_exit(Town *t)
 {
     int left;
     if (t->hero_scr_col < 0) left = 1;
-    else if (t->hero_scr_col == 0x1C) left = 0;
+    else if (t->hero_scr_col + 1 == 0x1C) left = 0;                    /* 6CB5 inc al / 6CF5 cmp al,0x1c: [83] == 0x1B */
     else return;
     npc_restore_tiles(t);                                               /* 6CBC/6CFA: 6C4E */
     town_draw_frame(t);                                                 /* 6CBF/6CFD: FF1A=28, 68AF */
@@ -874,7 +874,7 @@ static void check_edge_exit(Town *t)
         int is_left = t->map->exits[i].flags & 1;
         if (is_left == left) { e = &t->map->exits[i]; break; }
     }
-    if (!e) { t->hero_scr_col = left ? 0 : 0x1B; npc_place_markers(t); return; }
+    if (!e) { t->hero_scr_col = left ? 0 : 0x1A; npc_place_markers(t); return; }   /* port guard: no record (the original scans on past the list) */
     if (e->flags & 0xFE) { t->action = TOWN_TO_CAVERN; t->action_arg = e->dest; return; }   /* 6CD9 */
     t->action = TOWN_TO_TOWN; t->action_arg = e->dest | (left ? 0x100 : 0);                 /* 6CE1 */
 }

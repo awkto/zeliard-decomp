@@ -15,7 +15,11 @@ static void spider_crawl(Game *g, MapObj *e)
 {
     e->phase = (uint8_t)((e->phase + 1) & 7);                           /* A2F9 */
     int drop = 0;
-    if (PROBE(e, 2)) drop = 1;                                          /* A300: nothing above */
+    /* A300 `call [601C]` (vec 14, probe up) `jnc A34D`: drop when the probe
+     * is CLEAR.  ai_probe returns 1 = blocked (carry), so it is `!PROBE` --
+     * the port had it the other way and every spider fell at its first
+     * frame on the ring with [5] unturned (#75, pulpo_fight f69 obj[4].hit) */
+    if (!PROBE(e, 2)) drop = 1;
     else if (e->phase & 1) {
         if (e->rcol >= 0x12 && e->rcol < 0x15) drop = 1;                /* A30E */
         else if ((e->hit & FACING_RIGHT) ? STEP(e, 0) : STEP(e, 4)) {   /* A31F */
@@ -30,12 +34,16 @@ static void spider_crawl(Game *g, MapObj *e)
 static void spider_climb(Game *g, MapObj *e)
 {
     e->phase = 8;
+    /* ai_step / ai_probe return 1 = refused / blocked (carry).  A418/A439:
+     * the diagonal step moved -> done; refused -> A420 probe up (vec 14) /
+     * A441 a real step up (vec 6): `jc A42C` re-attaches when THAT is
+     * blocked, else A427/A448 turn.  (#75: both tests were inverted.) */
     if (!(e->hit & FACING_RIGHT)) {
         if (!STEP(e, 3)) return;                                        /* A418 */
-        if (!PROBE(e, 2)) { e->next = 0; e->phase = 0; e->link = 1; return; }   /* A420 */
+        if (PROBE(e, 2)) { e->next = 0; e->phase = 0; e->link = 1; return; }    /* A420 jc A42C */
     } else {
         if (!STEP(e, 1)) return;                                        /* A439 */
-        if (!STEP(e, 2)) { e->next = 0; e->phase = 0; e->link = 1; return; }    /* A441 */
+        if (STEP(e, 2)) { e->next = 0; e->phase = 0; e->link = 1; return; }     /* A441 jc A42C */
     }
     e->hit ^= FACING_RIGHT;
 }

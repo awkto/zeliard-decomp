@@ -173,7 +173,7 @@ static void item_break_step(Game *g, MapObj *o)
  * 08 90 1c 90 9d 90 ab 8f 3c 90 7f 90 90 90`), so:
  *
  *   10 8E32  break when the sword marks it      18 9008  +80 LIFE
- *   11 8E8D  break when the hero walks into it  19 901C  full heal
+ *   11 8E8D  floor block that drops under him   19 901C  full heal
  *   12 8EE9  three-frame flash                  1A 909D  the cavern's key item
  *   13 8EF6  treasure box                       1B 8FAB  100 almas
  *   14 8FAB  1 alma                             1C 903C  a chest with a message
@@ -206,20 +206,26 @@ void item_update(Game *g, MapObj *o)
         item_break_step(g, o);
         return;
     }
-    if (st == 0x11) {                                                   /* 8E8D */
+    if (st == 0x11) {                                                   /* 8E8D: a floor block that gives way */
         if (!(o->link & 1)) {
             if ((uint8_t)((o->row - 3) & 0x3F) != g->hero_map_row) return;   /* 8E93 */
-            /* 8EA3: the hero's ring column [83]+4 against the object's own,
-             * over three columns.  The original adds `([C2] & 1) * 2` to it --
-             * a BASE-segment byte this port does not model -- so the window is
-             * the same width but not offset by his half-step. */
-            int hc = g->hero_scr_col + 4, oc = (int)o->rcol;
-            if (hc < oc - 1 || hc > oc + 1) return;
+            /* 8EA3-8EBD: AL = [83] + 3 + ([C2] & 1) * 2 -- two columns in
+             * front of a hero facing left -- tested against the object's
+             * ring column at AL and AL+1 */
+            uint8_t al = (uint8_t)(g->hero_scr_col + 3 + ((g->hero_flags & 1) ? 2 : 0));
+            if (o->rcol != al && o->rcol != (uint8_t)(al + 1)) return;
             g->sfx_request = 0x12;                                      /* 8EC0 */
-            o->type = (uint8_t)(o->type & 0x7F);                        /* 8ECA */
-            o->link |= 1;
+            o->link |= 1;                                               /* 8EC5: nothing else this frame */
+            return;
         }
-        item_break_step(g, o);
+        o->type = (uint8_t)(o->type & 0x7F);                            /* 8ECA: no longer solid */
+        ai_step(g, o, 6);                                               /* 8ECE: 9255, it falls a row */
+        unsigned t = (unsigned)o->phase + 0x80;                         /* 8ED1 */
+        o->phase = (uint8_t)t;
+        if (!(t & 0x100)) return;
+        if (++o->phase < 4) return;                                     /* 8ED8 */
+        o->phase = 0;
+        enemy_remove(g, o);                                             /* 8EE2 -> 914C */
         return;
     }
     /* Each state runs its own animation, and most run none: the frame drawn is
@@ -456,4 +462,90 @@ void enemies_update(Game *g)
         }
     }
     g->obj_index = (uint8_t)g->nobj;    /* 8DA5 counts every record, so the loop leaves FF4A = the count */
+}
+
+/* gfmcga 302C (fight.bin 710F `call [cs:3000]`), the part of the cavern draw
+ * that writes BASE state: the per-cavern cell animation.  First 3038
+ * `inc byte [4FFF]`.  Then the 18 visible rows ([FF31] = ring row [82], 4FF1
+ * = 0x12) x ring columns 4..0x1F are compared with the screen shadow at E900
+ * (cmpsb 30CB.., 30FF); every cell that differs and is not a sprite marker
+ * goes through 3124, which ends in the hook at 315C: `[C012]` (the cavern)
+ * 5..8 picks 317E / 319E / 31D4 / 3252.  A hooked cell writes FE into its
+ * shadow, so it differs again next frame: once seen, an animated cell is
+ * hooked every frame it is on screen.  The shadow starts at FD (73B3) and
+ * holds only FD/FE/FF/FC or drawn non-animated cells, never an animated
+ * value, so the port needs no shadow: every visible non-marker cell is
+ * offered to the hook, in the original's row-major order (cavern 6 draws
+ * from the RNG here -- the order of the calls is the order of the cells).
+ *   5 (317E) 1B/1C: on odd [4FFF] swap 1B <-> 1C (water)
+ *   6 (319E) 1D..20: 1D only advances when KRN_RANDOM & 3 == 0, the others
+ *            always: 1D->1E->1F->20->1D, every frame;  21/22 swap every frame
+ *   7 (31D4) 2C/2D: odd [4FFF] swap;  else cells < 3E: 0E->33, 0D->36,
+ *            0F->39, 0C->3C, 10->3D, and 33..3D -> +1 except 35->0E,
+ *            38->0D, 3B->0F, 3C->0C, 3D->10; only on odd [4FFF]
+ *   8 (3252) 25..28: odd [4FFF] advance 25->26->27->28->25 */
+static void cell_anim_one(Game *g, uint8_t *p)
+{
+    uint8_t v = *p, odd = g->gf_frame & 1;
+    switch (g->map->cavern) {
+    case 5:                                                             /* 317E */
+        if ((uint8_t)(v - 0x1B) >= 2) return;
+        if (odd) *p = (uint8_t)(0x1B + ((v - 0x1B + 1) & 1));            /* 3194 */
+        return;
+    case 6: {                                                           /* 319E */
+        uint8_t a = (uint8_t)(v - 0x1D);
+        if (a >= 6) return;
+        if (a < 4) {
+            if (a == 0 && (krn_random(g) & 3)) return;                  /* 31B0..31BF */
+            *p = (uint8_t)(0x1D + ((a + 1) & 3));                       /* 31C0 */
+        } else *p = (uint8_t)(0x21 + ((a + 1) & 1));                    /* 31CA */
+        return;
+    }
+    case 7: {                                                           /* 31D4 */
+        if ((uint8_t)(v - 0x2C) < 2) {
+            if (odd) *p = (uint8_t)(0x2C + ((v - 0x2C + 1) & 1));        /* 31E9 */
+            return;
+        }
+        if (v >= 0x3E) return;                                          /* 31F6 */
+        uint8_t to;
+        switch (v) {                                                    /* 31FB..3217 */
+        case 0x0E: to = 0x33; break;
+        case 0x0D: to = 0x36; break;
+        case 0x0F: to = 0x39; break;
+        case 0x0C: to = 0x3C; break;
+        case 0x10: to = 0x3D; break;
+        default: {
+            if (v < 0x33) return;                                       /* 3219 sub al,33 / jnc */
+            uint8_t a = (uint8_t)(v - 0x33);
+            if (a == 2) to = 0x0E;                                      /* 321E.. */
+            else if (a == 5) to = 0x0D;
+            else if (a == 8) to = 0x0F;
+            else if (a == 9) to = 0x0C;
+            else if (a == 0xA) to = 0x10;
+            else to = (uint8_t)(a + 1 + 0x33);                          /* 323C */
+        }
+        }
+        if (odd) *p = to;                                               /* 3246..324E */
+        return;
+    }
+    case 8:                                                             /* 3252 */
+        if ((uint8_t)(v - 0x25) >= 4) return;
+        if (odd) *p = (uint8_t)(0x25 + ((v - 0x25 + 1) & 3));            /* 3268 */
+        return;
+    }
+}
+
+void cell_anim(Game *g)
+{
+    g->gf_frame++;                                                      /* 3038 */
+    int cav = g->map->cavern;
+    if (cav < 5 || cav > 8) return;                                     /* 315C..3168 */
+    for (int r = 0; r < 0x12; r++) {
+        uint8_t row = (uint8_t)((g->scroll_row + r) & 0x3F);
+        for (int c = 4; c < 0x20; c++) {
+            uint8_t *p = &g->ring[game_ring_index(g, row, (uint8_t)c)];
+            if (*p & 0x80) continue;                                    /* 3127 / 30FF: a sprite marker -> 3468 / 34E3 */
+            cell_anim_one(g, p);
+        }
+    }
 }

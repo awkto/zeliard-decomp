@@ -23,6 +23,7 @@
 #include "cutscene.h"
 #include "tear.h"
 #include "trace.h"
+#include "playthrough.h"
 #include <errno.h>
 #ifdef _WIN32
 #include <direct.h>
@@ -75,6 +76,15 @@ typedef struct {
     unsigned rng_mark;                  /* g->rng_calls at the previous boundary */
     int      trace_done;                /* script exhausted: the run is stopping */
     unsigned trace_idle;                /* presents since the last boundary (shops, status) */
+    /* --pilot ROUTE: the autopilot (playthrough.c) answers the input at each
+     * boundary instead of --script; --emit-script FILE writes what it fed,
+     * run-length coded, as a --script that replays it exactly */
+    Play    *pilot;
+    int      pilot_state;               /* 0 flying, 1 route done (tail), -1 failed */
+    unsigned pilot_tail;                /* --pilot-tail N: idle frames after the route */
+    FILE    *emit_f;
+    char     emit_tok[16];
+    unsigned emit_n, emit_count;
 #ifdef HAVE_SDL
     SDL_Window *win; SDL_Renderer *ren; SDL_Texture *tex;
     SDL_GameController *pad;            /* controller 0, opened on the fly */
@@ -302,6 +312,14 @@ static void usage(void)
         "              harness RNG, and --script advanced one token-frame per boundary.\n"
         "              --frames N stops after N traced frames\n"
         "  --png-every K          with --trace: DIR/frame_NNNNN.png every K traced frames\n"
+        "  --flag N[=V] set story-flag byte [N] (hex 0..48, docs/STATE_PAGE.md) to V (hex,\n"
+        "              default FF) before the save is made / the game starts; repeatable\n"
+        "  --pilot ROUTE          with --trace: the autopilot plays ROUTE instead of a\n"
+        "              --script, deciding the input at every boundary.  ROUTE is ';'-separated:\n"
+        "              town-cave C | town-shop C [MENU] | town-edge 0|1 | door C,R | door -1\n"
+        "              (the exit door 72F1 puts down) | cell C,R | break C,R | boss\n"
+        "  --pilot-tail N         idle frames after the route is done (default 10)\n"
+        "  --emit-script FILE     with --pilot: write the input it fed as a --script\n"
         "  --trace-fields         list every field name --trace can emit and exit\n");
 }
 
@@ -364,6 +382,7 @@ static void fb_town(App *a, Town *t)
     else if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
     else town_render(a->fb, t);
     render_hud(a->fb, t->g, &a->sh.font, &a->sh.tfont, town_place_record(t->map));
+    if (t->shop && !t->status) shop_hud_place(a->fb, &a->sh.tfont, t->shop);   /* #78 */
     itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, t->g);
     tear_draw_slots(a->fb, t->g, &a->sh.tear_art);
 }
@@ -408,6 +427,44 @@ static void trace_set_input(App *a, uint8_t dirs, uint8_t btns, uint8_t menu)
     t->dirs = dirs; t->buttons = btns; t->menu_key = menu;
 }
 
+/* --emit-script: one token-frame more, run-length coded ("R13 .3 X1") */
+static void emit_flush(App *a)
+{
+    if (a->emit_f && a->emit_count) {
+        fprintf(a->emit_f, "%s%s%u", a->emit_n++ ? " " : "", a->emit_tok, a->emit_count);
+        a->emit_count = 0;
+    }
+}
+static void emit_token(App *a, uint8_t dirs, uint8_t btns)
+{
+    char tok[12];
+    trace_input_token(tok, dirs, btns, 0);
+    if (a->emit_count && strcmp(tok, a->emit_tok)) emit_flush(a);
+    snprintf(a->emit_tok, sizeof a->emit_tok, "%s", tok);
+    a->emit_count++;
+}
+
+/* --pilot: the next token-frame from the autopilot (then --pilot-tail idle
+ * frames), into the same fields script_next fills */
+static int pilot_next(App *a)
+{
+    a->script_char = 0; a->script_char_new = 0;
+    a->script_dirs = 0; a->script_btns = 0;
+    if (a->pilot_state == 0) {
+        uint8_t d, b;
+        int rc = play_pilot(a->pilot, &d, &b);
+        if (rc < 0) { a->pilot_state = -1; fprintf(stderr, "[pilot] FAILED: %s\n", a->pilot->msg); return 0; }
+        if (rc > 0) { a->pilot_state = 1; fprintf(stderr, "[pilot] route done after %u frames\n", a->trace_n); }
+        else { a->script_dirs = d; a->script_btns = b; }
+    }
+    if (a->pilot_state == 1) {
+        if (a->pilot_tail == 0) return 0;
+        a->pilot_tail--;
+    }
+    emit_token(a, a->script_dirs, a->script_btns);
+    return 1;
+}
+
 /* `site`: "717F" / "68ED" for the frame boundaries, else a wait loop's poll
  * site (docs/HARNESS.md §1); `t` NULL = fight.bin's field set */
 static void trace_boundary_at(App *a, Game *g, Town *t, const char *site)
@@ -438,7 +495,7 @@ static void trace_boundary_at(App *a, Game *g, Town *t, const char *site)
     }
     a->trace_n++;
     a->trace_idle = 0;
-    int more = script_next(a);
+    int more = a->pilot ? pilot_next(a) : script_next(a);
     if (!more && a->max_frames) { a->script_dirs = a->script_btns = 0; more = 1; }   /* --frames: idle on */
     if ((a->max_frames && a->trace_n >= a->max_frames) || !more) {
         a->trace_done = 1; a->quit = 1;
@@ -705,6 +762,9 @@ int main(int argc, char **argv)
     long dbg_gold = -1, dbg_keys = -1, dbg_bank = -1;
     const char *dbg_potions = NULL, *dbg_spells = NULL;
     const char *save_name = "ZELIARD", *load_name = NULL, *save_now = NULL;
+    const char *pilot_route = NULL, *emit_path = NULL;
+    int nflags = 0; uint8_t flag_at[0x49], flag_val[0x49];
+    a.pilot_tail = 10;
     /* the intro runs on a plain interactive launch, the way GAME.BIN runs
      * opdemo when it was given no command-line argument; anything that names a
      * start state or a scripted/headless run suppresses it. */
@@ -769,6 +829,20 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--trace") && i + 1 < argc) { a.trace_dir = argv[++i]; a.headless = 1; explicit_start = 1; }
         else if (!strcmp(argv[i], "--png-every") && i + 1 < argc) a.png_every = (unsigned)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--trace-fields")) { trace_list_fields(stdout); return 0; }
+        else if (!strcmp(argv[i], "--flag") && i + 1 < argc) {
+            /* the story-flag array BASE:0000-0048 (docs/STATE_PAGE.md), e.g.
+             * `--flag 12=08`: bsmp's sentry steps aside for the Hero's Crest */
+            char *e; const char *v = argv[++i];
+            long n = strtol(v, &e, 16), val = 0xFF;
+            if (*e == '=') { const char *w = e + 1; val = strtol(w, &e, 16); if (e == w) n = -1; }
+            if (*e || e == v || n < 0 || n > 0x48 || val < 0 || val > 0xFF || nflags >= 0x49) {
+                fprintf(stderr, "--flag %s: want N[=V], hex, N 0..48, V 0..FF\n", v); return 2;
+            }
+            flag_at[nflags] = (uint8_t)n; flag_val[nflags++] = (uint8_t)val;
+        }
+        else if (!strcmp(argv[i], "--pilot") && i + 1 < argc) { pilot_route = argv[++i]; explicit_start = 1; }
+        else if (!strcmp(argv[i], "--pilot-tail") && i + 1 < argc) a.pilot_tail = (unsigned)atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--emit-script") && i + 1 < argc) emit_path = argv[++i];
         else { usage(); return 2; }
     }
     if (a.intro < 0) a.intro = !explicit_start;
@@ -902,6 +976,7 @@ int main(int argc, char **argv)
             if (*c) c++;
         }
     }
+    for (int f = 0; f < nflags; f++) g->page[flag_at[f]] = flag_val[f];  /* --flag */
     player_page_push(g);
     shell_load_enemy_banks(sh, &sh->maps[0]);
     int explicit_pos = pos_col >= 0;
@@ -1020,7 +1095,35 @@ int main(int argc, char **argv)
         shell_free(sh);
         return 0;
     }
-    while (!a.quit) shell_frame(sh);
+    static Play pilot;                  /* --pilot: big (the nav graph), not on the stack */
+    static PStep pilot_steps[64];
+    if (pilot_route) {
+        char err[128];
+        if (!a.trace_f) { fprintf(stderr, "--pilot needs --trace DIR (it drives the harness boundaries)\n"); return 2; }
+        if (a.script) { fprintf(stderr, "--pilot and --script are exclusive\n"); return 2; }
+        if (play_parse_route(pilot_route, pilot_steps, 64, err, sizeof err) < 0) { fprintf(stderr, "--pilot: %s\n", err); return 2; }
+        pilot.verbose = a.verbose;
+        if (play_attach(&pilot, sh, pilot_steps, 0) < 0) { fprintf(stderr, "[pilot] FAILED: %s\n", pilot.msg); return 1; }
+        a.pilot = &pilot;
+        if (emit_path && !(a.emit_f = fopen(emit_path, "w"))) { fprintf(stderr, "cannot write %s\n", emit_path); return 1; }
+    }
+    while (!a.quit) {
+        shell_frame(sh);
+        if (shop_exit_request) a.quit = 1;      /* sage "No" (kenjpro A934) / the ending (omoypro A0A9) */
+    }
+    if (shop_exit_request == SHOP_EXIT_ENDING && !a.trace_f) {      /* enddemo.bin, never to return */
+        a.quit = 0; a.ending = 1;
+        run_cutscenes(&a, sh->dir);
+    }
+    int rc = 0;
+    if (a.pilot) {                      /* --pilot / --emit-script */
+        emit_flush(&a);
+        if (a.emit_f) { fputc('\n', a.emit_f); fclose(a.emit_f); }
+        if (a.pilot_state != 1) {
+            if (a.pilot_state == 0) fprintf(stderr, "[pilot] stopped before the route was done (step %d)\n", pilot.step);
+            rc = 1;
+        } else if (a.emit_f) fprintf(stderr, "[pilot] %u token-frames -> %s\n", a.trace_n - 1, emit_path);
+    }
 
     if (a.trace_f) {
         fclose(a.trace_f);
@@ -1037,5 +1140,5 @@ int main(int argc, char **argv)
     if (a.win) SDL_DestroyWindow(a.win);
     if (!a.headless) SDL_Quit();
 #endif
-    return 0;
+    return rc;
 }

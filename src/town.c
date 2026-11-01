@@ -99,7 +99,7 @@ u8   jashiin_defeated;     /* 0x49  != 0 after the final boss: town shows the en
                                     enddemo.  fight.c calls this "force_death" — it is the game-won flag */
 u16  scroll_col;           /* 0x80  map column of screen column -4 (see town_col_ptr) */
 u8   scroll_row;           /* 0x82  written for fight.bin at a cavern entrance (7009) */
-u8   hero_scr_col;         /* 0x83  0..0x1B; 0xFF / 0x1C = walked off the left / right edge (6CB5) */
+u8   hero_scr_col;         /* 0x83  0..0x1A in play; 0xFF / 0x1B = walked off the left / right edge (6CB5 tests [83]+1 == 0x1C) */
 u8   gold_hi; u16 gold;    /* 0x85, 0x86  24-bit GOLD (HUD "GOLD", VID_NUM_GOLD).  fight.c named it gold_total */
 u16  almas;                /* 0x8B  ALMAS (HUD "ALMAS", VID_NUM_ALMAS; 2500 buys the Asbestos cape, 66DC).  fight.c named it gold */
 u8   shield;               /* 0x93  != 0 -> draw the shield gauge + count (6127) */
@@ -567,7 +567,7 @@ void walk_right(void)
     hero_anim = (hero_anim + 1) & 3;                    /* 6824, 6828 */
     hero_flags &= ~1;                                   /* 682D: face right */
     if (hero_scr_col < 0x10) { hero_scr_col++; return; }          /* 6832..683D */
-    if (scroll_col + 1 == MAP_WIDTH - 0x23) { hero_scr_col++; return; }   /* 683E..6851: may reach 0x1C = right edge */
+    if (scroll_col + 1 == MAP_WIDTH - 0x23) { hero_scr_col++; return; }   /* 683E..6851: may reach 0x1B = the right edge */
     scroll_col++; town_col_ptr += 8;                    /* 6852, 6856 */
     GT_SCROLL_NEAR_LEFT();                              /* 685B */
     if (town_flags == 1) GT_SCROLL_FAR_LEFT();          /* 6860..6868 */
@@ -741,7 +741,7 @@ void check_edge_exit(void)
         hero_scr_col = 0x1A; scroll_col = MAP_WIDTH - 0x24;   /* 6CE4..6CEF: appear at the right end */
         goto town_restart_60B7;                         /* 6CF2 */
     }
-    if (hero_scr_col != 0x1C) return;                   /* 6CF5..6CF9 */
+    if ((u8)(hero_scr_col + 1) != 0x1C) return;         /* 6CB5 inc al, 6CF5 cmp al,0x1c: [83] == 0x1B */
     npc_restore_tiles(); tick = 0x28; frame_tail();     /* 6CFA..6D02 */
     for (si = MAP_EXITS; (si->flags & 1); si++) ;       /* 6D05..6D11: the right-edge record */
     ah = si->flags; al = si->dest;

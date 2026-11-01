@@ -52,7 +52,11 @@ static void shell_wall_jump(Game *g, MapObj *e)
     e->next = (uint8_t)(e->next + 0x20);
     if (!(e->next & 0xE0)) { e->link = 0; e->next = 2; }                /* A433 */
     if (!ai_step_dir(g, e, ((e->hit & FACING_RIGHT) ? jump_r : jump_l)[idx])) return;
-    if ((e->next & 0xE0) >= 0xC0) e->hit ^= FACING_RIGHT;               /* A444 */
+    {   /* A444-A451: blocked mid-arc -> turn round, but only while the step
+         * counter is 1..5 (next & 0xE0 nonzero and below 0xC0) */
+        uint8_t k = (uint8_t)(e->next & 0xE0);
+        if (k && k < 0xC0) e->hit ^= FACING_RIGHT;
+    }
 }
 
 /* 0xA281 */
@@ -95,33 +99,39 @@ static int block3x3_free(Game *g, int p)
     return 1;
 }
 
-/* 0xA584  Spawn the copy two cells ahead into the claimed spare record. */
-static void slime_split(Game *g, MapObj *e)
+/* 0xA584  Spawn the copy two cells ahead into the claimed spare record.
+ * Returns 1 when the copy was placed (A673/A678 ret); 0 when the ring column
+ * or the 3x3 block ahead refuses it -- those exits jump to A512, the normal
+ * step-down/walk code, with the claim kept for the next frame-6 try. */
+static int slime_split(Game *g, MapObj *e)
 {
     int i = (int)(e - g->obj);
-    if (e->link >= g->nobj) { e->flags &= (uint8_t)~0x40; return; }
+    if (e->link >= g->nobj) { e->flags &= (uint8_t)~0x40; return 1; }   /* port guard */
     MapObj *s = &g->obj[e->link];
-    int p = game_ring_index(g, e->row, e->rcol);
+    int p = game_ring_index(g, e->row, e->rcol);                        /* A595: vec 20 */
     int dst;
     if (!(e->hit & FACING_RIGHT)) {
-        if (e->rcol >= 0x21) return;                                    /* A5A5 */
-        if (!block3x3_free(g, game_ring_add(p, -RING_W + 1))) return;
-        dst = game_ring_add(p, 2);
-        s->col = (uint16_t)((e->col + 2) % g->map->width); s->rcol = (uint8_t)(e->rcol + 2);
-        e->phase = 0x16; s->phase = 0x17;
+        if (e->rcol & 0x80) return 0;                                   /* A5AA jns */
+        if (e->rcol >= 0x21) return 0;                                  /* A5AF */
+        if (!block3x3_free(g, game_ring_add(p, -RING_W + 1))) return 0; /* A5B6: si - 0x23 */
+        dst = game_ring_add(p, 2);                                      /* A5C1 */
+        s->col = (uint16_t)((e->col + 2) % g->map->width); s->rcol = (uint8_t)(e->rcol + 2);   /* A5D6 / A5EA */
+        e->phase = 0x16; s->phase = 0x17;                               /* A5F2 */
     } else {
-        if (e->rcol < 3) return;                                        /* A5FC */
-        if (!block3x3_free(g, game_ring_add(p, -RING_W - 3))) return;
-        dst = game_ring_add(p, -2);
-        s->col = (uint16_t)((e->col + g->map->width - 2) % g->map->width); s->rcol = (uint8_t)(e->rcol - 2);
-        e->phase = 0x17; s->phase = 0x16;
+        if (e->rcol & 0x80) return 0;                                   /* A601 jns */
+        if (e->rcol < 3) return 0;                                      /* A606 */
+        if (!block3x3_free(g, game_ring_add(p, -RING_W - 3))) return 0; /* A60D: si - 0x27 */
+        dst = game_ring_add(p, -2);                                     /* A618 */
+        s->col = (uint16_t)((e->col + g->map->width - 2) % g->map->width); s->rcol = (uint8_t)(e->rcol - 2);   /* A62D / A63C */
+        e->phase = 0x17; s->phase = 0x16;                               /* A644 */
     }
-    g->under_sprite[e->link] = g->ring[dst];                            /* A5C3 */
+    g->under_sprite[e->link] = g->ring[dst];                            /* A5C3 / A657 */
     g->ring[dst] = (uint8_t)(0x80 | e->link);
-    s->type = (uint8_t)(e->type & 0x1F); s->row = e->row; s->flags = 0;
-    s->hp = 0; s->next = 0; s->link = 0; s->hit = 0;
-    e->flags &= (uint8_t)~0x40;
+    s->type = (uint8_t)(e->type & 0x1F); s->row = e->row;              /* A5CE / A64C */
+    s->flags = 0; s->hp = 0; s->next = 0;                               /* A65B-A663: hit and link are left as they were */
+    e->flags &= (uint8_t)~0x40;                                         /* A667 */
     if (i < (int)e->link) s->next |= 1;                                 /* A66B */
+    return 1;
 }
 
 /* 0xA466  Dividing slime: only magic 3/4/7 or the Enchantment sword hurts it;
@@ -151,7 +161,7 @@ static void slime_update(Game *g, MapObj *e)
     if (skip) return;                                                   /* A4EC */
     if (e->flags & 0x40) {                                              /* A56C */
         e->phase = (uint8_t)((e->phase & 0xF0) | ((e->phase + 1) & 7));
-        if ((e->phase & 7) == 6) { slime_split(g, e); return; }
+        if ((e->phase & 7) == 6 && slime_split(g, e)) return;          /* A57D */
     } else e->phase = (uint8_t)((e->phase & 0xF0) | ((e->phase + 1) & 3));   /* A4FF */
     if (!STEP(e, 6)) return;                                             /* A514 */
     e->phase = (uint8_t)(e->phase - 0x10);
@@ -181,20 +191,41 @@ static void icicle_update(Game *g, MapObj *e)
     enemy_killed(g, e);                                                 /* A6E3 */
 }
 
-/* 0xA71C  One crawl candidate.  Direction sequence and next-state formula are
- * the A756 / A7CE tables:
- *   facing left  (A756): dir = (state + 6 + i) & 7, next = (8 - dir) & 7
- *   facing right (A7CE): dir = (6 - state - i) & 7, next = (4 - dir) & 7
- * The tables' third column (the sprite frame) is not reconstructed: the port
- * spins the 4-frame animation instead. */
+/* 0xA756 (facing left) / 0xA7CE (facing right): per heading state `next`
+ * (0..7, row of 15 bytes, A728 `mov al,0xf / mul byte [si+9]`) five
+ * candidates {direction, next state, sprite frame}, copied from EAI4.BIN. */
+static const uint8_t crawl_l[8][5][3] = {
+    { {6, 2, 1}, {7, 1, 2}, {0, 0, 0}, {1, 7, 3}, {2, 6, 1} },
+    { {5, 3, 3}, {6, 2, 1}, {7, 1, 2}, {0, 0, 0}, {1, 7, 3} },
+    { {4, 4, 0}, {5, 3, 3}, {6, 2, 1}, {7, 1, 2}, {0, 0, 0} },
+    { {3, 5, 2}, {4, 4, 0}, {5, 3, 3}, {6, 2, 1}, {7, 1, 2} },
+    { {2, 6, 1}, {3, 5, 2}, {4, 4, 0}, {5, 3, 3}, {6, 2, 1} },
+    { {1, 7, 3}, {2, 6, 1}, {3, 5, 2}, {4, 4, 0}, {5, 3, 3} },
+    { {0, 0, 0}, {1, 7, 3}, {2, 6, 1}, {3, 5, 2}, {4, 4, 0} },
+    { {7, 1, 2}, {0, 0, 0}, {1, 7, 3}, {2, 6, 1}, {3, 5, 2} },
+};
+static const uint8_t crawl_r[8][5][3] = {
+    { {6, 6, 0}, {5, 7, 3}, {4, 0, 0}, {3, 1, 2}, {2, 2, 0} },
+    { {5, 7, 2}, {4, 0, 0}, {3, 1, 2}, {2, 2, 1}, {1, 3, 2} },
+    { {4, 0, 1}, {3, 1, 2}, {2, 2, 1}, {1, 3, 3}, {0, 4, 1} },
+    { {3, 1, 3}, {2, 2, 1}, {1, 3, 3}, {0, 4, 0}, {7, 5, 3} },
+    { {2, 2, 0}, {1, 3, 3}, {0, 4, 0}, {7, 5, 2}, {6, 6, 0} },
+    { {1, 3, 2}, {0, 4, 0}, {7, 5, 2}, {6, 6, 1}, {5, 7, 2} },
+    { {0, 4, 1}, {7, 5, 2}, {6, 6, 1}, {5, 7, 3}, {4, 0, 1} },
+    { {7, 5, 3}, {6, 6, 1}, {5, 7, 3}, {4, 0, 0}, {3, 1, 3} },
+};
+
+/* 0xA71C  One crawl step: try the five candidates in order (vec 2, A736);
+ * the first that moves sets next = [bx+1] and phase = [bx+2] (A749-A752:
+ * the whole phase byte is the table's frame).  All five blocked: turn
+ * around (A744).  Returns the candidate index (A716 reads CL = 5 - index). */
 static int blade_step(Game *g, MapObj *e)
 {
-    int right = (e->hit & FACING_RIGHT) != 0;
+    const uint8_t (*t)[3] = ((e->hit & FACING_RIGHT) ? crawl_r : crawl_l)[e->next & 7];
     for (int i = 0; i < 5; i++) {
-        int dir = right ? ((6 - e->next - i) & 7) : ((e->next + 6 + i) & 7);
-        if (ai_step_dir(g, e, (uint8_t)dir)) continue;
-        e->next = (uint8_t)(right ? ((4 - dir) & 7) : ((8 - dir) & 7));  /* A749 */
-        e->phase = (uint8_t)((e->phase + 1) & 3);
+        if (ai_step_dir(g, e, t[i][0])) continue;
+        e->next = t[i][1];                                              /* A749 */
+        e->phase = t[i][2];                                             /* A74F */
         return i;
     }
     e->hit ^= FACING_RIGHT;                                             /* A744 */

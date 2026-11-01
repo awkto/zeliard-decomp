@@ -19,6 +19,7 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h);     /* fb: FB_W
  * `place` is the {x4, y, xoff, len, chars} record video [2010] draws: the
  * cavern map's [C00E] or the town map's [C004]. */
 struct TextFont;
+void vid_gauge_bar(uint8_t *fb, int bh, int bl, int w);   /* [2004] */
 void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
                 const struct TextFont *tf, const uint8_t *place);
 void render_window(uint8_t *fb, int x, int y, int w, int h, int framed);   /* [2000] */

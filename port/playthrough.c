@@ -96,9 +96,9 @@ static const Door *find_door(const Map *m, int col, int row)
 
 static void set_goal(Play *p)
 {
-    Game *g = &p->sh.g;
+    Game *g = &p->s->g;
     const PStep *st = cur(p);
-    if (p->sh.in_town) return;
+    if (p->s->in_town) return;
     switch (st->kind) {
     case P_CAV_DOOR: {
         /* a < 0 = "the door this map has": 72F1 puts the post-boss exit door
@@ -126,11 +126,11 @@ static void set_goal(Play *p)
 
 static void step_enter(Play *p)
 {
-    Game *g = &p->sh.g;
+    Game *g = &p->s->g;
     const PStep *st = cur(p);
     p->step_start = p->frames;
     p->shop_seen = 0; p->menu_pos = 0; p->menu_press = 0; p->farm_end = 0; p->boss_seen = 0;
-    p->town_at_start = p->sh.in_town ? p->sh.tmap.index : -1;
+    p->town_at_start = p->s->in_town ? p->s->tmap.index : -1;
     p->step_map = g->map;
     p->step_exp = g->exp; p->step_almas = g->almas; p->step_gold = (long)g->gold;
     if (st->kind == P_END) { p->done = 1; return; }
@@ -139,7 +139,7 @@ static void step_enter(Play *p)
      * makes (7B32 / 6FF8); they exist because the autopilot cannot yet cross
      * MP10's lower level unaided.  Everything after them is played. */
     if (st->kind == P_GOTO) {
-        if (!shell_enter_cavern(&p->sh, st->a, st->b, st->c + 1, 0, 0)) { p->failed = 1; return; }
+        if (!shell_enter_cavern(p->s, st->a, st->b, st->c + 1, 0, 0)) { p->failed = 1; return; }
         p->step_map = g->map;
         return;
     }
@@ -152,13 +152,13 @@ static void step_enter(Play *p)
 
 static int step_done(Play *p)
 {
-    Game *g = &p->sh.g;
+    Game *g = &p->s->g;
     const PStep *st = cur(p);
     switch (st->kind) {
-    case P_TOWN_SHOP: return p->shop_seen && !p->sh.town.shop;
-    case P_TOWN_CAVE: return !p->sh.in_town;
-    case P_TOWN_EDGE: return !p->sh.in_town || p->sh.tmap.index != p->town_at_start;
-    case P_CAV_DOOR:  return p->sh.in_town || g->map != p->step_map;
+    case P_TOWN_SHOP: return p->shop_seen && !p->s->town.shop;
+    case P_TOWN_CAVE: return !p->s->in_town;
+    case P_TOWN_EDGE: return !p->s->in_town || p->s->tmap.index != p->town_at_start;
+    case P_CAV_DOOR:  return p->s->in_town || g->map != p->step_map;
     case P_CAV_BREAK:
     case P_CAV_CELL: {
         /* the point of walking here is the object standing on the cell: the
@@ -174,8 +174,8 @@ static int step_done(Play *p)
         if (dr < 0) dr = -dr;
         return dc <= 1 && dr <= 1; }
     case P_BOSS:      return p->boss_seen && !g->post_boss_pending && !g->boss_dying;
-    case P_GOTO:      return !p->sh.in_town && g->map == p->step_map;
-    case P_TOWN_GOTO: return p->sh.in_town;
+    case P_GOTO:      return !p->s->in_town && g->map == p->step_map;
+    case P_TOWN_GOTO: return p->s->in_town;
     case P_FARM: {
         /* walk the safe stretch back and forth, killing what wanders in, until
          * the sage has something to work with */
@@ -190,54 +190,158 @@ static int step_done(Play *p)
     }
 }
 
+/* After one frame: a death ends the run, a finished step starts the next,
+ * a map change under a running step re-aims it, the budget is enforced. */
+static void play_after_frame(Play *p)
+{
+    Game *g = &p->s->g;
+    if (g->deaths != p->last_deaths) {
+        p->last_deaths = g->deaths; p->deaths++;
+        snprintf(p->msg, sizeof p->msg, "step %d (%s): Garland died at %s (%d,%d) after %u frames",
+                 p->step, cur(p)->what, p->s->in_town ? p->s->tmap.label : g->map->name,
+                 p->s->in_town ? town_hero_col(&p->s->town) : game_hero_map_col(g),
+                 p->s->in_town ? 0 : game_hero_map_row(g), p->frames - p->step_start);
+        p->failed = 1; return;
+    }
+    while (!p->done && !p->failed && step_done(p)) {
+        const PStep *st = cur(p);
+        if (st->kind == P_BOSS) {
+            p->bosses_killed++;
+            p->boss_exp_paid   += (long)g->exp - p->step_exp;
+            p->boss_almas_paid += (long)g->almas - p->step_almas;
+            p->boss_gold_paid  += (long)g->gold - p->step_gold;
+            p->boss_exp_due    += g->boss.exp;
+            p->boss_almas_due  += g->boss.almas;
+        }
+        if (st->kind == P_CAV_DOOR || st->kind == P_TOWN_CAVE) p->doors_taken++;
+        if (st->kind == P_TOWN_SHOP) p->shops_visited++;
+        VLOG(p, "[play] step %d done in %u frames (LIFE %u/%u, EXP %u, GOLD %u, keys %u)\n",
+             p->step, p->frames - p->step_start, g->hp, g->max_hp, g->exp, (unsigned)g->gold, g->keys);
+        p->step++;
+        step_enter(p);
+        if (!p->pilot) return;          /* play_loop: one step change per frame, as before */
+    }
+    if (p->done || p->failed) return;
+    /* the map changed under a running step (a door we did not plan for) */
+    if (!p->s->in_town && g->map != p->step_map && cur(p)->kind != P_CAV_DOOR) set_goal(p);
+    if (p->frames > p->budget) {
+        snprintf(p->msg, sizeof p->msg, "step %d (%s): out of frames at %s (%d,%d), dist %d",
+                 p->step, cur(p)->what ? cur(p)->what : "?",
+                 p->s->in_town ? p->s->tmap.label : g->map->name,
+                 p->s->in_town ? town_hero_col(&p->s->town) : game_hero_map_col(g),
+                 p->s->in_town ? 0 : game_hero_map_row(g),
+                 p->s->in_town ? -1 : nav_distance(&p->nav, g));
+        p->failed = 1;
+    }
+}
+
 /* the common loop of play_run / play_continue */
 static int play_loop(Play *p)
 {
-    Game *g = &p->sh.g;
     step_enter(p);
-    unsigned last_deaths = g->deaths;
+    p->last_deaths = p->s->g.deaths;
     while (!p->done && !p->failed) {
-
-        shell_frame(&p->sh);
-        if (g->deaths != last_deaths) {
-            last_deaths = g->deaths; p->deaths++;
-            snprintf(p->msg, sizeof p->msg, "step %d (%s): Garland died at %s (%d,%d) after %u frames",
-                     p->step, cur(p)->what, p->sh.in_town ? p->sh.tmap.label : g->map->name,
-                     p->sh.in_town ? town_hero_col(&p->sh.town) : game_hero_map_col(g),
-                     p->sh.in_town ? 0 : game_hero_map_row(g), p->frames - p->step_start);
-            p->failed = 1; break;
-        }
-        if (step_done(p)) {
-            const PStep *st = cur(p);
-            if (st->kind == P_BOSS) {
-                p->bosses_killed++;
-                p->boss_exp_paid   += (long)g->exp - p->step_exp;
-                p->boss_almas_paid += (long)g->almas - p->step_almas;
-                p->boss_gold_paid  += (long)g->gold - p->step_gold;
-                p->boss_exp_due    += g->boss.exp;
-                p->boss_almas_due  += g->boss.almas;
-            }
-            if (st->kind == P_CAV_DOOR || st->kind == P_TOWN_CAVE) p->doors_taken++;
-            if (st->kind == P_TOWN_SHOP) p->shops_visited++;
-            VLOG(p, "[play] step %d done in %u frames (LIFE %u/%u, EXP %u, GOLD %u, keys %u)\n",
-                 p->step, p->frames - p->step_start, g->hp, g->max_hp, g->exp, (unsigned)g->gold, g->keys);
-            p->step++;
-            step_enter(p);
-            continue;
-        }
-        /* the map changed under a running step (a door we did not plan for) */
-        if (!p->sh.in_town && g->map != p->step_map && cur(p)->kind != P_CAV_DOOR) set_goal(p);
-        if (p->frames > p->budget) {
-            snprintf(p->msg, sizeof p->msg, "step %d (%s): out of frames at %s (%d,%d), dist %d",
-                     p->step, cur(p)->what ? cur(p)->what : "?",
-                     p->sh.in_town ? p->sh.tmap.label : g->map->name,
-                     p->sh.in_town ? town_hero_col(&p->sh.town) : game_hero_map_col(g),
-                     p->sh.in_town ? 0 : game_hero_map_row(g),
-                     p->sh.in_town ? -1 : nav_distance(&p->nav, g));
-            p->failed = 1;
-        }
+        shell_frame(p->s);
+        play_after_frame(p);
     }
     return p->failed ? -1 : 0;
+}
+
+/* ---------------------------------------------------------- the pilot */
+/* --pilot (main.c): the same route driver, but on the caller's Shell and
+ * asked for its input once per *harness boundary* (docs/HARNESS.md §1)
+ * instead of from the present callbacks, so what it decides is exactly what
+ * a --script would feed at that boundary.  The drivers write the engine's
+ * input fields directly; they are run on the live state and then undone, and
+ * the caller applies the answer through its normal script path. */
+int play_attach(Play *p, Shell *sh, const PStep *route, unsigned budget)
+{
+    p->s = sh; p->route = route; p->step = 0; p->done = p->failed = 0;
+    p->frames = 0; p->budget = budget ? budget : 200000; p->msg[0] = 0;
+    p->pilot = 1;
+    step_enter(p);
+    p->last_deaths = sh->g.deaths;
+    return p->failed ? -1 : 0;
+}
+
+int play_pilot(Play *p, uint8_t *dirs, uint8_t *btns)
+{
+    Game *g = &p->s->g; Town *t = &p->s->town;
+    *dirs = 0; *btns = 0;
+    if (p->done || p->failed) return p->failed ? -1 : 1;
+    p->frames++;
+    if (g->boss_defeated) p->boss_seen = 1;     /* 72F1 clears it again */
+    play_after_frame(p);
+    if (p->done || p->failed) return p->failed ? -1 : 1;
+    if (p->s->in_town) {
+        if (t->status || g->status) return 0;   /* the route never opens it */
+        uint8_t od = t->dirs, ob = t->buttons, om = t->menu_key, e1 = t->btn1_edge, e2 = t->btn2_edge;
+        t->btn1_edge = t->btn2_edge = 0;
+        if (t->shop) { p->shop_seen = 1; drive_shop(p, t); }
+        else drive_town(p, t);
+        *dirs = t->dirs;
+        *btns = (uint8_t)((t->buttons & 3) | (t->btn1_edge ? 1 : 0) | (t->btn2_edge ? 2 : 0));
+        t->dirs = od; t->buttons = ob; t->menu_key = om; t->btn1_edge = e1; t->btn2_edge = e2;
+        return 0;
+    }
+    if (g->status) return 0;
+    uint8_t od = g->dirs, ob = g->buttons, e1 = g->btn1_edge, e2 = g->btn2_edge;
+    nav_step(&p->nav, g);
+    *dirs = g->dirs; *btns = (uint8_t)(g->buttons & 3);
+    g->dirs = od; g->buttons = ob; g->btn1_edge = e1; g->btn2_edge = e2;
+    return 0;
+}
+
+/* "town-cave 7; door 188,20; boss; door -1" -> PStep[].  Returns the step
+ * count (P_END appended) or -1 with `err` filled. */
+int play_parse_route(const char *s, PStep *out, int max, char *err, size_t errlen)
+{
+    static const struct { const char *name; PKind kind; int nargs; } K[] = {
+        {"town-shop", P_TOWN_SHOP, 1}, {"town-cave", P_TOWN_CAVE, 1}, {"town-edge", P_TOWN_EDGE, 1},
+        {"door", P_CAV_DOOR, 2}, {"cell", P_CAV_CELL, 2}, {"break", P_CAV_BREAK, 2}, {"boss", P_BOSS, 0},
+    };
+    static char menus[16][16];
+    int n = 0, nm = 0;
+    while (*s) {
+        while (*s == ' ' || *s == ';') s++;
+        if (!*s) break;
+        if (n >= max - 1) { snprintf(err, errlen, "route too long"); return -1; }
+        char word[16]; int wl = 0;
+        while (*s && *s != ' ' && *s != ';' && wl < 15) word[wl++] = *s++;
+        word[wl] = 0;
+        int k = -1;
+        for (int i = 0; i < (int)(sizeof K / sizeof K[0]); i++) if (!strcmp(word, K[i].name)) k = i;
+        if (k < 0) { snprintf(err, errlen, "unknown route step '%s'", word); return -1; }
+        PStep st; memset(&st, 0, sizeof st);
+        st.kind = K[k].kind; st.what = K[k].name;
+        while (*s == ' ') s++;
+        if (K[k].nargs >= 1) {
+            char *e; st.a = (int)strtol(s, &e, 0);
+            if (e == s) { snprintf(err, errlen, "%s: wants a number", word); return -1; }
+            s = e;
+            if (K[k].nargs == 2) {
+                if (st.a >= 0 || *s == ',') {
+                    if (*s != ',') { snprintf(err, errlen, "%s: wants COL,ROW", word); return -1; }
+                    s++; st.b = (int)strtol(s, &e, 0);
+                    if (e == s) { snprintf(err, errlen, "%s: wants COL,ROW", word); return -1; }
+                    s = e;
+                }
+            }
+        }
+        if (st.kind == P_TOWN_SHOP) {           /* optional menu string: "town-shop 81 30yc" */
+            while (*s == ' ') s++;
+            int ml = 0;
+            if (nm < 16) {
+                while (*s && *s != ';' && *s != ' ' && ml < 15) menus[nm][ml++] = *s++;
+                menus[nm][ml] = 0;
+                st.menu = ml ? menus[nm++] : "c";
+            }
+        }
+        out[n++] = st;
+    }
+    memset(&out[n], 0, sizeof out[n]);
+    out[n].kind = P_END;
+    return n + 1;
 }
 
 int play_run(Play *p, const char *dir, const PStep *route, unsigned budget)
@@ -250,6 +354,7 @@ int play_run(Play *p, const char *dir, const PStep *route, unsigned budget)
     p->start_shield = save.start_shield; p->start_life = save.start_life;
     p->start_gold = save.start_gold;
     p->route = route; p->budget = budget ? budget : 200000;
+    p->s = &p->sh;
     p->sh.user = p; p->sh.present = present_cb; p->sh.town_present = town_present_cb;
     p->sh.quiet = 1;
     if (shell_init(&p->sh, dir, 0)) { snprintf(p->msg, sizeof p->msg, "cannot load the game files"); return -1; }
@@ -273,7 +378,7 @@ int play_run(Play *p, const char *dir, const PStep *route, unsigned budget)
      * entered towns that way since issue #38; the autopilot was still taking
      * shell_enter_town's C013 fallback (issue #40). */
     if ((g->page[0xC4] & 0x80) && (g->page[0xC4] & 0x7F) == 0)
-        town_page_pull(&p->sh.town);
+        town_page_pull(&p->s->town);
     p->entry_col = town_hero_col(&p->sh.town);
     p->entry_scroll = p->sh.town.scroll_col;
     return play_loop(p);
@@ -401,6 +506,12 @@ const PStep PLAY_ROUTE_BOSSES[] = {
   {P_CAV_DOOR,  88, 6,  NULL,      "MP30: the (88,6) door -> MP31 (87,7)", 0},
   {P_CAV_DOOR, 114, 6,  NULL,      "MP31: the (114,6) door -> MP30 (113,7)", 0},
   {P_CAV_BREAK,166,54,  NULL,      "MP30: break the biggest tree and take the Hero's Crest", 0},
+  /* the same burning row-42 shelf as after the Key below: since #75 the
+   * cavern-3 spiders crawl the ceilings as EAI3 A2F9 says instead of
+   * dropping at once, and the field's own hop out of (129,44) stalled */
+  {P_CAV_CELL, 130,44,  NULL,      "MP30: to the foot of the column-131 ladder", 0},
+  {P_CAV_CELL, 132,43,  NULL,      "MP30: up onto the row-42 shelf", 0},
+  {P_CAV_CELL, 140,42,  NULL,      "MP30: east along it", 0},
   {P_CAV_DOOR, 153,43,  NULL,      "MP30: the (153,43) door -> MP31 (152,44)", 0},
   /* cavern 3's own Key, and the last one the accounting needs: seven Keys lie
    * in caverns 1-3 (four lying in the maps, one handed back by each of the three

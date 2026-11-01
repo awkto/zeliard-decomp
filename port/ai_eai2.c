@@ -50,7 +50,11 @@ static void plant_update(Game *g, MapObj *e)
     int facing;
     if (!e->hp) e->hp = 8;                                              /* A384 */
     if ((e->hit & HIT_STUN) || (e[1].hit & 0x40)) { ai_tall_take_hit(g, e); return; }   /* A38E */
-    if (TALL(e, 6)) return;                                             /* A3A0: falling */
+    /* A3A0 `call A653` (tall step down) `jc A3A6` / `ret`: a refused step
+     * (standing on something) carries on; a step that moved (falling) ends
+     * the frame.  ai_tall_step returns 1 = refused, so `!TALL` -- it was the
+     * other way round and every plant stood frozen (#75, pulpo_fight f73) */
+    if (!TALL(e, 6)) return;
     if (e->next & 1) { plant_attack(g, e); return; }                    /* A3A6 */
     uint8_t f = ai_hero_dir(g, e, 5, &facing);                          /* A3AF */
     if (!facing) {
@@ -172,11 +176,15 @@ static void redfrog_update(Game *g, MapObj *e)
     uint8_t f = ai_hero_dir(g, e, 5, &facing);                          /* A7ED */
     if (!facing) {
         if (e->phase & 0xE0) return;                                    /* A7F2 */
-        f = ai_hero_dir(g, e, 5, &facing);
-        if (f != 0xFF) { e->hit = (uint8_t)((e->hit & 0x7F) | f); e->phase = 2; e->next |= 8; }
-        return;
+        f = ai_hero_dir(g, e, 5, &facing);                              /* A7FA */
+        if (f != 0xFF) { e->hit = (uint8_t)((e->hit & 0x7F) | f); e->phase = 2; e->next |= 8; return; }
+        /* A7FD `cmp al,FF / jz A811`: the hero out of row range (A8F4's
+         * AL = FF) goes to the coin too -- the port returned here and
+         * missed its RNG draw (#75, pulpo_fight f91) */
     }
-    if (krn_random(g) & 1) { e->phase = 2; e->next |= 8; }              /* A811 */
+    /* A823/A827 fall straight into A82B: the hop's first step is taken in
+     * the same frame (#75, pulpo_fight f91) */
+    if (krn_random(g) & 1) { e->phase = 2; e->next |= 8; redfrog_hop(g, e); }   /* A811 */
     else                   { e->next |= 4; e->link = 0; }               /* A81A */
 }
 

@@ -38,7 +38,7 @@ wall that fills mp10). Cell 0 also holds five more lists (see §3).
 | Map | `C000` header + column-major RLE stream | see ARCHITECTURE.md; width `[C002]` cells, 64 rows, wraps horizontally |
 | Ring | `E000`, 36 cols × 64 rows, stride 0x24 | ring column 0 = map column `scroll_col` (`[0x80]`); rows wrap mod 64 (`6D82/6D8E` wrap the whole 0x900 buffer, so pointer arithmetic is linear inside it) |
 | Window | `win` = `[FF31]` = `&ring[scroll_row][0]` (`6CE0`) | screen shows ring columns 4..31 × rows scroll_row..+18 (28×19 cells = 224×152 px) |
-| Screen copy | `E900`, 28×19 | 0xFD force redraw, 0xFF hero, 0xFC/0xFE message box (`7210`) |
+| Screen copy | `E900`, 28×19 | 0xFD force redraw (`73B3` fills it), 0xFF hero, 0xFC/0xFE message box (`7210`), 0xFE also every animated cell (below) |
 | Hero | `hero_scr_col` `[0x83]`, `hero_scr_row` `[0x84]` | top-left of a 3×3-cell (24×24 px) sprite, drawn at pixel (col*8, row*8) (gfmcga `42F7`). Ring cell of the top-left = `win + row*0x24 + col + 4` (`6DB1`) |
 | Hero map position | column `scroll_col + hero_scr_col + 4`, row `(scroll_row + hero_scr_row) & 63` = `FF35` (`7007`) | |
 
@@ -50,6 +50,22 @@ screen column is pulled back toward **12** (`6FF9`; boss rooms: the AI's
 row bias `[C016]`, 10 in normal caverns) one cell per frame while grounded
 (`6FAC`). A port can simply keep a camera that centres the hero on column 12 /
 row 10 and applies the same one-cell-per-frame catch-up.
+
+**Cell animation (gfmcga `302C`, the `[3000]` draw at `710F`).** It starts with
+`inc byte [4FFF]` (a gfmcga counter: 0 when the driver is loaded over town.bin's,
+0 after the fade-in redraw `[3012]`/4192 at a boss map start `625B` and after a boss
+`7395`, `letter & 7` after a cavern door `7BBF/7BF5` `[301E]`, 0 after a spell
+`895E` `[3018]`).  Every visible cell (18 rows from `[82]`, ring columns 4..31) that
+differs from its `E900` copy and is not a sprite marker goes through `3124`, whose
+tail `315C` animates by cavern (`[C012]`): **5** `317E` water 1B↔1C on odd `[4FFF]`;
+**6** `319E` 1D→1E→1F→20→1D every frame, but 1D only when `KRN_RANDOM & 3 == 0`
+(so the draw itself makes RNG calls, one per visible 1D cell, row-major), 21↔22 every
+frame; **7** `31D4` 2C↔2D, and 0E→33→34→35→0E, 0D→36→37→38→0D, 0F→39→3A→3B→0F,
+0C↔3C, 10↔3D on odd `[4FFF]`; **8** `3252` 25→26→27→28→25 on odd `[4FFF]`.  The
+hook also writes 0xFE into the cell's copy, so an animated cell is redrawn (and
+hooked) every frame it is on screen.  The cells it rewrites are ring (BASE) state:
+hazard and current tests and the AIs see them.  Port: `enemy.c cell_anim`, traced
+as `gf_frame`.
 
 Scrolling is cell-granular: **8 px per step, no sub-cell positions anywhere**.
 
@@ -448,7 +464,10 @@ standing on a hazard tile are killed outright (`A26A`).
   → table `8E14`, dumped from the image as
   `8E32 8E8D 8EE9 8EF6 8FAB 8FAB 8FE8 8FF8 9008 901C 909D 8FAB 903C 907F 9090`:
   **0** sword-breakable (`8E32`; its `next` chains to whatever it hides), **1**
-  touch-breakable, **2** flash, **3** treasure box (`8EF6`, prize by `(phase & 0xF) − 1`
+  a floor block that gives way (`8E8D`: armed when its row − 3 is `FF35` and its ring
+  column is `[83]+3+([C2]&1)*2` or one more -- sound 0x12, nothing else that frame;
+  then each frame `type &= 0x7F`, a step down (9255), and on the 4th count of
+  `phase += 0x80` it goes, `914C`), **2** flash, **3** treasure box (`8EF6`, prize by `(phase & 0xF) − 1`
   over the **seven**-entry table at `8F33` — `8F41` 50 gold, `8F4D` 100, `8F59` "nothing
   in the box", `8F5F` 500, `8F6B` 1000, `8F77` the **Glory Crest** (`[0x9B] = 0xFF`),
   `8F83` the **Enchantment sword** (`[0x92] = 6` and a reload of the blade's cells);

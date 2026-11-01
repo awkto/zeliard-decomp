@@ -129,8 +129,9 @@ bool fight_step_right(void), fight_step_right_up(void), fight_step_up(void), fig
  *     u16 drawn(0), u16 script, last_col, last_row}.  Shots move 1 cell/frame (85A5).      */
 /* vec 30  83DB  shots_clear: erase and drop every projectile                                 */
 /* vec 31  98C5  find_spare_object: DI = first C010 record with home_col == 0xFFFF that is
- *    either inactive with row == 0x7F, or active, inside the ring and not an item;
- *    DL = its index.  If none, DI -> the 0xFFFF terminator (CF is always 0).               */
+ *    either parked (col high byte 0xFF) with row != 0x7F (0x7F = already claimed), or
+ *    live, OUTSIDE the ring (96A1 CF=1) and not an item; DL = its index, CF=0.  If none,
+ *    CF=1 at the 0xFFFF terminator (98CB stc / jnz / ret).                              */
 /* vec 32  975B  fight_ride_current: if cell (row+1, rcol) or (row+1, rcol+1) is an updraft /
  *    current-left / current-right tile (76F6: CL = 0/1/2), POP the caller's return address
  *    and do two steps up / left / right (9788 table), returning to the caller's caller.    */

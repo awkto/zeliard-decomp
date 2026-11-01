@@ -36,7 +36,8 @@ typedef struct {
 } PStep;
 
 typedef struct {
-    Shell    sh;
+    Shell    sh;        /* play_run's own shell */
+    Shell   *s;         /* the shell being driven: &sh, or the caller's (play_attach) */
     Nav      nav;
     const PStep *route;
     int      step;
@@ -66,6 +67,8 @@ typedef struct {
     long     boss_exp_paid, boss_exp_due, boss_almas_paid, boss_almas_due, boss_gold_paid;
     long     step_exp, step_almas, step_gold;
     int      entry_col, entry_scroll;   /* where the castle put the hero on frame 0 */
+    unsigned last_deaths;
+    int      pilot;     /* play_attach: input is asked for per boundary (play_pilot) */
 } Play;
 
 /* run `route` to the end (or until the frame budget runs out).
@@ -73,6 +76,16 @@ typedef struct {
 int  play_run(Play *p, const char *dir, const PStep *route, unsigned budget);
 /* run another route on the shell/player record the last one left behind */
 int  play_continue(Play *p, const PStep *route, unsigned budget);
+/* --pilot (main.c): drive the caller's shell, which is already set up and
+ * placed.  play_pilot is called once per harness boundary and answers the
+ * held directions / buttons (bit0 X, bit1 M) for the next frame without
+ * touching the engine's input state: 0 running, 1 the route is done, -1 it
+ * failed (p->msg says why). */
+int  play_attach(Play *p, Shell *sh, const PStep *route, unsigned budget);
+int  play_pilot(Play *p, uint8_t *dirs, uint8_t *btns);
+/* "town-cave C; town-shop C [MENU]; town-edge 0|1; door C,R | door -1;
+ *  cell C,R; break C,R; boss" -> PStep[] with P_END; returns the count or -1 */
+int  play_parse_route(const char *s, PStep *out, int max, char *err, size_t errlen);
 /* the two routes test_playthrough.c drives */
 extern const PStep PLAY_ROUTE_START[];
 extern const PStep PLAY_ROUTE_BOSSES[];

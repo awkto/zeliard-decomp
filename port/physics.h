@@ -215,6 +215,7 @@ struct Game {
     uint8_t  btn2_edge;             /* FF1E */
     unsigned magic_casts, shots_fired;  /* port counters for the tests */
     uint8_t  heat_timer;            /* 9F25 */
+    uint8_t  gf_frame;              /* gfmcga [4FFF]: +1 per [3000] draw; its parity paces the cell animation (enemy.c cell_anim) */
     uint8_t  boss_map;              /* FF34  level record flags bit7 */
     uint8_t  boss_room;             /* 00E6  level record flags bit6 */
     uint8_t  boss_cutscene;         /* FF2E */

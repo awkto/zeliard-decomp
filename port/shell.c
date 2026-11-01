@@ -121,6 +121,7 @@ void shell_load_enemy_banks(Shell *s, const Map *m)
     audio_music((m->lvl_flags >> 1) & 0x0F);                            /* fight.bin 7E93 -> the 9E53 table */
     g->boss_map  = (uint8_t)((m->lvl_flags & 0x80) ? 0xFF : 0);         /* -> FF34 */
     g->boss_room = (uint8_t)((m->lvl_flags & 0x40) ? 0xFF : 0);         /* -> [E6] */
+    if (g->boss_map) g->gf_frame = 0;   /* 6254/625B: [FF34] -> gfmcga [3012] 4192, the fade-in redraw, counts [4FFF] 8 -> 0 */
     if (g->boss_map || g->boss_room) {
         if (boss_init(g) == 0)
             LOG(s, "[boss] %s \"%s\": HP %u, EXP %u, almas %u, camera column %u%s\n",
@@ -226,6 +227,12 @@ static int on_door(Game *g, const Door *d)
         game_boss_room_intro(g);                                /* 61A8 */
     else
         game_start_walk_in(g, (d->letter & 0x40) != 0);         /* 7C6E */
+    /* every branch reaches 7CF4 and ends in 7D61 `jmp 6042`, the loop
+     * restart: 6049..6053 zero 9F20..9F22 (the counter rise() bumps on the
+     * very Up that took the door) and 628A both press edges (#75:
+     * pulpo_fight f73 / pollo_fight f81, ice_slide oracle 0, port 2) */
+    g->ice_slide = g->ice_steps = g->walk_dir = 0;
+    g->btn1_edge = g->btn2_edge = 0;
     s->transitions++;
     LOG(s, "[door] entered %s (cavern %d, %d cols, tileset MPP%c) at hero (%d,%d)\n", s->maps[slot].name,
         s->maps[slot].cavern, s->maps[slot].width, "123456789AB"[s->maps[slot].tileset],
@@ -321,6 +328,11 @@ static void town_frame(Shell *s)
         g->page[0xC3] = (c->side & 1) ? 0xFF : 0;                       /* 700D..7011: shr / sbb */
         g->hero_flags = t->hero_flags;      /* [C2] is one byte: the town's value goes in (#69) */
         game_town_entry_reset(g);                                       /* [6002] = 79DC */
+        /* 701C loads the map and 703D fight.bin through [10C]: STICK 0CDC
+         * clears FF1D on each open (FF1E stays).  The port keeps FF1D twice
+         * (town / cavern); a Space the town saw -- paging a dialogue -- must
+         * not reach the first cavern frame as a swing (#75, pollo_fight f11) */
+        g->btn1_edge = t->btn1_edge = 0;
         shell_enter_cavern(s, c->map, c->col, c->row, c->side & 1, 1);
         break; }
     case TOWN_TO_TOWN: {                                                /* 6CE1 */

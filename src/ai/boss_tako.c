@@ -6,10 +6,11 @@
  * Contact A010: 10 for every part.  Frame tables A030: parts 0..5
  * (A052..A1E2, 16 poses each), 0x0E/0x0F/0x10 (A255/A205/A25F).
  *
- * Image format: the octopus is 8 parts wide x 7 rows; pose p (0..0x1F) has
- * an 8-bit-per-row bitmap at A9AF[p] and a list of {type, frame} words at
- * A57D[p] consumed left to right, top to bottom for every set bit (A3E3..
- * A48B).  Part row = boss_row + 2*bitrow, col = boss_col + 2*bit.
+ * Image format: the octopus is 7 parts wide x 8 rows; pose p (0..0x1F) has
+ * a 7-byte bitmap at A9AF[p], one byte per part COLUMN (bit 7 = top row),
+ * and a list of {type, frame} words at A57D[p] consumed top to bottom,
+ * left to right for every set bit (A3E3..A48B).  Part col = boss_col +
+ * 2*byte (A487), row = boss_row + 2*bit (A42B).
  * Pose = stage (AA97: 0, 8, 0x10) + animation frame (AA96 & 7); the
  * attack pose adds 8 (0x18) and the hit flicker subtracts 8.
  *
@@ -60,6 +61,7 @@ void boss_entry(void)
 /* 0xA492  The ink cloud: 4 parts at (ink_col + i, ink_row), type 0x30
  * (frame table 0x10 = A25F, sword-immune), frame = AA20[(n-1)*4 + i] - 1
  * (0 = no part), contact 10. */
-/* 0xA530  Death: 40 frames, boss_dying; first 20 frames flicker stage/stage+8
- * with sound 0x28, then pose stage+8; then boss_defeated. */
+/* 0xA530  Death: AA99 (the attack) = 0; 40 frames, boss_dying; first 20
+ * frames advance AA96 and flicker stage/stage+8 on AA9E's parity after its
+ * increment, sound 0x28 every frame; then pose stage+8; then boss_defeated. */
 /* 0xA503  boss_damage: HP (AA83) -= d, bar update, at 0 -> cutscene, AA9E = 0 */

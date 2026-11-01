@@ -61,7 +61,7 @@ fight.bin services (`call [cs:6000+2n]`, SI = record, CF=1 = blocked):
 | 28 | `9851` | `AL = source → AH = damage` (FIGHT.md §6 table) |
 | 29 | `8611` | spawn projectile from the 13-byte template at BX (max 31) |
 | 30 | `83DB` | clear all projectiles |
-| 31 | `98C5` | find a spare object (DI, DL = index) |
+| 31 | `98C5` | find a spare object (DI, DL = index): the first record with `home_col == FFFF` that is either parked (col high byte FF) with `row != 7F` (7F = already claimed by a splitting slime) or live **outside** the ring (96A1 CF=1) and not an item; none: CF=1 at the FFFF terminator |
 | 32 | `975B` | ride current: pops the return address and steps twice when on an updraft/current tile |
 | kernel `[11A]` | | `KRN_RANDOM` → AX |
 
@@ -136,17 +136,17 @@ individual hits.
 
 | class | name | frames | HP | contact | EXP | drops | behaviour |
 |---|---|---|---|---|---|---|---|
-| 0 | shell crawler | `A0B0/A100` (16: walk, curl, ball, spin) | 8 | 20 | 10 | {10 G, 1 G, 1 G, 10 G} | Walks; curls into a ball and dashes; waits at walls then wall-jumps (`A456/A45E` tables, `A281`) |
-| 1 | dividing green slime | `A15F` (8) | 16 | 4 | 10 | {1 G ×4} | Only magic 3/4/7 (sources 4, 5, 8), the Enchantment sword (sword 6) or a hit on an odd frame hurt it; any other hit makes it SPLIT: claims a spare object (vec 31) and spawns a copy 2 cells ahead (hp 16) |
+| 0 | shell crawler | `A0B0/A100` (16: walk, curl, ball, spin) | 8 | 20 | 10 | {10 G, 1 G, 1 G, 10 G} | Walks; curls into a ball and dashes; waits at walls then wall-jumps (`A456/A45E` tables, `A281`); a jump step that is blocked turns it round only while the step counter `next & 0xE0` is 0x20..0xA0 (`A444`) |
+| 1 | dividing green slime | `A15F` (8) | 16 | 4 | 10 | {1 G ×4} | Only magic 3/4/7 (sources 4, 5, 8), the Enchantment sword (sword 6) or a hit on an odd frame hurt it; any other hit makes it SPLIT: claims a spare object (vec 31, marked row 7F) and at its next frame 6 spawns a copy 2 cells ahead (hp 16); a refused spot (ring column, 3×3 block) goes on walking (`jmp A512`) and retries at the next frame 6 |
 | 2, 3 | icicles | `A196`, `A1A0` (2) | — (immune) | 80 | 0 | vanish | Hang until the hero is roughly below (rcol 8..0x12), 25 %/frame start falling 1 row/frame, die on landing (no EXP) |
-| 4 | spinning blade | `A1B9` (4) | 2 | 80 | 20 | {10 G, 10 G, 10 G, 1 G} | Crawls along surfaces: heading state 0..7, 8×5 candidate tables `A756/A7CE` tried in order each frame |
+| 4 | spinning blade | `A1B9` (4) | 2 | 80 | 20 | {10 G, 10 G, 10 G, 1 G} | Crawls along surfaces: heading state 0..7, 8×5 candidate tables `A756/A7CE` `{dir, next, frame}` tried in order each frame (the taken entry sets `next` and the whole `phase`), a second step when the 3rd candidate was taken |
 
 ### Cavern 5 (water) — EAI5 (ZELRES3[5]), ENP5.GRP, maps mp50/mp51 (classes 2-4 call vec 32: swept 2 cells/frame by currents)
 
 | class | name | frames | HP | contact | EXP | drops | behaviour |
 |---|---|---|---|---|---|---|---|
 | 0(+1) | tall spitter | `A0B0/A0EC` (12) + `A137/A173` | 24 | 40 | 50 | {100 G item, 10 G, 10 G, 10 G} | Walks toward the hero's column; facing him within 4 rows, spits (cell 0xB1, 18/20 cells, damage 40, `A41B/A428`).  Only the upper record takes hits (`A363`) |
-| 2 | dividing slime | `A1BE` (8) | 16 | 20 | 20 | {10 G, 1 G, 10 G, 1 G} | As cavern 4 class 1; the copy starts immune/harmless in frames 4-7 (`A641`, `A7FF`) |
+| 2 | dividing slime | `A1BE` (8) | 16 | 20 | 20 | {10 G, 1 G, 10 G, 1 G} | Hurt only by magic 3/4/7 or sword 6 (no odd-frame rule); any other hit splits it at once (`A641`): copy 2 cells ahead (facing right: the block checked is rows −1..1 × columns −3/−2), `type|0x60` immune/harmless through frames 4-7 (`A7FF`), `next = 2`; when the copy's index is above ours *our* skip bit is set (`A77C`) |
 | 3 | turning charger | `A1F5/A213` (6) | 8 | 20 | 10 | {10 G, —, 10 G, —} | walk → look around (turn frames 0..4) → charge (frame 5) (`A812`) |
 | 4 | diving floater | `A240` (8) | 8 | 10 | 10 | {10 G, —, 10 G, —} | Floats up 1 row/frame, drifts to the hero's column every 2nd frame, dives when over him (rcol 0x10..0x12) (`A91A`) |
 
@@ -217,19 +217,24 @@ Damage ×4, ×8 on the three lower weak-point parts (classes 0x10-0x12); every h
 cells away and plays 0x22.  Death: 40 frames, sound 0x23 every other frame for 30.
 
 ### Pulpo (octopus, `boss_tako.c`)
-8×7-part bitmap image (`A9AF` bitmaps, `A57D` part lists), 32 poses = stage (0/8/0x10) +
+7×8-part bitmap image, column-major (`A9AF`: one bitmap byte per part column, bit 7 = top
+row, part (col + 2·byte, row + 2·bit); `A57D` part lists), 32 poses = stage (0/8/0x10) +
 frame.  Damage ×2, ×4 on weak parts (classes ≥ 0x0E), sounds 0x24/0x25; each clean hit
 advances the stage with a 16-frame flicker.  Stage 0x10 attacks: 4-frame wind-up then an
 ink cloud (4 parts, class 0x10, immune, contact 10) drifting left one cell/frame for 24
-frames from (col+4, row+4), sound 0x27.  Death: 40 frames, sound 0x28.
+frames from (col+4, row+4), sound 0x27; ink parts never carry hit bit 5 (`A4D4`).  Death
+(`A530`): the attack is dropped, 40 frames, sound 0x28 on each of the first 20.
 
 ### Pollo (bird, `boss_tori.c`)
-9×8 parts from up to four layers (`A6CB` = the 9-byte bitmaps, `A64D` = the byte lists — the two are the other way round from an earlier note; popcounts match the run lengths): body (0/1 flinch),
+9 columns × 8 rows of parts, column-major (`A4C1`: outer loop = column), from up to four layers (`A6CB` = the 9-byte bitmaps, one per column, `A64D` = the byte lists — the two are the other way round from an earlier note; popcounts match the run lengths); a part's type is the byte's high nibble, its phase the whole byte: body (0/1 flinch),
 wings (4), legs (3), head (4).  Hovers over the hero every 2nd frame (columns ≥ 0x0D..0x30);
 1/32 per frame or when hit: 4 flaps then a 15-frame dive left (rising to row 0x0E, sound
 0x2B) then back to row 0x12; 1/16 per frame lays an egg (fight.bin shot: cell 0xA7, 50
 cells left, damage 40) from (col+4, row+4).  Damage ×2, ×8 on the head (class 0, contact
-56); sound 0x29; a hit ends a dive.  Death: 40 frames, sound 0x2C.
+56); sound 0x29; a hit ends a dive.  Hover steps use the hero's column (`A3FD`: `[80]+[83]`)
+and the left limits `col >= 0x0D` / `0x11` (`A58F`/`A59D`).  Death: 40 frames, sound 0x2C on
+each of the first 20, then the fallen pose; `A231` ends the list with `0FFF`, so the
+undrawn last frames keep the old records.
 
 ### `hit |= 0x20` in a boss room
 

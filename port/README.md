@@ -55,7 +55,7 @@ make test            # physics (147) + combat/AI (228) + town (160) + boss (634)
                      #   + status (87) + playthrough (119) + audio (315) + cutscene (46)
                      #   + video (70) = 1993 assertions.  Needs no game files: every
                      #   binary skips its data half when zeliard/ is not there.
-make verify          # 209 headless renders diffed against the DOSBox captures in docs/screenshots/,
+make verify          # 211 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
 make playthrough     # the same two routes as test_playthrough, with the step-by-step log
 ./zeliard            # the real boot: the opening demo, then Felishika's Castle

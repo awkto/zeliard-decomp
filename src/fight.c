@@ -1314,7 +1314,7 @@ bool hero_overlaps_item(struct obj *o);
 
 /* Item states (type 0x10..0x1F), table 8E14.  All use 9190 for the touch test. */
 void item_state_0x10(o) /* 8E32 */ { /* breaks when the sword marks it (hit bit 5): sound 0x12, then four half-speed phases -> `next` */ }
-void item_state_0x11(o) /* 8E8D */ { /* touch-triggered: fires when the hero is exactly 3 rows below and within 2 cols */ }
+void item_state_0x11(o) /* 8E8D */ { /* floor block under the hero's feet: row-3 == FF35 and rcol == [83]+3+([C2]&1)*2 or one more -> sound 0x12, link|=1 (that frame only); then each frame type&=0x7F, step down (9255), phase += 0x80, on the 4th count 914C removes it */ }
 void item_state_0x12(o) /* 8EE9 */ { /* 3-frame flash then remove */ }
 void item_state_0x13(o) /* 8EF6 */ { /* treasure box, sound 0x14.  `phase & 0xF` == 0 -> 8F07 swaps in `next`;
                                       * otherwise `(phase & 0xF) - 1` indexes the SEVEN-entry table at 8F33:
