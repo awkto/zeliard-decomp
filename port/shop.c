@@ -1086,6 +1086,10 @@ static uint32_t bank_adjust(uint32_t v, uint32_t max, uint8_t dirs)
  *   a direction: wait until it is released or [AD2F] ticks have passed
  *   (A2F9..A30B), then [AD2F] -= 1, and 0 - 1 gives 1 (A30D..A314), so a held
  *   key repeats after 35, 34, 33, ... ticks, down to an alternating 1/0.
+ * The redraw + poll cost no tick (#80, bank_hold): a wait ends right after
+ * a tick and the next pass resets [FF1A] well inside that tick, so a pass
+ * costs exactly [AD2F] ticks; at 1/0 two passes fit in one tick (+40 per 20
+ * ticks on a held U in the oracle).  Hence no ticks for the redraw here.
  * The release cannot be seen inside the wait: under --trace the input changes
  * only at a boundary, and there is none inside it (on either side).
  * Returns 1 with the amount in *out, 0 when cancelled (or the run ended). */

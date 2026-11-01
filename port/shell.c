@@ -321,6 +321,7 @@ static void town_frame(Shell *s)
          * then 61FC */
         if (shop_run_death(t)) fprintf(stderr, "[shop] cannot load kenjpro: no sage text\n");
         if (t->quit) return;
+        town_force_redraw(t);                                           /* 6ED4 */
         town_tail_frame(t);                                             /* 6EE6 */
         t->btn1_edge = t->btn2_edge = 0;
         t->hero_anim = 1;
@@ -385,6 +386,7 @@ static void town_frame(Shell *s)
         town_apply_patches(&s->tmap, g->page);                          /* 6EAF */
         town_npc_markers_reset(t);
         if (t->quit) break;
+        town_force_redraw(t);                                           /* 6ED4 */
         town_tail_frame(t);                                             /* 6EE1/6EE6: FF1A=28, 68AF */
         t->btn1_edge = t->btn2_edge = 0;                                /* 6EE9/6EEE */
         t->hero_anim = 1;                                               /* 6EF3 */

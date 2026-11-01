@@ -175,7 +175,10 @@ ARCHITECTURE.md lists these as "3-section shape containers"; they are the **town
                      2 A, word 2 = mask, C (B=0)   3 word 1 = mask, B, C (A=0)   4 opaque, whole cell sky
 off_block  {u8 n, u8 cell[n]}   ground cells that BLOCK walking (cpat 3C 3D, mpat 96 97, dpat BF)
 off_anim   {u8 n, {u8 from, u8 to}[n]}  cell cycling: after a row 0-2 cell is drawn the map byte is
-                     replaced by `to` (gtmcga 32C5, only cells 1..0x18) — flames/water animate
+                     replaced by `to` (gtmcga 32C5, only cells 1..0x18 whose type byte is not 0) —
+                     flames/water/flags animate.  GT_FLUSH draws a cell only where the map byte
+                     differs from the E000 screen copy, so a visible animated cell steps once per
+                     frame (port: town.c town_flush_rows, #67)
 +100 cells  48-byte PC-88 cells (cpat 157, mpat 242, dpat 191)
 ```
 `load_tileset` (6D9E) decompresses the file to `arena:8000`, adds 0x8000 to the three header

@@ -496,6 +496,7 @@ int town_load_tiles(TownTiles *t, const char *dir, int index)
         }
         t->nanim = na;
     }
+    for (int i = 0; i < 256; i++) t->type[i] = 6 + (size_t)i < len ? d[6 + i] : 0;   /* 31F2: [8000]+cell, raw */
     free(d);
     return 0;
 }
@@ -847,6 +848,7 @@ static void check_talk(Town *t)
         n->anim |= 1;
         town_draw_frame(t);                                             /* 6363..6368: FF1A=28, 68AF */
         if (!t->quit) town_dialogue_run(t, n->script, (t->hero_flags & 1) != 0);   /* 638F */
+        town_force_redraw(t);                                           /* 63AB */
         n->type = sv_type; n->sprite = sv_sprite;                       /* 62A6..62AA */
         return;
     }
@@ -870,6 +872,7 @@ static void check_auto_talk(Town *t)
     if (t->quit) return;
     t->sfx_request = 0x1E;                                              /* 636B */
     town_dialogue_run(t, n->script, (t->hero_flags & 1) != 0);
+    town_force_redraw(t);                                               /* 63AB */
 }
 
 /* 0x6E29  "up" in front of a door (the hero's column ±1). */
@@ -980,6 +983,7 @@ void town_init(Town *t, TownMap *m, TownTiles *ti, TownSprites *s, TownHero *h, 
     t->map = m; t->tiles = ti; t->spr = s; t->hero = h; t->g = g;
     t->hero_scr_col = 0x0D;
     t->hero_anim = 1;
+    town_force_redraw(t);                                               /* 61A5 (every entry, 60B7 included) */
 }
 
 /* 0x61FC  one iteration of the town main loop. */
@@ -993,6 +997,7 @@ static void check_status_menu(Town *t)
     t->g->sfx_request = 0x0B;                                           /* 68FC */
     status_run_town(t);                                                 /* 6909 */
     if (t->quit) return;
+    town_force_redraw(t);                                               /* 6920 */
     town_draw_frame(t);                                                 /* 692A: call 68AF, a tail frame */
     t->menu_debounce = 0xFF;
     t->btn1_edge = t->btn2_edge = 0;                                    /* 692D/6932 */
@@ -1001,9 +1006,46 @@ static void check_status_menu(Town *t)
 /* 0x68AF  draw and pace one frame, ending at the 68ED boundary.  68AC is the
  * same with the NPC update (6B1C) first.  The callers of 68AF preset
  * FF1A = 0x28 so it does not wait: a "tail" frame. */
+void town_force_redraw(Town *t) { memset(t->scr_copy, 0xFE, sizeof t->scr_copy); }
+
+/* gtmcga GT_FLUSH 3051, map rows 0-2 (3084..3099 -> 31D8): a cell is drawn
+ * only where the map byte differs from the screen copy at E000 (cmpsb).  31D8
+ * stores FE into the copy and returns at once if it held FF (protected); else
+ * the copy takes the map byte.  A cell whose type byte is 0 (opaque) goes to
+ * the plain 3123 draw and stops there.  Any other is drawn over the backdrop
+ * strip (3203) and then, if it is 1..0x18 (32BD..32CA), looked up in the tile
+ * bank's off_anim table [8004] ({n, {from, to}[n]}, a from of FF ends it,
+ * 32D7..32F7): the *map* byte becomes `to` (32EE).  The screen keeps `from`
+ * until the next flush finds map != copy and draws `to` -- so a visible
+ * animated cell steps once per frame, and one that scrolls onto a copy byte
+ * equal to it is not drawn and does not step.  Only the pixels shown come from
+ * the copy (town_render); the rows-3..7 copy is not modelled. */
+static void town_flush_rows(Town *t)
+{
+    const TownTiles *ti = t->tiles;
+    for (int c = 0; c < TOWN_SCR_COLS; c++) {
+        int mc = t->scroll_col + 4 + c;                                 /* 3070..3074: FF2A + 0x20 */
+        if (mc < 0 || mc >= t->map->width) continue;
+        for (int r = 0; r < 3; r++) {
+            uint8_t v = t->map->grid[mc][r], cp = t->scr_copy[c][r];
+            if (cp == v) continue;                                      /* 3086 cmpsb */
+            t->scr_copy[c][r] = 0xFE;                                   /* 31DB */
+            if (cp == 0xFF) continue;                                   /* 31DF..31E3 */
+            t->scr_copy[c][r] = v;                                      /* 3205 movsb */
+            if (!ti || !ti->type[v]) continue;                          /* 31FC -> 3123 */
+            if (v == 0 || v >= 0x19) continue;                          /* 32C0..32CA */
+            for (int i = 0; i < ti->nanim; i++) {
+                if (ti->anim_from[i] == 0xFF) break;                    /* 32E2 */
+                if (ti->anim_from[i] == v) { t->map->grid[mc][r] = ti->anim_to[i]; break; }
+            }
+        }
+    }
+}
+
 static void town_draw_frame(Town *t)
 {
     t->frame_no++;
+    town_flush_rows(t);                                                 /* 68B5: GT_FLUSH */
     if (t->present) t->present(t);
     town_sound(t);
     if (t->frame_end) t->frame_end(t);                                  /* 68ED: the frame boundary */
@@ -1140,6 +1182,9 @@ void town_render(uint8_t *fb, const Town *t)
         if (mc < 0 || mc >= t->map->width) continue;
         for (int r = 0; r < TOWN_ROWS; r++) {
             uint8_t v = t->map->grid[mc][r];
+            /* rows 0-2: what the last flush drew, which an animated cell's
+             * map byte is already one step past (town_flush_rows) */
+            if (r < 3 && t->scr_copy[c][r] < 0xFE) v = t->scr_copy[c][r];
             if (v == TOWN_MARK) {                                       /* an NPC marker: draw the tile below it */
                 for (int i = 0; i < t->map->nnpcs; i++)
                     if (t->map->npcs[i].col == (uint16_t)mc) { v = t->map->npcs[i].saved; break; }

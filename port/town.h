@@ -51,6 +51,7 @@ typedef struct {
     uint8_t sky[256][8][8];                     /* row 0-2 cells show the backdrop here */
     uint8_t block[16]; int nblock;              /* ground cells that stop the hero (686E) */
     uint8_t anim_from[32], anim_to[32]; int nanim;
+    uint8_t type[256];                          /* the raw type byte [8006+cell] gtmcga 31F2 tests */
     int     index;
 } TownTiles;
 
@@ -150,6 +151,11 @@ struct Town {
         const char *menu_item[2];
     } dlg;
     int      dlg_forced;            /* 7C54: an auto-talk script cannot be cancelled */
+    /* gtmcga's screen copy at BASE:E000, map rows 0-2 only (the rows whose
+     * cells cycle, docs/TOWN.md §4.1): GT_FLUSH (3051) redraws a cell only
+     * where the map byte differs from it, and only a redrawn cell advances
+     * its off_anim cycle.  0xFE = redraw (61A5 / 63AB / 6920 / 6ED4). */
+    uint8_t  scr_copy[TOWN_SCR_COLS][3];
     int      quit;                  /* port: the shell wants out of a blocking box */
 
     struct Shop *shop;
@@ -188,6 +194,8 @@ int  wait_poll(Game *g, Town *t, const char *site);
 void wait_boundary_now(Game *g, Town *t, const char *site);
 
 void town_init(Town *t, TownMap *m, TownTiles *ti, TownSprites *s, TownHero *h, Game *g);
+/* E000 = FE: the next GT_FLUSH redraws every cell (61A5 / 63AB / 6920 / 6ED4) */
+void town_force_redraw(Town *t);
 /* 7DE1: put the hero on map column `col` (scroll clamped to the map ends) */
 void town_place(Town *t, int col, int face_left);
 /* one iteration of the 61FC main loop; sets t->action when it wants to leave */

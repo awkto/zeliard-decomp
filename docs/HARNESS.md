@@ -303,9 +303,11 @@ port does, per the spec below:
 - **#65:** the bank amount entry (`shop.c bank_enter_amount`, **`bank:A2D8`** deposit /
   **`bank:A477`** withdraw, armed at A295 / A42A): one pass = redraw + poll + `int 61h`;
   no direction = one tick; a held direction adjusts, then waits `[AD2F]` ticks (0x23,
-  then one less per held pass; 0 − 1 gives 1) with no boundary inside. The port counts
-  no redraw time, so once `[AD2F]` drops below 20 (a hold of ~16 boundaries) the
-  boundaries may stop lining up: keep holds shorter. omoypro's Space wait
+  then one less per held pass; 0 − 1 gives 1) with no boundary inside. The redraw costs
+  no tick (#80): the wait ends just after a tick and the redraw, poll and `[FF1A]` reset
+  fit well inside it (at `[AD2F]` 1/0 two passes fit in one tick: +40 per 20 ticks held),
+  so a held pass is exactly `[AD2F]` ticks and the port counts none for the redraw;
+  `bank_hold` (U45, D40) checks it through the 1/0 regime. omoypro's Space wait
   (`shop.c omoy_wait`, **`omoy:A04E`**: only the Space edge ends it). The sage's name
   entry (`shop.c kenj_name_edit`, **`kenj:A597`**, typed keys via `'C`); its R/L release
   waits spin on `int 61h` without idle_poll and are polls of the same site on both
@@ -395,7 +397,7 @@ port's view: the oracle then checks it).
 Every scenario must be clean. `death_sage` goes on from the dying `717F` frames
 through the Sage's text (`71EC`) back to Muralla; `status_cave`, `drug_buy`,
 `bank_menu`, `npc_talk` and `npc_yesno` cover the other wait loops (#64);
-`bank_deposit`, `bank_withdraw` (amount entry: repeat, clamp, cancel), `omoya_wait` and
+`bank_deposit`, `bank_withdraw` (amount entry: repeat, clamp, cancel), `bank_hold` (long holds, #80), `omoya_wait` and
 `sage_record` (typed name, Backspace, cursor step, the A862 write) the last three (#65).
 `sage_exit` ends the run in the game's exit to DOS (the Sage's "No"; the exit record, §4, #81).
 Caverns 4-6 (#49): `ice_crawler`, `ice_icicles` (EAI4), `water_slimes`, `water_current`
