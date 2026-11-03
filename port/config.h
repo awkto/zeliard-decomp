@@ -42,6 +42,8 @@ typedef struct Config {
     int  sfx;                           /* F2 state; -1 = unset */
     int  speaker;                       /* 1 = PC speaker, 0 = AdLib; -1 = unset */
     int  volume;                        /* carried if present; -1 = unset */
+    int  touch_size;                    /* touch.size, percent of the default; -1 = unset (#54) */
+    int  touch_opacity;                 /* touch.opacity, percent; -1 = unset (#54) */
     /* #42 step 2: key remapping.  `key.<action>` and `pad.<action>` are kept in
      * the order they were read; a later line for the same action replaces the
      * value in place.  n_key/n_pad are the counts. */

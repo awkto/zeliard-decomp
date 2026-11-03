@@ -102,6 +102,7 @@ config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`
 | F1 / F2 | toggle the music / the sound effects (STICK's own hotkeys) |
 | F3 | **cycle the display filter**: integer → sharp-bilinear → smooth → crt (presentation only; remembered in the config) |
 | F7 | **Restore Game** (the original's own hotkey, #42): *Sure?(Y/N)*, then the *Input name:* box with the `*.usr` list; see below |
+| touch | on-screen controls (`--touch auto\|on\|off`, see `touch.c`): joystick, Sword, Magic, Combo, 1-9/Y/N, Esc, Items, quick save/load |
 | F12 | dump the framebuffer to the `--screenshot` file |
 | F11 / Alt+Enter | toggle fullscreen (the window is resizable; `--fullscreen` starts there) |
 | Esc | **pause** — Esc or Enter resumes, **Q** quits |
@@ -612,6 +613,28 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   renders through `video_to_rgb`) cannot see any of it.  The SDL-only half is
   exercised by `test_present` (SDL offscreen/dummy driver + software renderer), which
   is built and run separately from `make test`.
+* `touch.c` / `touch.h` — **on-screen touch controls** (#54 step 1), drawn by the port
+  itself over the presented frame (after `present.c`, with SDL_Render primitives) so the
+  same code serves desktop touchscreens, Android and mobile web.  Layout, relative to
+  the window so it fits landscape and portrait: a movement **joystick** bottom-left
+  (left/right walk, up jumps, down kneels, the four diagonals jump-walk or kneel-turn),
+  **Sword** and **Magic** bottom-right, a **Combo** button above Sword (holds Up+Down and
+  pulses Sword at about 10 Hz — the DOSBox-X attack-keys behaviour, so the stick is
+  free to steer), a top row of **1-9 / Y / N** for the game's prompts, and a second row
+  with **Esc** (pause), **Items** (Enter), quick **Save** and **Load** (#52).  Each
+  finger is bound to the control it started on (SDL_FINGERDOWN/MOTION/UP), so thumbs
+  are independent and a slide off a button does not release it.  The result is direction
+  bits, the sword/magic bits, the held menu bit and one-shot events, fed into the same
+  paths the keyboard and controller use; the engine never sees the difference.
+  `--touch auto|on|off`: *auto* (default) shows the overlay on the first touch and hides
+  it again when the keyboard or a controller is used; `zeliard.ini` takes `touch.size`
+  (percent, 50-200, default 100) and `touch.opacity` (percent, 10-100, default 50).
+  The layout, hit-test, stick sectors and finger state are pure C (no SDL calls);
+  `test_touch` unit-tests them (every control's hit, multi-finger independence, the
+  stick zones and diagonals, landscape 16:9 and portrait 9:16 layouts), built and run
+  separately from `make test` like `test_present`.  `./test_touch --shot DIR frame.ppm`
+  also renders the overlay over a game frame into `DIR/overlay_{landscape,portrait}.png`
+  with the SDL dummy driver and a software renderer.
 * `nav.c` / `nav.h` — **the autopilot** (not part of the original).  "Can Garland get
   from here to there" is a question about fight.bin's own rules, so rather than model
   them a second time the navigator *asks the engine*: every cell he can stand on is a

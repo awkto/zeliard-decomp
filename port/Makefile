@@ -21,7 +21,7 @@ CORE = sar.o gfx.o map.o physics.o render.o png.o enemy.o ai.o combat.o shots.o 
 # SDL-only objects: the display filters (#53) and the key/controller remapping
 # (#42 step 2).  The engine test binaries must stay SDL-free, so these are not
 # in CORE.
-SDL_ONLY = present.o
+SDL_ONLY = present.o touch.o
 ifneq ($(strip $(SDL_LIBS)),)
   CFLAGS += -DHAVE_SDL $(SDL_CFLAGS)
   LIBS   += $(SDL_LIBS)
@@ -40,7 +40,7 @@ ifeq ($(SAN),1)
   LIBS   += -fsanitize=address,undefined
 endif
 
-all: zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config test_present
+all: zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config test_present test_touch
 
 # present.o is the SDL display-filter stage (#53).  It is *not* in CORE: the
 # engine test binaries must stay SDL-free, so only zeliard and test_present
@@ -87,7 +87,12 @@ test_config: test_config.o $(CORE)
 test_present: test_present.o present.o
 	$(CC) -o $@ $^ $(LIBS)
 
-%.o: %.c sar.h gfx.h map.h physics.h render.h video.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h savestate.h nav.h playthrough.h opl2.h msd.h audio.h gd.h cutscene.h tear.h trace.h present.h config.h statekeys.h input.h
+# the touch overlay (#54): the layout/hit-test half is pure C and is tested
+# without a window; the SDL half renders into a software renderer for the shot.
+test_touch: test_touch.o touch.o statekeys.o png.o present.o
+	$(CC) -o $@ $^ $(LIBS)
+
+%.o: %.c sar.h gfx.h map.h physics.h render.h video.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h savestate.h nav.h playthrough.h opl2.h msd.h audio.h gd.h cutscene.h tear.h trace.h present.h config.h statekeys.h input.h touch.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Every binary's "N checks" line is collected so the last step can compare the

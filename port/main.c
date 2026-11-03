@@ -32,6 +32,7 @@
 #ifdef HAVE_SDL
 #include "input.h"
 #endif
+#include "touch.h"
 #include <errno.h>
 #ifdef _WIN32
 #include <direct.h>
@@ -126,6 +127,7 @@ typedef struct {
     SDL_Window *win; SDL_Renderer *ren; SDL_Texture *tex;
     SDL_GameController *pad;            /* controller 0, opened on the fly */
     Input    in;                        /* #42: the key/button bindings, one table */
+    Touch    touch;                     /* #54: the on-screen controls */
     int      paused;                    /* Esc: the original pauses, it does not quit */
     int      esc_edge;                  /* Esc was pressed; what that means is the caller's */
     char     title_base[900];           /* the engine's own title, re-applied when pause flips */
@@ -200,6 +202,7 @@ static void present_frame(App *a, int sw, int sh)
     if (present_render(a->ren, a->tex, sw, sh, dw, dh, a->filter) != 0)
         fprintf(stderr, "[video] present: %s\n", SDL_GetError());
     osd_draw(a);
+    touch_draw(&a->touch, a->ren);           /* #54: over the frame, after the filter */
     SDL_RenderPresent(a->ren);
 }
 
@@ -227,10 +230,17 @@ static void pump_events(App *a, Game *g)
         case SDL_QUIT: a->quit = 1; break;
         case SDL_CONTROLLERDEVICEADDED:   pad_open(a, e.cdevice.which); break;
         case SDL_CONTROLLERDEVICEREMOVED: pad_closed(a, e.cdevice.which); break;
+        case SDL_FINGERDOWN: case SDL_FINGERMOTION: case SDL_FINGERUP: {
+            int ow = 0, oh = 0;
+            if (SDL_GetRendererOutputSize(a->ren, &ow, &oh) == 0) touch_handle_sdl(&a->touch, &e, ow, oh);
+            break;
+        }
         case SDL_CONTROLLERBUTTONDOWN:
+            touch_note_other_input(&a->touch);
             if (input_pad_event_match(&a->in, ACT_PAUSE, e.cbutton.button)) { a->paused = !a->paused; title_apply(a); }
             break;
         case SDL_KEYDOWN:
+            touch_note_other_input(&a->touch);       /* #54: keyboard use hides the overlay */
             /* the F7 dialog owns the keyboard while it is up */
             if (a->rest.state) {
                 if (!e.key.repeat && a->rest_qn < 16) a->rest_q[a->rest_qn++] = (int)e.key.keysym.sym;
@@ -289,6 +299,18 @@ static void pump_events(App *a, Game *g)
                 if (c && !a->sk_combo) a->sh.town.last_ascii = c;   /* not the slot digit */
             }
             break;
+        default: break;
+        }
+    }
+    /* #54: the touch overlay's one-shot controls go down the keyboard's paths */
+    TouchEvent te;
+    while (touch_next_event(&a->touch, &te)) {
+        switch (te.kind) {
+        case TEV_ESC:   a->esc_edge = 1; break;
+        case TEV_ITEMS: if (a->paused) { a->paused = 0; title_apply(a); } break;
+        case TEV_QSAVE: if (g) { statekeys_request(&a->sk, &a->sh, STATE_REQ_SAVE, -1); } break;
+        case TEV_QLOAD: if (g) { statekeys_request(&a->sk, &a->sh, STATE_REQ_LOAD, -1); } break;
+        case TEV_CHAR:  a->sh.town.last_ascii = (uint8_t)te.ch; break;
         default: break;
         }
     }
@@ -353,7 +375,7 @@ static uint8_t pad_btns(App *a)
 }
 static int pad_menu(App *a)
 {
-    return input_pad_down(&a->in, ACT_MENU, a->pad);
+    return input_pad_down(&a->in, ACT_MENU, a->pad) || touch_menu_held(&a->touch);
 }
 
 /* Keyboard movement from the binding table; `town` picks the town defaults. */
@@ -427,6 +449,9 @@ static void usage(void)
         "  --filter F  display scaling: integer, sharp (sharp-bilinear, default), smooth or crt\n"
         "              (scanlines + aperture grille);\n"
         "              F3 cycles them (presentation only, the framebuffer is untouched)\n"
+        "  --touch M   on-screen touch controls: auto (default: shown on the first touch,\n"
+        "              hidden again by keyboard or controller use), on or off; size and opacity\n"
+        "              are touch.size / touch.opacity in zeliard.ini\n"
         "  --fullscreen  start full-screen (F11 or Alt+Enter toggles; Esc pauses, Q quits)\n"
         "  --video M   render through one of the five original drivers:\n"
         "              mcga (default) cga cga2 ega hgc tandy — the RESOURCE.CFG\n"
@@ -1025,10 +1050,12 @@ static void present(Game *g)
     if (a->paused) { g->dirs = 0; set_buttons(g, 0); g->menu_key = 0; return; }
     uint8_t d = pad_dirs(a);
     d |= key_dirs(a, k, 0);
+    d |= touch_dirs(&a->touch);
     g->dirs = d;
     uint8_t b = pad_btns(a);
     int combo = a->sk_combo;
     b |= key_btns(a, k, 0, combo);
+    b |= touch_buttons(&a->touch, SDL_GetTicks());
     set_buttons(g, b);
     g->menu_key = (uint8_t)(key_menu(a, k, 0) || pad_menu(a));   /* FF18 bit0 */
 #endif
@@ -1099,10 +1126,12 @@ static void town_present(Town *t)
     if (a->paused) { t->dirs = 0; t->buttons = 0; t->menu_key = 0; return; }
     uint8_t d = pad_dirs(a);
     d |= key_dirs(a, k, 1);
+    d |= touch_dirs(&a->touch);
     t->dirs = d;
     uint8_t b = pad_btns(a);
     int combo = a->sk_combo;
     b |= key_btns(a, k, 1, combo);
+    b |= touch_buttons(&a->touch, SDL_GetTicks());
     if ((b & 1) && !(t->buttons & 1)) t->btn1_edge = 0xFF;
     if ((b & 2) && !(t->buttons & 2)) t->btn2_edge = 0xFF;
     t->buttons = b;
@@ -1178,6 +1207,7 @@ int main(int argc, char **argv)
     Shell *sh = &a.sh;
     const char *dir = NULL;
     int map_idx = 0, pos_col = -1, pos_row = -1, start_in_town = -1, town_col = -1, town_scr = -1, town_anim = -1, town_face = 0, npc_i = -1, npc_f = 0;
+    int touch_mode = 0;                         /* #54: --touch auto|on|off (auto = first touch shows it) */
     int dbg_sword = -1, dbg_shield = -1, dbg_level = -1, dbg_life = -1;
     long dbg_gold = -1, dbg_keys = -1, dbg_bank = -1, dbg_worn = -1;
     const char *dbg_potions = NULL, *dbg_spells = NULL;
@@ -1210,6 +1240,10 @@ int main(int argc, char **argv)
             a.filter = present_filter_by_name(argv[++i]);
             if (a.filter < 0) { fprintf(stderr, "--filter: expected integer, sharp, smooth or crt\n"); return 2; }
             have_filter = 1;
+        }
+        else if (!strcmp(argv[i], "--touch") && i + 1 < argc) {
+            touch_mode = touch_mode_by_name(argv[++i]);
+            if (touch_mode < 0) { fprintf(stderr, "--touch: expected on, off or auto\n"); return 2; }
         }
         else if (!strcmp(argv[i], "--fullscreen")) { a.fullscreen = 1; have_fullscreen = 1; }
         /* the drivers all drew for a 4:3 monitor, so their pixels are not
@@ -1313,6 +1347,9 @@ int main(int argc, char **argv)
         if (cfg.sfx >= 0) sfx_on = cfg.sfx;
         if (!have_speaker && cfg.speaker >= 0) audio_backend = cfg.speaker ? AUDIO_SPEAKER : AUDIO_ADLIB;
     }
+#ifdef HAVE_SDL
+    touch_init(&a.touch, touch_mode, a.headless ? -1 : cfg.touch_size, a.headless ? -1 : cfg.touch_opacity);
+#endif
     if (a.intro < 0) a.intro = !explicit_start;
     /* GAME.BIN comes back from the demo and starts a new game in the castle */
     if (a.intro && !a.intro_only && !explicit_start && start_in_town < 0) start_in_town = 0;
