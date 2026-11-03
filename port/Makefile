@@ -18,9 +18,14 @@ CORE = sar.o gfx.o map.o physics.o render.o png.o enemy.o ai.o combat.o shots.o 
        config.o statekeys.o \
        gd.o cutscene.o tear.o \
        video.o video_mcga.o video_cga.o video_ega.o video_hgc.o video_tandy.o
+# SDL-only objects: the display filters (#53) and the key/controller remapping
+# (#42 step 2).  The engine test binaries must stay SDL-free, so these are not
+# in CORE.
+SDL_ONLY = present.o
 ifneq ($(strip $(SDL_LIBS)),)
   CFLAGS += -DHAVE_SDL $(SDL_CFLAGS)
   LIBS   += $(SDL_LIBS)
+  SDL_ONLY += input.o
 endif
 LIBS += -lm
 
@@ -40,7 +45,7 @@ all: zeliard test_physics test_combat test_town test_boss test_shop test_status 
 # present.o is the SDL display-filter stage (#53).  It is *not* in CORE: the
 # engine test binaries must stay SDL-free, so only zeliard and test_present
 # link it.
-zeliard: main.o trace.o $(CORE) present.o
+zeliard: main.o trace.o $(CORE) $(SDL_ONLY)
 	$(CC) -o $@ $^ $(LIBS)
 
 test_physics: test_physics.o $(CORE)
@@ -82,7 +87,7 @@ test_config: test_config.o $(CORE)
 test_present: test_present.o present.o
 	$(CC) -o $@ $^ $(LIBS)
 
-%.o: %.c sar.h gfx.h map.h physics.h render.h video.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h savestate.h nav.h playthrough.h opl2.h msd.h audio.h gd.h cutscene.h tear.h trace.h present.h config.h statekeys.h
+%.o: %.c sar.h gfx.h map.h physics.h render.h video.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h savestate.h nav.h playthrough.h opl2.h msd.h audio.h gd.h cutscene.h tear.h trace.h present.h config.h statekeys.h input.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Every binary's "N checks" line is collected so the last step can compare the

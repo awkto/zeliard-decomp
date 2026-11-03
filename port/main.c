@@ -28,6 +28,9 @@
 #include "playthrough.h"
 #include "present.h"
 #include "config.h"
+#ifdef HAVE_SDL
+#include "input.h"
+#endif
 #include <errno.h>
 #ifdef _WIN32
 #include <direct.h>
@@ -114,6 +117,7 @@ typedef struct {
 #ifdef HAVE_SDL
     SDL_Window *win; SDL_Renderer *ren; SDL_Texture *tex;
     SDL_GameController *pad;            /* controller 0, opened on the fly */
+    Input    in;                        /* #42: the key/button bindings, one table */
     int      paused;                    /* Esc: the original pauses, it does not quit */
     int      esc_edge;                  /* Esc was pressed; what that means is the caller's */
     char     title_base[900];           /* the engine's own title, re-applied when pause flips */
@@ -216,53 +220,50 @@ static void pump_events(App *a, Game *g)
         case SDL_CONTROLLERDEVICEADDED:   pad_open(a, e.cdevice.which); break;
         case SDL_CONTROLLERDEVICEREMOVED: pad_closed(a, e.cdevice.which); break;
         case SDL_CONTROLLERBUTTONDOWN:
-            if (e.cbutton.button == SDL_CONTROLLER_BUTTON_BACK) { a->paused = !a->paused; title_apply(a); }
+            if (input_pad_event_match(&a->in, ACT_PAUSE, e.cbutton.button)) { a->paused = !a->paused; title_apply(a); }
             break;
         case SDL_KEYDOWN:
-            switch (e.key.keysym.sym) {
-            /* Esc used to quit outright, with no confirmation -- one reflex
+            /* #42: every hotkey is looked up in the one binding table
+             * (input.c); the defaults are the keys this used to hard-code.
+             * Esc used to quit outright, with no confirmation -- one reflex
              * keypress and the session was gone, which is neither what the
              * original does nor what anyone expects.  What it *should* do
              * differs by screen, so record the press and let the caller say:
              * the engines pause, a cutscene skips. */
-            case SDLK_ESCAPE: a->esc_edge = 1; break;
-            case SDLK_q:      if (a->paused) a->quit = 1; break;
-            case SDLK_F11:    toggle_fullscreen(a); break;
-            /* F3 cycles the display filter: integer -> sharp-bilinear -> smooth */
-            case SDLK_F3:
+            if (input_event_match(&a->in, ACT_PAUSE, &e.key)) a->esc_edge = 1;
+            else if (e.key.keysym.sym == SDLK_q) { if (a->paused) a->quit = 1; }
+            else if (input_event_match(&a->in, ACT_FULLSCREEN, &e.key)) toggle_fullscreen(a);
+            /* the filter key cycles the display filter: integer -> sharp-bilinear -> smooth */
+            else if (input_event_match(&a->in, ACT_FILTER, &e.key)) {
                 a->filter = (a->filter + 1) % FILTER_COUNT;
                 fprintf(stderr, "[video] filter: %s\n", present_filter_name(a->filter));
-                break;
-            case SDLK_RETURN: case SDLK_KP_ENTER:
+            }
+            else if (input_event_match(&a->in, ACT_MENU, &e.key)) {
                 if (e.key.keysym.mod & KMOD_ALT) toggle_fullscreen(a);   /* Alt+Enter */
                 else if (a->paused) { a->paused = 0; title_apply(a); }
-                break;
-            case SDLK_F12:    if (a->shot_path && g) dump_png(a, g); break;
+            }
+            else if (input_event_match(&a->in, ACT_SCREENSHOT, &e.key)) { if (a->shot_path && g) dump_png(a, g); }
             /* #52 step 2: realtime save states, the same keys as the wasm
              * builds.  Ctrl+. quick-saves and Ctrl+\ quick-loads; Ctrl+1..9
              * saves to a numbered slot and Alt+1..9 loads one.  The combo is
              * remembered so the same Ctrl/Alt does not also swing the sword or
              * cast the spell this frame.  `g` is NULL in a cutscene, where there
              * is no engine state to save yet. */
-            case SDLK_PERIOD:
-                if (g && (e.key.keysym.mod & KMOD_CTRL)) {
-                    statekeys_request(&a->sk, &a->sh, STATE_REQ_SAVE, -1); a->sk_combo = 1;
+            else if (g && input_event_match(&a->in, ACT_QUICKSAVE, &e.key)) {
+                statekeys_request(&a->sk, &a->sh, STATE_REQ_SAVE, -1); a->sk_combo = 1;
+            }
+            else if (g && input_event_match(&a->in, ACT_QUICKLOAD, &e.key)) {
+                statekeys_request(&a->sk, &a->sh, STATE_REQ_LOAD, -1); a->sk_combo = 1;
+            }
+            else if (g) {
+                for (int n = 0; n < 9; n++) {
+                    if (input_event_match(&a->in, ACT_SAVE1 + n, &e.key)) {
+                        statekeys_request(&a->sk, &a->sh, STATE_REQ_SAVE, n + 1); a->sk_combo = 1; break;
+                    }
+                    if (input_event_match(&a->in, ACT_LOAD1 + n, &e.key)) {
+                        statekeys_request(&a->sk, &a->sh, STATE_REQ_LOAD, n + 1); a->sk_combo = 1; break;
+                    }
                 }
-                break;
-            case SDLK_BACKSLASH:
-                if (g && (e.key.keysym.mod & KMOD_CTRL)) {
-                    statekeys_request(&a->sk, &a->sh, STATE_REQ_LOAD, -1); a->sk_combo = 1;
-                }
-                break;
-            case SDLK_1: case SDLK_2: case SDLK_3: case SDLK_4: case SDLK_5:
-            case SDLK_6: case SDLK_7: case SDLK_8: case SDLK_9:
-                if (g && (e.key.keysym.mod & KMOD_CTRL)) {
-                    statekeys_request(&a->sk, &a->sh, STATE_REQ_SAVE, (int)(e.key.keysym.sym - SDLK_0)); a->sk_combo = 1;
-                } else if (g && (e.key.keysym.mod & KMOD_ALT)) {
-                    statekeys_request(&a->sk, &a->sh, STATE_REQ_LOAD, (int)(e.key.keysym.sym - SDLK_0)); a->sk_combo = 1;
-                }
-                break;
-            default: break;
             }
             {   /* FF29 (STICK 04D0): upper-case letters, digits, Backspace, Enter */
                 SDL_Keycode k = e.key.keysym.sym;
@@ -320,35 +321,53 @@ static uint8_t pad_dirs(App *a)
 {
     if (!a->pad) return 0;
     SDL_GameController *c = a->pad;
+    const Input *in = &a->in;
     uint8_t d = 0;
-    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_UP)    ||
-        SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_A)          ||   /* A jumps */
-        SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY) < -PAD_DEAD) d |= DIR_UP;
-    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_DOWN)  ||
-        SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY) >  PAD_DEAD) d |= DIR_DOWN;
-    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_LEFT)  ||
-        SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX) < -PAD_DEAD) d |= DIR_LEFT;
-    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) ||
-        SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX) >  PAD_DEAD) d |= DIR_RIGHT;
+    if (input_pad_down(in, ACT_UP, c)    || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY) < -PAD_DEAD) d |= DIR_UP;
+    if (input_pad_down(in, ACT_DOWN, c)  || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY) >  PAD_DEAD) d |= DIR_DOWN;
+    if (input_pad_down(in, ACT_LEFT, c)  || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX) < -PAD_DEAD) d |= DIR_LEFT;
+    if (input_pad_down(in, ACT_RIGHT, c) || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX) >  PAD_DEAD) d |= DIR_RIGHT;
     return d;
 }
 static uint8_t pad_btns(App *a)
 {
     if (!a->pad) return 0;
     uint8_t b = 0;
-    if (SDL_GameControllerGetButton(a->pad, SDL_CONTROLLER_BUTTON_X)) b |= 1;   /* sword */
-    if (SDL_GameControllerGetButton(a->pad, SDL_CONTROLLER_BUTTON_Y)) b |= 2;   /* magic */
+    if (input_pad_down(&a->in, ACT_SWORD, a->pad)) b |= 1;   /* sword */
+    if (input_pad_down(&a->in, ACT_MAGIC, a->pad)) b |= 2;   /* magic */
     return b;
 }
 static int pad_menu(App *a)
 {
-    return a->pad && SDL_GameControllerGetButton(a->pad, SDL_CONTROLLER_BUTTON_START);
+    return input_pad_down(&a->in, ACT_MENU, a->pad);
+}
+
+/* Keyboard movement from the binding table; `town` picks the town defaults. */
+static uint8_t key_dirs(const App *a, const Uint8 *k, int town)
+{
+    uint8_t d = 0;
+    if (input_key_down(&a->in, ACT_UP, town, k, 0))    d |= DIR_UP;
+    if (input_key_down(&a->in, ACT_DOWN, town, k, 0))  d |= DIR_DOWN;
+    if (input_key_down(&a->in, ACT_LEFT, town, k, 0))  d |= DIR_LEFT;
+    if (input_key_down(&a->in, ACT_RIGHT, town, k, 0)) d |= DIR_RIGHT;
+    return d;
+}
+static uint8_t key_btns(const App *a, const Uint8 *k, int town, int combo)
+{
+    uint8_t b = 0;
+    if (input_key_down(&a->in, ACT_SWORD, town, k, combo)) b |= 1;
+    if (input_key_down(&a->in, ACT_MAGIC, town, k, combo)) b |= 2;
+    return b;
+}
+static int key_menu(const App *a, const Uint8 *k, int town)
+{
+    return input_key_down(&a->in, ACT_MENU, town, k, 0);
 }
 
 /* F1 / F2, STICK.BIN's own music and sound-effect hotkeys */
-static void audio_hotkeys(const Uint8 *k)
+static void audio_hotkeys(const App *a, const Uint8 *k)
 {
-    int f1 = k[SDL_SCANCODE_F1], f2 = k[SDL_SCANCODE_F2];
+    int f1 = input_key_down(&a->in, ACT_MUSIC, 0, k, 0), f2 = input_key_down(&a->in, ACT_SFX, 0, k, 0);
     if (f1 && !f1_was) { music_on = !music_on; audio_music_enable(music_on); }
     if (f2 && !f2_was) { sfx_on = !sfx_on; audio_sfx_enable(sfx_on); }
     f1_was = f1; f2_was = f2;
@@ -894,22 +913,18 @@ static void present(Game *g)
     static Uint64 next = 0;
     frame_wait(a, g, &next);
     const Uint8 *k = SDL_GetKeyboardState(NULL);
-    audio_hotkeys(k);
+    audio_hotkeys(a, k);
     /* Paused: hand the engine a frame of nothing rather than the keys the
      * player is using to talk to the pause screen. */
     if (a->paused) { g->dirs = 0; set_buttons(g, 0); g->menu_key = 0; return; }
     uint8_t d = pad_dirs(a);
-    if (k[SDL_SCANCODE_UP] || k[SDL_SCANCODE_W] || k[SDL_SCANCODE_Z] || k[SDL_SCANCODE_SPACE]) d |= DIR_UP;
-    if (k[SDL_SCANCODE_DOWN] || k[SDL_SCANCODE_S]) d |= DIR_DOWN;
-    if (k[SDL_SCANCODE_LEFT] || k[SDL_SCANCODE_A]) d |= DIR_LEFT;
-    if (k[SDL_SCANCODE_RIGHT] || k[SDL_SCANCODE_D]) d |= DIR_RIGHT;
+    d |= key_dirs(a, k, 0);
     g->dirs = d;
     uint8_t b = pad_btns(a);
     int combo = a->sk_combo;
-    if (k[SDL_SCANCODE_X] || (!combo && (k[SDL_SCANCODE_LCTRL] || k[SDL_SCANCODE_RCTRL]))) b |= 1;
-    if (k[SDL_SCANCODE_C] || (!combo && k[SDL_SCANCODE_LALT])) b |= 2;
+    b |= key_btns(a, k, 0, combo);
     set_buttons(g, b);
-    g->menu_key = (uint8_t)(k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER] || pad_menu(a));   /* FF18 bit0 */
+    g->menu_key = (uint8_t)(key_menu(a, k, 0) || pad_menu(a));   /* FF18 bit0 */
 #endif
 }
 
@@ -973,22 +988,18 @@ static void town_present(Town *t)
     static Uint64 next = 0;
     frame_wait(a, NULL, &next);
     const Uint8 *k = SDL_GetKeyboardState(NULL);
-    audio_hotkeys(k);
+    audio_hotkeys(a, k);
     if (a->paused) { t->dirs = 0; t->buttons = 0; t->menu_key = 0; return; }
     uint8_t d = pad_dirs(a);
-    if (k[SDL_SCANCODE_UP] || k[SDL_SCANCODE_W] || k[SDL_SCANCODE_Z]) d |= DIR_UP;
-    if (k[SDL_SCANCODE_DOWN] || k[SDL_SCANCODE_S]) d |= DIR_DOWN;
-    if (k[SDL_SCANCODE_LEFT] || k[SDL_SCANCODE_A]) d |= DIR_LEFT;
-    if (k[SDL_SCANCODE_RIGHT] || k[SDL_SCANCODE_D]) d |= DIR_RIGHT;
+    d |= key_dirs(a, k, 1);
     t->dirs = d;
     uint8_t b = pad_btns(a);
     int combo = a->sk_combo;
-    if (k[SDL_SCANCODE_SPACE] || k[SDL_SCANCODE_X]) b |= 1;
-    if (k[SDL_SCANCODE_C] || (!combo && (k[SDL_SCANCODE_LALT] || k[SDL_SCANCODE_RALT])) || k[SDL_SCANCODE_BACKSPACE]) b |= 2;
+    b |= key_btns(a, k, 1, combo);
     if ((b & 1) && !(t->buttons & 1)) t->btn1_edge = 0xFF;
     if ((b & 2) && !(t->buttons & 2)) t->btn2_edge = 0xFF;
     t->buttons = b;
-    t->menu_key = (uint8_t)(k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER] || pad_menu(a));   /* FF18 bit0 */
+    t->menu_key = (uint8_t)(key_menu(a, k, 1) || pad_menu(a));   /* FF18 bit0 */
 #endif
 }
 
@@ -1054,6 +1065,9 @@ int main(int argc, char **argv)
     Config cfg; char cfgpath[CONFIG_PATH_MAX];
     config_resolve_path(cfgpath, sizeof cfgpath, argv[0]);
     config_load(&cfg, cfgpath);                 /* #42: absent = all defaults */
+#ifdef HAVE_SDL
+    input_init(&a.in, &cfg);                    /* #42 step 2: key.* / pad.* over the defaults */
+#endif
     Shell *sh = &a.sh;
     const char *dir = NULL;
     int map_idx = 0, pos_col = -1, pos_row = -1, start_in_town = -1, town_col = -1, town_scr = -1, town_anim = -1, town_face = 0, npc_i = -1, npc_f = 0;

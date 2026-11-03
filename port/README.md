@@ -53,7 +53,7 @@ cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 12 test binaries
 make test            # physics (149) + combat/AI (228) + town (160) + boss (641) + shop (189)
                      #   + status (87) + playthrough (139) + audio (315) + cutscene (46)
-                     #   + video (70) + config (30) = 2054 assertions.  Needs no game files:
+                     #   + video (70) + config (45) = 2069 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 211 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -835,13 +835,53 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     accounted for separately.
   * **silence and determinism**: the engine hooks are no-ops while audio is off, and
     the same `--dump-audio` script rendered twice is bit-identical.
-* `test_config.c` — 30 assertions over the settings file (#42): the sentinels
+* `test_config.c` — 45 assertions over the settings file (#42): the sentinels
   `config_init` leaves, a full `key=value` parse, the lines it ignores (junk, a
   bare `=`, an unknown key, a bad boolean) and the whitespace/CRLF trimming, the
   `on`/`off`/`true`/`no` spellings, a lossless render+parse round trip, the atomic
   save (parent directory created, the `.tmp` gone, the file loading back, a missing
-  file being no error) and the XDG / `HOME` / next-to-the-binary default path.
+  file being no error), the XDG / `HOME` / next-to-the-binary default path and the
+  `key.*` / `pad.*` binding lines (kept as text, last line wins, verbatim round trip,
+  full-table refusal).
 * `tools/compare_shot.py` — playfield diff against a DOSBox capture.
+
+
+### Key and controller bindings (#42 step 2)
+
+Every game action can be rebound in `zeliard.ini` with `key.<action> = <keys>` and
+`pad.<action> = <buttons>` lines.  A value is a comma-separated list and **replaces**
+that action's whole default set; leave the line out to keep the default.  With no
+binding lines the port behaves exactly as before.  Unknown action or key/button names
+are warned about on stderr and ignored (an action whose value has no valid name keeps
+its default).  `config.c` keeps the lines as text and writes them back on exit
+(SDL-free); `input.c` resolves them into the one table the event pump and the polled
+movement read.
+
+    key.sword = X, Left Ctrl, Right Ctrl
+    key.quicksave = Ctrl+Period
+    pad.magic = Y, B
+
+Actions (default keys; controller defaults in brackets):
+
+* `left` Left, A (d-pad left) · `right` Right, D (d-pad right) · `down` Down, S (d-pad down)
+* `up` Up, W, Z (+ Space in the cavern: jump) (d-pad up, A)
+* `sword` cavern X, Left/Right Ctrl; town Space, X (X) · `magic` cavern C, Left Alt;
+  town C, Left/Right Alt, Backspace (Y)
+* `menu` Return, Keypad Enter: the status screen (Start) · `pause` Escape (Back)
+* `music` F1 · `sfx` F2 · `filter` F3 · `fullscreen` F11 · `screenshot` F12
+* `quicksave` Ctrl+. · `quickload` Ctrl+\ · `save1`..`save9` Ctrl+1..9 · `load1`..`load9` Alt+1..9
+  (a `key.*` binding replaces both the cavern and the town default set)
+
+Key names are SDL's scancode names (`SDL_GetScancodeFromName`): `A`..`Z`, `0`..`9`,
+`Left`, `Right`, `Up`, `Down`, `Space`, `Return`, `Escape`, `Backspace`, `Tab`,
+`Left Ctrl`, `Right Alt`, `Keypad Enter`, `F1`..`F12`, `Period`, `Comma`, `\`, and so
+on.  A hotkey (one-shot) binding may carry a modifier prefix: `Ctrl+`, `Alt+`,
+`Shift+`, `Gui+` (e.g. `Ctrl+Period`); movement/button bindings are polled, so a
+prefix there is ignored.  Controller buttons use SDL's names: `a b x y back guide
+start leftstick rightstick leftshoulder rightshoulder dpup dpdown dpleft dpright`.
+Only the pad's `up/down/left/right/sword/magic/menu/pause` actions are used; the left
+stick stays a fixed direction input.  Alt+Enter (fullscreen) and Q (quit while paused)
+are not rebindable.
 
 Verification: `make verify` renders nine positions headlessly and compares them with
 the DOSBox captures.  All 53 checks are 100 % pixel-identical, three of them over

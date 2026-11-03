@@ -52,8 +52,25 @@ static void copy_str(char *dst, size_t n, const char *src)
     snprintf(dst, n, "%s", src);
 }
 
+/* key.<action> / pad.<action>: keep the action and the raw value text.  A
+ * repeated action replaces its value in place (so the last line wins, as a
+ * hand-edited ini would expect); new actions append while there is room. */
+static int bind_set(ConfigBind *list, int *n, const char *action, const char *val)
+{
+    if (!*action || !*val) return 0;
+    for (int i = 0; i < *n; i++)
+        if (!strcmp(list[i].action, action)) { copy_str(list[i].value, sizeof list[i].value, val); return 1; }
+    if (*n >= CONFIG_MAX_BIND) return 0;
+    copy_str(list[*n].action, sizeof list[*n].action, action);
+    copy_str(list[*n].value, sizeof list[*n].value, val);
+    (*n)++;
+    return 1;
+}
+
 int config_set(Config *c, const char *key, const char *val)
 {
+    if (!strncmp(key, "key.", 4))       return bind_set(c->key, &c->n_key, key + 4, val);
+    if (!strncmp(key, "pad.", 4))       return bind_set(c->pad, &c->n_pad, key + 4, val);
     if (!strcmp(key, "dir"))            { copy_str(c->dir, sizeof c->dir, val); return 1; }
     if (!strcmp(key, "scale"))          { int v; if (!parse_int(val, &v)) return 0; c->scale = v; return 1; }
     if (!strcmp(key, "fullscreen"))     { int v; if (!parse_bool(val, &v)) return 0; c->fullscreen = v; return 1; }
@@ -111,6 +128,8 @@ void config_render(const Config *c, char *out, size_t n)
     if (c->sfx >= 0)    EMIT("sfx=%d\n", c->sfx);
     if (c->speaker >= 0) EMIT("speaker=%d\n", c->speaker);
     if (c->volume >= 0) EMIT("volume=%d\n", c->volume);
+    for (int i = 0; i < c->n_key; i++) EMIT("key.%s=%s\n", c->key[i].action, c->key[i].value);
+    for (int i = 0; i < c->n_pad; i++) EMIT("pad.%s=%s\n", c->pad[i].action, c->pad[i].value);
     #undef EMIT
     if (n) out[o < n ? o : n - 1] = 0;
 }
@@ -122,7 +141,7 @@ int config_load(Config *c, const char *path)
     copy_str(c->path, sizeof c->path, path);
     FILE *f = fopen(path, "rb");
     if (!f) return 0;                           /* absent is fine: defaults */
-    char text[4096];
+    char text[8192];
     size_t n = fread(text, 1, sizeof text - 1, f);
     fclose(f);
     text[n] = 0;
@@ -148,7 +167,7 @@ static void make_parents(const char *path)
 
 int config_save(const Config *c)
 {
-    char text[4096];
+    char text[8192];
     config_render(c, text, sizeof text);
     make_parents(c->path);
 

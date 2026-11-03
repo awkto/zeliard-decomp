@@ -159,6 +159,56 @@ static void t_paths(void)
     ck(!strcmp(out, "/opt/zel/zeliard.ini"), "next to the binary when there is no home");
 }
 
+/* ----------------------------------------------- key.* / pad.* (step 2) */
+static void t_binds(void)
+{
+    printf("bindings        ");
+    Config c; config_init(&c);
+    ck(c.n_key == 0 && c.n_pad == 0, "init: no bindings");
+    int n = config_parse(&c,
+        "key.sword = Left Ctrl, X\npad.magic=A\nkey.left=Left,A\n"
+        "key.sword = Z\nkey.nosuchaction = Q\nkey.up =\nkey.quicksave=Ctrl+Period\n");
+    ck(n == 6, "six binding lines kept, the empty value refused (got %d)", n);
+    ck(c.n_key == 4 && c.n_pad == 1, "counts (key %d, pad %d)", c.n_key, c.n_pad);
+    ck(!strcmp(c.key[0].action, "sword") && !strcmp(c.key[0].value, "Z"),
+       "a repeated action replaces its value in place; the last line wins");
+    ck(!strcmp(c.key[1].action, "left") && !strcmp(c.key[1].value, "Left,A"), "order and value text kept verbatim");
+    ck(!strcmp(c.key[3].value, "Ctrl+Period"), "modifier spelling kept");
+    ck(!strcmp(c.pad[0].action, "magic") && !strcmp(c.pad[0].value, "A"), "pad binding");
+    ck(config_set(&c, "key.", "X") == 0, "an empty action name is refused");
+
+    char text[4096];
+    config_render(&c, text, sizeof text);
+    ck(strstr(text, "key.sword=Z\n") && strstr(text, "pad.magic=A\n") && strstr(text, "key.quicksave=Ctrl+Period\n"),
+       "render writes the binding lines");
+    Config d; config_init(&d); config_parse(&d, text);
+    int same = d.n_key == c.n_key && d.n_pad == c.n_pad;
+    for (int i = 0; same && i < c.n_key; i++)
+        same = !strcmp(d.key[i].action, c.key[i].action) && !strcmp(d.key[i].value, c.key[i].value);
+    for (int i = 0; same && i < c.n_pad; i++)
+        same = !strcmp(d.pad[i].action, c.pad[i].action) && !strcmp(d.pad[i].value, c.pad[i].value);
+    ck(same, "bindings survive render then parse");
+
+    /* saved to disk and loaded back, alongside the ordinary keys */
+    char tmpl[] = "/tmp/zel_cfgb_XXXXXX";
+    char *base = mkdtemp(tmpl);
+    ck(base != NULL, "mkdtemp");
+    if (!base) return;
+    snprintf(c.path, sizeof c.path, "%s/zeliard.ini", base);
+    c.scale = 3;
+    ck(config_save(&c) == 0, "save with bindings");
+    Config e; config_load(&e, c.path);
+    ck(e.scale == 3 && e.n_key == 4 && e.n_pad == 1 && !strcmp(e.key[0].value, "Z"), "bindings load back from the file");
+    remove(c.path); rmdir(base);
+
+    /* a full table does not overflow */
+    Config f; config_init(&f);
+    int ok = 1;
+    for (int i = 0; i < CONFIG_MAX_BIND; i++) { char k[32]; snprintf(k, sizeof k, "key.a%d", i); ok &= config_set(&f, k, "X"); }
+    ck(ok && f.n_key == CONFIG_MAX_BIND, "the table fills");
+    ck(config_set(&f, "key.overflow", "X") == 0 && f.n_key == CONFIG_MAX_BIND, "a full table refuses more");
+}
+
 int main(void)
 {
     t_defaults();  printf("ok\n");
@@ -168,6 +218,7 @@ int main(void)
     t_roundtrip(); printf("ok\n");
     t_save();      printf("ok\n");
     t_paths();     printf("ok\n");
+    t_binds();     printf("ok\n");
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;
 }

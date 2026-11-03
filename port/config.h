@@ -19,6 +19,17 @@
 
 #define CONFIG_PATH_MAX 1024
 #define CONFIG_STR_MAX   32
+#define CONFIG_VAL_MAX   64         /* a binding's value: "C, Left Alt, Right Alt, Backspace" */
+#define CONFIG_MAX_BIND  48         /* key.<action> / pad.<action> pairs kept */
+
+/* One `key.<action> = <value>` (or `pad.<action> = <value>`) line: the action
+ * name and the value text, kept verbatim so the file round-trips.  The port
+ * resolves the value into scancodes/controller buttons at run time (input.c);
+ * config.c only carries the text, so it stays SDL-free. */
+typedef struct ConfigBind {
+    char action[CONFIG_STR_MAX];
+    char value[CONFIG_VAL_MAX];
+} ConfigBind;
 
 typedef struct Config {
     char dir[CONFIG_PATH_MAX];          /* the game folder; "" = unset */
@@ -31,6 +42,11 @@ typedef struct Config {
     int  sfx;                           /* F2 state; -1 = unset */
     int  speaker;                       /* 1 = PC speaker, 0 = AdLib; -1 = unset */
     int  volume;                        /* carried if present; -1 = unset */
+    /* #42 step 2: key remapping.  `key.<action>` and `pad.<action>` are kept in
+     * the order they were read; a later line for the same action replaces the
+     * value in place.  n_key/n_pad are the counts. */
+    ConfigBind key[CONFIG_MAX_BIND]; int n_key;
+    ConfigBind pad[CONFIG_MAX_BIND]; int n_pad;
     char path[CONFIG_PATH_MAX];         /* the ini's own location (load/save) */
 } Config;
 
