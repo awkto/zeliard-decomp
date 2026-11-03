@@ -80,6 +80,33 @@ be verified on a server.  If SDL2 lives somewhere unusual, put `SDL_CFLAGS`/`SDL
 in `port/local.mk` (auto-included, gitignored).  `compat/SDL_config.h` is a generic
 config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`).
 
+## Web build (Emscripten, issue #59 step 1)
+
+`packaging/web/build.sh` builds the port with Emscripten (`emmake make zeliard.js`)
+into `build/web/{index.html,zeliard.js,zeliard.wasm}`.  CI does it in the
+`emscripten/emsdk` container (pinned 3.1.64): `.github/workflows/web.yml`, on pushes
+to `ci/web*` and on manual dispatch, uploads the folder as the `zeliard-web`
+artifact.  It is code only; no game data is built in.
+
+* **Loops.** This is step 1: `-sASYNCIFY`, no loop inversion.  `frame_wait` and the
+  cutscene frame pacing call `emscripten_sleep(0)` once per frame under
+  `#ifdef __EMSCRIPTEN__`, so the existing blocking loops hand control back to the
+  browser.  Native builds and traces are unchanged.  Step 2 (a per-frame step
+  function) would remove ASYNCIFY's size and speed cost.
+* **Game files.** `index.html` asks for the game folder (`<input webkitdirectory>`)
+  or a zip of it, writes the files into MEMFS `/game` (rooted at the folder that
+  holds `ZELRES1.SAR`) and calls `main` with `--dir /game --touch auto`.  Starting
+  happens inside the file-input event, which is the user gesture SDL audio needs.
+  Nothing leaves the browser.
+* **Persistence.** IDBFS is mounted at `/libsdl` (what `SDL_GetPrefPath` returns), so
+  `zeliard.ini` and the save states persist.  `.usr` saves go next to the game
+  files, so the page mirrors changed `.usr` files into `/libsdl/usr` and puts them
+  back into `/game` on the next visit; `FS.syncfs` runs every 3 s.
+* **Network.** No libcurl: `net_stub.c`, so `--sync` reports "no network support".
+  An `emscripten_fetch` backend is a later step.
+* **Touch.** The #54 overlay uses SDL finger events, which SDL2's Emscripten backend
+  generates from the canvas's touch events.
+
 ## Installing on Linux
 
 Each release (a `v*` tag) carries two Linux packages, built by

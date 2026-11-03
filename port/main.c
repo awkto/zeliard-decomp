@@ -36,6 +36,9 @@
 #include "input.h"
 #endif
 #include "touch.h"
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 #include <errno.h>
 #ifdef _WIN32
 #include <direct.h>
@@ -353,6 +356,9 @@ static void frame_wait(App *a, Game *g, Uint64 *next)
         Uint64 rem = (*next - now) * 1000 / freq;
         SDL_Delay(rem > 2 ? 1 : 0);
     }
+#ifdef __EMSCRIPTEN__
+    emscripten_sleep(0);        /* ASYNCIFY: always hand the thread back to the browser once a frame */
+#endif
 }
 
 /* The analogue stick counts as a direction past half deflection. */
@@ -1026,6 +1032,9 @@ static void cutscene_present(Cutscene *c)
         Uint64 rem = (next - now) * 1000 / freq;
         SDL_Delay(rem > 2 ? 1 : 0);
     }
+#ifdef __EMSCRIPTEN__
+    emscripten_sleep(0);        /* ASYNCIFY: yield to the browser (see frame_wait) */
+#endif
     const Uint8 *k = SDL_GetKeyboardState(NULL);
     c->key = (uint8_t)(k[SDL_SCANCODE_SPACE] || k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]);
 #endif

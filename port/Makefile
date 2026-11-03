@@ -63,6 +63,17 @@ all: zeliard test_physics test_combat test_town test_boss test_shop test_status 
 zeliard: main.o trace.o $(CORE) $(SDL_ONLY) $(SYNC_OBJ) syncdlg.o $(NET_OBJ)
 	$(CC) -o $@ $^ $(LIBS) $(NET_LIBS)
 
+# Web build (packaging/web/build.sh: emmake make zeliard.js).  The link flags
+# live here so the objects and the test builds stay untouched.  ASYNCIFY lets
+# the blocking frame loops in main.c yield to the browser (emscripten_sleep);
+# IDBFS is how the saves/states/zeliard.ini under SDL_GetPrefPath persist.
+WEB_LDFLAGS = -sUSE_SDL=2 -sASYNCIFY -sASYNCIFY_STACK_SIZE=262144 -sSTACK_SIZE=2097152 \
+              -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=67108864 -lidbfs.js \
+              -sINVOKE_RUN=0 -sEXIT_RUNTIME=0 -sFORCE_FILESYSTEM=1 \
+              -sEXPORTED_RUNTIME_METHODS=FS,callMain,IDBFS -sEXPORTED_FUNCTIONS=_main
+zeliard.js: main.o trace.o $(CORE) $(SDL_ONLY) $(SYNC_OBJ) syncdlg.o $(NET_OBJ)
+	$(CC) -o $@ $^ $(LIBS) $(NET_LIBS) $(WEB_LDFLAGS)
+
 test_physics: test_physics.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
 
