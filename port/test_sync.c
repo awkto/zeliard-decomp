@@ -81,7 +81,8 @@ int net_delete(const char *url, const NetAuth *au, NetResp *r) { (void)url; (voi
 
 static void srv_set(const void *blob, size_t n, long long modified)
 {
-    free(srv.blob); srv.blob = malloc(n); memcpy(srv.blob, blob, n); srv.len = n; srv.modified = modified; srv.has = 1;
+    void *nb = malloc(n); memcpy(nb, blob, n);          /* blob may be srv.blob itself */
+    free(srv.blob); srv.blob = nb; srv.len = n; srv.modified = modified; srv.has = 1;
 }
 static void srv_reset(void)
 {
