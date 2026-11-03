@@ -22,6 +22,7 @@ int present_filter_by_name(const char *name)
     if (name_eq(name, "integer")) return FILTER_INTEGER;
     if (name_eq(name, "sharp") || name_eq(name, "sharp-bilinear")) return FILTER_SHARP;
     if (name_eq(name, "smooth") || name_eq(name, "linear")) return FILTER_SMOOTH;
+    if (name_eq(name, "crt") || name_eq(name, "scanlines")) return FILTER_CRT;
     return -1;
 }
 
@@ -31,6 +32,7 @@ const char *present_filter_name(int filter)
     case FILTER_INTEGER: return "integer";
     case FILTER_SHARP:   return "sharp-bilinear";
     case FILTER_SMOOTH:  return "smooth";
+    case FILTER_CRT:     return "crt";
     default:             return "?";
     }
 }
@@ -73,11 +75,56 @@ int present_prescale(int cw, int ch, int sw, int sh)
     return n < 1 ? 1 : n;
 }
 
+int present_crt_row_gain(int y, int ch, int sh)
+{
+    if (ch <= 0 || sh <= 0 || ch < 3 * sh || y < 0) return 255;
+    int frac = (int)((long long)y * sh % ch * 256 / ch);    /* 0..255 across one source line */
+    int d = frac < 128 ? 128 - frac : frac - 128;           /* 0 at the centre .. 128 at the seam */
+    return 255 - PRESENT_CRT_SCAN_DARK * d / 128;
+}
+
+int present_crt_col_gain(int x, int c, int cw, int sw)
+{
+    if (cw <= 0 || sw <= 0 || cw < 3 * sw || x < 0) return 255;
+    return (x % 3 == c) ? 255 : 255 - PRESENT_CRT_MASK_DARK;
+}
+
+uint32_t present_crt_mask(int x, int y, int cw, int ch, int sw, int sh)
+{
+    uint32_t g = (uint32_t)present_crt_row_gain(y, ch, sh);
+    uint32_t r = g * (uint32_t)present_crt_col_gain(x, 0, cw, sw) / 255;
+    uint32_t gg = g * (uint32_t)present_crt_col_gain(x, 1, cw, sw) / 255;
+    uint32_t b = g * (uint32_t)present_crt_col_gain(x, 2, cw, sw) / 255;
+    return 0xFF000000u | r << 16 | gg << 8 | b;
+}
+
 #ifdef HAVE_SDL
 #include <SDL.h>
+#include <stdlib.h>
 
 static SDL_Texture *g_target;
 static int g_tw, g_th;
+static SDL_Texture *g_mask;          /* the CRT multiply mask, cached per geometry */
+static int g_mw, g_mh, g_msw, g_msh;
+
+static SDL_Texture *mask_ensure(SDL_Renderer *ren, int cw, int ch, int sw, int sh)
+{
+    if (g_mask && g_mw == cw && g_mh == ch && g_msw == sw && g_msh == sh) return g_mask;
+    if (g_mask) { SDL_DestroyTexture(g_mask); g_mask = NULL; }
+    SDL_Texture *t = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888,
+                                       SDL_TEXTUREACCESS_STATIC, cw, ch);
+    uint32_t *px = t ? malloc((size_t)cw * ch * 4) : NULL;
+    if (!px) { if (t) SDL_DestroyTexture(t); return NULL; }
+    for (int y = 0; y < ch; y++)
+        for (int x = 0; x < cw; x++)
+            px[(size_t)y * cw + x] = present_crt_mask(x, y, cw, ch, sw, sh);
+    SDL_UpdateTexture(t, NULL, px, cw * 4);
+    free(px);
+    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_MOD);
+    SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
+    g_mask = t; g_mw = cw; g_mh = ch; g_msw = sw; g_msh = sh;
+    return g_mask;
+}
 
 static int target_ensure(SDL_Renderer *ren, int w, int h)
 {
@@ -108,7 +155,7 @@ int present_render(SDL_Renderer *ren, SDL_Texture *src,
         SDL_RenderCopy(ren, src, NULL, &dst);
         return 0;
     }
-    if (filter == FILTER_SHARP) {
+    if (filter == FILTER_SHARP || filter == FILTER_CRT) {
         int n = present_prescale(w, h, sw, sh);
         if (n > 1 && target_ensure(ren, sw * n, sh * n) == 0) {
             if (SDL_SetRenderTarget(ren, g_target) == 0) {
@@ -117,7 +164,7 @@ int present_render(SDL_Renderer *ren, SDL_Texture *src,
                 SDL_SetRenderTarget(ren, NULL);
                 SDL_SetTextureScaleMode(g_target, SDL_ScaleModeLinear);
                 SDL_RenderCopy(ren, g_target, NULL, &dst);   /* to the output */
-                return 0;
+                goto overlay;
             }
             SDL_SetRenderTarget(ren, NULL);
         }
@@ -125,6 +172,11 @@ int present_render(SDL_Renderer *ren, SDL_Texture *src,
     }
     SDL_SetTextureScaleMode(src, SDL_ScaleModeLinear);
     SDL_RenderCopy(ren, src, NULL, &dst);
+overlay:
+    if (filter == FILTER_CRT) {
+        SDL_Texture *m = mask_ensure(ren, w, h, sw, sh);
+        if (m) SDL_RenderCopy(ren, m, NULL, &dst);   /* scanlines + grille */
+    }
     return 0;
 }
 
@@ -132,5 +184,7 @@ void present_shutdown(void)
 {
     if (g_target) { SDL_DestroyTexture(g_target); g_target = NULL; }
     g_tw = g_th = 0;
+    if (g_mask) { SDL_DestroyTexture(g_mask); g_mask = NULL; }
+    g_mw = g_mh = g_msw = g_msh = 0;
 }
 #endif
