@@ -61,6 +61,8 @@ int player_load_stdply(Game *g, const char *dir)
 }
 
 /* kenjpro A862: <name>.usr = a raw copy of the 256-byte page, no header. */
+void (*player_usr_saved_hook)(const char *dir, const char *name);
+
 int player_save_usr(Game *g, const char *dir, const char *name)
 {
     char base[16], path[1024];
@@ -74,6 +76,7 @@ int player_save_usr(Game *g, const char *dir, const char *name)
     if (!f) return -1;
     size_t w = fwrite(g->page, 1, 256, f);
     if (fclose(f) || w != 256) return -1;
+    if (player_usr_saved_hook) player_usr_saved_hook(dir, base);    /* #55: save sync */
     return 0;
 }
 

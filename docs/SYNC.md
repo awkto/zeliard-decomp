@@ -346,7 +346,7 @@ accepted.
    * libcurl is optional (pkg-config); without it `--sync` says "built without network
      support".  The test round trip uses a local `saves-api.py`, not `docker run`, and a
      generated fixture bundle rather than a capture from the web build.
-2. **Lifecycle hooks + ask-before-link UI.** Pull before the first town load
+2. **Lifecycle hooks + ask-before-link UI.** **DONE (#55 step 2, see port/README.md "Save sync").** Pull before the first town load
    (before `shell_init` reads the dir, so nothing races), push after each
    `player_save_usr` (the port writes a `.usr` rarely, so push-on-save replaces
    the 2-minute timer), final push at exit, offline = skip and log. The
@@ -356,6 +356,16 @@ accepted.
    #55: save in the emulated web build, load that `.usr` in the port on another
    machine (F7), and the reverse (open the web app, confirm the `.USR` loads
    in the DOS game via its F7 Restore, as in `docs/DOSBOX_RECIPE.md` section 9).
+   **Step 2 as built** (`port/synclife.c/.h`, `syncdlg.c/.h`, glue in `main.c`, one hook
+   `player_usr_saved_hook` in `player.c`, `net_set_timeouts` in `net.h`): active only
+   in an interactive SDL run with `sync = on`; never in `--script/--trace/--save/
+   --screenshot/--headless/--pilot/--state-*` runs.  Pull before `shell_init`
+   (3 s connect, 10 s total).  An unlinked key with a server save and local saves
+   shows the modal after the window opens and before the first town/cutscene; a
+   folder with no saves takes the server's without asking.  Push per save on an SDL
+   thread (coalesced, 3 s / 20 s), final push at exit if one is unsent.  Offline:
+   one log line, play on.  Hard errors (401) turn sync off for the session.
+   The two-machine F7 acceptance run is not done here.
 3. **Port-only realtime states + undo.** Push/pull `port-state-*` slots (6.2)
    from the `states/` dir, after #52's `quick.zst` / `slotN.zst`. Add
    `--sync history` and `--sync restore ID`, mirroring `SaveSync.kt:662-703`,

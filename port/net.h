@@ -26,6 +26,12 @@ typedef struct NetAuth {            /* both optional ("" or NULL = not sent) */
 /* 1 when this build can talk HTTP at all. */
 int net_supported(void);
 
+/* Seconds to wait for a connection / for a whole request, for the calls that
+ * follow (defaults 10 / 120, the desktop client's).  The in-game lifecycle sets
+ * a short pair so a dead server never holds up play.  Not thread-safe: set it
+ * while no request is in flight. */
+void net_set_timeouts(int connect_s, int total_s);
+
 /* Each returns the HTTP status (0 on a transport failure) and fills *r.  The
  * caller owns r->body (net_resp_free).  `modified` goes out as X-Save-Modified. */
 int net_get(const char *url, const NetAuth *au, NetResp *r);

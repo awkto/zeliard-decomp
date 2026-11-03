@@ -1,5 +1,5 @@
 #!/bin/bash
-# sync_roundtrip.sh -- #55 step 1 end to end: the real zeliard binary (libcurl)
+# sync_roundtrip.sh -- #55 steps 1-2 end to end: the real zeliard binary (libcurl)
 # against a LOCAL copy of the zeliard-wasm saves-api.py.  Never touches a live
 # server: it binds 127.0.0.1 on a random port with a throw-away data dir.
 #
@@ -139,6 +139,51 @@ check "an immediate second pull is a no-op" test $rc = 0
 dev A --sync push --sync-key NONE --sync-base "$BASE"; rc=$?
 check "push to an empty key is refused (exit 6)" test $rc = 6
 check "...and nothing was created" test "$(api "$BASE" NONE GET api/saves | tr -d ' \n')" = "[]"
+
+# ---- lifecycle (step 2): the interactive game with sync = on, under SDL's dummy
+# video driver (no window, no sound).  A device is a game folder plus its own
+# zeliard.ini in the pref path ($XDG_DATA_HOME/awkto/zeliard).
+play() { local n=$1; shift   # --frames 3: three frames of the town, then a normal exit
+    SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy XDG_CONFIG_HOME="$T/$n/cfg" XDG_DATA_HOME="$T/$n/data" HOME="$T/$n" \
+        timeout "${PLAY_TIMEOUT:-25}" "$BIN" --dir "$T/$n/game" --town 1 --frames 3 "$@" >"$T/$n.play" 2>&1; }
+ini() { local n=$1 base=$2 key=$3 d="$T/$1/data/awkto/zeliard"; mkdir -p "$d"
+    printf 'sync=on\nsync_base=%s\nsync_key=%s\n' "$base" "$key" > "$d/zeliard.ini"; }
+if SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy HOME="$T/A" XDG_DATA_HOME="$T/A/data" "$BIN" --dir "$T/A/game" --town 1 --frames 1 2>&1 | grep -q "built without SDL2"; then
+    echo "  skip lifecycle checks: this binary has no SDL"
+else
+    echo "lifecycle:"
+    KEY2=LIFE
+    # server holds a bundle for LIFE, as the web app would have left it
+    curl -fs -X PUT -H "X-Client-Id: $KEY2" -H "X-Save-Modified: $OLD_MS" --data-binary @"$T/seed.zip" "${BASE}api/saves/auto" >/dev/null
+    # C: empty folder, unlinked key -> the start-up pull takes the server's save, no question
+    mkdev C; ini C "$BASE" $KEY2
+    play C; rc=$?
+    check "empty folder + sync on: the game starts (exit 0)" test $rc = 0
+    check "...and the server's save was pulled before the town loaded" test -f "$T/C/game/webhero.usr"
+    check "...and the key is linked" grep -q '"LIFE"' "$T/C/data/awkto/zeliard/sync-links.json"
+    # D: has its own save, unlinked key + a server save -> the dialog opens and waits (no keys on a dummy
+    # display), nothing is touched, until Esc/close; here the watchdog ends it
+    mkdev D; ini D "$BASE" $KEY2
+    head -c 256 /dev/urandom > "$T/D/game/mine.usr"; sum=$(sha256sum "$T/D/game/mine.usr")
+    srv_before=$(api "$BASE" $KEY2 GET api/saves/auto | sha256sum)
+    PLAY_TIMEOUT=4 play D; rc=$?
+    check "both sides have a save: the question is asked and play waits (watchdog, exit 124)" test $rc = 124
+    check "...local save untouched, server untouched, not linked" \
+        test "$(sha256sum "$T/D/game/mine.usr")" = "$sum" -a "$(api "$BASE" $KEY2 GET api/saves/auto | sha256sum)" = "$srv_before" -a ! -f "$T/D/game/webhero.usr" -a ! -f "$T/D/data/awkto/zeliard/sync-links.json"
+    # E: offline server -> one [sync] line, play goes on, quickly
+    mkdev E; ini E "http://127.0.0.1:1/" $KEY2
+    head -c 256 /dev/urandom > "$T/E/game/mine.usr"
+    s0=$SECONDS; play E; rc=$?
+    check "server unreachable: the game still starts and exits 0" test $rc = 0
+    check "...with an offline line in the log, within a few seconds" test $(grep -c '^\[sync\] offline' "$T/E.play") = 1 -a $((SECONDS - s0)) -lt 8
+    # F: tool runs never sync and never ask, even with sync on and a key that needs a decision
+    mkdev F; ini F "$BASE" $KEY2
+    head -c 256 /dev/urandom > "$T/F/game/mine.usr"
+    for mode in "--headless" "--script R5" "--screenshot 2 $T/F/shot.png"; do
+        play F $mode; rc=$?
+        check "$mode: exits 0, no [sync] line, nothing pulled" test $rc = 0 -a "$(grep -c '^\[sync\]\|^zeliard: sync' "$T/F.play")" = 0 -a ! -f "$T/F/game/webhero.usr"
+    done
+fi
 
 echo
 if [ $fails -eq 0 ]; then echo "sync_roundtrip: all checks passed"; else echo "sync_roundtrip: $fails FAILED (logs in $T)"; trap - EXIT; kill "$SRV_PID" 2>/dev/null; exit 1; fi

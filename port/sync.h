@@ -100,6 +100,12 @@ int  sync_status(SyncCtx *c);
 int  sync_pull(SyncCtx *c, int force);
 int  sync_push(SyncCtx *c, int force);
 
+/* the context the config describes (shared by --sync and the lifecycle hooks,
+ * synclife.h).  `remember` stores an explicit key in <cfg dir>/sync-key.
+ * 0, or SYNC_ERR with the reason on stderr. */
+int  sync_ctx_init(SyncCtx *c, const Config *cfg, const char *cfgpath, const char *game_dir,
+                   const char *cli_key, const char *cli_base, int remember);
+
 /* main.c entry for `--sync ACTION`: builds the context from the config (+ the
  * --sync-key / --sync-base overrides), runs, returns the exit code.  Never
  * writes the config. */

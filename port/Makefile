@@ -42,7 +42,7 @@ else
   NET_LIBS = $(CURL_LIBS)
 endif
 # the sync core + the vendored zip library (third_party/miniz, MIT); SDL-free
-SYNC_OBJ = sync.o miniz.o
+SYNC_OBJ = sync.o synclife.o miniz.o
 
 # `make SAN=1 test` builds and links everything with AddressSanitizer and
 # UndefinedBehaviorSanitizer.  The flags have to reach the *link* too, which is
@@ -60,7 +60,7 @@ all: zeliard test_physics test_combat test_town test_boss test_shop test_status 
 # present.o is the SDL display-filter stage (#53).  It is *not* in CORE: the
 # engine test binaries must stay SDL-free, so only zeliard and test_present
 # link it.
-zeliard: main.o trace.o $(CORE) $(SDL_ONLY) $(SYNC_OBJ) $(NET_OBJ)
+zeliard: main.o trace.o $(CORE) $(SDL_ONLY) $(SYNC_OBJ) syncdlg.o $(NET_OBJ)
 	$(CC) -o $@ $^ $(LIBS) $(NET_LIBS)
 
 test_physics: test_physics.o $(CORE)
@@ -100,18 +100,20 @@ test_config: test_config.o $(CORE)
 # save sync (#55): the protocol core against an in-memory fake server (test_sync.c
 # carries its own net_* implementation), so no libcurl and no network
 test_sync: test_sync.o $(SYNC_OBJ)
-	$(CC) -o $@ $^ $(LIBS)
+	$(CC) -o $@ $^ $(LIBS) -lpthread
 
 miniz.o: third_party/miniz/miniz.c third_party/miniz/miniz.h
 	$(CC) $(CFLAGS) -w -DMINIZ_NO_STDIO -c -o $@ $<
 
 sync.o test_sync.o: sync.h net.h config.h third_party/miniz/miniz.h
+synclife.o test_sync.o: synclife.h
+syncdlg.o: syncdlg.h synclife.h restore.h shell.h text.h
 sync.o: CFLAGS += -Ithird_party/miniz
 test_sync.o: CFLAGS += -Ithird_party/miniz
 net_curl.o: net_curl.c net.h
 	$(CC) $(CFLAGS) $(CURL_CFLAGS) -c -o $@ $<
 net_stub.o: net_stub.c net.h
-main.o: sync.h
+main.o: sync.h synclife.h syncdlg.h
 
 # The display filters only exist on the SDL path, so this one is built (and run)
 # separately from `make test`; with no SDL it compiles to a "skipping" stub.

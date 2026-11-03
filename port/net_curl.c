@@ -43,6 +43,8 @@ static size_t on_header(char *ptr, size_t sz, size_t nm, void *ud)
     return n;
 }
 
+static volatile int t_connect = 10, t_total = 120;   /* net_set_timeouts; the desktop client waits 120 s */
+
 static int perform(const char *method, const char *url, const NetAuth *au,
                    const void *body, size_t bn, int has_body, long long modified, NetResp *r)
 {
@@ -67,8 +69,8 @@ static int perform(const char *method, const char *url, const NetAuth *au,
     curl_easy_setopt(c, CURLOPT_WRITEDATA, &s);
     curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, on_header);
     curl_easy_setopt(c, CURLOPT_HEADERDATA, r);
-    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 10L);
-    curl_easy_setopt(c, CURLOPT_TIMEOUT, 120L);         /* native Go client: 120 s */
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, (long)t_connect);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, (long)t_total);
     curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(c, CURLOPT_USERAGENT, "zeliard-port-sync");
     if (has_body) {
@@ -85,6 +87,7 @@ static int perform(const char *method, const char *url, const NetAuth *au,
     return r->status;
 }
 
+void net_set_timeouts(int connect_s, int total_s) { t_connect = connect_s; t_total = total_s; }
 int net_supported(void) { return 1; }
 int net_get(const char *url, const NetAuth *au, NetResp *r) { return perform("GET", url, au, NULL, 0, 0, 0, r); }
 int net_put(const char *url, const NetAuth *au, const void *b, size_t n, long long m, NetResp *r)

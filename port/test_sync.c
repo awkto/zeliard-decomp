@@ -15,6 +15,8 @@
 #include "miniz.h"
 #include "net.h"
 #include "sync.h"
+#include "synclife.h"
+#include <pthread.h>
 
 static int checks, failures;
 static void ck(int ok, const char *fmt, ...)
@@ -30,7 +32,7 @@ static void ck(int ok, const char *fmt, ...)
 /* ------------------------------------------------------------ fake server */
 static struct {
     unsigned char *blob; size_t len; long long modified; int has;
-    int healthy, puts, gets, deletes;
+    int healthy, puts, gets, deletes, t_connect, t_total;
     char want_token[64], seen_key[80], seen_token[64];
 } srv;
 
@@ -47,6 +49,7 @@ static void note_auth(const NetAuth *au)
     snprintf(srv.seen_token, sizeof srv.seen_token, "%s", au && au->token ? au->token : "");
 }
 static int denied(const NetAuth *au) { return srv.want_token[0] && (!au || !au->token || strcmp(au->token, srv.want_token)); }
+void net_set_timeouts(int connect_s, int total_s) { srv.t_connect = connect_s; srv.t_total = total_s; }
 int net_supported(void) { return 1; }
 int net_get(const char *url, const NetAuth *au, NetResp *r)
 {
@@ -459,6 +462,210 @@ static void t_flow_push_pull(void)
     srv_reset();
 }
 
+
+/* ------------------------------------------------ lifecycle (#55 step 2) */
+/* a Config as zeliard.ini would give it, over the same dirs as `f` */
+static void life_cfg(Config *cfg, const SyncCtx *f, char *cfgpath, size_t n, int sync)
+{
+    memset(cfg, 0, sizeof *cfg);
+    cfg->sync = sync;
+    snprintf(cfg->sync_base, sizeof cfg->sync_base, "http://127.0.0.1:1");
+    snprintf(cfg->sync_key, sizeof cfg->sync_key, "%.63s", f->key);
+    snprintf(cfgpath, n, "%s/zeliard.ini", f->cfg_dir);
+}
+
+/* test runners: inline (runs at spawn), deferred (runs at join), real thread */
+static int rn_spawns, rn_joins;
+static void *rn_inline_spawn(void (*fn)(void *), void *a) { rn_spawns++; fn(a); return (void *)1; }
+static void  rn_inline_join(void *h) { (void)h; rn_joins++; }
+static void (*rn_def_fn)(void *); static void *rn_def_arg;
+static void *rn_def_spawn(void (*fn)(void *), void *a) { rn_spawns++; rn_def_fn = fn; rn_def_arg = a; return (void *)1; }
+static void  rn_def_join(void *h) { (void)h; rn_joins++; if (rn_def_fn) { rn_def_fn(rn_def_arg); rn_def_fn = NULL; } }
+typedef struct { void (*fn)(void *); void *arg; pthread_t t; } PT;
+static void *pt_main(void *p) { PT *x = p; x->fn(x->arg); return NULL; }
+static void *rn_pt_spawn(void (*fn)(void *), void *a)
+{
+    PT *x = malloc(sizeof *x); x->fn = fn; x->arg = a; rn_spawns++;
+    if (pthread_create(&x->t, NULL, pt_main, x)) { free(x); return NULL; }
+    return x;
+}
+static void rn_pt_join(void *h) { PT *x = h; pthread_join(x->t, NULL); free(x); rn_joins++; }
+static const SyncRunner RUN_INLINE = { rn_inline_spawn, rn_inline_join };
+static const SyncRunner RUN_DEFER  = { rn_def_spawn, rn_def_join };
+static const SyncRunner RUN_PT     = { rn_pt_spawn, rn_pt_join };
+
+/* a folder + server in the state "linked, this device is newer": a save pushed now goes up */
+static void life_linked(SyncCtx *f, const char *tag)
+{
+    fresh(f, tag);
+    srv_reset();
+    size_t rl; void *b = web_bundle(&rl, T0 + 100, T0 + 200);
+    srv_set(b, rl, (T0 + 300) * 1000); free(b);
+    putf(f->game_dir, "hero.usr", USR_OLD, 256, T0 + 500);
+    sync_link_mark(f, (T0 + 300) * 1000);
+}
+
+static void t_lifecycle(void)
+{
+    Config cfg; char cp[1100]; SyncCtx f; SyncLife sl; long long last; unsigned char buf[300]; size_t n;
+    static const SyncRunner none;
+
+    /* when sync is not wanted nothing runs and the network is never touched */
+    life_linked(&f, "lc-off");
+    life_cfg(&cfg, &f, cp, sizeof cp, 1);
+    ck(synclife_begin(&sl, 0, &cfg, cp, f.game_dir, &RUN_INLINE) == SL_OFF, "headless/tool run: SL_OFF");
+    life_cfg(&cfg, &f, cp, sizeof cp, 0);
+    ck(synclife_begin(&sl, 1, &cfg, cp, f.game_dir, &RUN_INLINE) == SL_OFF, "sync = off in the ini: SL_OFF");
+    life_cfg(&cfg, &f, cp, sizeof cp, -1);
+    ck(synclife_begin(&sl, 1, &cfg, cp, f.game_dir, &RUN_INLINE) == SL_OFF, "sync unset: SL_OFF");
+    life_cfg(&cfg, &f, cp, sizeof cp, 1); cfg.sync_base[0] = 0;
+    ck(synclife_begin(&sl, 1, &cfg, cp, f.game_dir, &RUN_INLINE) == SL_OFF, "no server: SL_OFF");
+    synclife_request_push(&sl); synclife_finish(&sl);
+    ck(srv.gets == 0 && srv.puts == 0, "...and a disabled lifecycle never touches the network, whatever is saved");
+
+    /* linked, the server is newer: the start-up pull takes it, newer-wins */
+    life_linked(&f, "lc-pull");
+    void *b2; size_t rl; b2 = web_bundle(&rl, T0 + 900, T0 + 950); srv_set(b2, rl, (T0 + 1000) * 1000); free(b2);
+    life_cfg(&cfg, &f, cp, sizeof cp, 1);
+    ck(synclife_begin(&sl, 1, &cfg, cp, f.game_dir, &RUN_INLINE) == SL_ON, "linked: SL_ON");
+    ck(readf(f.game_dir, "hero.usr", buf, sizeof buf, &n) && !memcmp(buf, USR_A, 256), "...and the newer server save was pulled before the game starts");
+    ck(srv.t_connect == SL_CONNECT_S && srv.t_total <= 20, "short network timeouts (3 s connect) while syncing");
+    ck(sync_link_get(&f, &last) && last == (T0 + 1000) * 1000, "...link advanced");
+
+    /* linked, this device is newer: nothing at start-up, a push on save */
+    life_linked(&f, "lc-push");
+    life_cfg(&cfg, &f, cp, sizeof cp, 1);
+    int puts0 = srv.puts; rn_spawns = rn_joins = 0;
+    ck(synclife_begin(&sl, 1, &cfg, cp, f.game_dir, &RUN_INLINE) == SL_ON && srv.puts == puts0, "linked, device newer: ON, nothing pushed yet");
+    putf(f.game_dir, "hero.usr", USR_A, 256, T0 + 600);
+    synclife_request_push(&sl);
+    ck(rn_spawns == 1 && srv.puts == puts0 + 1, "a save pushes through the runner");
+    ck(sync_link_get(&f, &last) && last == (T0 + 600) * 1000, "...and the link records it");
+    synclife_finish(&sl);
+    ck(srv.puts == puts0 + 1 && sl.state == SL_OFF, "exit: the save was already pushed, no second push");
+
+    /* final push at exit when a save is still unsent */
+    life_linked(&f, "lc-final");
+    life_cfg(&cfg, &f, cp, sizeof cp, 1);
+    puts0 = srv.puts; rn_spawns = rn_joins = 0; rn_def_fn = NULL;
+    synclife_begin(&sl, 1, &cfg, cp, f.game_dir, &RUN_DEFER);
+    putf(f.game_dir, "hero.usr", USR_A, 256, T0 + 600);
+    synclife_request_push(&sl); synclife_request_push(&sl); synclife_request_push(&sl);
+    ck(rn_spawns == 1 && srv.puts == puts0, "three saves while the thread is busy: one thread, still nothing sent");
+    synclife_finish(&sl);
+    ck(srv.puts == puts0 + 1, "exit waits for the thread: coalesced into one push");
+
+    /* a real thread (ASan/LSan watch this one) */
+    life_linked(&f, "lc-thread");
+    life_cfg(&cfg, &f, cp, sizeof cp, 1);
+    puts0 = srv.puts; rn_spawns = rn_joins = 0;
+    synclife_begin(&sl, 1, &cfg, cp, f.game_dir, &RUN_PT);
+    putf(f.game_dir, "hero.usr", USR_A, 256, T0 + 600);
+    synclife_request_push(&sl); synclife_request_push(&sl);
+    synclife_finish(&sl);
+    ck(srv.puts >= puts0 + 1 && srv.puts <= puts0 + 2 && rn_joins == rn_spawns, "real thread: pushed, every thread joined");
+    ck(sync_link_get(&f, &last) && last == (T0 + 600) * 1000, "...link at the saved time");
+
+    /* no runner: the push is inline (still correct, only blocking) */
+    life_linked(&f, "lc-norun");
+    life_cfg(&cfg, &f, cp, sizeof cp, 1);
+    puts0 = srv.puts;
+    synclife_begin(&sl, 1, &cfg, cp, f.game_dir, &none);
+    putf(f.game_dir, "hero.usr", USR_A, 256, T0 + 600);
+    synclife_request_push(&sl);
+    ck(srv.puts == puts0 + 1, "no runner: the push runs inline");
+    synclife_finish(&sl);
+
+    /* offline: start-up logs and goes on; pushes skip; a later exit retries */
+    life_linked(&f, "lc-offline");
+    life_cfg(&cfg, &f, cp, sizeof cp, 1);
+    srv.healthy = 0; puts0 = srv.puts;
+    ck(synclife_begin(&sl, 1, &cfg, cp, f.game_dir, &RUN_INLINE) == SL_ON && sl.last_rc == SYNC_OFFLINE, "offline at start: play on, SL_ON, no error");
+    putf(f.game_dir, "hero.usr", USR_A, 256, T0 + 600);
+    synclife_request_push(&sl);
+    ck(srv.puts == puts0 && sl.last_rc == SYNC_OFFLINE, "offline: the push is skipped");
+    srv.healthy = 1;
+    synclife_finish(&sl);
+    ck(srv.puts == puts0 + 1, "back online at exit: the final push carries the missed save");
+
+    /* a server that wants a token we lack is a hard error: off, not retried */
+    life_linked(&f, "lc-401");
+    life_cfg(&cfg, &f, cp, sizeof cp, 1);
+    snprintf(srv.want_token, sizeof srv.want_token, "s3cret");
+    ck(synclife_begin(&sl, 1, &cfg, cp, f.game_dir, &RUN_INLINE) == SL_OFF, "HTTP 401 at start: SL_OFF for the session");
+    srv.want_token[0] = 0;
+
+    /* unlinked key + a save on both sides: ask, touch nothing */
+    SyncCtx a;
+    fresh(&a, "lc-ask");
+    srv_reset();
+    b2 = web_bundle(&rl, T0 + 100, T0 + 200); srv_set(b2, rl, (T0 + 300) * 1000); free(b2);
+    putf(a.game_dir, "hero.usr", USR_OLD, 256, T0 + 500);
+    life_cfg(&cfg, &a, cp, sizeof cp, 1);
+    puts0 = srv.puts;
+    ck(synclife_begin(&sl, 1, &cfg, cp, a.game_dir, &RUN_INLINE) == SL_ASK, "unlinked + both sides have a save: SL_ASK");
+    ck(srv.puts == puts0 && readf(a.game_dir, "hero.usr", buf, sizeof buf, &n) && !memcmp(buf, USR_OLD, 256) && !sync_link_get(&a, &last),
+       "...nothing pulled, pushed or linked until the player chooses");
+    ck(!strcmp(synclife_key(&sl), "ABCD-EFGH"), "...the dialog names the key");
+    synclife_request_push(&sl);
+    ck(srv.puts == puts0, "a push request while the question is open does nothing");
+    ck(synclife_resolve(&sl, SLC_CANCEL) == SL_OFF, "Cancel: sync off for the session");
+    synclife_request_push(&sl); synclife_finish(&sl);
+    ck(srv.puts == puts0 && !sync_link_get(&a, &last) && readf(a.game_dir, "hero.usr", buf, sizeof buf, &n) && !memcmp(buf, USR_OLD, 256),
+       "...and nothing is pushed, pulled or linked afterwards");
+
+    /* keep the cloud save */
+    fresh(&a, "lc-cloud");
+    putf(a.game_dir, "hero.usr", USR_OLD, 256, T0 + 500);
+    life_cfg(&cfg, &a, cp, sizeof cp, 1);
+    ck(synclife_begin(&sl, 1, &cfg, cp, a.game_dir, &RUN_INLINE) == SL_ASK, "ask again (fresh device)");
+    ck(synclife_resolve(&sl, SLC_CLOUD) == SL_ON, "Keep cloud save: SL_ON");
+    ck(readf(a.game_dir, "hero.usr", buf, sizeof buf, &n) && !memcmp(buf, USR_A, 256) && readf(a.game_dir, "zoe.usr", buf, sizeof buf, &n),
+       "...the server's saves replace the local ones");
+    char bd[1100]; snprintf(bd, sizeof bd, "%s/backups", a.cfg_dir);
+    ck(access(bd, F_OK) == 0 && sync_link_get(&a, &last) && last == (T0 + 300) * 1000, "...backed up first, and linked");
+    synclife_finish(&sl);
+
+    /* keep this device's save */
+    fresh(&a, "lc-local");
+    putf(a.game_dir, "hero.usr", USR_OLD, 256, T0 + 500);
+    life_cfg(&cfg, &a, cp, sizeof cp, 1);
+    puts0 = srv.puts;
+    ck(synclife_begin(&sl, 1, &cfg, cp, a.game_dir, &RUN_INLINE) == SL_ASK, "ask once more");
+    ck(synclife_resolve(&sl, SLC_LOCAL) == SL_ON && srv.puts == puts0 + 1, "Keep this device's save: pushed, SL_ON");
+    ck(sync_link_get(&a, &last) && last == (T0 + 500) * 1000, "...linked at the pushed time");
+    synclife_finish(&sl);
+
+    /* the choice cannot be carried out: not linked, off */
+    fresh(&a, "lc-fail");
+    srv_reset(); b2 = web_bundle(&rl, T0 + 100, T0 + 200); srv_set(b2, rl, (T0 + 300) * 1000); free(b2);
+    putf(a.game_dir, "hero.usr", USR_OLD, 256, T0 + 500);
+    life_cfg(&cfg, &a, cp, sizeof cp, 1);
+    synclife_begin(&sl, 1, &cfg, cp, a.game_dir, &RUN_INLINE);
+    srv.healthy = 0;
+    ck(synclife_resolve(&sl, SLC_CLOUD) == SL_OFF && !sync_link_get(&a, &last), "the server went away during the question: off, not linked");
+    srv.healthy = 1;
+
+    /* nothing here to lose: the server's save is taken without asking (like the web app) */
+    fresh(&a, "lc-empty");
+    life_cfg(&cfg, &a, cp, sizeof cp, 1);
+    ck(synclife_begin(&sl, 1, &cfg, cp, a.game_dir, &RUN_INLINE) == SL_ON && exists(a.game_dir, "hero.usr") && sync_link_get(&a, &last),
+       "no local saves + a server save: pulled without a question, linked");
+    synclife_finish(&sl);
+
+    /* a key nobody has saved under: nothing to pull, ON; the port cannot create the bundle */
+    fresh(&a, "lc-new");
+    srv.has = 0;
+    putf(a.game_dir, "me.usr", USR_A, 256, T0);
+    life_cfg(&cfg, &a, cp, sizeof cp, 1);
+    puts0 = srv.puts;
+    ck(synclife_begin(&sl, 1, &cfg, cp, a.game_dir, &RUN_INLINE) == SL_ON, "key with no server save: SL_ON");
+    synclife_request_push(&sl);
+    ck(srv.puts == puts0 && sl.last_rc == SYNC_NOBUNDLE, "...a save push is refused cleanly (the port never creates `auto`)");
+    synclife_finish(&sl);
+    srv_reset();
+}
+
 int main(void)
 {
     mkroot(); init_data(); srv_reset();
@@ -470,6 +677,7 @@ int main(void)
     t_extract();     printf("ok\n");
     t_backup();      printf("ok\n");
     t_flow_push_pull(); printf("ok\n");
+    t_lifecycle();   printf("ok\n");
     char cmd[300]; snprintf(cmd, sizeof cmd, "rm -rf %s", root);
     if (system(cmd)) {}
     printf("%d checks, %d failures\n", checks, failures);

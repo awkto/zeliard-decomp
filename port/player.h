@@ -19,6 +19,9 @@ void player_page_pull(Game *g);     /* page[] -> the named members */
  * `dir`.  Returns 0 on success. */
 int  player_save_usr(Game *g, const char *dir, const char *name);
 int  player_load_usr(Game *g, const char *dir, const char *name);   /* town.bin 7592 */
+/* called after a successful player_save_usr (NULL = none): the save-sync
+ * lifecycle (synclife.h, #55) hangs its push here; `name` is the base name */
+extern void (*player_usr_saved_hook)(const char *dir, const char *name);
 
 /* shop-only fields of the page (docs/TOWN.md §10) */
 #define P_KING_GIFT   0x05          /* the 1000-gold gift has been paid */

@@ -53,7 +53,7 @@ cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 13 test binaries
 make test            # physics (149) + combat/AI (228) + town (160) + boss (641) + shop (189)
                      #   + status (87) + playthrough (165) + audio (315) + cutscene (46)
-                     #   + video (70) + config (45) + sync (105) = 2200 assertions.  Needs no game files:
+                     #   + video (70) + config (45) + sync (144) = 2239 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 211 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -923,13 +923,15 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   file being no error), the XDG / `HOME` / next-to-the-binary default path and the
   `key.*` / `pad.*` binding lines (kept as text, last line wins, verbatim round trip,
   full-table refusal).
-* `test_sync.c` — 105 assertions over the save-sync core (#55 step 1) against an
+* `test_sync.c` — 144 assertions over the save-sync core and lifecycle (#55 steps 1-2) against an
   in-memory fake server (no libcurl, no network): key normalisation / generation /
   storage, the link record (including the Go client's own file), the pull/push
   decision and its refusal on an unlinked key, `NAME.USR` <-> `name.usr` mapping,
   the per-`.USR` newer-wins union with foreign entries (`save/1.sav`, `.jsdos/`,
   game files) copied byte for byte, extraction, the local backup, and the
-  push / pull / `--force` / offline / token flows.
+  push / pull / `--force` / offline / token flows; and the in-game lifecycle: when
+  it pulls, pushes, asks or stays off, the offline path, the Cancel path, the push
+  coalescing and a real thread.
 * `tools/compare_shot.py` — playfield diff against a DOSBox capture.
 
 
@@ -1154,13 +1156,13 @@ simply fails and leaves whatever 7EBB already loaded in place.  The rule is now
 "`+4` unless it is 0xFF, then `+5`", which is what all eleven maps want, and
 `test_boss.c`'s `boss banks` case pins every one of them.
 
-## Save sync (`--sync`, #55 step 1)
+## Save sync (`--sync`, #55 steps 1-2)
 
 The town saves (`NAME.usr`) can be exchanged with a `zeliard-wasm` save server, the
 same one the web build and the desktop launcher use, so a save made in one place
 loads in another.  The design, the wire protocol and the plan are in
-[`docs/SYNC.md`](../docs/SYNC.md); this is step 1 only: a command-line tool, no UI
-and no hooks into play yet.
+[`docs/SYNC.md`](../docs/SYNC.md).  Step 1 is the command-line tool below; step 2
+(further down) hooks it into play.
 
 ```
 zeliard --sync status                       # key, link state, both sides' timestamps, what pull/push would do
@@ -1188,6 +1190,40 @@ next to it.  A first key is generated in the web app's 4-letter format.
   is the vendored [miniz](third_party/miniz/LICENSE) (MIT).
 * `tools/sync_roundtrip.sh` runs the whole thing against a local copy of
   `saves-api.py` (never the live server).
+
+### While playing (step 2)
+
+With `sync = on` in `zeliard.ini` (and a `sync_base`; the key comes from `sync_key`
+or the remembered key file) an **interactive** run syncs by itself:
+
+* **Start:** the server's save is pulled before the game folder is read (newer
+  wins, the same rules as `--sync pull`).
+* **Ask before linking:** if this key was never synced here and the server already
+  holds a save, and this folder has saves of its own, nothing is touched. A modal
+  (the F7 dialog's window and text) opens before the town loads, with the web app's
+  two choices: *Keep cloud save* (= `pull --force`, local saves backed up first) or
+  *Keep this device's save* (= `push --force`).  Up/Down and Enter choose; Esc, or
+  closing the window, turns sync off for the session and changes nothing.  If this
+  folder has no saves the server's is taken without asking (as the web app does).
+* **Save:** each Sage save (`player_save_usr`) queues a push on a background thread
+  (SDL thread; the frame loop never waits, several saves in a row coalesce into one
+  push).  The port writes a `.usr` rarely, so this replaces the Go client's 2-minute
+  timer.
+* **Exit:** waits for a push in flight, then pushes once more if a save has not
+  gone up yet (offline earlier, say).
+* **Offline:** logged in one `[sync]` line and skipped; play is never blocked: the
+  connect timeout is 3 s (10 s for the whole start-up pull, 20 s for a push).  The
+  next save, or exit, tries again.  A wrong token or other hard error switches sync
+  off for the session.
+
+`--script`, `--trace`, `--save`, `--screenshot`, `--headless`, `--pilot`, the
+`--state-*` tool flags and the differential harness never sync and never show the
+dialog (`synclife_begin` is not even asked), so scenario traces are unchanged.
+The engine is untouched: the only hook is `player_usr_saved_hook` in `player.c`.
+Code: `synclife.c` (the decisions, SDL-free, unit-tested in `test_sync.c`),
+`syncdlg.c` (the dialog), glue in `main.c`.  The start-up pull, the
+dialog and the offline path are also driven against a local `saves-api.py` by
+`tools/sync_roundtrip.sh` (SDL's dummy video driver).
 
 ## Stubbed / not yet implemented
 

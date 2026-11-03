@@ -773,6 +773,37 @@ done:
 }
 
 /* ------------------------------------------------------------------- CLI */
+/* Context from the config (+ optional CLI overrides), shared by --sync and the
+ * lifecycle hooks.  `remember` stores an explicit key in <cfg dir>/sync-key.
+ * 0 or a SYNC_* code; says why on stderr. */
+int sync_ctx_init(SyncCtx *c, const Config *cfg, const char *cfgpath, const char *game_dir,
+                  const char *cli_key, const char *cli_base, int remember)
+{
+    memset(c, 0, sizeof *c);
+    const char *base = cli_base && *cli_base ? cli_base : cfg->sync_base;
+    if (!base || !*base) { fprintf(stderr, "zeliard: sync: no server set (--sync-base URL, or sync_base in zeliard.ini)\n"); return SYNC_ERR; }
+    if (strncmp(base, "http://", 7) && strncmp(base, "https://", 8)) { fprintf(stderr, "zeliard: sync: server URL must start with http:// or https://\n"); return SYNC_ERR; }
+    snprintf(c->base, sizeof c->base, "%s", base);
+    size_t bl = strlen(c->base);
+    if (bl && c->base[bl - 1] != '/' && bl + 1 < sizeof c->base) { c->base[bl] = '/'; c->base[bl + 1] = 0; }
+    snprintf(c->token, sizeof c->token, "%s", cfg->sync_token);
+    snprintf(c->game_dir, sizeof c->game_dir, "%s", game_dir);
+    /* link record and key file live beside zeliard.ini (never inside it) */
+    snprintf(c->cfg_dir, sizeof c->cfg_dir, "%s", cfgpath);
+    char *sl = strrchr(c->cfg_dir, '/');
+#ifdef _WIN32
+    { char *bs = strrchr(c->cfg_dir, '\\'); if (bs && (!sl || bs > sl)) sl = bs; }
+#endif
+    if (sl && sl != c->cfg_dir) *sl = 0; else snprintf(c->cfg_dir, sizeof c->cfg_dir, ".");
+    if (cli_key && *cli_key) {
+        if (sync_key_resolve(c, cli_key) != 0) return SYNC_ERR;
+        if (remember && sync_key_store(c, c->key) != 0) logs("note: could not remember the key in %s/sync-key", c->cfg_dir);
+        if (cfg->sync_key[0] && !ci_eq(cfg->sync_key, c->key))
+            logs("note: sync_key in zeliard.ini overrides the remembered key on later runs");
+    } else if (sync_key_resolve(c, cfg->sync_key) != 0) return SYNC_ERR;
+    return 0;
+}
+
 int sync_cli(const Config *cfg, const char *cfgpath, const char *game_dir,
              const char *action, int force, const char *cli_key, const char *cli_base)
 {
@@ -785,28 +816,9 @@ int sync_cli(const Config *cfg, const char *cfgpath, const char *game_dir,
         fprintf(stderr, "zeliard: sync: built without network support (libcurl was not found when this binary was built)\n");
         return SYNC_NONET;
     }
-    static SyncCtx c; memset(&c, 0, sizeof c);
-    const char *base = cli_base && *cli_base ? cli_base : cfg->sync_base;
-    if (!base || !*base) { fprintf(stderr, "zeliard: sync: no server set (--sync-base URL, or sync_base in zeliard.ini)\n"); return SYNC_ERR; }
-    if (strncmp(base, "http://", 7) && strncmp(base, "https://", 8)) { fprintf(stderr, "zeliard: sync: server URL must start with http:// or https://\n"); return SYNC_ERR; }
-    snprintf(c.base, sizeof c.base, "%s", base);
-    size_t bl = strlen(c.base);
-    if (bl && c.base[bl - 1] != '/' && bl + 1 < sizeof c.base) { c.base[bl] = '/'; c.base[bl + 1] = 0; }
-    snprintf(c.token, sizeof c.token, "%s", cfg->sync_token);
-    snprintf(c.game_dir, sizeof c.game_dir, "%s", game_dir);
-    /* link record and key file live beside zeliard.ini (never inside it) */
-    snprintf(c.cfg_dir, sizeof c.cfg_dir, "%s", cfgpath);
-    char *sl = strrchr(c.cfg_dir, '/');
-#ifdef _WIN32
-    { char *bs = strrchr(c.cfg_dir, '\\'); if (bs && (!sl || bs > sl)) sl = bs; }
-#endif
-    if (sl && sl != c.cfg_dir) *sl = 0; else snprintf(c.cfg_dir, sizeof c.cfg_dir, ".");
-    if (cli_key && *cli_key) {
-        if (sync_key_resolve(&c, cli_key) != 0) return SYNC_ERR;
-        if (sync_key_store(&c, c.key) != 0) logs("note: could not remember the key in %s/sync-key", c.cfg_dir);
-        if (cfg->sync_key[0] && !ci_eq(cfg->sync_key, c.key))
-            logs("note: sync_key in zeliard.ini overrides the remembered key on later runs");
-    } else if (sync_key_resolve(&c, cfg->sync_key) != 0) return SYNC_ERR;
+    static SyncCtx c;
+    int rc = sync_ctx_init(&c, cfg, cfgpath, game_dir, cli_key, cli_base, 1);
+    if (rc != 0) return rc;
     if (is_status) return sync_status(&c);
     return is_pull ? sync_pull(&c, force) : sync_push(&c, force);
 }

@@ -30,6 +30,8 @@
 #include "restore.h"
 #include "config.h"
 #include "sync.h"
+#include "synclife.h"
+#include "syncdlg.h"
 #ifdef HAVE_SDL
 #include "input.h"
 #endif
@@ -69,6 +71,7 @@ typedef struct {
     Restore  rest;
     int      restore_req;
     int      rest_q[16], rest_qn;       /* SDL keys the dialog has not consumed yet */
+    int      sync_dlg;                  /* the ask-before-link dialog (#55) owns the keyboard */
     double   frame_ms;
     int      scale;
     int      square;                /* --aspect 1:1: present the framebuffer unscaled in shape */
@@ -243,7 +246,7 @@ static void pump_events(App *a, Game *g)
         case SDL_KEYDOWN:
             touch_note_other_input(&a->touch);       /* #54: keyboard use hides the overlay */
             /* the F7 dialog owns the keyboard while it is up */
-            if (a->rest.state) {
+            if (a->rest.state || a->sync_dlg) {
                 if (!e.key.repeat && a->rest_qn < 16) a->rest_q[a->rest_qn++] = (int)e.key.keysym.sym;
                 break;
             }
@@ -679,6 +682,69 @@ static void restore_modal(App *a, Game *g, Town *t)
     if (a->quit && r->state) { r->state = RS_CLOSED; audio_music_pause(0); }
     a->restore_req = 0;
 }
+
+/* ------------------------------------------------- save sync lifecycle (#55 step 2) */
+/* synclife.c owns the decisions; this is the thread, the hook and the dialog.
+ * Interactive SDL runs only: a headless / scripted / traced run never builds one. */
+static SyncLife g_sl;
+static void on_usr_saved(const char *dir, const char *name)
+{
+    (void)dir; (void)name;
+    synclife_request_push(&g_sl);                       /* returns at once: the push is on its own thread */
+}
+#ifdef HAVE_SDL
+static int sync_thread_main(void *p)
+{
+    void **v = p; ((void (*)(void *))v[0])(v[1]); return 0;
+}
+static void *sync_spawn(void (*fn)(void *), void *arg)
+{
+    void **v = malloc(2 * sizeof *v);
+    if (!v) return NULL;
+    v[0] = (void *)fn; v[1] = arg;
+    SDL_Thread *t = SDL_CreateThread(sync_thread_main, "zeliard-sync", v);
+    if (!t) { free(v); return NULL; }
+    /* v is leaked into the thread: freed by sync_join once the thread is done */
+    void **h = malloc(2 * sizeof *h);
+    if (!h) { SDL_WaitThread(t, NULL); free(v); return NULL; }
+    h[0] = t; h[1] = v;
+    return h;
+}
+static void sync_join(void *handle)
+{
+    void **h = handle;
+    SDL_WaitThread(h[0], NULL);
+    free(h[1]); free(h);
+}
+static const SyncRunner sync_runner = { sync_spawn, sync_join };
+
+/* the "Two saves found for this key" modal, over a black frame, before the
+ * first town loads.  Keys come through the same SDL pump as the F7 dialog. */
+static int sync_ask_modal(App *a)
+{
+    SyncDlg d;
+    syncdlg_open(&d, synclife_key(&g_sl));
+    a->sync_dlg = 1; a->rest_qn = 0;
+    Uint64 next = 0;
+    while (!d.choice && !a->quit) {
+        memset(a->fb, 0, sizeof a->fb);
+        syncdlg_draw(&d, &a->sh, a->fb);
+        int vw, vh;
+        const uint8_t *rgb = video_out(a, &vw, &vh);
+        SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+        present_frame(a, vw, vh);
+        frame_wait(a, &a->sh.g, &next);
+        while (a->rest_qn) {
+            int sym = a->rest_q[0], key = RK_NONE; char ch;
+            memmove(a->rest_q, a->rest_q + 1, (size_t)(--a->rest_qn) * sizeof a->rest_q[0]);
+            key = restore_sdl_key(sym, &ch);
+            syncdlg_key(&d, key);
+        }
+    }
+    a->sync_dlg = 0;
+    return d.choice ? d.choice : SLC_CANCEL;            /* closing the window = cancel */
+}
+#endif
 
 /* INT 61h AH: bit0 sword, bit1 magic.  The kernel latches the press edge in
  * FF1D (btn1_edge) and fight.bin clears it when it consumes it (6EF7). */
@@ -1470,6 +1536,19 @@ int main(int argc, char **argv)
      * score (shell_load_enemy_banks -> fight.bin 7E93) would then play over the
      * demo (#37) -- hold it until the real level entry below. */
     audio_music_hold(1);
+    /* #55 step 2: save sync, interactive SDL runs only (a --script/--trace/--save/
+     * --screenshot/harness run never syncs and never shows the dialog).  The pull
+     * comes before shell_init, so nothing reads the game folder first. */
+    {
+        int sl_want = 0;
+        const SyncRunner *sl_run = NULL;
+#ifdef HAVE_SDL
+        sl_want = !a.headless && !a.script && !save_now && !a.trace_dir && !pilot_route
+                  && !a.state_save && !a.state_load && !a.n_st_ev;
+        sl_run = &sync_runner;
+#endif
+        if (synclife_begin(&g_sl, sl_want, &cfg, cfgpath, gdir, sl_run) != SL_OFF) player_usr_saved_hook = on_usr_saved;
+    }
     if (shell_init(sh, gdir, map_idx)) return 1;
     Game *g = &sh->g;
     if (a.trace_f) g->harness_rng = 1;                                  /* HARNESS §3: no +20 stir */
@@ -1597,6 +1676,12 @@ int main(int argc, char **argv)
                 fprintf(stderr, "[state] states directory: %s\n", a.sk.dir);
         }
     }
+#ifdef HAVE_SDL
+    if (g_sl.state == SL_ASK) {          /* the key is unlinked and both sides have a save: ask, before the town loads */
+        synclife_resolve(&g_sl, sync_ask_modal(&a));
+        if (g_sl.state == SL_OFF) player_usr_saved_hook = NULL;
+    }
+#endif
     if (a.headless && a.shot_path && a.shot_frame == 0) a.shot_frame = 1;
     if (music_force >= -1) audio_music_force(music_force);     /* --music N: pin one score (-1 = effects only) */
 
@@ -1730,6 +1815,7 @@ int main(int argc, char **argv)
     fprintf(stderr, "stopped after %u frames: hero map (%d,%d), LIFE %u/%u, EXP %u, GOLD %u, %u hazard frames, %u deaths\n",
             g->frame_no, game_hero_map_col(g), game_hero_map_row(g), g->hp, g->max_hp, g->exp, (unsigned)g->gold,
             g->hazard_frames, g->deaths);
+    synclife_finish(&g_sl);             /* #55: wait for a push in flight, then push what is still unsent */
     if (!a.headless) { config_capture(&cfg, &a, sh->dir, audio_backend, dir != NULL || cfg.dir[0] != 0); config_save(&cfg); }
     audio_shutdown();
     shell_free(sh);

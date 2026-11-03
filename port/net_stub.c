@@ -9,6 +9,7 @@ static int nope(NetResp *r)
     strcpy(r->error, "built without network support (libcurl not found at build time)");
     return 0;
 }
+void net_set_timeouts(int connect_s, int total_s) { (void)connect_s; (void)total_s; }
 int net_supported(void) { return 0; }
 int net_get(const char *url, const NetAuth *au, NetResp *r) { (void)url; (void)au; return nope(r); }
 int net_put(const char *url, const NetAuth *au, const void *b, size_t n, long long m, NetResp *r)
