@@ -75,6 +75,17 @@ other letters in the token); a count holds nothing more (`'A3` = the key, then t
 frames). The frame's `"input"` is `'A` / `'<` (appended to the held letters, if any),
 identically on both sides.
 
+`F` (#42 step 2b) presses **F7**, the original's "Restore Game": the kernel's `[11E]`
+(STICK 092D) puts up *Sure?(Y/N)* at the next frame, and the tokens that follow are the
+dialog's keys until it closes: `'Y` / `'N` answer, then in the *Input name:* box `'C` /
+`'<` type and delete, `L`/`R` move the caret, `U`/`D` move the `*.usr` list, `X` (Space)
+copies the highlighted name, `E` accepts (an empty box becomes *Re-Start*, then `E` again),
+`M` backs out.  One token = one dialog frame; the game stands still meanwhile.  `F` stands
+alone and a count holds nothing more.  It is a **port-only token**: it is ignored under
+`--trace` (the oracle's own F7 restore is `ORACLE_LOAD`, `oracle-dosbox-x.patch`, and its
+frames start after the restore), so no scenario uses it; `test_playthrough.c`'s
+`restore_unit` covers the dialog and the load in-process.
+
 The oracle applies frame `n`'s inputs at boundary `n-1`. It writes the kernel's
 input state directly (`FF17` dirs, `FF16` buttons, `FF1D`/`FF1E` press edges,
 `FF18` key mask), exactly as STICK's INT 9 would leave it. This is deterministic

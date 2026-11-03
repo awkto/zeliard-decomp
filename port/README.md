@@ -52,8 +52,8 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 12 test binaries
 make test            # physics (149) + combat/AI (228) + town (160) + boss (641) + shop (189)
-                     #   + status (87) + playthrough (139) + audio (315) + cutscene (46)
-                     #   + video (70) + config (45) = 2069 assertions.  Needs no game files:
+                     #   + status (87) + playthrough (165) + audio (315) + cutscene (46)
+                     #   + video (70) + config (45) = 2095 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 211 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -101,9 +101,24 @@ config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`
 | Enter | **the status / inventory screen** (select.bin): pick a spell, wear a key item, drink a potion |
 | F1 / F2 | toggle the music / the sound effects (STICK's own hotkeys) |
 | F3 | **cycle the display filter**: integer → sharp-bilinear → smooth → crt (presentation only; remembered in the config) |
+| F7 | **Restore Game** (the original's own hotkey, #42): *Sure?(Y/N)*, then the *Input name:* box with the `*.usr` list; see below |
 | F12 | dump the framebuffer to the `--screenshot` file |
 | F11 / Alt+Enter | toggle fullscreen (the window is resizable; `--fullscreen` starts there) |
 | Esc | **pause** — Esc or Enter resumes, **Q** quits |
+
+**F7 Restore Game** (#42 step 2b) is the original's flow, from the disassembly: the kernel's
+`[11E]` (STICK 092D) polls F7 in town.bin's frame (68DC) and wait loops (704E) and in
+fight.bin's frame (716E), and puts up *Restore Game / Sure?(Y/N)*; **N** (or Esc) takes it down.
+**Y** runs town.bin 7592: the *Input name:* window (7695) with an 8-slot name box and the
+`*.usr` files in the game folder, *Re-Start* first.  Up/Down move the list, **Space** copies the
+highlighted name into the box, letters / Backspace / Left / Right edit it, **Enter** accepts (an
+empty box becomes *Re-Start* first).  *Re-Start* reloads STDPLY.BIN, any other name NAME.USR; a
+missing file shows *User File / Not Found* (Space, then the box again).  Then the page's town is
+entered at the saved column, from the cavern too: the same path as `--load`.  Esc in the name box
+backs out (a port courtesy, the original has no way out).  `restore.c` owns the dialog; it is
+modal over the frozen frame and presentation only.  Differences: not honoured inside a shop, the
+status screen or an NPC dialogue box (their wait loops are not re-entered), and not under
+`--trace`; the dialog ignores key remapping and the controller.
 
 ### Town (town.bin)
 
@@ -115,6 +130,7 @@ config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`
 | Enter | **the status / inventory screen** (select.bin); the potion row is disabled in town, as in the original |
 | F1 / F2 | toggle the music / the sound effects |
 | F3 | cycle the display filter (integer → sharp-bilinear → smooth → crt) |
+| F7 | **Restore Game**, as in the cavern |
 | F11 / Alt+Enter | toggle fullscreen |
 | Esc | **pause** — Esc or Enter resumes, **Q** quits |
 
@@ -744,7 +760,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   `menu_result = 8`; selecting a spell into `[9D]` and wearing an item into
   `[9E]` through the real cursor; the row change; the Enter debounce; and the
   window frames and header colours in the rendered framebuffer.
-* `test_playthrough.c` — 139 assertions over two autopilot runs, two fixture
+* `test_playthrough.c` — 165 assertions over two autopilot runs, two fixture
   crossings and a survey of cavern 1's topology (`make playthrough` prints the
   routes step by step):
   * **route 1, the opening**, played end to end with nobody at the keyboard: the
@@ -874,7 +890,7 @@ Actions (default keys; controller defaults in brackets):
 * `sword` cavern X, Left/Right Ctrl; town Space, X (X) · `magic` cavern C, Left Alt;
   town C, Left/Right Alt, Backspace (Y)
 * `menu` Return, Keypad Enter: the status screen (Start) · `pause` Escape (Back)
-* `music` F1 · `sfx` F2 · `filter` F3 · `fullscreen` F11 · `screenshot` F12
+* `music` F1 · `sfx` F2 · `filter` F3 · `restore` F7 · `fullscreen` F11 · `screenshot` F12
 * `quicksave` Ctrl+. · `quickload` Ctrl+\ · `save1`..`save9` Ctrl+1..9 · `load1`..`load9` Alt+1..9
   (a `key.*` binding replaces both the cavern and the town default set)
 

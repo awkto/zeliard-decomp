@@ -12,6 +12,8 @@
 #include "town.h"
 #include "savestate.h"
 #include "statekeys.h"
+#include "restore.h"
+#include "text.h"
 
 static int checks, failures;
 static void ck(int cond, const char *what, ...)
@@ -593,6 +595,107 @@ static void state_roundtrip_unit(const char *dir)
     shell_free(&ss);
 }
 
+/* #42 step 2b: F7 "Restore Game", the dialog and the commit, in-process.  The
+ * flow the original runs: [11E] "Sure?(Y/N)" -> town.bin 7695's name box and
+ * *.usr list -> 7592 reloads NAME.USR and re-enters the town the page names at
+ * the saved column.  Saves a file in the game folder and removes it again. */
+static void type_name(Restore *r, Shell *s, const char *t)
+{
+    for (; *t; t++) restore_key(r, s, RK_CHAR, *t);
+}
+static void restore_unit(const char *dir)
+{
+    static Shell rs; static Restore r; static uint8_t fb[320 * 200], fb2[320 * 200];
+    shell_free(&rs); memset(&rs, 0, sizeof rs); rs.quiet = 1;
+    if (shell_init(&rs, dir, 0)) { ck(0, "restore: shell_init"); return; }
+    Game *g = &rs.g;
+    if (!shell_enter_town(g, 1, 172, 0)) { ck(0, "restore: entering Muralla"); shell_free(&rs); return; }
+    char path[1200]; snprintf(path, sizeof path, "%s/ZRSTEST.usr", dir);
+
+    /* save: Muralla, column 172, a distinctive record (the Sage's A862) */
+    g->gold = 4321; g->level = 7; g->max_hp = g->hp = 345; g->exp = 99;
+    town_page_push(&rs.town);
+    ck(player_save_usr(g, dir, "ZRSTEST") == 0, "restore: ZRSTEST.usr written");
+    ck(town_hero_col(&rs.town) == 172, "restore: saved at column 172 (%d)", town_hero_col(&rs.town));
+
+    /* move on: another place, another record */
+    town_place(&rs.town, 40, 0);
+    g->gold = 5; g->level = 1; g->max_hp = g->hp = 120; g->exp = 3;
+
+    /* F7: the confirm box, drawn over the frame; N takes it down again */
+    memset(fb, 0, sizeof fb); memset(fb2, 0, sizeof fb2);
+    restore_open(&r);
+    ck(r.state == RS_CONFIRM, "restore: F7 opens the Sure?(Y/N) box");
+    restore_draw(&r, &rs, fb);
+    ck(memcmp(fb, fb2, sizeof fb) != 0, "restore: the box is drawn");
+    restore_key(&r, &rs, RK_CHAR, 'N');
+    ck(r.state == RS_CLOSED && !r.apply, "restore: N cancels, nothing is loaded");
+    ck(g->gold == 5 && town_hero_col(&rs.town) == 40, "restore: and the game is untouched");
+
+    /* Y: the name box.  No name yet -> "Re-Start", the list starts with it */
+    restore_open(&r);
+    restore_key(&r, &rs, RK_CHAR, 'Y');
+    ck(r.state == RS_PICK && r.nfiles >= 2, "restore: Y opens the name box (%d entries)", r.nfiles);
+    ck(!strcmp(r.files[0], "Re-Start") && r.restart && !memcmp(r.name, "Re-Start", 8),
+       "restore: it offers Re-Start first");
+    memset(fb, 0, sizeof fb);
+    restore_draw(&r, &rs, fb);
+    ck(memcmp(fb, fb2, sizeof fb) != 0, "restore: the name box is drawn");
+
+    /* a name that is not a file: "User File / Not Found", Space, back to the box */
+    restore_key(&r, &rs, RK_CHAR, 'Z'); restore_key(&r, &rs, RK_CHAR, 'Z');
+    ck(!r.restart && r.name[0] == 'Z' && r.name[1] == 'Z' && r.used == 2, "restore: typing replaces Re-Start");
+    restore_key(&r, &rs, RK_BACKSPACE, 0);
+    ck(r.name[1] == 0x60 && r.used == 1, "restore: Backspace deletes");
+    restore_key(&r, &rs, RK_ACCEPT, 0);
+    ck(r.state == RS_NOTFOUND && !r.apply, "restore: an unknown name is User File Not Found");
+    restore_key(&r, &rs, RK_TAKE, 0);
+    ck(r.state == RS_PICK, "restore: Space goes back to the box");
+
+    /* Down to the saved file, Space copies it, Enter accepts it */
+    int want = -1;
+    for (int i = 0; i < r.nfiles; i++) if (!strcmp(r.files[i], "ZRSTEST")) want = i;
+    ck(want > 0, "restore: ZRSTEST is in the list (row %d)", want);
+    for (int i = 0; i < want; i++) restore_key(&r, &rs, RK_DOWN, 0);
+    ck(r.sel == want && r.sel < r.top + 5 && r.sel >= r.top, "restore: Down scrolls the list to it");
+    restore_key(&r, &rs, RK_TAKE, 0);
+    ck(!memcmp(r.name, "ZRSTEST`", 8) && !r.restart, "restore: Space copies the name into the box");
+    restore_key(&r, &rs, RK_ACCEPT, 0);
+    ck(r.state == RS_CLOSED && r.apply && !strcmp(r.pick, "ZRSTEST"), "restore: Enter accepts (%s)", r.pick);
+    ck(strncmp(g->player_name, "ZRSTEST", 8) == 0 || g->player_name[0] == 'Z', "restore: FF6C holds the name");
+
+    /* the commit: the page comes back and the town is re-entered at column 172 */
+    ck(restore_commit(&r, &rs) == 0, "restore: the commit succeeds");
+    ck(rs.in_town && town_hero_col(&rs.town) == 172, "restore: back in the town at column 172 (%d)", town_hero_col(&rs.town));
+    ck(g->gold == 4321 && g->level == 7 && g->max_hp == 345 && g->exp == 99,
+       "restore: the record is the saved one (gold %u, level %u)", (unsigned)g->gold, g->level);
+    ck(g->cur_map == 0x81, "restore: Muralla (cur_map %02X)", g->cur_map);
+
+    /* from a cavern: F7 leaves it for the town the save names */
+    if (shell_enter_cavern(&rs, 0, 61, 7, 0, 0)) {
+        g->gold = 9; g->hp = 17;
+        restore_open(&r); restore_key(&r, &rs, RK_CHAR, 'Y');
+        for (int i = 0; i < 10; i++) restore_key(&r, &rs, RK_BACKSPACE, 0);   /* the box holds the last name */
+        type_name(&r, &rs, "ZRSTEST");
+        restore_key(&r, &rs, RK_ACCEPT, 0);
+        ck(r.apply && restore_commit(&r, &rs) == 0 && rs.in_town && town_hero_col(&rs.town) == 172
+           && g->gold == 4321, "restore: from a cavern it lands in the town at column 172 with the saved record");
+    } else ck(0, "restore: entering MP10");
+
+    /* Enter on an empty box turns it into Re-Start; the second Enter takes it */
+    restore_open(&r); restore_key(&r, &rs, RK_CHAR, 'Y');
+    for (int i = 0; i < 10; i++) restore_key(&r, &rs, RK_BACKSPACE, 0);     /* ZRSTEST -> empty */
+    restore_key(&r, &rs, RK_ACCEPT, 0);
+    ck(r.state == RS_PICK && r.restart && !memcmp(r.name, "Re-Start", 8), "restore: an empty box becomes Re-Start");
+    restore_key(&r, &rs, RK_ACCEPT, 0);
+    ck(r.apply && r.pick[0] == 0, "restore: and the second Enter takes it");
+    ck(restore_commit(&r, &rs) == 0 && rs.in_town && g->level == 0 && g->gold != 4321,
+       "restore: Re-Start is a new game (STDPLY.BIN: level %u, gold %u)", g->level, (unsigned)g->gold);
+
+    remove(path);
+    shell_free(&rs);
+}
+
 /* #52 step 2: the player-facing layer -- the slot file names, the request
  * queue and the overlay refusal.  Pure C, no game files needed. */
 static void statekeys_unit(void)
@@ -742,6 +845,7 @@ int main(int argc, char **argv)
     cavern_progression(dir, verbose);
     state_roundtrip_unit(dir);
     statekeys_unit();
+    restore_unit(dir);
 
     /* teardown, so `make SAN=1 test` proves the load-once allocations all
      * have an owner and a shell_free that reaches them */

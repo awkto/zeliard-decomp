@@ -27,6 +27,7 @@
 #include "statekeys.h"
 #include "playthrough.h"
 #include "present.h"
+#include "restore.h"
 #include "config.h"
 #ifdef HAVE_SDL
 #include "input.h"
@@ -59,6 +60,13 @@ typedef struct {
     uint8_t  script_char;               /* 'C token: the key's ASCII, written to FF29 once */
     int      script_char_new;           /*   set when the token starts, cleared when applied */
     uint8_t  trace_char;                /* the FF29 key the current trace frame was played with */
+    /* F7 "Restore Game" (#42 step 2b): restore.c owns the dialog; `restore_req`
+     * (the key, or the F token) opens it at the next frame's present, as a
+     * modal loop over the frozen frame; an accepted name is committed at the
+     * true end of the frame (state_frame_done), like a loaded save state */
+    Restore  rest;
+    int      restore_req;
+    int      rest_q[16], rest_qn;       /* SDL keys the dialog has not consumed yet */
     double   frame_ms;
     int      scale;
     int      square;                /* --aspect 1:1: present the framebuffer unscaled in shape */
@@ -223,6 +231,12 @@ static void pump_events(App *a, Game *g)
             if (input_pad_event_match(&a->in, ACT_PAUSE, e.cbutton.button)) { a->paused = !a->paused; title_apply(a); }
             break;
         case SDL_KEYDOWN:
+            /* the F7 dialog owns the keyboard while it is up */
+            if (a->rest.state) {
+                if (!e.key.repeat && a->rest_qn < 16) a->rest_q[a->rest_qn++] = (int)e.key.keysym.sym;
+                break;
+            }
+            if (input_event_match(&a->in, ACT_RESTORE, &e.key)) { if (!e.key.repeat) a->restore_req = 1; break; }
             /* #42: every hotkey is looked up in the one binding table
              * (input.c); the defaults are the keys this used to hard-code.
              * Esc used to quit outright, with no confirmation -- one reflex
@@ -476,6 +490,13 @@ static int script_next(App *a)
         if (!s[a->script_pos]) return 0;
         uint8_t d = 0, b = 0;
         a->script_char = 0; a->script_char_new = 0;
+        if (s[a->script_pos] == 'F' || s[a->script_pos] == 'f') {
+            /* F presses F7 (docs/HARNESS.md §2): the kernel's [11E] opens
+             * "Restore Game / Sure?(Y/N)" at the next frame; nothing is held.
+             * The dialog then reads the tokens that follow (see restore_modal) */
+            a->restore_req = 1;
+            a->script_pos++;
+        } else
         if (s[a->script_pos] == '\'') {
             /* 'C types one key (docs/HARNESS.md §2): FF29 = its ASCII on the
              * token's first frame, nothing held.  A-Z (either case), 0-9, and
@@ -544,6 +565,87 @@ static void dump_png(App *a, Game *g)
     if (fb_write_png(a, a->shot_path) == 0) fprintf(stderr, "wrote %s (frame %u, hero map (%d,%d) scr (%d,%d) scroll (%d,%d))\n", a->shot_path,
                  g->frame_no, game_hero_map_col(g), game_hero_map_row(g), g->hero_scr_col, g->hero_scr_row,
                  g->scroll_col, g->scroll_row);
+}
+
+/* ------------------------------------------- F7 "Restore Game" (#42) */
+/* The original polls the kernel's [11E] in the town frame (68DC) and the
+ * cavern frame (716E); on F7 the screen freezes under restore.c's two dialogs.
+ * Here the same: a modal loop over the frame the engine just drew, fed by the
+ * keyboard (SDL) or by --script tokens (headless: Y / N as 'Y 'N, letters and
+ * '< as for the sage's name entry, U D L R move, X = Space, E = Enter, M = Esc).
+ * Presentation and input only; the load itself runs at the frame's end
+ * (state_frame_done -> restore_commit), the --load path.  Not honoured under
+ * --trace (the harness input has no F7), nor while a shop, the status screen
+ * or a dialogue box owns the frame: those wait loops do not return here. */
+#ifdef HAVE_SDL
+static int restore_sdl_key(int sym, char *ch)
+{
+    *ch = 0;
+    switch (sym) {
+    case SDLK_UP: return RK_UP;       case SDLK_DOWN: return RK_DOWN;
+    case SDLK_LEFT: return RK_LEFT;   case SDLK_RIGHT: return RK_RIGHT;
+    case SDLK_SPACE: return RK_TAKE;
+    case SDLK_RETURN: case SDLK_KP_ENTER: return RK_ACCEPT;
+    case SDLK_BACKSPACE: return RK_BACKSPACE;
+    case SDLK_ESCAPE: return RK_CANCEL;
+    default: break;
+    }
+    if (sym >= SDLK_a && sym <= SDLK_z) { *ch = (char)('A' + (sym - SDLK_a)); return RK_CHAR; }
+    if (sym >= SDLK_0 && sym <= SDLK_9) { *ch = (char)('0' + (sym - SDLK_0)); return RK_CHAR; }
+    return RK_NONE;
+}
+#endif
+
+static void restore_modal(App *a, Game *g, Town *t)
+{
+    Restore *r = &a->rest;
+    a->restore_req = 0;
+    if (a->trace_f || a->quit) return;
+    if (t ? (t->shop || t->status || t->dlg.active) : (g->status || g->tear)) return;
+    restore_open(r);
+    a->rest_qn = 0;
+#ifdef HAVE_SDL
+    static Uint64 next = 0;
+    next = 0;
+#endif
+    while (r->state && !a->quit) {
+        if (t) fb_town(a, t); else fb_fight(a, g);
+        restore_draw(r, &a->sh, a->fb);
+        int key = RK_NONE; char ch = 0;
+        if (a->headless) {
+            if (a->shot_path) fb_write_png(a, a->shot_path);    /* the dialog's last picture stays */
+            if (!script_next(a)) { r->state = RS_CLOSED; audio_music_pause(0); break; }
+            if (a->script_char_new) {
+                ch = (char)a->script_char; a->script_char_new = 0;
+                key = ch == 0x08 ? RK_BACKSPACE : RK_CHAR;
+            }
+            else if (a->script_btns & 4)                    key = RK_ACCEPT;
+            else if (a->script_btns & 1)                    key = RK_TAKE;
+            else if (a->script_dirs & DIR_UP)               key = RK_UP;
+            else if (a->script_dirs & DIR_DOWN)             key = RK_DOWN;
+            else if (a->script_dirs & DIR_LEFT)             key = RK_LEFT;
+            else if (a->script_dirs & DIR_RIGHT)            key = RK_RIGHT;
+            else if (a->script_btns & 2)                    key = RK_CANCEL;
+            a->restore_req = 0;                             /* an F inside the dialog is nothing */
+        }
+#ifdef HAVE_SDL
+        else {
+            int vw, vh;
+            const uint8_t *rgb = video_out(a, &vw, &vh);
+            SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+            present_frame(a, vw, vh);
+            frame_wait(a, g, &next);                        /* pumps events into rest_q */
+            if (a->rest_qn) {
+                int sym = a->rest_q[0];
+                memmove(a->rest_q, a->rest_q + 1, (size_t)(--a->rest_qn) * sizeof a->rest_q[0]);
+                key = restore_sdl_key(sym, &ch);
+            }
+        }
+#endif
+        if (key != RK_NONE) restore_key(r, &a->sh, key, ch);
+    }
+    if (a->quit && r->state) { r->state = RS_CLOSED; audio_music_pause(0); }
+    a->restore_req = 0;
 }
 
 /* INT 61h AH: bit0 sword, bit1 magic.  The kernel latches the press edge in
@@ -687,6 +789,7 @@ static int state_execute(App *a, Shell *s, int kind, int slot, unsigned frame)
 static void state_frame_done(Shell *s)
 {
     App *a = s->user;
+    if (a->rest.apply) restore_commit(&a->rest, s);     /* #42: F7's accepted name -> the town it names */
     if (a->state_save && !a->state_save_done && a->state_save_pending) {
         a->state_save_pending = 0;
         if (a->trace_n != a->state_save_at + 1) {       /* the frame opened a blocking screen (a shop/status poll): not resumable here */
@@ -790,6 +893,7 @@ static void cutscene_present(Cutscene *c)
     App *a = c->user;
     static uint8_t rgb[FB_W * FB_H * 3];
     audio_advance_ms(CS_FRAME_MS);
+    a->restore_req = 0;                 /* no F7 in a cutscene */
     if (a->shot_path && c->frames == a->shot_frame) {
         cutscene_to_rgb(c, rgb);
         if (png_write_rgb(a->shot_path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", a->shot_path);
@@ -863,6 +967,7 @@ static void present(Game *g)
     a->sk_combo = 0;                    /* a stale save/load combo must not suppress input */
     statekeys_osd_tick(&a->sk);
     audio_advance_ms(a->frame_ms);
+    if (a->restore_req) restore_modal(a, g, NULL);          /* kernel [11E] at fight.bin 716E */
     if (a->verbose)
         fprintf(stderr, "frame %4u  hero map (%3d,%2d) scr (%2d,%2d) scroll (%3d,%2d) v=%02x anim=%02x flags=%02x "
                 "crouch=%02x ladder=%02x dirs=%x hp=%u atk=%02x/%u%s%s\n",
@@ -936,6 +1041,7 @@ static void town_present(Town *t)
     a->sk_combo = 0;                    /* a stale save/load combo must not suppress input */
     statekeys_osd_tick(&a->sk);
     audio_advance_ms(a->frame_ms);
+    if (a->restore_req) restore_modal(a, t->g, t);          /* kernel [11E] at town.bin 68DC */
     if (a->verbose)
         fprintf(stderr, "town frame %4u  hero map col %3d scr %3d scroll %3d anim %u flags %02x%s%s\n",
                 t->frame_no, town_hero_col(t), t->hero_scr_col, t->scroll_col, t->hero_anim, t->hero_flags,
