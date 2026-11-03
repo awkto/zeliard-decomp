@@ -310,7 +310,7 @@ accepted.
 
 ### 6.4 Plan
 
-1. **Protocol core + `auto` pull/push (no UI).** New `port/sync.c/.h` + `net.h`.
+1. **Protocol core + `auto` pull/push (no UI).** **DONE (#55 step 1).** New `port/sync.c/.h` + `net.h`.
    Key resolve/normalise/generate (section 2), `/api/health`, `/api/saves`,
    `GET/PUT /api/saves/auto`, `link` record, `ShouldPull/ShouldPush` and the
    link-decision refusal. Zip read/write with the foreign-entry carry-through
@@ -319,6 +319,33 @@ accepted.
    `--sync-key KEY`. Test: round trip against `docker run awkto/zeliard-wasm`
    plus a fixture bundle captured from the web build; assert foreign entries
    (`save/1.sav`, `.jsdos/dosbox.conf`) survive byte for byte.
+
+   **Step 1 as built** (`port/sync.c/.h`, `net.h` + `net_curl.c` / `net_stub.c`,
+   vendored `port/third_party/miniz/`, `port/test_sync.c`, `port/tools/sync_roundtrip.sh`;
+   keys `sync`, `sync_base`, `sync_key`, `sync_token` in `zeliard.ini`).  Deviations
+   from the plan above:
+   * **Only `.usr` entries are managed.** Every other bundle entry (`save/1.sav`,
+     `.jsdos/*`, `dosbox.conf`, and also the game files `ZELIARD.EXE`, `*.SAR`) is
+     foreign and copied compressed-as-stored, so bytes, method and mtime survive.
+     Local mtimes are taken from the `.usr` files only (the game files' mtimes mean
+     "install time", open question 2).
+   * **Open question 1 resolved as "refuse":** a push to a key with no `auto` bundle
+     exits 6; the port never creates one (a `.usr`-only bundle could replace the web
+     app's whole local bundle on its next pull).
+   * `NAME.USR` entries are written upper-case; a pull writes `name.usr`, reusing the
+     case of an existing file. Entries with a base name over 8 characters are carried
+     but not extracted. Backup (`<config dir>/backups/game-<tag>-<time>.zip`) holds
+     the `.usr` files only, made before a pull that would change an existing file
+     and always before `pull --force`.
+   * `--sync-key KEY` is remembered in `<config dir>/sync-key`, never in `zeliard.ini`;
+     the link record is `sync-links.json` beside it (Go schema, so it can be shared).
+     `sync_base` has no default; `--sync` works whether or not `sync=1`.
+   * Health requires `"ok": true` in the body (the web client's rule), not just a 200.
+   * Exit codes: 0 ok, 1 error, 3 unlinked key (decision needed), 4 offline, 5 built
+     without libcurl, 6 no bundle on the server.
+   * libcurl is optional (pkg-config); without it `--sync` says "built without network
+     support".  The test round trip uses a local `saves-api.py`, not `docker run`, and a
+     generated fixture bundle rather than a capture from the web build.
 2. **Lifecycle hooks + ask-before-link UI.** Pull before the first town load
    (before `shell_init` reads the dir, so nothing races), push after each
    `player_save_usr` (the port writes a `.usr` rarely, so push-on-save replaces

@@ -50,10 +50,10 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 
 ```
 cd port
-make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 12 test binaries
+make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 13 test binaries
 make test            # physics (149) + combat/AI (228) + town (160) + boss (641) + shop (189)
                      #   + status (87) + playthrough (165) + audio (315) + cutscene (46)
-                     #   + video (70) + config (45) = 2095 assertions.  Needs no game files:
+                     #   + video (70) + config (45) + sync (105) = 2200 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 211 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -888,6 +888,13 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   file being no error), the XDG / `HOME` / next-to-the-binary default path and the
   `key.*` / `pad.*` binding lines (kept as text, last line wins, verbatim round trip,
   full-table refusal).
+* `test_sync.c` — 105 assertions over the save-sync core (#55 step 1) against an
+  in-memory fake server (no libcurl, no network): key normalisation / generation /
+  storage, the link record (including the Go client's own file), the pull/push
+  decision and its refusal on an unlinked key, `NAME.USR` <-> `name.usr` mapping,
+  the per-`.USR` newer-wins union with foreign entries (`save/1.sav`, `.jsdos/`,
+  game files) copied byte for byte, extraction, the local backup, and the
+  push / pull / `--force` / offline / token flows.
 * `tools/compare_shot.py` — playfield diff against a DOSBox capture.
 
 
@@ -1111,6 +1118,41 @@ Jashiin was invisible, under the generic overlay as much as under the new one.
 simply fails and leaves whatever 7EBB already loaded in place.  The rule is now
 "`+4` unless it is 0xFF, then `+5`", which is what all eleven maps want, and
 `test_boss.c`'s `boss banks` case pins every one of them.
+
+## Save sync (`--sync`, #55 step 1)
+
+The town saves (`NAME.usr`) can be exchanged with a `zeliard-wasm` save server, the
+same one the web build and the desktop launcher use, so a save made in one place
+loads in another.  The design, the wire protocol and the plan are in
+[`docs/SYNC.md`](../docs/SYNC.md); this is step 1 only: a command-line tool, no UI
+and no hooks into play yet.
+
+```
+zeliard --sync status                       # key, link state, both sides' timestamps, what pull/push would do
+zeliard --sync pull  [--force]              # server -> game folder
+zeliard --sync push  [--force]              # game folder -> server
+        --sync-key ABCD-EFGH                # use (and remember in <config dir>/sync-key) this key
+        --sync-base https://host/           # the server, else sync_base in zeliard.ini
+```
+
+Each run does its job and exits, and never rewrites `zeliard.ini`.  The `sync`,
+`sync_base`, `sync_key` and `sync_token` keys are read from it; the link record
+(`sync-links.json`, the Go client's schema), the key file and `backups/` live
+next to it.  A first key is generated in the web app's 4-letter format.
+
+* A key this device has never synced with, that already holds a save, is **never**
+  resolved automatically: both directions refuse (exit 3) and say how to choose,
+  `--sync pull --force` (take the server; local `.usr` files are zipped to
+  `backups/` first) or `--sync push --force` (keep this device).
+* Only the `.usr` files are managed, per save, newer wins (2 s slack).  Every other
+  entry in the server's bundle (`save/1.sav`, `.jsdos/`, the game files) is carried
+  through a push byte for byte.  The port cannot build a bootable bundle, so a push
+  needs one on the server already (save once in the web app with the key).
+* Needs libcurl at build time (found with `pkg-config`, like SDL).  Without it the
+  binary builds and `--sync` reports "built without network support".  The zip code
+  is the vendored [miniz](third_party/miniz/LICENSE) (MIT).
+* `tools/sync_roundtrip.sh` runs the whole thing against a local copy of
+  `saves-api.py` (never the live server).
 
 ## Stubbed / not yet implemented
 

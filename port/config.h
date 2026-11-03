@@ -47,6 +47,12 @@ typedef struct Config {
     /* #42 step 2: key remapping.  `key.<action>` and `pad.<action>` are kept in
      * the order they were read; a later line for the same action replaces the
      * value in place.  n_key/n_pad are the counts. */
+    /* #55: save sync.  `sync` turns the (step 2) lifecycle hooks on; the --sync
+     * tool runs work regardless.  The key falls back to the sync-key file. */
+    int  sync;                          /* 0/1; -1 = unset */
+    char sync_base[256];                /* server URL; "" = unset */
+    char sync_key[64];                  /* ABCD-EFGH; "" = unset */
+    char sync_token[128];               /* optional bearer token; "" = unset */
     ConfigBind key[CONFIG_MAX_BIND]; int n_key;
     ConfigBind pad[CONFIG_MAX_BIND]; int n_pad;
     char path[CONFIG_PATH_MAX];         /* the ini's own location (load/save) */

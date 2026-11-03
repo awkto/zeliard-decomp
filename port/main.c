@@ -29,6 +29,7 @@
 #include "present.h"
 #include "restore.h"
 #include "config.h"
+#include "sync.h"
 #ifdef HAVE_SDL
 #include "input.h"
 #endif
@@ -468,6 +469,12 @@ static void usage(void)
         "  --load NAME restore NAME.USR (town.bin 7592) before starting; the page's\n"
         "              [C4] picks the town and [80]/[83] the column\n"
         "  --save NAME write NAME.usr for the state just set up and exit (kenjpro A862)\n"
+        "  --sync status|pull|push [--force]   save sync of the town saves (.usr) with a\n"
+        "              zeliard-wasm server (docs/SYNC.md); runs once and exits.  --sync-key KEY\n"
+        "              picks/remembers the key, --sync-base URL the server (else zeliard.ini)\n"
+        "  --sync status|pull|push [--force]   sync the town saves (.usr) with a zeliard-wasm\n"
+        "              server (docs/SYNC.md); runs once and exits.  --sync-key KEY picks and\n"
+        "              remembers the key, --sync-base URL the server (else sync_base in zeliard.ini)\n"
         "  --intro / --no-intro   run (or skip) the opening demo; the default is to run it\n"
         "              only on a plain interactive launch, as GAME.BIN does when it was\n"
         "              given no command-line argument\n"
@@ -1212,6 +1219,8 @@ int main(int argc, char **argv)
     long dbg_gold = -1, dbg_keys = -1, dbg_bank = -1, dbg_worn = -1;
     const char *dbg_potions = NULL, *dbg_spells = NULL;
     const char *save_name = "ZELIARD", *load_name = NULL, *save_now = NULL;
+    const char *sync_action = NULL, *sync_key_opt = NULL, *sync_base_opt = NULL;   /* #55 */
+    int sync_force = 0;
     const char *pilot_route = NULL, *emit_path = NULL;
     int nflags = 0; uint8_t flag_at[0x49], flag_val[0x49];
     a.pilot_tail = 10;
@@ -1286,6 +1295,10 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--name") && i + 1 < argc) save_name = argv[++i];
         else if (!strcmp(argv[i], "--load") && i + 1 < argc) { load_name = argv[++i]; explicit_start = 1; }
         else if (!strcmp(argv[i], "--save") && i + 1 < argc) { save_now = argv[++i]; explicit_start = 1; }
+        else if (!strcmp(argv[i], "--sync") && i + 1 < argc) sync_action = argv[++i];
+        else if (!strcmp(argv[i], "--sync-key") && i + 1 < argc) sync_key_opt = argv[++i];
+        else if (!strcmp(argv[i], "--sync-base") && i + 1 < argc) sync_base_opt = argv[++i];
+        else if (!strcmp(argv[i], "--force")) sync_force = 1;
         else if (!strcmp(argv[i], "--gd-art") && i + 2 < argc) { gd_art_name = argv[++i]; gd_art_path = argv[++i]; }
         else if (!strcmp(argv[i], "--intro")) a.intro = 1;
         else if (!strcmp(argv[i], "--no-intro")) a.intro = 0;
@@ -1359,6 +1372,10 @@ int main(int argc, char **argv)
     shell_set_config_dir(cfg.dir);
     const char *gdir = shell_find_dir(dir);
     if (!gdir) { no_game_files(cfgpath, a.headless); return 1; }
+    /* --sync is a tool run (#55): it reads/writes the .usr files and the sync
+     * link record, never the player's config, and exits before any engine start. */
+    if (sync_action) return sync_cli(&cfg, cfgpath, gdir, sync_action, sync_force, sync_key_opt, sync_base_opt);
+    if (sync_force || sync_key_opt || sync_base_opt) { fprintf(stderr, "--force/--sync-key/--sync-base need --sync status|pull|push\n"); return 2; }
     /* --gd-art NAME OUT.png: render one intro/ending resource the way
      * tools/grp2png.py's render_gd does, so the two decoders can be diffed
      * (port/tools/compare_gdart.py, `make verify`). */

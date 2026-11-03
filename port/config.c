@@ -20,6 +20,7 @@ void config_init(Config *c)
     c->scale = c->fullscreen = c->music = c->sfx = -1;
     c->speaker = c->volume = -1;
     c->touch_size = c->touch_opacity = -1;
+    c->sync = -1;
 }
 
 /* --------------------------------------------------------------- parsing */
@@ -84,6 +85,10 @@ int config_set(Config *c, const char *key, const char *val)
     if (!strcmp(key, "volume"))         { int v; if (!parse_int(val, &v)) return 0; c->volume = v; return 1; }
     if (!strcmp(key, "touch.size"))     { int v; if (!parse_int(val, &v)) return 0; c->touch_size = v; return 1; }
     if (!strcmp(key, "touch.opacity"))  { int v; if (!parse_int(val, &v)) return 0; c->touch_opacity = v; return 1; }
+    if (!strcmp(key, "sync"))           { int v; if (!parse_bool(val, &v)) return 0; c->sync = v; return 1; }
+    if (!strcmp(key, "sync_base"))      { copy_str(c->sync_base, sizeof c->sync_base, val); return 1; }
+    if (!strcmp(key, "sync_key"))       { copy_str(c->sync_key, sizeof c->sync_key, val); return 1; }
+    if (!strcmp(key, "sync_token"))     { copy_str(c->sync_token, sizeof c->sync_token, val); return 1; }
     return 0;
 }
 
@@ -133,6 +138,10 @@ void config_render(const Config *c, char *out, size_t n)
     if (c->volume >= 0) EMIT("volume=%d\n", c->volume);
     if (c->touch_size >= 0)    EMIT("touch.size=%d\n", c->touch_size);
     if (c->touch_opacity >= 0) EMIT("touch.opacity=%d\n", c->touch_opacity);
+    if (c->sync >= 0)   EMIT("sync=%d\n", c->sync);
+    if (c->sync_base[0])  EMIT("sync_base=%s\n", c->sync_base);
+    if (c->sync_key[0])   EMIT("sync_key=%s\n", c->sync_key);
+    if (c->sync_token[0]) EMIT("sync_token=%s\n", c->sync_token);
     for (int i = 0; i < c->n_key; i++) EMIT("key.%s=%s\n", c->key[i].action, c->key[i].value);
     for (int i = 0; i < c->n_pad; i++) EMIT("pad.%s=%s\n", c->pad[i].action, c->pad[i].value);
     #undef EMIT

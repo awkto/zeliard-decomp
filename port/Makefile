@@ -29,6 +29,21 @@ ifneq ($(strip $(SDL_LIBS)),)
 endif
 LIBS += -lm
 
+# Save sync (#55).  libcurl is optional, found the way SDL is: without it the
+# stub net backend links and `--sync` says "built without network support".
+# Only the zeliard binary links curl; the engine test binaries never do.
+CURL_CFLAGS ?= $(shell pkg-config --cflags libcurl 2>/dev/null)
+CURL_LIBS   ?= $(shell pkg-config --libs libcurl 2>/dev/null)
+ifeq ($(strip $(CURL_LIBS)),)
+  NET_OBJ  = net_stub.o
+  NET_LIBS =
+else
+  NET_OBJ  = net_curl.o
+  NET_LIBS = $(CURL_LIBS)
+endif
+# the sync core + the vendored zip library (third_party/miniz, MIT); SDL-free
+SYNC_OBJ = sync.o miniz.o
+
 # `make SAN=1 test` builds and links everything with AddressSanitizer and
 # UndefinedBehaviorSanitizer.  The flags have to reach the *link* too, which is
 # why this is a switch rather than something to pass in CFLAGS by hand.  -O1
@@ -40,13 +55,13 @@ ifeq ($(SAN),1)
   LIBS   += -fsanitize=address,undefined
 endif
 
-all: zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config test_present test_touch
+all: zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config test_sync test_present test_touch
 
 # present.o is the SDL display-filter stage (#53).  It is *not* in CORE: the
 # engine test binaries must stay SDL-free, so only zeliard and test_present
 # link it.
-zeliard: main.o trace.o $(CORE) $(SDL_ONLY)
-	$(CC) -o $@ $^ $(LIBS)
+zeliard: main.o trace.o $(CORE) $(SDL_ONLY) $(SYNC_OBJ) $(NET_OBJ)
+	$(CC) -o $@ $^ $(LIBS) $(NET_LIBS)
 
 test_physics: test_physics.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
@@ -82,6 +97,22 @@ test_video: test_video.o $(CORE)
 test_config: test_config.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
 
+# save sync (#55): the protocol core against an in-memory fake server (test_sync.c
+# carries its own net_* implementation), so no libcurl and no network
+test_sync: test_sync.o $(SYNC_OBJ)
+	$(CC) -o $@ $^ $(LIBS)
+
+miniz.o: third_party/miniz/miniz.c third_party/miniz/miniz.h
+	$(CC) $(CFLAGS) -w -DMINIZ_NO_STDIO -c -o $@ $<
+
+sync.o test_sync.o: sync.h net.h config.h third_party/miniz/miniz.h
+sync.o: CFLAGS += -Ithird_party/miniz
+test_sync.o: CFLAGS += -Ithird_party/miniz
+net_curl.o: net_curl.c net.h
+	$(CC) $(CFLAGS) $(CURL_CFLAGS) -c -o $@ $<
+net_stub.o: net_stub.c net.h
+main.o: sync.h
+
 # The display filters only exist on the SDL path, so this one is built (and run)
 # separately from `make test`; with no SDL it compiles to a "skipping" stub.
 test_present: test_present.o present.o
@@ -104,7 +135,7 @@ COUNTS = $(CURDIR)/.test_counts.txt
 
 test: SHELL := /bin/bash
 test: .SHELLFLAGS := -o pipefail -c
-test: test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config
+test: test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config test_sync
 	@rm -f $(COUNTS)
 	./test_physics 2>&1 | tee -a $(COUNTS)
 	./test_combat 2>&1 | tee -a $(COUNTS)
@@ -117,6 +148,7 @@ test: test_physics test_combat test_town test_boss test_shop test_status test_pl
 	./test_cutscene ../zeliard 2>&1 | tee -a $(COUNTS)
 	./test_video ../zeliard 2>&1 | tee -a $(COUNTS)
 	./test_config 2>&1 | tee -a $(COUNTS)
+	./test_sync 2>&1 | tee -a $(COUNTS)
 	tools/check_counts.sh $(COUNTS)
 
 # random-input soak test (tools/monkey.py): `make monkey N=50 FRAMES=600 SEED=1`
@@ -895,7 +927,7 @@ fuzz-smoke: fuzz fuzz-corpus
 	./fuzz/fuzz_grp -max_total_time=$(FUZZ_TIME) -close_fd_mask=3 $(FUZZ_CORPUS)/grp
 
 clean:
-	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video
+	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config test_sync test_present test_touch
 	rm -rf fuzz/obj fuzz/fuzz_sar fuzz/fuzz_map fuzz/fuzz_grp fuzz/fuzz_seed
 
 .PHONY: all test verify monkey playthrough clean fuzz fuzz-corpus fuzz-smoke
