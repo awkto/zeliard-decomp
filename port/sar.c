@@ -1,6 +1,7 @@
 /* sar.c — .SAR reader and the 8-opcode RLE engine of STICK.BIN @0D9D (see
  * tools/sardec.py for the annotated Python original; the DX "remaining input"
  * counter is mirrored exactly so that malformed tails behave the same). */
+#include <dirent.h>
 #include "sar.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -121,21 +122,37 @@ fail:
     return NULL;
 }
 
+static int ci_eq(const char *a, const char *b)
+{
+    for (; *a && *b; a++, b++) {
+        char x = (*a >= 'A' && *a <= 'Z') ? (char)(*a + 32) : *a;
+        char y = (*b >= 'A' && *b <= 'Z') ? (char)(*b + 32) : *b;
+        if (x != y) return 0;
+    }
+    return *a == *b;
+}
+
+/* Every game-data open goes through here.  The DOS media is upper-case but
+ * dumps come in any case (and mixed), so: the name as given, then a directory
+ * scan for a case-insensitive match.  (Case-insensitive file systems hit on the
+ * first try.) */
 FILE *game_fopen(const char *dir, const char *name)
 {
     char path[1024];
     snprintf(path, sizeof path, "%s/%s", dir, name);
     FILE *f = fopen(path, "rb");
     if (f) return f;
-    /* the game files are upper-case on the DOS media; try lower-case too */
-    size_t n = strlen(name);
-    if (n >= sizeof path) return NULL;
-    char lower[256];
-    if (n >= sizeof lower) return NULL;
-    for (size_t i = 0; i <= n; i++)
-        lower[i] = (name[i] >= 'A' && name[i] <= 'Z') ? (char)(name[i] - 'A' + 'a') : name[i];
-    snprintf(path, sizeof path, "%s/%s", dir, lower);
-    return fopen(path, "rb");
+    DIR *d = opendir(dir && *dir ? dir : ".");
+    if (!d) return NULL;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (!ci_eq(e->d_name, name)) continue;
+        snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
+        f = fopen(path, "rb");
+        if (f) break;
+    }
+    closedir(d);
+    return f;
 }
 
 uint8_t *sar_read_raw(const char *dir, int archive, int index, size_t *out_len)

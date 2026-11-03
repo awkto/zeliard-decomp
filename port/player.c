@@ -83,8 +83,8 @@ int player_load_usr(Game *g, const char *dir, const char *name)
     int n = 0;
     for (; n < 8 && name[n]; n++) base[n] = name[n];
     base[n] = 0;
-    snprintf(path, sizeof path, "%s/%s.usr", dir, base);
-    FILE *f = fopen(path, "rb");
+    snprintf(path, sizeof path, "%s.usr", base);
+    FILE *f = game_fopen(dir, path);
     if (!f) return -1;
     uint8_t buf[256];
     memset(buf, 0, sizeof buf);
