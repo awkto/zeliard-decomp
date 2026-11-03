@@ -7,6 +7,8 @@
 
 #ifdef _WIN32
 #include <direct.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #define SK_MKDIR(d) _mkdir(d)
 #else
 #include <errno.h>

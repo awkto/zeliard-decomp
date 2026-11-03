@@ -1,0 +1,65 @@
+# Windows zip for the C port: zeliard.exe + SDL2.dll + README.txt + LICENSE,
+# cross-compiled on a Linux runner with mingw-w64 (no MSYS2: its MINGW64
+# packages vanish without warning).  SDL2 is the pinned libsdl.org mingw dev
+# release, checksum-verified by packaging/windows/build.sh.  No game data is
+# read or shipped.
+#
+# * v* tag               -> zip attached to that tag's GitHub release.  The Linux
+#                           workflow does the same; softprops/action-gh-release
+#                           creates the release or, if the other job got there
+#                           first, uploads into it, so the two never block or
+#                           race each other.
+# * push to ci/windows*  -> build only, zip as a workflow artifact (validate here
+#                           before ever tagging).
+# * workflow_dispatch    -> same, artifact only.
+name: Windows release
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - 'ci/windows*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create/upload the release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # git describe for untagged builds
+
+      - name: Install mingw-w64
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 make zip unzip curl
+
+      - name: Build the zip
+        run: ./packaging/windows/build.sh   # version: git describe, which on a v* tag is the tag
+
+      - name: Check imported DLLs
+        run: |
+          x86_64-w64-mingw32-objdump -p build/win/port/zeliard.exe | grep "DLL Name"
+          # build.sh already fails on anything outside the Windows system set + SDL2.dll;
+          # this repeats it on the staged exe so the log shows the list
+          ! x86_64-w64-mingw32-objdump -p build/win/stage/*/zeliard.exe | awk '/DLL Name/{print tolower($3)}' \
+            | grep -Evx 'sdl2\.dll|kernel32\.dll|msvcrt\.dll|shell32\.dll|user32\.dll|gdi32\.dll|advapi32\.dll|ole32\.dll|oleaut32\.dll|winmm\.dll|imm32\.dll|setupapi\.dll|version\.dll|ws2_32\.dll|api-ms-win-crt-.*\.dll|ucrtbase\.dll'
+
+      - name: Upload workflow artifact (non-tag runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: zeliard-windows
+          path: build/win/*.zip
+
+      - name: Create or update the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/win/*.zip
