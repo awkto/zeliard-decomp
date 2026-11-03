@@ -24,6 +24,16 @@ void shell_set_config_dir(const char *dir)
     else shell_cfg_dir[0] = 0;
 }
 
+/* #56: the per-user drop folder (SDL_GetPrefPath/game), the one place an
+ * installed copy, which has no useful working directory, can be given its
+ * game files without a command line. */
+static char shell_data_dir[1024];
+void shell_set_data_dir(const char *dir)
+{
+    if (dir) snprintf(shell_data_dir, sizeof shell_data_dir, "%s", dir);
+    else shell_data_dir[0] = 0;
+}
+
 /* A folder is the game folder only when all three ZELRES*.SAR archives are
  * there.  game_fopen (sar.c) tries the name as given and all-lower-case, which
  * is the port's one case-insensitive helper (#57). */
@@ -43,6 +53,7 @@ const char *shell_find_dir(const char *hint)
     static const char *cands[] = {"zeliard", "../zeliard", "./", NULL};
     if (hint && dir_has_game(hint)) return hint;
     if (shell_cfg_dir[0] && dir_has_game(shell_cfg_dir)) return shell_cfg_dir;
+    if (shell_data_dir[0] && dir_has_game(shell_data_dir)) return shell_data_dir;
     for (int i = 0; cands[i]; i++)
         if (dir_has_game(cands[i])) return cands[i];
     return NULL;

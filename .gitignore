@@ -5,3 +5,4 @@
 # disassembly of copyrighted binaries — regenerate with tools/disasm.sh
 /disasm/
 __pycache__/
+/build/

@@ -1,0 +1,62 @@
+# Linux packages for the C port: a .deb and an AppImage, built on a semver tag
+# (v1.2.3) and attached to that tag's GitHub release.  Manual runs (and PRs
+# that touch packaging/) build them as a smoke test and upload them as workflow
+# artifacts instead.  No game data is read or shipped; see packaging/linux/.
+name: Linux release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'packaging/linux/**'
+      - '.github/workflows/linux-release.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create/upload the release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # git describe for untagged builds
+
+      - name: Build .deb and AppImage (debian:12 container)
+        run: ./packaging/linux/build.sh   # version: git describe, which on a v* tag is the tag
+
+      - name: Smoke-test the .deb on a clean Debian 12
+        run: |
+          docker run --rm -v "$PWD/build:/pkg:ro" debian:12 bash -euxc '
+            apt-get update -qq
+            apt-get install -y -qq /pkg/zeliard_*_amd64.deb
+            zeliard --help 2>&1 | head -3'
+
+      - name: Smoke-test the AppImage with no SDL installed
+        run: |
+          docker run --rm -v "$PWD/build:/pkg:ro" debian:12 bash -euxc '
+            cp /pkg/Zeliard-*-x86_64.AppImage /tmp/z.AppImage
+            /tmp/z.AppImage --appimage-extract-and-run --help 2>&1 | head -3'
+
+      - name: Upload workflow artifacts (non-tag runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: zeliard-linux
+          path: |
+            build/*.deb
+            build/*.AppImage
+
+      - name: Create or update the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/*.deb
+            build/*.AppImage
+          generate_release_notes: true

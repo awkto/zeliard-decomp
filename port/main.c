@@ -1178,7 +1178,7 @@ static void config_capture(Config *c, const App *a, const char *dir, int backend
 
 /* #42 first run: the game files are copyrighted and stay user-supplied, so say
  * so and say where.  SDL builds get a real dialog; headless stays on stderr. */
-static void no_game_files(const char *cfgpath, int headless)
+static void no_game_files(const char *cfgpath, const char *datadir, int headless)
 {
     char msg[2048];
     snprintf(msg, sizeof msg,
@@ -1187,8 +1187,9 @@ static void no_game_files(const char *cfgpath, int headless)
         "original files (ZELRES1.SAR, ZELRES2.SAR, ZELRES3.SAR, GAME.BIN, ...)\n"
         "in one of these folders:\n"
         "    zeliard/    ../zeliard/    ./\n"
+        "or, for an installed copy, the per-user folder\n    %s\n"
         "or point the port at them:  zeliard --dir /path/to/the/files\n\n"
-        "The folder that works is remembered in:\n    %s", cfgpath);
+        "The folder that works is remembered in:\n    %s", datadir[0] ? datadir : "(SDL_GetPrefPath)/game", cfgpath);
     fprintf(stderr, "%s\n", msg);
 #ifdef HAVE_SDL
     if (!headless && SDL_Init(SDL_INIT_VIDEO) == 0) {
@@ -1370,8 +1371,17 @@ int main(int argc, char **argv)
      * before anything tries to open it.  Order: --dir, the config's remembered
      * folder, then zeliard/ ../zeliard/ ./. */
     shell_set_config_dir(cfg.dir);
+    char datadir[CONFIG_PATH_MAX]; datadir[0] = 0;
+#ifdef HAVE_SDL
+    /* #56: an installed copy (.deb/AppImage) has no useful working directory,
+     * so also look in <pref path>/game (~/.local/share/awkto/zeliard/game) */
+    if (!a.headless) {
+        char *p = SDL_GetPrefPath("awkto", "zeliard");
+        if (p) { snprintf(datadir, sizeof datadir, "%sgame", p); SDL_free(p); shell_set_data_dir(datadir); }
+    }
+#endif
     const char *gdir = shell_find_dir(dir);
-    if (!gdir) { no_game_files(cfgpath, a.headless); return 1; }
+    if (!gdir) { no_game_files(cfgpath, datadir, a.headless); return 1; }
     /* --sync is a tool run (#55): it reads/writes the .usr files and the sync
      * link record, never the player's config, and exits before any engine start. */
     if (sync_action) return sync_cli(&cfg, cfgpath, gdir, sync_action, sync_force, sync_key_opt, sync_base_opt);

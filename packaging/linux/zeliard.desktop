@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Zeliard
+GenericName=Action RPG
+Comment=C port of Zeliard (Game Arts / Sierra, 1990); needs your own copy of the game files
+Exec=zeliard
+Icon=zeliard
+Terminal=false
+Categories=Game;ActionGame;
+Keywords=zeliard;rpg;platformer;

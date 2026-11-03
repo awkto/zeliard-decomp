@@ -80,6 +80,41 @@ be verified on a server.  If SDL2 lives somewhere unusual, put `SDL_CFLAGS`/`SDL
 in `port/local.mk` (auto-included, gitignored).  `compat/SDL_config.h` is a generic
 config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`).
 
+## Installing on Linux
+
+Each release (a `v*` tag) carries two Linux packages, built by
+`.github/workflows/linux-release.yml` in a `debian:12` container so they run on
+anything with glibc 2.36 or newer:
+
+- `zeliard_<ver>_amd64.deb` — `sudo apt install ./zeliard_<ver>_amd64.deb`
+  (depends on `libsdl2-2.0-0`; installs `/usr/bin/zeliard`, a desktop entry and icon).
+- `Zeliard-<ver>-x86_64.AppImage` — `chmod +x` and run; SDL2 is bundled, so
+  nothing else needs installing (it still uses the system's X11/Wayland/audio).
+
+**The game files are not included** (they are copyrighted).  Give the port your
+own copy of the folder holding `ZELRES1-3.SAR`, `GAME.BIN`, ... in any one of
+these ways; the first that has all three `ZELRES*.SAR` wins:
+
+1. `zeliard --dir /path/to/the/files` (the folder is then remembered);
+2. the folder remembered in `zeliard.ini`;
+3. `~/.local/share/awkto/zeliard/game/` — copy the files here and launching from
+   the desktop menu just works (this is `SDL_GetPrefPath("awkto","zeliard")` + `game`);
+4. `zeliard/`, `../zeliard/` or `./` relative to the working directory.
+
+With none of them, the port says so (message box and stderr) and lists these
+places.  Nothing is ever written next to the binary: settings
+(`zeliard.ini`) and saves live under `~/.local/share/awkto/zeliard/`.
+
+To build the packages locally (needs docker and curl; nothing else):
+
+    packaging/linux/build.sh            # version from `git describe`
+    packaging/linux/build.sh 1.2.3      # or explicit
+    # -> build/zeliard_<ver>_amd64.deb  build/Zeliard-<ver>-x86_64.AppImage
+
+The version of a release is its tag without the `v`.  The icon is original
+artwork drawn by `packaging/linux/make-icon.py` (a sword; it uses no game data).
+To cut a release: `git tag v1.2.3 && git push origin v1.2.3`.
+
 ## Controls
 
 ### Cutscenes (opdemo / enddemo)

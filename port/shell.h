@@ -72,6 +72,8 @@ const char *shell_find_dir(const char *hint);
 /* The folder `config.c` remembered, consulted by shell_find_dir between the
  * --dir hint and the built-in probes.  NULL or "" clears it. */
 void shell_set_config_dir(const char *dir);
+/* #56: an extra candidate after the config's folder: <pref path>/game. */
+void shell_set_data_dir(const char *dir);
 /* load system map `map_idx` into slot 0, the fonts, the hero and item art, and
  * game_init() the player record (STDPLY.BIN).  Returns 0 on success. */
 int  shell_init(Shell *s, const char *dir_hint, int map_idx);
