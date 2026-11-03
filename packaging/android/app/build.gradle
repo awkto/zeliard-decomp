@@ -1,0 +1,42 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.awkto.zeliard.port'
+    compileSdk 34
+    ndkVersion '26.3.11579264'
+
+    defaultConfig {
+        // Not the emulated APKs' ids (com.awkto.zeliard, .dx): installs alongside them.
+        applicationId 'com.awkto.zeliard.port'
+        minSdk 21
+        targetSdk 34
+        versionCode project.hasProperty('zeliardVersionCode') ? zeliardVersionCode.toInteger() : 1
+        versionName project.hasProperty('zeliardVersionName') ? zeliardVersionName : '0.0-dev'
+        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64' }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_static'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    // TODO(release signing): debug-signed for now.  A stable release key is a
+    // separate decision; do not reuse the emulated APKs' keystore secrets here.
+    buildTypes {
+        release { minifyEnabled false }
+    }
+    lint { abortOnError false }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

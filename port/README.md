@@ -3184,3 +3184,29 @@ exactly in both towns.  `town.png` alone is blind to the sign (179 and -(48+179)
 with the page holding `[80]`/`[83]` — STDPLY.BIN's scroll 30 / column 10 — while the map's `C013`
 is the *death* return; the port was booting the castle at scroll 17 / column 34.
 `playthrough.c` still uses `C013` for its castle entry: same bug, tracked separately.
+
+## Android build
+
+`packaging/android/` is a Gradle project around SDL2's own `SDLActivity`
+(SDL 2.30.9, the same pin as the Windows build, checksum-verified by
+`fetch-sdl.sh`).  `port/*.c` (the `zeliard` object list, `net_stub.c`, no tests)
+is compiled by CMake as `libmain.so` next to `libSDL2.so`; SDL owns the window,
+touch, audio and controllers, and `main()` becomes `SDL_main` through
+`SDL_main.h`.  applicationId `com.awkto.zeliard.port`, minSdk 21, ABIs
+arm64-v8a, armeabi-v7a, x86_64.
+
+It is built only in CI (`.github/workflows/android.yml`: pushes to `ci/android*`,
+manual dispatch, `v*` tags): the debug-signed APK is a workflow artifact, and on
+a tag it is attached to the release.  The Android SDK/NDK are not needed locally.
+TODO: a stable release-signing key (the emulated APKs' secrets are not reused).
+
+* **Game files** are never bundled.  Copy `ZELRES1-3.SAR`, `GAME.BIN`, ... into
+  `Android/data/com.awkto.zeliard.port/files/game/` (the app's external storage,
+  `SDL_AndroidGetExternalStoragePath()/game`; no permission needed; a file
+  manager or `adb push` reaches it).  Without them the app says so and where.
+  A folder/zip picker (Storage Access Framework) is a later step.
+* **Lifecycle** (`#ifdef __ANDROID__` in `main.c`'s event pump, engine untouched):
+  going to the background pauses the game and quick-saves (#52); coming back
+  resumes it.  The Back button pauses instead of closing the app.
+* The touch overlay (#54) is in its `auto` mode: it shows on the first touch.
+* Not verified on a device or emulator yet.

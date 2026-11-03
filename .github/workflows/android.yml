@@ -1,0 +1,91 @@
+# Android APK of the C port: SDL2's SDLActivity (pinned 2.30.9, checksum-verified
+# by packaging/android/fetch-sdl.sh) with port/ compiled as libmain.so through
+# the NDK.  applicationId com.awkto.zeliard.port, so it installs alongside the
+# emulated APKs.  No game data is read or shipped.
+#
+# * v* tag               -> APK attached to that tag's release (create-or-upload,
+#                           like linux-release.yml / windows-release.yml).
+# * push to ci/android*  -> build only, APK as a workflow artifact.
+# * workflow_dispatch    -> same, artifact only.
+#
+# TODO(release signing): the APK is debug-signed.  The emulated APKs' keystore
+# secrets are deliberately NOT used here; a stable key for this app is a
+# separate decision.
+name: Android APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - 'ci/android*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create/upload the release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # git describe for untagged builds
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platforms;android-34
+            build-tools;34.0.0
+            cmake;3.22.1
+            ndk;26.3.11579264
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.2.1'
+
+      - name: Fetch SDL2 (pinned, checksummed)
+        run: ./packaging/android/fetch-sdl.sh
+
+      - name: Version
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF#refs/tags/v}"; else V="$(git describe --tags --always)"; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if [[ "$V" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+            echo "code=$(( ${BASH_REMATCH[1]}*10000 + ${BASH_REMATCH[2]}*100 + ${BASH_REMATCH[3]} ))" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=$(( 90000 + GITHUB_RUN_NUMBER ))" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Assemble debug APK
+        working-directory: packaging/android
+        run: gradle --no-daemon assembleDebug -PzeliardVersionCode=${{ steps.ver.outputs.code }} -PzeliardVersionName=${{ steps.ver.outputs.version }}
+
+      - name: Name the APK, list its contents
+        id: apk
+        run: |
+          DEST="zeliard-port-${{ steps.ver.outputs.version }}-android-debug.apk"
+          cp packaging/android/app/build/outputs/apk/debug/app-debug.apk "$DEST"
+          echo "path=$DEST" >> "$GITHUB_OUTPUT"
+          ls -l "$DEST"; unzip -l "$DEST" | grep -E 'lib/.*\.so'
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zeliard-port-android
+          path: ${{ steps.apk.outputs.path }}
+          if-no-files-found: error
+
+      - name: Create or update the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.apk.outputs.path }}

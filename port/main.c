@@ -133,6 +133,8 @@ typedef struct {
     Input    in;                        /* #42: the key/button bindings, one table */
     Touch    touch;                     /* #54: the on-screen controls */
     int      paused;                    /* Esc: the original pauses, it does not quit */
+    int      bg_paused;                 /* Android: paused by the app going to the background, so coming back resumes */
+    int      bg_flush;                  /* Android: finish the frame so the queued background save runs, before SDL blocks us */
     int      esc_edge;                  /* Esc was pressed; what that means is the caller's */
     char     title_base[900];           /* the engine's own title, re-applied when pause flips */
 #endif
@@ -232,6 +234,22 @@ static void pump_events(App *a, Game *g)
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
         case SDL_QUIT: a->quit = 1; break;
+#ifdef __ANDROID__
+        /* Android lifecycle.  SDL blocks the next pump once DIDENTERBACKGROUND
+         * has been delivered, so the save is queued here and the frame is let
+         * finish (frame_wait, bg_flush): state_frame_done runs it at the true
+         * frame end, before we block.  Pause only; the engine is not touched. */
+        case SDL_APP_WILLENTERBACKGROUND:
+            if (!a->paused) { a->paused = 1; a->bg_paused = 1; }
+            break;
+        case SDL_APP_DIDENTERBACKGROUND:
+            if (g) statekeys_request(&a->sk, &a->sh, STATE_REQ_SAVE, -1);
+            a->bg_flush = 1;
+            break;
+        case SDL_APP_DIDENTERFOREGROUND:
+            if (a->bg_paused) { a->bg_paused = 0; a->paused = 0; }
+            break;
+#endif
         case SDL_CONTROLLERDEVICEADDED:   pad_open(a, e.cdevice.which); break;
         case SDL_CONTROLLERDEVICEREMOVED: pad_closed(a, e.cdevice.which); break;
         case SDL_FINGERDOWN: case SDL_FINGERMOTION: case SDL_FINGERUP: {
@@ -244,6 +262,9 @@ static void pump_events(App *a, Game *g)
             if (input_pad_event_match(&a->in, ACT_PAUSE, e.cbutton.button)) { a->paused = !a->paused; title_apply(a); }
             break;
         case SDL_KEYDOWN:
+#ifdef __ANDROID__
+            if (e.key.keysym.sym == SDLK_AC_BACK) { a->esc_edge = 1; break; }   /* Back = pause, not quit */
+#endif
             touch_note_other_input(&a->touch);       /* #54: keyboard use hides the overlay */
             /* the F7 dialog owns the keyboard while it is up */
             if (a->rest.state || a->sync_dlg) {
@@ -345,6 +366,9 @@ static void frame_wait(App *a, Game *g, Uint64 *next)
     *next += (Uint64)(a->frame_ms / 1000.0 * (double)freq);
     for (;;) {
         pump_events(a, g);
+#ifdef __ANDROID__
+        if (a->bg_flush) { a->bg_flush = 0; break; }   /* let this frame end: the background save runs in frame_done */
+#endif
         if (a->esc_edge) { a->esc_edge = 0; a->paused = !a->paused; title_apply(a); }
         if (a->quit) break;
         if (a->paused) { SDL_Delay(16); *next = SDL_GetPerformanceCounter(); continue; }
@@ -1256,6 +1280,14 @@ static void no_game_files(const char *cfgpath, const char *datadir, int headless
         "or, for an installed copy, the per-user folder\n    %s\n"
         "or point the port at them:  zeliard --dir /path/to/the/files\n\n"
         "The folder that works is remembered in:\n    %s", datadir[0] ? datadir : "(SDL_GetPrefPath)/game", cfgpath);
+#ifdef __ANDROID__
+    snprintf(msg, sizeof msg,
+        "Zeliard's game data files were not found.\n\n"
+        "They are copyrighted and are not included with this app.  Copy the\n"
+        "original files (ZELRES1.SAR, ZELRES2.SAR, ZELRES3.SAR, GAME.BIN, ...)\n"
+        "into this folder on the phone (a file manager or 'adb push'):\n\n    %s\n\n"
+        "then start the app again.", datadir[0] ? datadir : "Android/data/com.awkto.zeliard.port/files/game");
+#endif
     fprintf(stderr, "%s\n", msg);
 #ifdef HAVE_SDL
     if (!headless && SDL_Init(SDL_INIT_VIDEO) == 0) {
@@ -1442,8 +1474,19 @@ int main(int argc, char **argv)
     /* #56: an installed copy (.deb/AppImage) has no useful working directory,
      * so also look in <pref path>/game (~/.local/share/awkto/zeliard/game) */
     if (!a.headless) {
+#ifdef __ANDROID__
+        /* app-specific external storage: reachable from a file manager / adb
+         * push without any storage permission (Android/data/<pkg>/files/game) */
+        const char *ext = SDL_AndroidGetExternalStoragePath();
+        if (ext) {
+            snprintf(datadir, sizeof datadir, "%s/game", ext);
+            MKDIR(datadir);
+            shell_set_data_dir(datadir);
+        }
+#else
         char *p = SDL_GetPrefPath("awkto", "zeliard");
         if (p) { snprintf(datadir, sizeof datadir, "%sgame", p); SDL_free(p); shell_set_data_dir(datadir); }
+#endif
     }
 #endif
     const char *gdir = shell_find_dir(dir);
@@ -1622,6 +1665,9 @@ int main(int argc, char **argv)
 
 #ifdef HAVE_SDL
     if (!a.headless) {
+#ifdef __ANDROID__
+        SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");   /* Back pauses (SDLK_AC_BACK) instead of closing the app */
+#endif
         if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 1; }
         /* a controller is a nicety, not a requirement: if the subsystem will
          * not start, the keyboard path is untouched */
