@@ -110,6 +110,7 @@ PY
       # a boundary whose frame ends inside a shop/status/dialogue is not a
       # resumable point; the loader reports it, we just move on
       skipped=$((skipped + 1))
+      rm -rf "$d/b$N" "$d/b$N.out"
       continue
     fi
     tried=$((tried + 1))
@@ -124,6 +125,9 @@ PY
       [ -n "$keyn" ] || keyn=$N
       # keep one blob per scenario for the corruption check below
       if [ -f "$d/keep.bin" ]; then rm -f "$d/state_$N.bin"; else mv "$d/state_$N.bin" "$d/keep.bin"; fi
+      # a passing N keeps nothing else: with --all the traces of every
+      # boundary would run to tens of GB.  Failures keep theirs for triage.
+      rm -rf "$d/b$N" "$d/c$N" "$d/b$N.out" "$d/c$N.out" "$d/eq$N.txt"
     else
       nfail=$((nfail + 1))
       if [ "$nfail" -le 8 ]; then
