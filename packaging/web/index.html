@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<link rel="icon" href="data:,">
+<title>Zeliard (C port, web)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #ccc; font: 16px system-ui, sans-serif; }
+  #pick { max-width: 34em; margin: 8vh auto; padding: 0 1em; }
+  #pick h1 { font-size: 1.4em; }
+  #pick label { display: block; margin: 1em 0 .3em; }
+  #status { margin-top: 1em; min-height: 1.4em; color: #9c9; }
+  #err { color: #f88; }
+  #stage { display: none; position: fixed; inset: 0; align-items: center; justify-content: center; }
+  canvas { background: #000; touch-action: none; image-rendering: pixelated; outline: none; }
+  small { color: #888; }
+</style>
+</head>
+<body>
+<div id="pick">
+  <h1>Zeliard</h1>
+  <p>This runs the C port in your browser. It needs your own copy of the game files
+     (the folder with <code>ZELRES1.SAR</code>). They are read locally and never uploaded.</p>
+  <label for="dir">Game folder</label>
+  <input id="dir" type="file" webkitdirectory multiple>
+  <label for="zip">or a zip of it</label>
+  <input id="zip" type="file" accept=".zip,application/zip">
+  <div id="status">Loading engine...</div>
+  <div id="err"></div>
+  <p><small>Saves (.usr), save states and settings are kept in this browser (IndexedDB).</small></p>
+</div>
+<div id="stage"><canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas></div>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const status = t => { $('status').textContent = t; };
+const fail = t => { $('err').textContent = t; console.warn(t); };
+let ready = false, started = false;
+
+var Module = {
+  canvas: $('canvas'),
+  print: t => console.log(t),
+  printErr: t => console.log(t),      // the port logs progress to stderr; not an error
+  onRuntimeInitialized() { setupPersistence(); },
+};
+
+function syncfs(populate) {
+  return new Promise((res, rej) => Module.FS.syncfs(populate, e => e ? rej(e) : res()));
+}
+
+// SDL_GetPrefPath("awkto","zeliard") is /libsdl/awkto/zeliard/ under Emscripten
+async function setupPersistence() {
+  const FS = Module.FS;
+  FS.mkdir('/libsdl');
+  FS.mount(Module.IDBFS, {}, '/libsdl');
+  try { await syncfs(true); } catch (e) { fail('Could not open browser storage: ' + e); }
+  try { FS.mkdir('/libsdl/usr'); } catch (e) {}
+  ready = true;
+  status('Choose your game folder or zip.');
+  $('dir').disabled = $('zip').disabled = false;
+}
+$('dir').disabled = $('zip').disabled = true;
+
+// ---- reading the files -------------------------------------------------
+async function inflateRaw(bytes) {
+  const s = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(s).arrayBuffer());
+}
+async function unzip(buf) {                      // minimal reader: stored + deflate, via the central directory
+  const dv = new DataView(buf), u8 = new Uint8Array(buf), out = [];
+  let e = u8.length - 22;
+  while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) throw new Error('not a zip file');
+  let n = dv.getUint16(e + 10, true), p = dv.getUint32(e + 16, true);
+  while (n--) {
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
+    const nl = dv.getUint16(p + 28, true), el = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true);
+    const lho = dv.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nl));
+    p += 46 + nl + el + cl;
+    if (name.endsWith('/')) continue;
+    const ds = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true);
+    const raw = u8.subarray(ds, ds + csize);
+    out.push({ path: name, data: method === 0 ? raw : await inflateRaw(raw) });
+  }
+  return out;
+}
+
+// files: [{path, data}] -> /game, rooted at the folder that holds ZELRES1.SAR
+function installGame(files) {
+  const FS = Module.FS;
+  const key = files.find(f => /(^|\/)zelres1\.sar$/i.test(f.path));
+  if (!key) throw new Error('ZELRES1.SAR not found: that is not a Zeliard folder.');
+  const root = key.path.slice(0, key.path.length - 'zelres1.sar'.length);
+  try { FS.mkdir('/game'); } catch (e) {}
+  let n = 0;
+  for (const f of files) {
+    if (!f.path.startsWith(root)) continue;
+    const rel = f.path.slice(root.length);
+    if (!rel || rel.includes('/')) continue;      // the game dir is flat
+    FS.writeFile('/game/' + rel, f.data); n++;
+  }
+  // saves from earlier visits win over any .usr that came in the folder
+  for (const f of FS.readdir('/libsdl/usr')) {
+    if (f[0] === '.') continue;
+    FS.writeFile('/game/' + f, FS.readFile('/libsdl/usr/' + f));
+  }
+  return n;
+}
+
+async function begin(files) {
+  if (started) return;
+  try {
+    status('Reading files...');
+    const n = installGame(files);
+    started = true;
+    status(n + ' files loaded.');
+    start();
+  } catch (e) { fail(e.message || String(e)); status('Choose your game folder or zip.'); }
+}
+
+$('dir').onchange = async ev => {
+  const fl = [...ev.target.files];
+  if (!fl.length) return;
+  const files = [];
+  for (const f of fl) files.push({ path: f.webkitRelativePath || f.name, data: new Uint8Array(await f.arrayBuffer()) });
+  begin(files);
+};
+$('zip').onchange = async ev => {
+  const f = ev.target.files[0];
+  if (!f) return;
+  try { begin(await unzip(await f.arrayBuffer())); } catch (e) { fail(e.message); }
+};
+
+// ---- running -------------------------------------------------------------
+function fit() {
+  const c = $('canvas'), r = c.width / c.height || 1.6;
+  let w = innerWidth, h = innerWidth / r;
+  if (h > innerHeight) { h = innerHeight; w = h * r; }
+  c.style.width = Math.floor(w) + 'px'; c.style.height = Math.floor(h) + 'px';
+}
+
+function start() {
+  $('pick').style.display = 'none';
+  $('stage').style.display = 'flex';
+  fit(); addEventListener('resize', fit);
+  new MutationObserver(fit).observe($('canvas'), { attributes: true, attributeFilter: ['width', 'height'] });
+  // this runs inside the file-input change event, so the browser lets SDL start audio
+  persistLoop();
+  Module.callMain(['--dir', '/game', '--scale', '3', '--touch', 'auto']);
+  $('canvas').focus();
+}
+
+// .usr saves are written next to the game files; mirror them (and everything
+// under /libsdl: states, zeliard.ini) into IndexedDB
+const seen = {};
+function persistLoop() {
+  const FS = Module.FS;
+  const scan = copy => {
+    for (const f of FS.readdir('/game')) {
+      if (!/\.usr$/i.test(f)) continue;
+      const st = FS.stat('/game/' + f), sig = st.mtime.getTime() + ':' + st.size;
+      if (seen[f] !== sig) { seen[f] = sig; if (copy) FS.writeFile('/libsdl/usr/' + f, FS.readFile('/game/' + f)); }
+    }
+  };
+  scan(false);                                                    // as installed: not a save
+  setInterval(() => {
+    try {
+      scan(true);
+      syncfs(false).catch(e => console.warn('syncfs: ' + e));
+    } catch (e) { console.warn('persist: ' + e); }
+  }, 3000);
+}
+</script>
+<script async src="zeliard.js"></script>
+</body>
+</html>
