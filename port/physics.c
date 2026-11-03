@@ -318,6 +318,10 @@ static int door_unlock(Game *g, Door *d)
     (*n)--;
     g->sfx_request = 0x15;
     d->letter |= 0x80;
+    /* 7E15 writes the byte into the map image at C00A; the parsed Door is a
+     * copy, so mirror it into raw (a 6BFC re-parse or a save-state reload that
+     * stores raw would otherwise re-lock the door, #110). */
+    if (g->map) map_door_letter_set((Map *)(void *)g->map, (int)(d - g->map->doors), d->letter);
     if (d->flag_ptr != 0xFFFF) g->page[d->flag_ptr & 0xFF] |= d->flag_mask;   /* 7E39 */
     /* no message box: 7E26..7E3B is the whole of it (the "You get a Key."
      * the port printed here is the pickup's, 90D3) -- key_door f43 */

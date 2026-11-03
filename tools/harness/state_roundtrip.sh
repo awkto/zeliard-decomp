@@ -13,22 +13,27 @@
 # (no signal), which is the corruption half of the issue.  No oracle and no
 # droplet: this is the port talking to itself.
 #
-# usage: state_roundtrip.sh [-j N] [--out DIR] [--saves K] [--no-fuzz] [NAME ...]
+# usage: state_roundtrip.sh [-j N] [--out DIR] [--saves K] [--all] [--no-fuzz] [NAME ...]
 #   -j N      scenarios in parallel (default 2)
 #   --out DIR traces and blobs (default /tmp/zel-state)
 #   --saves K how many N per scenario (default 3)
+#   --all     save at EVERY resumable frame boundary, not just K samples; the
+#             transition proof (#110): a state from any boundary must reload
+#             identically.  A boundary whose frame opens a shop/status/dialogue
+#             box is still skipped (no blob is written for it).
 #   --no-fuzz skip the corruption check
 #   NAME      run only these scenarios (name or path)
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-J=2; OUT=/tmp/zel-state; K=3; FUZZ=1; SEL=
+J=2; OUT=/tmp/zel-state; K=3; FUZZ=1; ALL=0; SEL=
 while [ $# -gt 0 ]; do
   case "$1" in
     -j) J=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;;
     --saves) K=$2; shift 2 ;;
+    --all) ALL=1; shift ;;
     --no-fuzz) FUZZ=0; shift ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
     *) SEL="$SEL $1"; shift ;;
   esac
 done
@@ -72,16 +77,18 @@ run_one() {
 
   # frame boundaries to sample (717F / 68ED only; menus and shops are not
   # resumable at a poll, and the loader says so)
-  ns=$(python3 - "$d/ref/frames.jsonl" "$K" <<'PY'
+  ns=$(python3 - "$d/ref/frames.jsonl" "$K" "$ALL" <<'PY'
 import json, sys
 lines = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
-k = int(sys.argv[2])
+k = int(sys.argv[2]); all_b = int(sys.argv[3])
 # candidates: every frame boundary except the last (where the script runs out,
 # leaving nothing to resume); sample up to k, but try them all when there are few
 fr = [o["f"] for o in lines if o["site"] in ("717F", "68ED")][:-1]
 if not fr:
     sys.exit(0)
-if len(fr) <= k:
+if all_b:
+    picks = fr
+elif len(fr) <= k:
     picks = fr
 else:
     picks = []
@@ -94,7 +101,7 @@ PY
 )
   [ -n "$ns" ] || { printf 'ERROR\t-\tno frame boundary to sample\n' >"$d/result"; return; }
 
-  ok=0; tried=0; skipped=0; detail=; keyn=
+  ok=0; tried=0; skipped=0; detail=; nfail=0; keyn=
   for N in $ns; do
     # 2. the run that writes the state
     (cd "$ROOT" && "$PORT" --dir zeliard --load "$load" --trace "$d/b$N" \
@@ -118,9 +125,14 @@ PY
       # keep one blob per scenario for the corruption check below
       if [ -f "$d/keep.bin" ]; then rm -f "$d/state_$N.bin"; else mv "$d/state_$N.bin" "$d/keep.bin"; fi
     else
-      detail="$detail N=$N:$(sed -n '1p' "$d/eq$N.txt")"
+      nfail=$((nfail + 1))
+      if [ "$nfail" -le 8 ]; then
+        one=$(sed -n '1p' "$d/eq$N.txt" | cut -c1-100)
+        detail="$detail N=$N:$one;"
+      fi
     fi
   done
+  [ "$nfail" -gt 8 ] && detail="$detail (+$((nfail - 8)) more)"
 
   # 4. #52 step 2: the same save/load through the *in-game* request path -- a
   # queued request run by the shell's frame_done hook, the code a Ctrl+. / Ctrl+\

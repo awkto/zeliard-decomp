@@ -71,6 +71,11 @@ void map_free(Map *m);
  * records; every poke whose (page[flag & 0xFF] & mask) holds is applied to the
  * raw image, which is then re-parsed.  Returns the number of pokes applied. */
 int map_apply_patches(Map *m, const uint8_t page[256]);
+/* 7E15: the original sets bit 7 of a door's letter byte in the map image at
+ * C00A.  The parsed Door is a copy, so mirror the byte into raw, or a reload
+ * (6BFC re-parse) and a save state that stores the raw image lose the unlocked
+ * bit (#110).  Returns 0 on success. */
+int map_door_letter_set(Map *m, int index, uint8_t letter);
 /* load system map #idx (STICK.BIN cs:0xF68 table: 0 = MP10 .. 0x1E = MPA0; 0x20.. town maps) */
 int map_load_system(Map *m, const char *dir, int sys_index);
 /* build a synthetic map for tests: rows[0..63] strings of width chars, '.' = 0, else hex digit / 'A'-'Z' = 10.. */

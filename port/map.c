@@ -180,6 +180,19 @@ int map_apply_patches(Map *m, const uint8_t page[256])
     return applied;
 }
 
+/* 7E15: set a door's letter byte in the raw image (the door table at C00A,
+ * 12-byte records, letter at +3).  The parsed Door is a copy; without this a
+ * re-parse or a save-state reload (the blob stores raw) reverts the door to
+ * locked (#110, key_door). */
+int map_door_letter_set(Map *m, int index, uint8_t letter)
+{
+    if (!m || !m->raw || index < 0 || index >= m->ndoors) return -1;
+    size_t o = off_in(u16(m->raw, 0xA), m->rawlen);
+    if (o + (size_t)index * 12 + 4 > m->rawlen) return -1;
+    m->raw[o + (size_t)index * 12 + 3] = letter;
+    return 0;
+}
+
 /* fight.bin 6185: VID_2010(si = [C00E]) — the map's own place-name label. */
 const uint8_t *map_place_record(const Map *m)
 {

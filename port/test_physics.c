@@ -466,6 +466,19 @@ static void t_keys(const char *dir)
     step(DIR_UP);
     CHECK(G.keys == 1, "one key spent, %u left", G.keys);
     CHECK(G.map->doors[0].letter & 0x80, "the door is now unlocked (letter %02x)", G.map->doors[0].letter);
+    /* #110: 7E15 writes the byte into the map image at C00A, so a 6BFC
+     * re-parse -- and a save state, which stores the raw image and re-parses it
+     * on load -- keeps the door unlocked */
+    {
+        const uint8_t *raw = G.map->raw;
+        size_t o = (size_t)((raw[0xA] | raw[0xB] << 8) - 0xC000);
+        CHECK(o + 4 <= G.map->rawlen && (raw[o + 3] & 0x80),
+              "the raw door record carries the unlocked bit");
+        static Map mr;
+        CHECK(map_parse(&mr, raw, G.map->rawlen) == 0 && (mr.doors[0].letter & 0x80),
+              "a re-parse of the raw image keeps the door unlocked");
+        map_free(&mr);
+    }
     CHECK(G.page[3] & 0x80, "the door's story flag [03] bit7 was set");
     CHECK(G.sfx_request == 0x15 || sound_count(0x15) > 0, "sound 0x15 requested");
     step(DIR_UP);

@@ -625,7 +625,7 @@ before the first resumed frame.
 
 ### 9.2 Proof
 
-    tools/harness/state_roundtrip.sh [-j N] [--out DIR] [--saves K] [--no-fuzz] [NAME ...]
+    tools/harness/state_roundtrip.sh [-j N] [--out DIR] [--saves K] [--all] [--no-fuzz] [NAME ...]
 
 Port only, no oracle.  For every `tests/scenarios/*.zs`: run the reference trace; for
 several frame boundaries N, re-run with `--state-save-at N`; run a third time from the
@@ -638,6 +638,16 @@ same boundary through the same queue a key press uses, and the whole trace must 
 byte-identical (`trace_eq.py REF CAND -1`).  It ends with a corruption check:
 truncations and bit-flips of a real blob must be refused cleanly (exit < 128), and
 `ZELIARD=/path/to/san/zeliard` runs the same proof under `make SAN=1`.
+
+**Every boundary (#110).**  `--all` replaces the K samples with *every* resumable
+`717F`/`68ED` frame boundary, so the proof covers each frame of a transition, not just
+a few.  It is the regression guard for the door-transition state: `7E15` writes a
+door's unlocked bit into the map image at `C00A`, and the save state stores that raw
+image, so `port/physics.c door_unlock` mirrors the byte into `raw` (via
+`map_door_letter_set`) or a reload re-parses the door locked and the arch the ring
+draws flips back to `78DD`'s LOCKED template.  `key_door` (the locked MP10 door),
+`cave_door`, `gate_walking`, `town_gate`, `edge_press`, `drug_buy`, `death_sage`,
+`crab_fight` and `paguro_return` all pass at every boundary.
 
 ### 9.3 Unit checks
 

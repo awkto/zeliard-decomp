@@ -51,9 +51,9 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 12 test binaries
-make test            # physics (147) + combat/AI (228) + town (160) + boss (641) + shop (189)
+make test            # physics (149) + combat/AI (228) + town (160) + boss (641) + shop (189)
                      #   + status (87) + playthrough (139) + audio (315) + cutscene (46)
-                     #   + video (70) + config (30) = 2052 assertions.  Needs no game files:
+                     #   + video (70) + config (30) = 2054 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 211 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -656,7 +656,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   not scripted at all.  Shops are answered frame by frame: the driver pages the text
   with the select button and walks the cursor to the row the route names, using the
   `in_menu` / `menu_row` that `menu_select` now publishes.
-* `test_physics.c` — 147 assertions (idle, walk, walls, jumps, ceilings, gaps, edge
+* `test_physics.c` — 149 assertions (idle, walk, walls, jumps, ceilings, gaps, edge
   fall, ladders, conveyor, hazard, currents/updraft (2 per frame, and the frame still
   renders: #60), MP10 door/platform, elevators and the fixture-C
   patrol, locked doors + keys + the message-box lifetime, the C00C patch list, the
