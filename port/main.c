@@ -59,7 +59,7 @@ typedef struct {
     double   frame_ms;
     int      scale;
     int      square;                /* --aspect 1:1: present the framebuffer unscaled in shape */
-    int      filter;                /* --filter: FILTER_INTEGER / SHARP / SMOOTH (#53) */
+    int      filter;                /* --filter: FILTER_INTEGER / SHARP / SMOOTH / CRT (#53) */
     int      quit;
     int      verbose;
     int      dump_audio;
@@ -228,7 +228,7 @@ static void pump_events(App *a, Game *g)
             case SDLK_ESCAPE: a->esc_edge = 1; break;
             case SDLK_q:      if (a->paused) a->quit = 1; break;
             case SDLK_F11:    toggle_fullscreen(a); break;
-            /* F3 cycles the display filter: integer -> sharp-bilinear -> smooth */
+            /* F3 cycles the display filter: integer -> sharp-bilinear -> smooth -> crt */
             case SDLK_F3:
                 a->filter = (a->filter + 1) % FILTER_COUNT;
                 fprintf(stderr, "[video] filter: %s\n", present_filter_name(a->filter));
@@ -391,7 +391,8 @@ static void usage(void)
         "  --speed N   FF33 speed (frame = 4*N ticks; default 5 = 84.5 ms)\n"
         "  --scale N   window scale (default 3)\n"
         "  --aspect A  4:3 (default: the shape the driver's monitor had) or 1:1\n"
-        "  --filter F  display scaling: integer, sharp (sharp-bilinear, default) or smooth;\n"
+        "  --filter F  display scaling: integer, sharp (sharp-bilinear, default), smooth or crt\n"
+        "              (scanlines + aperture grille);\n"
         "              F3 cycles them (presentation only, the framebuffer is untouched)\n"
         "  --fullscreen  start full-screen (F11 or Alt+Enter toggles; Esc pauses, Q quits)\n"
         "  --video M   render through one of the five original drivers:\n"
@@ -1087,7 +1088,7 @@ int main(int argc, char **argv)
         /* the scaling filter (F3 cycles it); default sharp-bilinear */
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) {
             a.filter = present_filter_by_name(argv[++i]);
-            if (a.filter < 0) { fprintf(stderr, "--filter: expected integer, sharp or smooth\n"); return 2; }
+            if (a.filter < 0) { fprintf(stderr, "--filter: expected integer, sharp, smooth or crt\n"); return 2; }
             have_filter = 1;
         }
         else if (!strcmp(argv[i], "--fullscreen")) { a.fullscreen = 1; have_fullscreen = 1; }

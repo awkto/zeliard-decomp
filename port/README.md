@@ -100,7 +100,7 @@ config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`
 | C (or Alt) | **cast the selected spell** (`magic_sel`, picked on the status screen) |
 | Enter | **the status / inventory screen** (select.bin): pick a spell, wear a key item, drink a potion |
 | F1 / F2 | toggle the music / the sound effects (STICK's own hotkeys) |
-| F3 | **cycle the display filter**: integer → sharp-bilinear → smooth (presentation only) |
+| F3 | **cycle the display filter**: integer → sharp-bilinear → smooth → crt (presentation only; remembered in the config) |
 | F12 | dump the framebuffer to the `--screenshot` file |
 | F11 / Alt+Enter | toggle fullscreen (the window is resizable; `--fullscreen` starts there) |
 | Esc | **pause** — Esc or Enter resumes, **Q** quits |
@@ -114,7 +114,7 @@ config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`
 | Space (or X) | talk to an NPC 1-3 columns ahead: the **dialogue box** opens; Space turns the page, Alt cancels |
 | Enter | **the status / inventory screen** (select.bin); the potion row is disabled in town, as in the original |
 | F1 / F2 | toggle the music / the sound effects |
-| F3 | cycle the display filter (integer → sharp-bilinear → smooth) |
+| F3 | cycle the display filter (integer → sharp-bilinear → smooth → crt) |
 | F11 / Alt+Enter | toggle fullscreen |
 | Esc | **pause** — Esc or Enter resumes, **Q** quits |
 
@@ -180,7 +180,7 @@ Command line: `--dir GAMEDIR`, `--map N` (system map index, 0 = MP10 … 0x1E = 
 `--pos COL ROW` (hero top-left map cell), `--town N` (start in town N: 0 cmap, 1 mrmp
 Muralla, … 9 esmp), `--speed N` (FF33 speed, default 5 = 84.5 ms/frame), `--scale N`,
 `--aspect 4:3|1:1` (the driver's 4:3 display shape, or square pixels for
-pixel-peeping), `--filter integer|sharp|smooth` (display scaling, default
+pixel-peeping), `--filter integer|sharp|smooth|crt` (display scaling, default
 `sharp`; F3 cycles it — presentation only, the framebuffer is untouched),
 `--headless`, `--sword N`/`--shield N`/`--level N`/`--life N`/`--gold N` (write the
 player record directly; the shops do it properly), `--name NAME` (the NAME.USR the
@@ -582,11 +582,17 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   where to put them, instead of only a stderr line.  `test_config.c` unit-tests
   the parser, the round trip and the atomic save.
 * `present.c` / `present.h` — **the display filters** (#53): `--filter integer|sharp|
-  smooth` (default `sharp`), F3 cycling them.  *integer* is the largest integer
+  smooth|crt` (default `sharp`), F3 cycling them.  *integer* is the largest integer
   multiple of the source framebuffer that fits, nearest and centred; *sharp-bilinear*
   is an integer pre-scale of the source into an intermediate render target, then a
   linear pass to the 4:3 (or `--aspect 1:1`) display rectangle; *smooth* is plain
-  linear.  Pure presentation — the framebuffer is untouched, so `make verify` (which
+  linear; *crt* is sharp-bilinear plus a multiply overlay (an SDL_Texture in
+  `SDL_BLENDMODE_MOD`, no OpenGL, so it runs on any SDL2 renderer, windowed or
+  fullscreen, 4:3 or `--aspect 1:1`): a dark band on the seam between source
+  scanlines (the `present_crt_row_gain` profile) and a faint R,G,B aperture-grille
+  tint per output column (`present_crt_col_gain`), each switched off when a source
+  pixel gets fewer than 3 output pixels.  The mask is rebuilt only when the content
+  rectangle changes.  The choice is saved as `filter=` in the config.  Pure presentation — the framebuffer is untouched, so `make verify` (which
   renders through `video_to_rgb`) cannot see any of it.  The SDL-only half is
   exercised by `test_present` (SDL offscreen/dummy driver + software renderer), which
   is built and run separately from `make test`.

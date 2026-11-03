@@ -30,6 +30,40 @@ static void ck(int ok, const char *fmt, ...)
     printf("\n");
 }
 
+/* ------------------------------------------------------ the CRT mask maths */
+static void t_crt(void)
+{
+    printf("crt mask        ");
+    /* 200 source lines into 800 rows: 4 rows per line, centre bright, seam dark */
+    int g[4];
+    for (int i = 0; i < 4; i++) g[i] = present_crt_row_gain(i, 800, 200);
+    ck(g[2] == 255, "line centre (row 2 of 4) is full brightness (got %d)", g[2]);
+    ck(g[0] == 255 - PRESENT_CRT_SCAN_DARK, "the seam row is darkest (got %d)", g[0]);
+    ck(g[1] > g[0] && g[1] < g[2] && g[3] > g[0] && g[3] < g[2], "the profile rises to the centre and falls");
+    int periodic = 1, inrange = 1;
+    for (int y = 0; y < 800; y++) {
+        int v = present_crt_row_gain(y, 800, 200);
+        if (v != present_crt_row_gain(y % 4, 800, 200)) periodic = 0;
+        if (v < 255 - PRESENT_CRT_SCAN_DARK || v > 255) inrange = 0;
+    }
+    ck(periodic, "the pattern repeats every source line");
+    ck(inrange, "every row gain is within [255-dark, 255]");
+    ck(present_crt_row_gain(0, 500, 200) == 255 && present_crt_row_gain(1, 500, 200) == 255,
+       "under 3 rows per source line there is no scanline gap");
+    ck(present_crt_row_gain(5, 0, 200) == 255 && present_crt_row_gain(5, 800, 0) == 255, "degenerate sizes are flat");
+    int own = 0, other = 0;
+    for (int x = 0; x < 9; x++)
+        for (int c = 0; c < 3; c++) {
+            int v = present_crt_col_gain(x, c, 960, 320);
+            if (x % 3 == c) own += (v == 255); else other += (v == 255 - PRESENT_CRT_MASK_DARK);
+        }
+    ck(own == 9 && other == 18, "the aperture grille lights one channel per column in R,G,B order");
+    ck(present_crt_col_gain(1, 0, 640, 320) == 255, "under 3 columns per source pixel the grille is off");
+    uint32_t px = present_crt_mask(0, 2, 960, 800, 320, 200);   /* centre row, R stripe */
+    ck(px == 0xFFFFD7D7u, "mask pixel (0,2): R full, G and B dimmed by the grille (got %08X)", (unsigned)px);
+    ck((present_crt_mask(7, 0, 960, 800, 320, 200) >> 24) == 0xFF, "the mask is opaque");
+}
+
 /* ------------------------------------------------------------- the names */
 static void t_names(void)
 {
@@ -38,6 +72,11 @@ static void t_names(void)
     ck(present_filter_by_name("sharp") == FILTER_SHARP, "sharp");
     ck(present_filter_by_name("sharp-bilinear") == FILTER_SHARP, "sharp-bilinear");
     ck(present_filter_by_name("smooth") == FILTER_SMOOTH, "smooth");
+    ck(present_filter_by_name("crt") == FILTER_CRT, "crt");
+    ck(!strcmp(present_filter_name(FILTER_CRT), "crt"), "crt name");
+    ck(present_filter_by_name(present_filter_name(FILTER_CRT)) == FILTER_CRT, "crt round-trips");
+    for (int k = 0; k < FILTER_COUNT; k++)
+        ck(present_filter_by_name(present_filter_name(k)) == k, "filter %d round-trips by name", k);
     ck(present_filter_by_name("nonsense") < 0, "an unknown name is rejected");
     ck(present_filter_by_name(NULL) < 0, "NULL is rejected");
     ck(!strcmp(present_filter_name(FILTER_INTEGER), "integer"), "integer name");
@@ -182,6 +221,61 @@ static void t_render(void)
     ck(memcmp(f[FILTER_SMOOTH], f[FILTER_INTEGER], (size_t)ow * oh * 4) != 0,
        "smooth differs from integer");
 
+    /* crt: the multiply mask only ever darkens sharp-bilinear's picture, and
+     * does darken it (the checkerboard is half white), with a scanline gap */
+    {
+        int x, y, w, h, dark = 0, bright = 0, seam = 1;
+        present_content_rect(FILTER_CRT, ow, oh, SRC_W, SRC_H, DISP_W, DISP_H, &x, &y, &w, &h);
+        for (int j = y; j < y + h; j++)
+            for (int i = x; i < x + w; i++) {
+                unsigned a = f[FILTER_SHARP][(size_t)j * ow + i], b = f[FILTER_CRT][(size_t)j * ow + i];
+                for (int s = 0; s < 24; s += 8)
+                    if (((b >> s) & 255) > ((a >> s) & 255)) bright++;
+                if (a != b) dark++;
+            }
+        ck(bright == 0, "crt never brightens sharp-bilinear's pixel (%d did)", bright);
+        ck(dark > w * h / 2, "crt darkens most of the picture (%d of %d)", dark, w * h);
+        /* row mean luminance must vary with the scanline profile */
+        long best = 0, worst = 1L << 40;
+        for (int j = y; j < y + h; j++) {
+            long s = 0;
+            for (int i = x; i < x + w; i++) s += f[FILTER_CRT][(size_t)j * ow + i] & 255;
+            if (s > best) best = s;
+            if (s < worst) worst = s;
+        }
+        seam = best > worst * 5 / 4;
+        ck(seam, "crt rows differ in brightness (scanlines): max %ld vs min %ld", best, worst);
+    }
+
+    /* the screenshots: one per filter of a fixed synthetic frame */
+    {
+        const char *dir = getenv("PRESENT_SHOTS");
+        if (dir) {
+            for (int j = 0; j < SRC_H; j++)
+                for (int i = 0; i < SRC_W; i++) {
+                    unsigned r = i * 255 / SRC_W, g = j * 255 / SRC_H, b = 255 - r;
+                    if (((i / 20) + (j / 20)) & 1) { r /= 2; g /= 2; b /= 2; }
+                    if (i > 100 && i < 220 && j > 60 && j < 140) { r = g = b = (i % 8 < 4) ? 255 : 40; }
+                    if (j % 50 == 0 || i % 64 == 0) r = g = b = 255;
+                    sbuf[(size_t)j * SRC_W + i] = 0xFF000000u | r << 16 | g << 8 | b;
+                }
+            SDL_UpdateTexture(src, NULL, sbuf, SRC_W * 4);
+            for (int k = 0; k < FILTER_COUNT; k++) {
+                render_read(ren, src, k, f[k], ow, oh);
+                char path[512];
+                snprintf(path, sizeof path, "%s/%s.ppm", dir, present_filter_name(k));
+                FILE *fp = fopen(path, "wb");
+                if (!fp) continue;
+                fprintf(fp, "P6\n%d %d\n255\n", ow, oh);
+                for (int p = 0; p < ow * oh; p++) {
+                    unsigned v = f[k][p];
+                    fputc((v >> 16) & 255, fp); fputc((v >> 8) & 255, fp); fputc(v & 255, fp);
+                }
+                fclose(fp);
+            }
+        }
+    }
+
     for (int k = 0; k < FILTER_COUNT; k++) free(f[k]);
     free(sbuf);
     SDL_DestroyTexture(src);
@@ -194,6 +288,7 @@ static void t_render(void)
 
 int main(void)
 {
+    t_crt();        printf("ok\n");
     t_names();      printf("ok\n");
     t_geometry();   printf("ok\n");
 #ifdef HAVE_SDL
