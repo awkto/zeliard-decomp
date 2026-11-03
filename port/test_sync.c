@@ -322,8 +322,8 @@ static void t_merge(void)
     d = zget(out, ol, "HERO.USR", &n, NULL); ck(d && !memcmp(d, USR_OLD, 256) && nc == 1 /* ZOE carried */, "remote only wins when more than the 2 s slack ahead"); free(d);
     free(out);
     /* local files only, no remote bundle at all */
-    ck(sync_bundle_merge(NULL, 0, loc, 3, &out, &ol, &carried, &nc) == 0 && zget(out, ol, "NEW.USR", &n, NULL) && nc == 0, "no remote: just the local saves");
-    free(out);
+    ck(sync_bundle_merge(NULL, 0, loc, 3, &out, &ol, &carried, &nc) == 0 && (d = zget(out, ol, "NEW.USR", &n, NULL)) && nc == 0, "no remote: just the local saves");
+    free(d); d = NULL; free(out);
     ck(sync_bundle_merge("not a zip at all", 16, loc, 1, &out, &ol, &carried, &nc) == -1, "an unreadable remote bundle is refused (never replaced)");
     free(remote);
 }

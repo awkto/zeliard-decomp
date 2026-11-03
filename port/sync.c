@@ -573,7 +573,8 @@ int sync_backup(const SyncCtx *c, const char *tag, char *out, size_t n)
         }
     }
 done:
-    mz_zip_writer_end(&zw);
+    mz_zip_writer_end(&zw);   /* after finalize_heap_archive the buffer is ours */
+    free(buf);
     sync_free_usr(l, cnt);
     return rc;
 }
