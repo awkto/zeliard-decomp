@@ -12,8 +12,9 @@
 /* ------------------------------------------------------------- the overlay */
 static uint16_t ov16(const AiOverlay *o, unsigned addr)
 {
-    unsigned off = addr - AI_BASE;
-    if (off + 1 >= o->len) return 0;
+    if (addr < AI_BASE) return 0;
+    size_t off = addr - AI_BASE;              /* no wrap: a hostile image can hold any pointer */
+    if (off >= o->len || o->len - off < 2) return 0;
     return (uint16_t)(o->img[off] | o->img[off + 1] << 8);
 }
 
@@ -53,8 +54,9 @@ const uint8_t *ai_frame(const AiOverlay *o, uint8_t type, uint8_t hit, uint8_t p
     if (!o || !o->loaded) return NULL;
     uint16_t ptr = (hit & 0x80) ? o->frame_r[type & 0x1F] : o->frame_l[type & 0x1F];
     if (!ptr) return NULL;
-    unsigned off = (unsigned)(ptr - AI_BASE) + 5u * (phase & 0xF);
-    if (off + 5 > o->len) return NULL;
+    if (ptr < AI_BASE) return NULL;
+    size_t off = (size_t)(ptr - AI_BASE) + 5u * (phase & 0xF);
+    if (off >= o->len || o->len - off < 5) return NULL;
     return o->img + off;
 }
 
@@ -64,8 +66,9 @@ const uint8_t *ai_drop_list(const AiOverlay *o, int cls)
     if (!o || !o->loaded || !o->drops) return NULL;
     uint16_t ptr = ov16(o, (unsigned)(o->drops + 2 * (cls & 7)));
     if (!ptr) return NULL;
-    unsigned off = ptr - AI_BASE;
-    if (off + 4 > o->len) return NULL;
+    if (ptr < AI_BASE) return NULL;
+    size_t off = (size_t)(ptr - AI_BASE);
+    if (off >= o->len || o->len - off < 4) return NULL;
     return o->img + off;
 }
 
