@@ -1652,10 +1652,17 @@ int main(int argc, char **argv)
         int lw = vw, lh = vh;
         if (!a.square) video_display_size(a.video, &lw, &lh);
         Uint32 wflags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
+#ifdef __EMSCRIPTEN__
+        wflags &= ~(Uint32)SDL_WINDOW_RESIZABLE;     /* the page scales the canvas with CSS; SDL would resize its buffer to the browser window */
+#endif
         if (a.fullscreen) wflags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
         a.win = SDL_CreateWindow("Zeliard port", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                  lw * vscale, lh * vscale, wflags);
+#ifdef __EMSCRIPTEN__
+        a.ren = SDL_CreateRenderer(a.win, -1, SDL_RENDERER_ACCELERATED);    /* no vsync: frame_wait paces, ASYNCIFY yields */
+#else
         a.ren = SDL_CreateRenderer(a.win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+#endif
         if (!a.ren) a.ren = SDL_CreateRenderer(a.win, -1, 0);
         /* no SDL_RenderSetLogicalSize: present.c computes the letterbox rect
          * itself so the integer and sharp-bilinear filters can differ (#53) */
