@@ -115,6 +115,33 @@ The version of a release is its tag without the `v`.  The icon is original
 artwork drawn by `packaging/linux/make-icon.py` (a sword; it uses no game data).
 To cut a release: `git tag v1.2.3 && git push origin v1.2.3`.
 
+## Building for Windows
+
+Releases (`v*` tags) carry `zeliard-<ver>-windows-x64.zip` next to the Linux
+packages: `zeliard.exe`, `SDL2.dll`, `README.txt`, `LICENSE`.  No game files are
+included; point it at your own copy with `zeliard.exe --dir C:\path\to\game`
+(file-name case does not matter, see `game_fopen` in `sar.c`).
+
+It is a mingw-w64 cross build from Linux, no Windows machine or MSYS2 needed:
+
+    sudo apt install gcc-mingw-w64-x86-64 make zip unzip curl
+    packaging/windows/build.sh [version]      # -> build/win/zeliard-<ver>-windows-x64.zip
+
+The script downloads the pinned SDL2 mingw dev release (2.30.9, sha256-checked),
+builds in a scratch copy of `port/`, checks with `objdump -p` that only Windows
+system DLLs plus `SDL2.dll` are imported, and zips.  CI is
+`.github/workflows/windows-release.yml`: it runs on `v*` tags (uploading into the
+same GitHub release as the Linux job, whichever finishes first creates it), on
+pushes to `ci/windows*` branches and on manual dispatch (the last two leave the
+zip as a workflow artifact only).
+
+Not in the Windows build: save sync.  libcurl is not bundled (its DLL closure is
+large and unpinned), so `net_stub.c` is linked and `--sync` reports "built without
+network support"; a WinHTTP backend behind `net.h` is the clean follow-up.  The
+exe is a console-subsystem program so messages show in the terminal.  Checked
+under Wine: the exe's `--screenshot` output is byte-identical to the Linux
+build's.
+
 ## Controls
 
 ### Cutscenes (opdemo / enddemo)

@@ -1006,7 +1006,7 @@ static int fight_lookahead(Nav *n, Game *g)
 {
     static const uint8_t D[6] = {0, DIR_LEFT, DIR_RIGHT, DIR_UP, UL, UR};
     if (!pred_available(n, g)) return -1;
-    long bests = -(1L << 40); int bd = -1, bx = 0;
+    long bests = -(1L << 30); int bd = -1, bx = 0;
     for (int x = 0; x < 2; x++)
         for (int di = 0; di < 6; di++) {
             uint8_t sd[FIGHT_H], sb[FIGHT_H];

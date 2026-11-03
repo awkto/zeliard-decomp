@@ -2,6 +2,7 @@
 #include "restore.h"
 #include "text.h"
 #include "player.h"
+#include "sar.h"
 #include "audio.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -104,13 +105,9 @@ static void start_pick(Restore *r, Shell *sh)   /* 7695 */
  * otherwise have no map to enter (doubt: the original loads it regardless). */
 static int loadable(const Shell *sh, const char *name)
 {
-    char path[1200];
-    snprintf(path, sizeof path, "%s/%s.usr", sh->dir, name);
-    FILE *f = fopen(path, "rb");
-    if (!f) {                               /* DOS is case-blind */
-        snprintf(path, sizeof path, "%s/%s.USR", sh->dir, name);
-        f = fopen(path, "rb");
-    }
+    char path[300];
+    snprintf(path, sizeof path, "%s.usr", name);
+    FILE *f = game_fopen(sh->dir, path);     /* DOS is case-blind */
     if (!f) return 0;
     uint8_t b[256];
     size_t n = fread(b, 1, sizeof b, f);
