@@ -184,7 +184,13 @@ test: test_physics test_combat test_town test_boss test_shop test_status test_pl
 # always builds ASan+UBSan into $(OUT)/build-san (a copy, so this tree is untouched)
 monkey:
 	nice -n 19 ionice -c3 ../tools/monkey.py --san --cases $(or $(N),20) --frames $(or $(FRAMES),600) \
-	  --seed $(or $(SEED),1) --jobs 2 --out $(or $(OUT),/tmp/monkey-out)
+	  --seed $(or $(SEED),1) --jobs $(or $(JOBS),2) --out $(or $(OUT),/tmp/monkey-out) $(MONKEY_ARGS)
+
+# the v2 soak profile (#50): saves, scenario prefixes (bosses, door routes), the ending, random --video /
+# --audio, per-frame invariants over --trace.  Droplet only: `make soak N=3000 FRAMES=20000 JOBS=6`
+soak:
+	nice -n 19 ionice -c3 ../tools/monkey.py --san --soak --check --cases $(or $(N),300) --frames $(or $(FRAMES),4000) \
+	  --seed $(or $(SEED),1) --jobs $(or $(JOBS),6) --out $(or $(OUT),/tmp/soak-out)
 
 # the same two routes with the step-by-step log (issue #26's acceptance run)
 playthrough: test_playthrough
@@ -1033,4 +1039,4 @@ clean:
 	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config test_sync test_present test_touch
 	rm -rf fuzz/obj fuzz/fuzz_sar fuzz/fuzz_map fuzz/fuzz_grp fuzz/fuzz_seed
 
-.PHONY: all test verify monkey playthrough clean fuzz fuzz-corpus fuzz-smoke
+.PHONY: all test verify monkey soak playthrough clean fuzz fuzz-corpus fuzz-smoke
