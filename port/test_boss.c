@@ -885,8 +885,13 @@ static void t_e6_room(void)
     CHECK(loaded, "the [E6] intro ends and 61DB loads the next map");
     if (loaded) {
         CHECK(!strcmp(g->map->name, "MPA0"), "it is MPA0 (got %s)", g->map->name);
-        CHECK(game_hero_map_col(g) == 0x18 && game_hero_map_row(g) == 0x0D + 1,
-              "621F + 7DC1 place him at (0x18,0x0D+1) (got %d,%d)", game_hero_map_col(g), game_hero_map_row(g));
+        /* 7DC1: [82] = 0x0D + 1 - [C016] = 2; [84] is still MP90's 0xD (61DD..6234 never write it),
+         * so the hero stands at row 2 + 0xD = 15 until 6FB8 walks [84] to [9F00] (jashiin_fight f161) */
+        CHECK(game_hero_map_col(g) == 0x18 && game_hero_map_row(g) == 0x0D + 2 && g->scroll_row == 2,
+              "621F + 7DC1 place him at (0x18,0x0D+2) (got %d,%d, scroll_row %d)",
+              game_hero_map_col(g), game_hero_map_row(g), g->scroll_row);
+        CHECK(g->cur_map == 0x1D && g->boss_intro == 0xFF && g->score_clock,
+              "[C4] stays 1D, [9F26] stays set for the first frame, the score clock runs");
         CHECK(g->boss_map == 0xFF, "MPA0 is an FF34 boss map: the last fight starts");
     }
 }

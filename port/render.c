@@ -430,7 +430,7 @@ static void draw_message_box(uint8_t *fb, const Game *g)
 {
     Game *gm = (Game *)g;                       /* the frozen region is a cache */
     const int bx = 56, by = 30, bw = 208, bh = 16;
-    if (!g->msg_box) {                          /* keep the box-free frame's region */
+    if (!g->msg_box && !g->boss_text) {                          /* keep the box-free frame's region */
         for (int r = 0; r < bh; r++)
             memcpy(gm->msg_bg + r * bw, fb + (by + r) * FB_W + bx, bw);
         return;
@@ -621,7 +621,8 @@ void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
     vid_gauge_bar(fb, 0x02, 0x10, 0x88);            /* PLACE / ENEMY */
     vid_gauge_bar(fb, 0x02, 0x1C, 0x42);            /* GOLD */
     vid_gauge_bar(fb, 0x48, 0x1C, 0x42);            /* ALMAS */
-    int boss = (g->boss_map || g->boss_room) && g->boss.active;
+    /* [E6]-only MP90 (FF34 = 0) takes 6179's ordinary HUD: PLACE, GOLD (jashiin_fight f27) */
+    int boss = g->boss_map && g->boss.active;
     if (tf) hud_label(fb, tf, HUD_LIFE);
     if (boss) {
         /* fight.bin 6C55, on a boss-room entry (6082/6237) in place of [2012]:
@@ -647,7 +648,7 @@ void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
     /* docs/VIDEO_DRIVERS.md [2012]/[200A]/[200C]: in a boss room the ENEMY
      * line carries the boss HP — the same red/white pair at (84,175) on the
      * black 6C55 left, [A002]+3 full scale. */
-    if ((g->boss_map || g->boss_room) && g->boss.active && g->boss.hp0) {
+    if (g->boss_map && g->boss.active && g->boss.hp0) {
         unsigned bmax = g->boss.hp0 / 8, bcur = g->boss.hp / 8;
         if (bmax > 100) bmax = 100;
         if (bcur > bmax) bcur = bmax;

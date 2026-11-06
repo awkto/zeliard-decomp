@@ -617,6 +617,39 @@ void audio_music_play_res(int archive, int index)
     audio_unlock();
 }
 
+/* ------------------------------------------------------------ score clock
+ * The game reads [FF21] (the score's F1 sync byte) as a *game* input: MAO2's
+ * start gate, A3A7.  The audio thread's player is real-time and absent in a
+ * headless/--no-music run, so a second, silent player follows the frame count:
+ * one game frame = 20 INT 8 ticks (4 * speed 5), the music driver runs on every
+ * second one (docs/MUSIC.md section 1).  The harness needs this to be a function
+ * of frames alone (docs/HARNESS.md section 6, jashiin_fight). */
+static MsdPlayer V;
+static uint8_t *V_res;
+static int V_on;
+static void clock_sink(void *u, uint8_t reg, uint8_t val) { (void)u; (void)reg; (void)val; }
+
+int audio_clock_start(const char *dir, int idx, int pre_ticks)
+{
+    audio_clock_stop();
+    if (idx < 0 || idx >= 14) return -1;
+    size_t len;
+    uint8_t *res = sar_load(dir, MUSIC[idx].archive, MUSIC[idx].index, 1, &len);
+    if (!res) return -1;
+    const uint8_t *blob; size_t bl;
+    if (msd_split(res, len, &blob, &bl)) { free(res); return -1; }
+    memset(&V, 0, sizeof V);
+    V.opl = clock_sink;
+    if (msd_start(&V, res + (blob - res), bl, MSD_STD)) { free(res); return -1; }
+    V_res = res; V_on = 1;
+    for (int i = 0; i < pre_ticks; i++) msd_driver_tick(&V);
+    return 0;
+}
+void audio_clock_stop(void) { free(V_res); V_res = NULL; V_on = 0; }
+int  audio_clock_on(void) { return V_on; }
+void audio_clock_frame(void) { if (V_on) for (int i = 0; i < 10; i++) msd_driver_tick(&V); }
+int  audio_clock_sync0(void) { return V_on ? V.sync[0] : 0; }
+
 int audio_music_stopped(void)
 {
     return A.on ? (A.music.stopped != 0) : 1;

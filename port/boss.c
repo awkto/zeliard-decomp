@@ -84,8 +84,15 @@ int boss_init(Game *g)
         b->name[len] = 0;
     }
     b->col = b->start_col; b->row = b->start_row; b->hp = b->hp0;
-    g->boss_knock_left = b->knock_left;                            /* 6150 -> 9F01 */
     b->ported = 1;                  /* all eleven overlays are ported */
+    if (!g->boss_map) {
+        /* A [E6]-only room (MP90, FF34 = 0): the door path 6042 -> 6078 `jz 6179` skips both the
+         * 60E6 card and 6150, so [9F01] stays 0 until the boss map itself (MPA0) is loaded
+         * through 61DD (oracle: jashiin_fight frame 27) */
+        g->boss.parts = 0;
+        return 0;
+    }
+    g->boss_knock_left = b->knock_left;                            /* 6150 -> 9F01 */
     /* 60E6: six flashes of the ENCNT.GRP encounter card, 0x41 ticks apart */
     g->encounter_frames = 12;
     g->boss.parts = 0;

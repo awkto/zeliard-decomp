@@ -23,6 +23,8 @@
 # .zs format:
 #   # start: NAME.usr          the save both sides restore (--load NAME)
 #   # make: ARGS               port/zeliard arguments that create it (ends in --save NAME)
+#   # cave: I,COL,ROW,SIDE,MAP optional: rewrite the start town's cave record I (oracle ORACLE_CAVE at
+#                              frame 0, port --cave); the cave mouth then leads to MAP (HARNESS.md s6)
 #   # what: TEXT               what the scenario exercises (free text)
 #   # allow: PATTERN [MODE]    optional, repeatable: a tracediff allow rule for this
 #                              scenario only (a known, filed divergence it must step over)
@@ -40,7 +42,7 @@ while [ $# -gt 0 ]; do
     --out) OUT=$2; shift 2 ;;
     --png-every) PE=$2; shift 2 ;;
     --png) PNG=1; shift ;;
-    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
     *) SEL="$SEL $1"; shift ;;
   esac
 done
@@ -77,7 +79,8 @@ run_one() {
   save=$(hdr "$f" start); load=${save%.*}
   script=$(grep -v '^#' "$f" | grep -v '^[[:space:]]*$' | head -1)
   pe=$PE
-  if ! (cd "$ROOT" && tools/oracle.sh "$script" --load "$load" --out "$d/o" --png-every $pe) >"$d/oracle.out" 2>&1; then
+  cave=$(hdr "$f" cave); cargs=; [ -n "$cave" ] && cargs="--cave $cave"
+  if ! (cd "$ROOT" && ORACLE_CAVE="$cave" tools/oracle.sh "$script" --load "$load" --out "$d/o" --png-every $pe) >"$d/oracle.out" 2>&1; then
     printf 'ERROR\t-\toracle exit %s (%s/oracle.out, o/oracle.log)\n' "$?" "$d" >"$d/result"; return
   fi
   # isolated game dir, as tools/oracle.sh stages for the oracle: the original files plus
@@ -91,7 +94,7 @@ run_one() {
     [ -f "$g" ] && { cp "$g" "$pd/"; break; }
   done
   pargs=; [ "$PE" != 0 ] && pargs="--png-every $PE"
-  if ! (cd "$ROOT" && "$PORT" --dir "$pd" --load "$load" --trace "$d/p" --script "$script" $pargs) >"$d/port.out" 2>&1; then
+  if ! (cd "$ROOT" && "$PORT" --dir "$pd" --load "$load" --trace "$d/p" --script "$script" $cargs $pargs) >"$d/port.out" 2>&1; then
     printf 'ERROR\t-\tport exit %s (%s/port.out)\n' "$?" "$d" >"$d/result"; return
   fi
   dargs=--first-only; [ "$PNG" = 1 ] && dargs=--png

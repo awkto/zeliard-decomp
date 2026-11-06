@@ -281,6 +281,8 @@ struct Game {
     /* messages (7210/73E0): a box stays up for 32 frames */
     uint8_t  msg_timer;             /* 9EED */
     uint8_t  msg_box;               /* 9EEF */
+    uint8_t  score_clock, ff21;     /* audio_clock_*: [FF21] as the game sees it (0 = no clock: the gate is open) */
+    uint8_t  boss_text;             /* MAO1's A376 line: the same box drawn by video [2000]/[202A] without touching 9EED/9EEF */
     uint16_t msg_x;                 /* text x of the 73E0 box (record x + 0x3A) */
     /* the 208x16 box region frozen at the last box-free frame: the original's
      * 7210 writes 0xFC into the E900 screen copy so gfmcga 312E never redraws

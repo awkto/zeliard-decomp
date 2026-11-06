@@ -41,9 +41,8 @@
  * 0x10..0x38.
  *
  * `started` (A3A0): nothing is drawn until [FF21] is non-zero.  fight.bin
- * never writes that byte — only the enddemo overlay references it — so the
- * port sets it when the boss map is entered, which is the only way the fight
- * can happen at all.
+ * never writes that byte: it is the score's F1 (mmao, 1625 driver ticks in), so
+ * the shell steps a silent copy of the score by frames (audio_clock_*).
  */
 #include "boss.h"
 #include <string.h>
@@ -275,8 +274,14 @@ void boss_mao2_entry(Game *g)
         else if (b->hp < 200) ST(S_PHASE2) = 0xFF;              /* A389 */
     }
     if (g->boss_cutscene) { mao2_death(g); return; }            /* A396 */
-    /* A3A0: [FF21].  fight.bin never writes it, so the port starts him. */
-    if (!ST(S_STARTED)) { ST(S_STARTED) = 1; boss_parts_begin(g); boss_parts_end(g); return; }
+    /* A3A0..A3AF: nothing is drawn until [FF21] is non-zero -- the score's F1, which the port
+     * follows with audio_clock_* (the shell starts it with MPA0's music).  Without a clock
+     * (--map 0x1E, unit tests) the gate is open. */
+    if (!ST(S_STARTED)) {
+        boss_parts_begin(g); boss_parts_end(g);
+        if (!g->score_clock || g->ff21) ST(S_STARTED) = 1;
+        return;
+    }
 
     boss_parts_begin(g);
     if (ST(S_PHASE2)) { mao2_phase2(g); return; }               /* A4C9 */
