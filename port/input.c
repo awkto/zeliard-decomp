@@ -61,17 +61,18 @@ static void default_key(KeyBind *b, int act, int town)
     case ACT_LEFT:  kb_set(b, 0, SDL_SCANCODE_LEFT, SDL_SCANCODE_A, -1); return;
     case ACT_RIGHT: kb_set(b, 0, SDL_SCANCODE_RIGHT, SDL_SCANCODE_D, -1); return;
     case ACT_DOWN:  kb_set(b, 0, SDL_SCANCODE_DOWN, SDL_SCANCODE_S, -1); return;
-    case ACT_UP:
-        if (town) kb_set(b, 0, SDL_SCANCODE_UP, SDL_SCANCODE_W, SDL_SCANCODE_Z, -1);
-        else      kb_set(b, 0, SDL_SCANCODE_UP, SDL_SCANCODE_W, SDL_SCANCODE_Z, SDL_SCANCODE_SPACE, -1);
-        return;
+    /* The original's fire keys (kernel INT 9, docs/SERVICES.md FF16) are Space =
+     * bit 0 (sword / talk) and Alt = bit 1 (magic / cancel) in towns AND caverns;
+     * Up jumps.  Space used to jump in the cavern here, which DOS players found
+     * backwards. */
+    case ACT_UP:     kb_set(b, 0, SDL_SCANCODE_UP, SDL_SCANCODE_W, SDL_SCANCODE_Z, -1); return;
     case ACT_SWORD:
         if (town) kb_set(b, 0, SDL_SCANCODE_SPACE, SDL_SCANCODE_X, -1);
-        else      kb_set(b, 0, SDL_SCANCODE_X, SDL_SCANCODE_LCTRL, SDL_SCANCODE_RCTRL, -1);
+        else      kb_set(b, 0, SDL_SCANCODE_SPACE, SDL_SCANCODE_X, SDL_SCANCODE_LCTRL, SDL_SCANCODE_RCTRL, -1);
         return;
     case ACT_MAGIC:
         if (town) kb_set(b, 0, SDL_SCANCODE_C, SDL_SCANCODE_LALT, SDL_SCANCODE_RALT, SDL_SCANCODE_BACKSPACE, -1);
-        else      kb_set(b, 0, SDL_SCANCODE_C, SDL_SCANCODE_LALT, -1);
+        else      kb_set(b, 0, SDL_SCANCODE_C, SDL_SCANCODE_LALT, SDL_SCANCODE_RALT, -1);
         return;
     case ACT_MENU:       kb_set(b, 0, SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER, -1); return;
     case ACT_PAUSE:      kb_set(b, 0, SDL_SCANCODE_ESCAPE, -1); return;

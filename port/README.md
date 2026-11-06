@@ -188,10 +188,10 @@ build's.
 | key | action |
 |---|---|
 | Left / Right (or A / D) | walk 1 cell (8 px) per frame; the world scrolls, Garland stays on screen column 12 |
-| Up (or W / Z / Space) | jump (hold for up to 2 rows), climb a ladder, enter a door, **ride an elevator up**; with Left/Right: diagonal jump |
+| Up (or W / Z) | jump (hold for up to 2 rows), climb a ladder, enter a door, **ride an elevator up**; with Left/Right: diagonal jump |
 | Down (or S) | crouch, descend a ladder, let go of a ladder, **ride an elevator down** |
-| X (or Ctrl) | **attack** — sword slash; with Up an upward slash; held with Down while airborne a down-thrust (×2 damage) |
-| C (or Alt) | **cast the selected spell** (`magic_sel`, picked on the status screen) |
+| Space (or X / Ctrl) | **attack** — sword slash; with Up an upward slash; held with Down while airborne a down-thrust (×2 damage) |
+| Alt (or C) | **cast the selected spell** (`magic_sel`, picked on the status screen) |
 | Enter | **the status / inventory screen** (select.bin): pick a spell, wear a key item, drink a potion |
 | F1 / F2 | toggle the music / the sound effects (STICK's own hotkeys) |
 | F3 | **cycle the display filter**: integer → sharp-bilinear → smooth → crt (presentation only; remembered in the config) |
@@ -1040,8 +1040,8 @@ movement read.
 Actions (default keys; controller defaults in brackets):
 
 * `left` Left, A (d-pad left) · `right` Right, D (d-pad right) · `down` Down, S (d-pad down)
-* `up` Up, W, Z (+ Space in the cavern: jump) (d-pad up, A)
-* `sword` cavern X, Left/Right Ctrl; town Space, X (X) · `magic` cavern C, Left Alt;
+* `up` Up, W, Z (d-pad up, A)
+* `sword` Space, X (+ Left/Right Ctrl in the cavern) (X) — Space is the original's fire key · `magic` cavern C, Left/Right Alt;
   town C, Left/Right Alt, Backspace (Y)
 * `menu` Return, Keypad Enter: the status screen (Start) · `pause` Escape (Back)
 * `music` F1 · `sfx` F2 · `filter` F3 · `restore` F7 · `fullscreen` F11 · `screenshot` F12
