@@ -70,7 +70,7 @@ void map_free(Map *m);
 /* 0x6BFC: the C00C list of {u16 flag_ptr, u8 mask, {u16 addr, u16 val}.. FFFF}
  * records; every poke whose (page[flag & 0xFF] & mask) holds is applied to the
  * raw image, which is then re-parsed.  Returns the number of pokes applied. */
-int map_apply_patches(Map *m, const uint8_t page[256]);
+int map_apply_patches(Map *m, uint8_t page[256]);
 /* 7E15: the original sets bit 7 of a door's letter byte in the map image at
  * C00A.  The parsed Door is a copy, so mirror the byte into raw, or a reload
  * (6BFC re-parse) and a save state that stores the raw image lose the unlocked

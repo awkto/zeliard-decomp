@@ -32,6 +32,10 @@
 #                              optional, repeatable: pixels (inclusive rect, game 320x200
 #                              coords, optional frame range) ignored by the pixel compare;
 #                              the reason is mandatory (tools/harness/pixdiff.py)
+#   # ends: stall              optional: the scenario ends in a cutscene the oracle has no
+#                              boundary site for (the ending, #111): the oracle's stall exit (6)
+#                              after ORACLE_STALL_MS (default 60 s here, long enough for the tear scene) is the expected end of its
+#                              trace, and the port's trace is compared up to that frame
 #   SCRIPT                     the first non-comment line: the --script input
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -80,8 +84,12 @@ run_one() {
   script=$(grep -v '^#' "$f" | grep -v '^[[:space:]]*$' | head -1)
   pe=$PE
   cave=$(hdr "$f" cave); cargs=; [ -n "$cave" ] && cargs="--cave $cave"
-  if ! (cd "$ROOT" && ORACLE_CAVE="$cave" tools/oracle.sh "$script" --load "$load" --out "$d/o" --png-every $pe) >"$d/oracle.out" 2>&1; then
-    printf 'ERROR\t-\toracle exit %s (%s/oracle.out, o/oracle.log)\n' "$?" "$d" >"$d/result"; return
+  ends=$(hdr "$f" ends); stall=
+  [ "$ends" = stall ] && stall=${ORACLE_STALL_MS:-60000}
+  (cd "$ROOT" && env ORACLE_CAVE="$cave" ${stall:+ORACLE_STALL_MS=$stall} tools/oracle.sh "$script" --load "$load" --out "$d/o" --png-every $pe) >"$d/oracle.out" 2>&1
+  orc=$?
+  if [ $orc != 0 ] && ! { [ -n "$stall" ] && [ $orc = 6 ]; }; then
+    printf 'ERROR\t-\toracle exit %s (%s/oracle.out, o/oracle.log)\n' "$orc" "$d" >"$d/result"; return
   fi
   # isolated game dir, as tools/oracle.sh stages for the oracle: the original files plus
   # only this scenario's start save, so screens that list saves (the Sage's name entry)

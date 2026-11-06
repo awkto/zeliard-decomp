@@ -324,6 +324,7 @@ void game_enter(Game *g, const Map *m, const Tileset *t, int dest_col, int dest_
 void game_boss_room_intro(Game *g);
 /* one iteration of the 629C main loop (renders one frame, more while climbing) */
 void game_step(Game *g);
+void game_force_death_check(Game *g);                   /* 6266 */
 /* the initial frame() call before the loop (6254) */
 void game_first_frame(Game *g);
 

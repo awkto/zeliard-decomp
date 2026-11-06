@@ -1023,6 +1023,41 @@ static int fight_lookahead(Nav *n, Game *g)
     nemit(n, g, D[bd], (uint8_t)bx);
     return 0;
 }
+/* Jashiin (MAO2) below 200 HP regenerates 80 every 32 frames (AB88) and keeps
+ * eight columns from the hero, so the one-blow-per-window the greedy search
+ * above settles for never kills.  Once the boss is within two blows of dead,
+ * search two-leg plans (stick A for L frames, then stick B, swinging every
+ * other frame) over a window long enough to see the kill and play the first
+ * frame of the best one (#111). */
+#define KILL_H 40
+static int kill_lookahead(Nav *n, Game *g)
+{
+    static const uint8_t D[6] = {0, DIR_LEFT, DIR_RIGHT, DIR_UP, UL, UR};
+    static const uint8_t LEN[] = {0, 3, 6, 9, 12, 16, 20, 26};
+    if (!pred_available(n, g)) return -1;
+    long bests = -(1L << 40); int bd = -1, bx = 0;
+    for (int x1 = 0; x1 < 2; x1++)
+     for (unsigned li = 0; li < sizeof LEN; li++)
+      for (int d1 = 0; d1 < 6; d1++)
+       for (int d2 = 0; d2 < 6; d2++) {
+        if (LEN[li] == 0 && (d1 || x1)) continue;
+        uint8_t sd[KILL_H], sb[KILL_H];
+        for (int f = 0; f < KILL_H; f++) {
+            int leg1 = f < LEN[li];
+            sd[f] = D[leg1 ? d1 : d2];
+            sb[f] = (uint8_t)((leg1 ? x1 : 1) && !(f & 1));
+        }
+        if (predict_run(n, g, sd, sb, KILL_H, 1) == -2) return -1;
+        const Game *p = &n->probe;
+        long sc = 4L * ((long)g->boss.hp - (long)p->boss.hp) - ((long)g->hp - (long)p->hp);
+        if (p->boss_cutscene || p->boss.hp == 0) sc += 1000000;
+        if (p->hero_dead || !p->hp) sc -= 100000;
+        if (sc > bests) { bests = sc; bd = (LEN[li] ? d1 : d2); bx = (LEN[li] ? x1 : 1); }
+       }
+    if (bd < 0) return -1;
+    nemit(n, g, D[bd], (uint8_t)(bx && 1));
+    return 0;
+}
 /* What the executor feeds for edge `e` from here: a turn first if he faces
  * the wrong way (see the facing rule in nav_step), then the macro. */
 static int edge_seq(const Nav *n, const Game *g, int e, uint8_t *sd, uint8_t *sb)
@@ -1133,7 +1168,8 @@ static void nav_step_live(Nav *n, Game *g)
         fprintf(stderr, "   [fight] f%u hero %d hp %u boss col %d row %d hp %u pose %u st %02x%02x%02x\n", g->frame_no, hc, g->hp,
                 (int)g->boss.col, (int)g->boss.row, g->boss.hp, g->boss.pose, g->boss.st[0], g->boss.st[2], g->boss.st[4]);
 #endif
-        if (g->boss.active && (g->boss.index == BOSS_LEGA || g->boss.index == BOSS_MAO2) && !g->boss_cutscene && fight_lookahead(n, g) == 0) return;
+        if (g->boss.active && (g->boss.index == BOSS_LEGA || g->boss.index == BOSS_MAO2) && !g->boss_cutscene &&
+            ((g->boss.index == BOSS_MAO2 && g->boss.hp < 200 && g->boss.hp <= 2u * (damage_for_source(g, 1) / 2u) && kill_lookahead(n, g) == 0) || fight_lookahead(n, g) == 0)) return;
         if (g->hp * 3 < g->max_hp) n->stall = 1;                /* retreat */
         else if (g->hp * 3 >= g->max_hp * 2) n->stall = 0;
         uint8_t d = 0;
