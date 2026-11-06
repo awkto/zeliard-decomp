@@ -34,7 +34,8 @@ static const uint8_t TGA_RGB[16][3] = {
 void video_tandy_to_rgb(const uint8_t *fb, uint8_t *rgb)
 {
     for (int i = 0; i < FB_W * FB_H; i++) {
-        const uint8_t *p = TGA_RGB[VID_TGA_PAIR[fb[i] & 63]];
+        uint8_t bd, v = fb[i];
+        const uint8_t *p = TGA_RGB[video_town_pixel(VID_TANDY, i / FB_W, v, &bd) ? bd : VID_TGA_PAIR[v & 63]];
         rgb[i * 3] = p[0]; rgb[i * 3 + 1] = p[1]; rgb[i * 3 + 2] = p[2];
     }
 }

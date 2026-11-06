@@ -6,6 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "town.h"
+#include "video.h"
 #include "player.h"
 #include "enemy.h"
 #include "shell.h"
@@ -568,19 +569,21 @@ static void t_art(const char *dir)
     if (b.loaded) {
         CHECK(b.back_y0 == 14 && b.back_y1 == 102, "ympd paints y14..101");
         CHECK(!b.has_far, "and has no separate far strip");
-        int nz = 0, bad = 0;
+        int nz = 0, bad = 0, tagbad = 0;
         for (int y = 14; y < 102; y++)
             for (int x = 48; x < 272; x++) {
                 uint8_t v = b.back[y * 320 + x];
-                if (v) nz++;
-                int l = v >> 3, r = v & 7;
+                if (v & 63) nz++;
+                if ((v & FB_TAG) != FB_BD_YM) tagbad++;
+                int l = (v >> 3) & 7, r = v & 7;
                 if (!(l == 0 || l == 1 || l == 4 || l == 5) || !(r == 0 || r == 1 || r == 4 || r == 5)) bad++;
             }
         CHECK(nz > 10000, "the mountain panorama is painted (%d non-black px)", nz);
         CHECK(bad == 0, "every pair is one of the four colours 0,1,4,5 (0x34F9)");
+        CHECK(tagbad == 0, "and every pixel is tagged as ympd's, so CGA/HGC/Tandy can recolour it");
         int s142 = 0, s150 = 0;
         for (int r = 0; r < 8; r++)
-            for (int x = 0; x < 112; x++) { s142 += b.near142[r][x] != 0; s150 += b.near150[r][x] != 0; }
+            for (int x = 0; x < 112; x++) { s142 += (b.near142[r][x] & 63) != 0; s150 += (b.near150[r][x] & 63) != 0; }
         CHECK(s142 > 200 && s150 > 200, "both near strips have content (%d / %d px)", s142, s150);
     }
     /* ckpd.bin: 224x72 at (48,30) plus the 112x16 far strip */
@@ -590,8 +593,8 @@ static void t_art(const char *dir)
         CHECK(b.has_far, "and a far parallax strip of its own");
         int nz = 0, far = 0;
         for (int y = 30; y < 102; y++)
-            for (int x = 48; x < 272; x++) nz += b.back[y * 320 + x] != 0;
-        for (int r = 0; r < 16; r++) for (int x = 0; x < 112; x++) far += b.far14[r][x] != 0;
+            for (int x = 48; x < 272; x++) nz += (b.back[y * 320 + x] & 63) != 0;
+        for (int r = 0; r < 16; r++) for (int x = 0; x < 112; x++) far += (b.far14[r][x] & 63) != 0;
         CHECK(nz > 4000, "the cave ceiling is painted (%d px)", nz);
         CHECK(far > 200, "the far strip has content (%d px)", far);
     }

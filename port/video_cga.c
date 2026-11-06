@@ -44,7 +44,8 @@ static const uint8_t CGA5_RGB[4][3] = {
 void video_cga_to_rgb(const uint8_t *fb, uint8_t *rgb)
 {
     for (int i = 0; i < FB_W * FB_H; i++) {
-        const uint8_t *p = CGA5_RGB[VID_CGA_PAIR[fb[i] & 63]];
+        uint8_t bd, v = fb[i];
+        const uint8_t *p = CGA5_RGB[video_town_pixel(VID_CGA, i / FB_W, v, &bd) ? bd : VID_CGA_PAIR[v & 63]];
         rgb[i * 3] = p[0]; rgb[i * 3 + 1] = p[1]; rgb[i * 3 + 2] = p[2];
     }
 }
@@ -55,7 +56,8 @@ void video_cga2_to_rgb(const uint8_t *fb, uint8_t *rgb)
 {
     for (int y = 0; y < FB_H; y++)
         for (int x = 0; x < FB_W; x++) {
-            unsigned v = VID_CGA_PAIR[fb[y * FB_W + x] & 63];    /* 2 bits = 2 px */
+            uint8_t bd, f = fb[y * FB_W + x];
+            unsigned v = video_town_pixel(VID_CGA2, y, f, &bd) ? bd : VID_CGA_PAIR[f & 63];   /* 2 bits = 2 px */
             for (int b = 0; b < 2; b++) {
                 uint8_t on = (v >> (1 - b)) & 1 ? 0xFF : 0x00;
                 uint8_t *o = rgb + ((size_t)y * CGA2_W + x * 2 + b) * 3;

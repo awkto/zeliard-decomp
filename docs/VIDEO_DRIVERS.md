@@ -265,14 +265,17 @@ caller.)*
 ## 3. Differences between the drivers
 
 **The drivers agree; the renderers above them do not.**  All 35 driver slots produce the
-same visible result in every mode, but the *renderer* overlays each carry their own
-16-entry 2 bpp colour table: `gf*.bin`'s tables are the pair table's image of `gfmcga`'s
-(so every cavern sprite is exact in every mode), while **`gt*.bin`'s are not** — which is
-the whole of the town's per-mode colour difference, and why EGA, the one driver with no
-`[0x2044]` conversion at all, is the closest match there.  A port that works from the
-engine's PC-88 pair buffer reproduces the caverns exactly in all five modes but needs the
-2 bpp index carried alongside the pair to get the towns right (see `port/README.md`,
-"What the pair buffer cannot reach").
+same visible result in every mode, but the *renderer* overlays carry colour tables of their
+own.  `gf*.bin`'s tables are the pair table's image of `gfmcga`'s (so every cavern sprite is
+exact in every mode).  `gt*.bin` is different: it converts the town's tile and sprite cells
+through its own 64-entry pair table (gtcga `@3D0B`, gthgc `@3C24`, gttga `@3DCB`; three
+entries differ from GMCGA's on CGA/HGC, gttga's equals GMTGA's, gtega has none), and the
+backdrop painters `ympd.bin` / `ckpd.bin` colour their 2-plane art through 16-entry tables
+of their own per mode (CGA/HGC `@3432` `@36B6`, Tandy `@357D` `@38C7` `@38D7`; ckpd `@3753`
+`@3497` `@38D0` `@3654`).  The port reproduces this by tagging the town's pixels in the pair
+buffer (`FB_GT`, `FB_BD_YM`, `FB_BD_CK`, video.h) -- see `port/README.md`, "What the pair
+buffer cannot reach" -- and the Muralla playfield now matches the DOSBox capture exactly in
+CGA, CGA2, Hercules and Tandy.
 
 | Aspect | MCGA | CGA | EGA | HGC | Tandy |
 |---|---|---|---|---|---|

@@ -58,6 +58,32 @@ extern const uint8_t VID_CGA_PAIR[64];      /* GMCGA.BIN @290B / GMHGC.BIN @2994
 extern const uint8_t VID_TGA_PAIR[64];      /* GMTGA.BIN @2999 */
 extern const uint8_t VID_EGA_PALETTE[17];   /* GAME.BIN @A409 (INT 10h AX=1002h) */
 
+/* The town is drawn by gt*.bin, a renderer per mode, and what it colours it
+ * colours with tables of its *own*, not the ones `[0x2044]` uses on the cavern's
+ * cells (docs/VIDEO_DRIVERS.md section 3):
+ *   - the tile and sprite cells go through a 64-entry pair table in the
+ *     overlay (gtcga @3D0B, gthgc @3C24, gttga @3DCB; EGA has none) that is
+ *     not the pair table of GMCGA/GMHGC (three entries differ on CGA/HGC);
+ *   - the backdrop painters ympd.bin / ckpd.bin never see a pair at all: they
+ *     read the art's two bit planes and colour each 4-bit (left, right) index
+ *     through yet another 16-entry table per mode.
+ * Neither is a function of the MCGA pair alone, so the town's painters tag the
+ * pixels they write in bits 6 and 7, leaving the pair in bits 0..5 (and the
+ * 4-bit index recoverable from it once the row says which painter wrote it).
+ * MCGA and EGA mask the tag away; CGA / CGA2 / HGC / Tandy ask here.
+ * Returns 1 and sets *out (CGA colour 0..3, or Tandy colour 0..15) for a
+ * tagged pixel on game row `y` in `mode`, 0 for an untagged one. */
+#define FB_TAG    0xC0
+#define FB_GT     0x40      /* a gt*.bin tile or sprite pixel */
+#define FB_BD_YM  0x80      /* ympd.bin's backdrop */
+#define FB_BD_CK  0xC0      /* ckpd.bin's backdrop */
+int video_town_pixel(int mode, int y, uint8_t v, uint8_t *out);
+extern const uint8_t VID_GT_CGA[64];        /* gtcga.bin @3D0B == gthgc.bin @3C24 */
+extern const uint8_t VID_GT_TGA[64];        /* gttga.bin @3DCB */
+/* the backdrop painters' 16-entry tables (tests read them back out of the overlays) */
+extern const uint8_t VID_YM_MTN_C[16], VID_YM_MTN_T[16], VID_YM_GND_C[16], VID_YM_GND_T0[16], VID_YM_GND_T1[16];
+extern const uint8_t VID_CK_MTN_C[16], VID_CK_MTN_T[16], VID_CK_GND_C[16], VID_CK_GND_T[16];
+
 /* GMHGC.BIN @2E11: game row -> Hercules scan line (3 rows over 4 lines, +37) */
 int video_hgc_line(int y);
 
