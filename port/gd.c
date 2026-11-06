@@ -171,8 +171,16 @@ static void stage_pack(const uint8_t *src, int wbytes, int rows,
 {
     size_t planesz = (size_t)wbytes * rows, w = (size_t)wbytes * 4;
     if (w * rows > sizeof STAGE) return;
+    /* 33D6 / 3058: the loop converts one *word* of each plane a time (`shr cx,1` of the
+     * byte count), so with an odd number of bytes per plane the last byte is never
+     * converted and its 4 staged pixels keep what the last picture left there
+     * (the ending's 5 x 11 mouth, 0xA0 bank 0: its bottom right 4 pixels, #113) */
+    uint8_t keep[4];
+    int odd = (planesz & 1) != 0;
+    if (odd) memcpy(keep, STAGE + (planesz - 1) * 4, 4);
     for (int r = 0; r < rows; r++)
         gd_expand_row(src, planesz, wbytes, r, weights, nplanes, STAGE + (size_t)r * w);
+    if (odd) memcpy(STAGE + (planesz - 1) * 4, keep, 4);
 }
 
 /* 30FC — the `ao` recolour: both planes -> 8, plane 0 only -> 10, plane 1 only
@@ -705,8 +713,40 @@ static void wipe_row(Gd *g, const uint8_t *src, int y)
     } else memcpy(d, row, GD_W);
 }
 
-int gd_wipe(Gd *g, const uint8_t *src)                               /* 3E8B */
+/* 3FEF / 4074 — before it starts, the wipe bakes the two talking-head windows' frames
+ * into the *picture itself* (three planes P apart, 80 bytes a row): a 26-byte top row at
+ * picture row 21, 91 rows whose first and 0x19th bytes carry the side edges, a bottom
+ * row, for the windows at byte columns 10 and 44.  Plane 1 alternates two edge patterns. */
+static void wipe_bar(uint8_t *d, uint8_t lo, uint8_t hi)             /* 4074 */
 {
+    d[0] = lo; memset(d + 1, 0xFF, 24); d[25] = hi;
+}
+
+static void wipe_frame(uint8_t *src, size_t di)                       /* 3FEF */
+{
+    const size_t P = 0x2A80;
+    for (int pl = 0; pl < 3; pl++) {
+        uint8_t *d = src + di + pl * P;
+        if (pl == 1) {
+            wipe_bar(d, 0x7F, 0xFD);
+            for (int r = 1; r <= 91; r++) {
+                int odd = (r & 1) || r == 91;
+                d[(size_t)r * 80] = odd ? 0xB0 : 0x70;
+                d[(size_t)r * 80 + 0x19] = odd ? 0x0E : 0x0D;
+            }
+            wipe_bar(d + 92 * 80, 0x7F, 0xFD);
+        } else {
+            wipe_bar(d, 0x3F, 0xFC);
+            for (int r = 1; r <= 91; r++) { d[(size_t)r * 80] = 0x30; d[(size_t)r * 80 + 0x19] = 0x0C; }
+            wipe_bar(d + 92 * 80, 0x3F, 0xFC);
+        }
+    }
+}
+
+int gd_wipe(Gd *g, uint8_t *src)                                     /* 3E8B */
+{
+    wipe_frame(src, 0x69A);
+    wipe_frame(src, 0x6BC);
     for (int cx = 0x44; cx; cx--) {
         wipe_row(g, src, 2 * (0x44 - cx));
         wipe_row(g, src, 2 * cx - 1);

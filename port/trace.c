@@ -320,6 +320,11 @@ void trace_write_exit(FILE *f, unsigned n, unsigned rng_calls, const char *input
             n, rng_calls, input, code);
 }
 
+void trace_write_site(FILE *f, unsigned n, const char *site, unsigned rng_calls, const char *input)
+{
+    fprintf(f, "{\"f\":%u,\"site\":\"%s\",\"rng_calls\":%u,\"input\":\"%s\"}\n", n, site, rng_calls, input);
+}
+
 void trace_write_frame(FILE *f, unsigned n, const char *site, unsigned rng_calls, const char *input, Game *g, const Town *t)
 {
     int mode = t ? M_TOWN : M_FIGHT;

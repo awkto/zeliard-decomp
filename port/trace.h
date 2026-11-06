@@ -24,6 +24,10 @@ void trace_input_token(char out[12], uint8_t dirs, uint8_t buttons, uint8_t menu
  * (its page[] is used as a scratch copy and restored). */
 void trace_write_frame(FILE *f, unsigned n, const char *site, unsigned rng_calls, const char *input, Game *g, const Town *t);
 
+/* a boundary line with no fields: the ending's "end:wait" (#113), a cutscene that has
+ * no game state; tracediff compares its site, and the PNGs compare the picture */
+void trace_write_site(FILE *f, unsigned n, const char *site, unsigned rng_calls, const char *input);
+
 /* the last line of a run that leaves for DOS through the game's own exit (the
  * Sage's "No", kenjpro A934; docs/HARNESS.md section 6): no fields, no frame
  *   {"f":N,"site":"exit","rng_calls":k,"input":"M","code":0}

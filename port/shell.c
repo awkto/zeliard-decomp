@@ -231,7 +231,10 @@ int shell_enter_cavern(Shell *s, int sys_map, int col, int row, int face_left,
     }
     if (from_cave_record) row = row - 10 + s->maps[slot].row_bias;       /* 7005 / 7D2D */
     game_place(g, col, row, face_left);
-    if (g->boss_room) game_boss_room_intro(g);                          /* 61A8 */
+    /* 7D61 -> 6042 .. 6266: with [49] set the hero dies on the restart's first pass, before
+     * the walk-in (hero_entering stays 0 in the oracle's first frame; #113) */
+    if (g->jashiin_defeated) game_force_death_check(g);                 /* 6266 -> 98FC */
+    else if (g->boss_room) game_boss_room_intro(g);                     /* 61A8 */
     else game_start_walk_in(g, face_left);                              /* 7C6E */
     g->cur_map = (uint8_t)sys_map;
     s->in_town = 0;

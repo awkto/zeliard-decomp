@@ -73,10 +73,10 @@ index e31e63f..b521035 100644
 +libmisc_a_SOURCES = clipboard.cpp cross.cpp ethernet.cpp ethernet_pcap.cpp ethernet_slirp.cpp ethernet_ethnet.cpp ethernet_nothing.cpp messages.cpp programs.cpp setup.cpp support.cpp regionalloctracking.cpp savestates.cpp shiftjis.cpp iconvpp.cpp mkdir_p.cpp zel_oracle.cpp
 diff --git a/src/misc/zel_oracle.cpp b/src/misc/zel_oracle.cpp
 new file mode 100644
-index 0000000..dba9964
+index 0000000..052d3f5
 --- /dev/null
 +++ b/src/misc/zel_oracle.cpp
-@@ -0,0 +1,483 @@
+@@ -0,0 +1,509 @@
 +/*
 + * zel_oracle.cpp -- Zeliard differential-test oracle (decomp-zel docs/HARNESS.md).
 + *
@@ -444,6 +444,30 @@ index 0000000..dba9964
 +    }
 +}
 +
++/* The ending (enddemo.bin, #113).  It is paced by ticks, has no game frame and no input, so
++ * its boundary is the *completion of a wait*: every `cmp [cs:FF1A],x ; jc back` loop (enddemo's
++ * own 62EE / 6945, gdmcga's seven pass waits) at the instruction after its `jc` falling through,
++ * the credits' two other waits (0xF7: [FF21] set by the score, 6760; 0xF9: [FF50] reached, 678A).
++ * One boundary per wait, not per elapsed tick: how many ticks the original spends drawing
++ * between two waits is emulated CPU speed, which the port does not model.  Tracing of the
++ * ending starts at enddemo's entry (6002); site "end:wait". */
++const uint8_t SIG_END_ENTRY[] = {0xFA,0xBC,0x00,0x20,0xFB,0x2E,0xC7,0x06,0x30,0x66,0xA8,0x6A};  /* enddemo 6002 */
++const uint8_t SIG_END_F7[]    = {0xC6,0x06,0x21,0xFF,0x00,0xC7,0x06,0x50,0xFF,0x00,0x00};        /* enddemo 6760 */
++const uint8_t SIG_END_F9[]    = {0xC7,0x06,0x50,0xFF,0x00,0x00,0xE9,0x3F,0xFF};                  /* enddemo 678A */
++bool in_end = false;
++uint16_t end_pend = 0;               /* the address after the `jc` of the FF1A wait loop last entered */
++
++void end_check(uint16_t ip, const uint8_t *p) {
++    if (end_pend && ip == end_pend) { end_pend = 0; on_boundary(0, "end:wait", ip); return; }
++    if (p[0] == 0x2E) {
++        if (p[1] == 0x80 && p[2] == 0x3E && p[3] == 0x1A && p[4] == 0xFF && p[6] == 0x72)      /* cmp byte [cs:FF1A],imm8 ; jc */
++            end_pend = (uint16_t)(ip + 8);
++        else if (p[1] == 0x38 && p[2] == 0x06 && p[3] == 0x1A && p[4] == 0xFF && p[5] == 0x72) /* cmp [cs:FF1A],al ; jc */
++            end_pend = (uint16_t)(ip + 7);
++    } else if (ip == 0x6760 && MATCH(0x6760, SIG_END_F7)) on_boundary(0, "end:wait", ip);
++    else if (ip == 0x678A && MATCH(0x678A, SIG_END_F9)) on_boundary(0, "end:wait", ip);
++}
++
 +} // namespace
 +
 +/* Called by the normal core before each instruction while CS == BASE. */
@@ -451,6 +475,8 @@ index 0000000..dba9964
 +    if (cpu.pmode) return;
 +    uint16_t ip = (uint16_t)reg_eip;
 +    uint8_t *p = base_ptr(ip);
++    if (state == ST_TRACE && !in_end && ip == 0x6002 && MATCH(0x6002, SIG_END_ENTRY)) { in_end = true; logf("enddemo entered at frame %lu", frame); }
++    if (state == ST_TRACE && in_end) end_check(ip, p);
 +    if (state == ST_TRACE && ip >= 0x7000) menu_check(ip, p);
 +    if (p[0] == 0xC6 && memcmp(p, BOUNDARY, 5) == 0) {
 +        if (ip == 0x717F || ip == 0x68ED) {

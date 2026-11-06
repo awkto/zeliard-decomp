@@ -81,6 +81,7 @@ struct Cutscene {
     /* the front end */
     void     *user;
     CutscenePresentFn present;
+    void    (*boundary)(Cutscene *c);   /* a wait ran to its end (the harness's "end:wait" boundary, #113); NULL = none */
     unsigned  max_frames;               /* headless guard: 0 = none */
     int       act;                      /* which act is running (for the tests) */
     int       beat;                     /* how many narration beats have played */
