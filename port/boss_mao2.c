@@ -26,7 +26,7 @@
  * hurt in — then 6 frames flickering out.
  *
  * Phase 2 (A4C9) — HP < 200: he stays visible, faces the hero and keeps
- * exactly 8 columns from him (1 cell on odd walk poses, 2 on even, columns
+ * exactly 8 columns from him (2 cells on odd poses stepping toward him, on even ones stepping back, columns
  * 0x10..0x35); a wall starts the 14-frame jump arc A666 ({fwd, drow, pose},
  * 0x80 ends it).  At range for two consecutive frames, 1/16 per frame, he
  * throws.  Every 32 frames he REGENERATES 80 HP (sound 0x3C) and at 800 he
@@ -233,7 +233,10 @@ static void mao2_phase2(Game *g)
         ST(S_POSE) = (uint8_t)(toward ? (ST(S_POSE) + 1) & 3 : (ST(S_POSE) - 1) & 3);
         int go_right = (toward == (ST(S_FACING) != 0));
         int blocked;
-        if (!(ST(S_POSE) & 1)) (go_right ? step_right : step_left)(g);   /* even: 2 cells */
+        /* A529/A550/A583/A5A7: a step toward him (pose + 1) takes two cells on an ODD
+         * pose, a step back (pose - 1) two cells on an EVEN one (`test [AC1B],1`, jz/jnz
+         * over the first of the two 1-cell calls) */
+        if (toward ? (ST(S_POSE) & 1) : !(ST(S_POSE) & 1)) (go_right ? step_right : step_left)(g);
         blocked = (go_right ? step_right : step_left)(g);
         if (blocked) { ST(S_JUMPI) = 0; ST(S_JUMP) = 0xFF; }
         else { mao2_draw(g); mao2_shots(g); return; }
