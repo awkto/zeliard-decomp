@@ -51,11 +51,11 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 13 test binaries
-make test            # physics (149) + combat/AI (228) + town (161) + boss (642) + shop (189)
+make test            # physics (149) + combat/AI (228) + town (162) + boss (642) + shop (189)
                      #   + status (87) + playthrough (165) + audio (315) + cutscene (46)
-                     #   + video (70) + config (45) + sync (144) = 2241 assertions.  Needs no game files:
+                     #   + video (91) + config (45) + sync (144) = 2263 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
-make verify          # 211 headless renders diffed against the DOSBox captures in docs/screenshots/,
+make verify          # 215 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
 make playthrough     # the same two routes as test_playthrough, with the step-by-step log
 ./zeliard            # the real boot: the opening demo, then Felishika's Castle
@@ -846,7 +846,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   (level 0 + 120 EXP -> level 1, 120/120 LIFE, 70 EXP left) and the one-level
   clamp; and the first-visit spell + `[E5]` bit (Yasmin teaches spell 1, Marid
   teaches none).
-* `test_town.c` — 161 assertions: the mrmp header, doors, cave record, exits, NPCs,
+* `test_town.c` — 162 assertions: the mrmp header, doors, cave record, exits, NPCs,
   walker range and dialogue; the mpat block list; the walk/scroll model and the block
   list; the door ±1 window; the edge exit; NPC markers, the type-1 walker's 2-frame
   cadence and the type-3 facing rule; Space dialogue in and out of range; the
@@ -1551,22 +1551,24 @@ matters is the same one: **the whole 28×18-cell playfield, pixel for pixel**.
 
 The **town** was captured the same way, at the state `town.png` already pins
 (Muralla at the map's right edge, scroll 179, Garland on column 209, walk frame
-3 — the same `KEYS` minus the door taps, shot at 56 s), and it splits the modes
-in two:
+3 — the same `KEYS` minus the door taps, shot at 56 s).  Issue #34 closed the
+gap the first version of this table showed (the playfield, whole 28×18 cells,
+pixel for pixel against the capture):
 
-| mode | Muralla playfield | HUD bar + digits |
-|---|---|---|
-| `mcga` | **100 %** | 100 % |
-| `ega` | **99.93 %** — 43 px of sprite outline | 100 % |
-| `cga2` | 84.34 % | 100 % |
-| `hgc` | 84.19 % | 100 % |
-| `cga` | 79.32 % | 100 % |
-| `tandy` | 76.05 % | LIFE bar 90 %, digits 100 % |
+| mode | Muralla playfield, before #34 | now | HUD bar + digits |
+|---|---|---|---|
+| `mcga` | **100 %** | **100 %** | 100 % |
+| `ega` | 99.93 % | 99.93 % — 43 px of sprite outline | 100 % |
+| `cga2` | 84.34 % | **100 %** | 100 % |
+| `hgc` | 84.34 % | **100 %** | 100 % |
+| `cga` | 79.32 % | **100 %** | 100 % |
+| `tandy` | 76.05 % | **100 %** | LIFE bar 90 %, digits 100 % |
 
-EGA comes out whole for the same reason it needs no table at all, and the other
-three are all one cause — the next section.  `make verify` has **16 more boxes**
-for the town: EGA's playfield in four pieces around the two sprites, and every
-mode's LIFE bar and digit runs.
+EGA never had a gap of this kind (it has no `[0x2044]` conversion), and the other
+three were all one cause — the next section.  `make verify` has **19 more boxes**
+for the town: EGA's playfield in four pieces around the two sprites, every
+mode's LIFE bar and digit runs, and the whole playfield in CGA, cga2, HGC and
+Tandy.
 
 ### What the pair buffer cannot reach
 
@@ -1598,24 +1600,36 @@ driver behaviour rather than an approximation:
   **twelve pixels** of Garland's own edge, all inside x 306..321 (and 43 px around
   the two sprites in the town) — which is why the EGA playfield is covered by
   boxes around the sprites rather than one box.
-* **The town's 2 bpp art has a colour table per driver.**  This is the one real
-  gap.  The town is drawn by `gt*.bin`, a renderer per mode, and its art is 2 bpp:
-  a pixel is a 0..15 index into a 16-entry colour table, which gfmcga/gtmcga
-  resolve to a *pair* (`PAL2BPP` in `gfx.c`, from gfmcga `@4F98`).  Those tables
-  are what the pair buffer stores, and the other drivers' 16-entry tables are not
-  the pair table's image of gtmcga's — so a 2 bpp town pixel converts to the wrong
-  colour.  Measured on the Muralla capture, every mismatching pixel's pair is an
-  entry of one of the five `PAL2BPP` rows and none is a cell pixel: e.g. the sky's
-  `blu+blu` (0x2D) is CGA 1 through `@290B` and CGA **2** on the real screen.  The
-  geometry is identical to the pixel — the mismatching rows have exactly the same
-  run lengths — so this is a palette gap and nothing else, and it is why EGA, the
-  one driver with no table, is at 99.93 % there.  Closing it means carrying the
-  2 bpp *index* alongside the pair rather than only the pair, plus reading the
-  16-entry tables out of gtcga/gtega/gthgc/gttga; neither is in this change.
+* **The town has its own colour tables per driver (closed by #34).**  The town
+  is drawn by `gt*.bin`, a renderer per mode, and it does *not* reuse the tables
+  `[0x2044]` applies to the cavern.  Two things differ.  (1) The tile and sprite
+  cells are converted by the overlay's own 64-entry pair table (gtcga `@3D0B`,
+  gthgc `@3C24`, gttga `@3DCB`; EGA has none): gtcga's and gthgc's differ from
+  GMCGA's `@290B` in three entries (blk+red 2 -> 0, red+wht and wht+red 3 -> 2),
+  gttga's is the same as GMTGA's.  (2) The backdrop painters `ympd.bin` and
+  `ckpd.bin` never see a pair at all: they read the art's two bit planes and
+  colour each 4-bit (left, right) index through a 16-entry table of their own
+  per driver (CGA/HGC `@3432`, `@36B6`; Tandy `@357D`, `@38C7`, `@38D7`; ckpd
+  `@3753`, `@3497`, `@38D0`, `@3654`).  The CGA mountain table ignores the left
+  half of the pair entirely.  Neither is a function of the MCGA pair, which is
+  why the first measurement showed pair `blu+blu` (0x2D) as CGA 1 through `@290B`
+  and CGA 2 on the real screen.
 
-  The cavern is unaffected: the hero and the enemies are 2 bpp too, but gfcga's,
-  gfhgc's and gftga's tables *do* agree with the pair table's image of gfmcga's —
-  every cavern sprite is exact in every mode.
+  The fix keeps the pair buffer and tags the pixels: bits 6-7 of the byte are
+  free (every consumer already masks `& 63`), so `FB_GT` marks a gt tile or
+  sprite pixel and `FB_BD_YM` / `FB_BD_CK` a backdrop pixel, with the usual MCGA
+  pair left in bits 0..5.  The backdrop's index is recoverable from those bits
+  once the row says which painter wrote it (mountains y < 142; the two ground
+  strips at y 142 and 150, which pack the planes differently).  MCGA and EGA
+  ignore the tag, so their output is unchanged; CGA, cga2, HGC and Tandy ask
+  `video_town_pixel()` (video.c).  `test_video` reads all twelve tables back out
+  of gt*.bin / ympd.bin / ckpd.bin.  What is verified against a capture is
+  Muralla (ympd); ckpd's tables are checked against the binaries and its bit
+  layout was read from the disassembly, but no underground town has been
+  captured in the other modes.
+
+  The cavern is unaffected: gfcga's, gfhgc's and gftga's tables *do* agree with
+  the pair table's image of gfmcga's — every cavern sprite is exact in every mode.
 
 None of this affects a cell, a tile or a scroll offset, which is why the cavern
 playfield is exact everywhere.
@@ -1652,7 +1666,7 @@ of `gdmcga.bin`, and each mode has its own `gd*.bin` with its own palette record
 
 ## Ground truth
 
-`make verify` compares 186 boxes of headless renders against the DOSBox captures
+`make verify` compares 215 boxes of headless renders against the DOSBox captures
 in `docs/screenshots/`; all of them are at 100 % — `tools/compare_shot.py` exits
 non-zero on anything less, so the target fails on the first regression — and
 **eight** of them are the whole 320×200 screen — including all five intro captures (`intro_prologue`,

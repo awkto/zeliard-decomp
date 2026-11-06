@@ -48,7 +48,8 @@ void video_hgc_to_rgb(const uint8_t *fb, uint8_t *rgb)
         if (line < 0 || line >= HGC_H) continue;
         uint8_t *row = rgb + ((size_t)line * HGC_W + HGC_MARGIN) * 3;
         for (int x = 0; x < FB_W; x++) {
-            unsigned v = VID_CGA_PAIR[fb[y * FB_W + x] & 63];   /* 2 bits = 2 mono px */
+            uint8_t bd, f = fb[y * FB_W + x];
+            unsigned v = video_town_pixel(VID_HGC, y, f, &bd) ? bd : VID_CGA_PAIR[f & 63];   /* 2 bits = 2 mono px */
             for (int b = 0; b < 2; b++) {
                 uint8_t on = (v >> (1 - b)) & 1 ? HGC_ON : 0x00;
                 uint8_t *o = row + (x * 2 + b) * 3;

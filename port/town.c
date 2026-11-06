@@ -9,6 +9,7 @@
 #include "render.h"
 #include "status.h"
 #include "text.h"
+#include "video.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -488,7 +489,7 @@ static void decode48_town(const uint8_t *c, int typ, Cell8 *out, uint8_t sky[8][
         for (int x = 0; x < 16; x++)
             p[x] = (((cc >> (15 - x)) & 1) << 2) | (((b >> (15 - x)) & 1) << 1) | ((a >> (15 - x)) & 1);
         for (int k = 0; k < 8; k++) {
-            out->px[row][k] = (uint8_t)((p[2 * k] << 3) | p[2 * k + 1]);
+            out->px[row][k] = (uint8_t)(FB_GT | (p[2 * k] << 3) | p[2 * k + 1]);
             sky[row][k] = (uint8_t)(((mk >> (14 - 2 * k)) & 3) == 3);
         }
     }
@@ -544,7 +545,7 @@ static void decode48_sprite(const uint8_t *c, Cell2 *out)
             int l = p[2 * k], r = p[2 * k + 1];
             if (!l && !r) { out->mask[row][k] = 0; continue; }
             out->mask[row][k] = 1;
-            out->px[row][k] = (uint8_t)(((l == 7 ? 0 : l) << 3) | (r == 7 ? 0 : r));
+            out->px[row][k] = (uint8_t)(FB_GT | ((l == 7 ? 0 : l) << 3) | (r == 7 ? 0 : r));
         }
     }
 }
@@ -607,7 +608,7 @@ static void bd_unpack_ym_strip(const uint8_t *d, size_t len, size_t off, uint8_t
 }
 /* ympd 0x34F9 / ckpd 0x383A: two planes, two bits a pixel, expanded into the
  * driver's pair byte as (p2a<<5 | p1a<<3 | p2b<<2 | p1b) — colours 0,1,4,5. */
-static void bd_pairs(uint8_t *dst, const uint8_t *p1, const uint8_t *p2, int w, int rows, int pitch)
+static void bd_pairs(uint8_t *dst, const uint8_t *p1, const uint8_t *p2, int w, int rows, int pitch, uint8_t tag)
 {
     for (int r = 0; r < rows; r++)
         for (int c = 0; c < w; c++) {
@@ -615,7 +616,7 @@ static void bd_pairs(uint8_t *dst, const uint8_t *p1, const uint8_t *p2, int w, 
             for (int k = 0; k < 4; k++) {
                 int p2a = (dh >> (7 - 2 * k)) & 1, p1a = (dl >> (7 - 2 * k)) & 1;
                 int p2b = (dh >> (6 - 2 * k)) & 1, p1b = (dl >> (6 - 2 * k)) & 1;
-                dst[r * pitch + c * 4 + k] = (uint8_t)(p2a << 5 | p1a << 3 | p2b << 2 | p1b);
+                dst[r * pitch + c * 4 + k] = (uint8_t)(tag | p2a << 5 | p1a << 3 | p2b << 2 | p1b);
             }
         }
 }
@@ -629,16 +630,17 @@ int town_load_backdrop(TownBackdrop *b, const char *dir, int underground)
     uint8_t *d = sar_load(dir, 1, res, 1, &len);
     if (!d) return -1;
     static uint8_t p1[8192], p2[8192];
+    const uint8_t tag = underground ? FB_BD_CK : FB_BD_YM;      /* video.h: the pixel keeps its painter for CGA/HGC/Tandy */
     if (underground) {
         /* ckpd 0x3321..0x3348: 224x72 at (48,30) */
         bd_unpack_ck(d, len, 0x38E0 - BD_ORG, p1, 0x0FC0);
         bd_unpack_ck(d, len, 0x426A - BD_ORG, p2, 0x0FC0);
-        bd_pairs(b->back + 30 * FB_W + 48, p1, p2, 0x38, 0x48, FB_W);
+        bd_pairs(b->back + 30 * FB_W + 48, p1, p2, 0x38, 0x48, FB_W, tag);
         b->back_y0 = 30; b->back_y1 = 102;
         /* 0x3351..0x3380: the 112x16 far strip drawn at (48,14) */
         bd_unpack_ck(d, len, 0x4C6D - BD_ORG, p1, 0x01C0);
         bd_unpack_ck(d, len, 0x4DB8 - BD_ORG, p2, 0x01C0);
-        bd_pairs(&b->far14[0][0], p1, p2, 0x1C, 0x10, 112);
+        bd_pairs(&b->far14[0][0], p1, p2, 0x1C, 0x10, 112, tag);
         b->has_far = 1;
         /* 0x3548: the near strips, two raw planes at the end of the image
          * (0x4F25 / 0x50E5), 28 bytes x 16 rows, expander 0x35AB (0,2,4,6) */
@@ -650,7 +652,7 @@ int town_load_backdrop(TownBackdrop *b, const char *dir, int underground)
                     for (int k = 0; k < 4; k++) {
                         int p2a = (dh >> (7 - 2*k)) & 1, p1a = (dl >> (7 - 2*k)) & 1;
                         int p2b = (dh >> (6 - 2*k)) & 1, p1b = (dl >> (6 - 2*k)) & 1;
-                        uint8_t v = (uint8_t)(p2a << 5 | p1a << 4 | p2b << 2 | p1b << 1);
+                        uint8_t v = (uint8_t)(tag | p2a << 5 | p1a << 4 | p2b << 2 | p1b << 1);
                         if (r < 8) b->near142[r][c * 4 + k] = v;
                         else       b->near150[r - 8][c * 4 + k] = v;
                     }
@@ -659,7 +661,7 @@ int town_load_backdrop(TownBackdrop *b, const char *dir, int underground)
         /* ympd 0x3321..0x3333: 224x88 at (48,14) — no separate far strip */
         bd_unpack_ym(d, len, 0x38E7 - BD_ORG, p1, 0x38, 0x58);
         bd_unpack_ym(d, len, 0x4759 - BD_ORG, p2, 0x38, 0x58);
-        bd_pairs(b->back + 14 * FB_W + 48, p1, p2, 0x38, 0x58, FB_W);
+        bd_pairs(b->back + 14 * FB_W + 48, p1, p2, 0x38, 0x58, FB_W, tag);
         b->back_y0 = 14; b->back_y1 = 102;
         /* 0x333E..0x3357: two 448-byte streams, each 8 rows of {28, 28} bytes;
          * 0x374E draws them at (48,142) and (48,150).  The halves swap their
@@ -680,8 +682,8 @@ int town_load_backdrop(TownBackdrop *b, const char *dir, int underground)
                         int db = (dx >> (14 - 2*k)) & 1, bb = (bx >> (14 - 2*k)) & 1;
                         unsigned al = 16u*da + 8u*ba + 2u*db + bb;
                         if (!half) al = (al * 2) & 0xFF;
-                        if (half) b->near150[r][i * 8 + k] = (uint8_t)al;
-                        else      b->near142[r][i * 8 + k] = (uint8_t)al;
+                        if (half) b->near150[r][i * 8 + k] = (uint8_t)(tag | al);
+                        else      b->near142[r][i * 8 + k] = (uint8_t)(tag | al);
                     }
                 }
             }

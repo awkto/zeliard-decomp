@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "video.h"
+#include "sar.h"
 #include "render.h"
 #include "gfx.h"
 
@@ -248,6 +249,56 @@ static void t_tables(const char *dir)
 }
 
 
+/* The town's own tables (issue #34): gt*.bin's 64-entry tile/sprite pair tables
+ * and the 16-entry tables inside ympd.bin / ckpd.bin, read back out of the
+ * overlays themselves.  gt*.bin is ZELRES1[7..11] loaded at 3000; ympd/ckpd are
+ * ZELRES2[8..9] loaded at 3300. */
+static void t_town_tables(const char *dir)
+{
+    printf("town tables     ");
+    struct { int arch, idx; unsigned org, addr; const uint8_t *have; size_t n; const char *what; } t[] = {
+        { 0, 8,  0x3000, 0x3D0B, VID_GT_CGA, 64, "gtcga.bin @3D0B tile/sprite pair table" },
+        { 0, 9,  0x3000, 0x3C24, VID_GT_CGA, 64, "gthgc.bin @3C24 (byte-identical to gtcga's)" },
+        { 0, 10, 0x3000, 0x3DCB, VID_GT_TGA, 64, "gttga.bin @3DCB tile/sprite pair table" },
+        { 1, 8,  0x3300, 0x3432, VID_YM_MTN_C, 16, "ympd.bin @3432 mountains, CGA/HGC" },
+        { 1, 8,  0x3300, 0x357D, VID_YM_MTN_T, 16, "ympd.bin @357D mountains, Tandy" },
+        { 1, 8,  0x3300, 0x36B6, VID_YM_GND_C, 16, "ympd.bin @36B6 ground strips, CGA/HGC" },
+        { 1, 8,  0x3300, 0x38C7, VID_YM_GND_T0, 16, "ympd.bin @38C7 first ground strip, Tandy" },
+        { 1, 8,  0x3300, 0x38D7, VID_YM_GND_T1, 16, "ympd.bin @38D7 second ground strip, Tandy" },
+        { 1, 9,  0x3300, 0x3753, VID_CK_MTN_C, 16, "ckpd.bin @3753 ceiling, CGA/HGC" },
+        { 1, 9,  0x3300, 0x38D0, VID_CK_MTN_T, 16, "ckpd.bin @38D0 ceiling, Tandy" },
+        { 1, 9,  0x3300, 0x3497, VID_CK_GND_C, 16, "ckpd.bin @3497 ground strips, CGA/HGC" },
+        { 1, 9,  0x3300, 0x3654, VID_CK_GND_T, 16, "ckpd.bin @3654 ground strips, Tandy" },
+    };
+    int any = 0;
+    for (unsigned i = 0; i < sizeof t / sizeof *t; i++) {
+        size_t len = 0;
+        uint8_t *b = sar_load(dir, t[i].arch, t[i].idx, 1, &len);
+        if (!b) continue;
+        any = 1;
+        size_t off = t[i].addr - t[i].org;
+        ck(off + t[i].n <= len && !memcmp(b + off, t[i].have, t[i].n), "%s", t[i].what);
+        free(b);
+    }
+    if (!any) printf("(ZELRES not available in %s: skipping the table check) ", dir);
+
+    /* what a tagged pixel becomes: gtcga's table, not GMCGA's, for a tile pixel,
+     * and the painter's own table for a backdrop pixel */
+    uint8_t o = 0;
+    ck(VID_CGA_PAIR[0 * 8 + 2] == 2 && VID_GT_CGA[0 * 8 + 2] == 0, "blk+red is red in GMCGA's table but black in gtcga's");
+    ck(video_town_pixel(VID_CGA, 100, FB_GT | 2, &o) && o == 0, "a tagged town tile pixel (blk+red) reads gtcga's table: black");
+    ck(!video_town_pixel(VID_CGA, 100, 2, &o), "an untagged one is left to the driver's own table");
+    ck(!video_town_pixel(VID_MCGA, 100, FB_GT | 2, &o) && !video_town_pixel(VID_EGA, 100, FB_BD_YM | 2, &o),
+       "MCGA and EGA never recolour (the tag is masked away)");
+    /* ympd mountains: pair (p2a p1a p2b p1b) = bits 5 3 2 0, the CGA table looks at the right half only */
+    ck(video_town_pixel(VID_CGA, 50, FB_BD_YM | (1 << 5) | 1, &o) && o == VID_YM_MTN_C[9], "ympd mountain: index 1001");
+    ck(video_town_pixel(VID_TANDY, 50, FB_BD_YM | (1 << 3) | (1 << 2), &o) && o == VID_YM_MTN_T[6], "ympd mountain (Tandy): index 0110");
+    /* the two ground strips pack the same four bits differently and take different Tandy tables */
+    ck(video_town_pixel(VID_TANDY, 142, FB_BD_YM | (1 << 5) | (1 << 1), &o) && o == VID_YM_GND_T0[4 | 2], "ympd first ground strip: bits 5 and 1 are w1a and w2b");
+    ck(video_town_pixel(VID_TANDY, 150, FB_BD_YM | (1 << 4) | 1, &o) && o == VID_YM_GND_T1[8 | 1], "ympd second ground strip: bits 4 and 0 are w2a and w1b");
+    ck(video_town_pixel(VID_CGA, 150, FB_BD_CK | (1 << 4) | (1 << 1), &o) && o == VID_CK_GND_C[4 | 1], "ckpd ground strips: bits 5 4 2 1");
+}
+
 /* The drivers all drew for a 4:3 monitor, so the presentation shape is not the
  * framebuffer shape (issue #43).  This is the only place the distinction is
  * asserted -- `make verify` deliberately never goes through it. */
@@ -284,6 +335,7 @@ int main(int argc, char **argv)
     t_tandy();   printf("ok\n");
     t_display_aspect(); printf("ok\n");
     t_tables(dir); printf("ok\n");
+    t_town_tables(dir); printf("ok\n");
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;
 }

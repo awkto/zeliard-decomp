@@ -796,14 +796,13 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	# already pins, captured with the same recipe minus the door taps
 	# (`KEYS="6:Return 9:Return 16:Return 20:+Right 48:-Right"`, shot at 56 s).
 	#
-	# EGA is the mode that comes out whole here, and for a reason: its
-	# `[0x2044]` does nothing, so *nothing* in the town needs a colour table and
-	# the whole playfield lands except 43 pixels of sprite outline (the same
-	# 640ths-vs-320ths edge as in the cavern).  In CGA / HGC / Tandy the town's
-	# art is 2 bpp and each driver colours it through its *own* 16-entry table
-	# in gt*.bin, which is not the pair table's image — see port/README.md
-	# "What the pair buffer cannot reach".  What is checked there is the HUD,
-	# whose bar and digits are pairs and are exact.
+	# EGA's `[0x2044]` does nothing, so its town needs no colour table and the
+	# playfield lands except 43 pixels of sprite outline (the same 640ths-vs-
+	# 320ths edge as in the cavern), hence the boxes around the sprites.  In
+	# CGA / HGC / Tandy the town is coloured by gt*.bin's *own* pair table
+	# (gtcga @3D0B ...) and ympd.bin's own per-driver tables, neither of which is
+	# the pair table's image (#34): those pixels carry a tag in bits 6-7 of the
+	# pair buffer (video.h), and the whole playfield is one box in each mode.
 	./zeliard --dir ../zeliard --video ega --town 1 --town-scr 179 --town-col 209 \
 		--town-anim 3 0 --frames 1 --screenshot 1 /tmp/zel_town_ega.png
 	python3 tools/compare_shot.py /tmp/zel_town_ega.png ../docs/screenshots/town_ega.png \
@@ -823,6 +822,8 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	python3 tools/compare_shot.py /tmp/zel_town_cga.png ../docs/screenshots/town_cga.png \
 		--box 84 163 100 6 --label "CGA Muralla: HUD LIFE bar"
 	python3 tools/compare_shot.py /tmp/zel_town_cga.png ../docs/screenshots/town_cga.png \
+		--box 48 14 224 144 --label "CGA Muralla: the whole playfield (gtcga's tile table, ympd's backdrop)"
+	python3 tools/compare_shot.py /tmp/zel_town_cga.png ../docs/screenshots/town_cga.png \
 		--box 76 187 36 8 --label "CGA Muralla: HUD GOLD digits"
 	python3 tools/compare_shot.py /tmp/zel_town_cga.png ../docs/screenshots/town_cga.png \
 		--box 152 187 30 8 --label "CGA Muralla: HUD ALMAS digits"
@@ -831,11 +832,15 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 	python3 tools/compare_shot.py /tmp/zel_town_cga2.png ../docs/screenshots/town_cga2.png \
 		--box 168 163 200 6 --label "cga2 Muralla: HUD LIFE bar"
 	python3 tools/compare_shot.py /tmp/zel_town_cga2.png ../docs/screenshots/town_cga2.png \
+		--box 96 14 448 144 --label "cga2 Muralla: the whole playfield"
+	python3 tools/compare_shot.py /tmp/zel_town_cga2.png ../docs/screenshots/town_cga2.png \
 		--box 152 187 72 8 --label "cga2 Muralla: HUD GOLD digits"
 	./zeliard --dir ../zeliard --video hgc --town 1 --town-scr 179 --town-col 209 \
 		--town-anim 3 0 --frames 1 --screenshot 1 /tmp/zel_town_hgc.png
 	python3 tools/compare_shot.py /tmp/zel_town_hgc.png ../docs/screenshots/town_hgc.png \
 		--box 208 254 200 8 --label "HGC Muralla: HUD LIFE bar"
+	python3 tools/compare_shot.py /tmp/zel_town_hgc.png ../docs/screenshots/town_hgc.png \
+		--box 136 56 448 192 --label "HGC Muralla: the whole playfield"
 	python3 tools/compare_shot.py /tmp/zel_town_hgc.png ../docs/screenshots/town_hgc.png \
 		--box 192 286 72 11 --label "HGC Muralla: HUD GOLD digits"
 	python3 tools/compare_shot.py /tmp/zel_town_hgc.png ../docs/screenshots/town_hgc.png \
@@ -844,6 +849,8 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 		--town-anim 3 0 --frames 1 --screenshot 1 /tmp/zel_town_tandy.png
 	python3 tools/compare_shot.py /tmp/zel_town_tandy.png ../docs/screenshots/town_tandy.png \
 		--box 76 187 36 8 --label "Tandy Muralla: HUD GOLD digits"
+	python3 tools/compare_shot.py /tmp/zel_town_tandy.png ../docs/screenshots/town_tandy.png \
+		--box 48 14 224 144 --label "Tandy Muralla: the whole playfield"
 	python3 tools/compare_shot.py /tmp/zel_town_tandy.png ../docs/screenshots/town_tandy.png \
 		--box 152 187 30 8 --label "Tandy Muralla: HUD ALMAS digits"
 	# and the gd decoders themselves against tools/grp2png.py's, the reference
