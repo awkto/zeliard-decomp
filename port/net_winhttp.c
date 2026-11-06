@@ -79,12 +79,15 @@ static int perform(const wchar_t *method, const char *url, const NetAuth *au,
                              uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
     if (!req) { err = GetLastError(); step = "request"; goto done; }
 
+    /* each append is guarded: once hl reaches sizeof h, sizeof h - hl would wrap */
     char h[900]; int hl = 0;
-    if (au && au->key && *au->key)     hl += snprintf(h + hl, sizeof h - hl, "X-Client-Id: %s\r\n", au->key);
-    if (au && au->token && *au->token) hl += snprintf(h + hl, sizeof h - hl, "Authorization: Bearer %s\r\n", au->token);
-    if (has_body) hl += snprintf(h + hl, sizeof h - hl,
-                                 "X-Save-Modified: %lld\r\nContent-Type: application/octet-stream\r\n", modified);
-    if (hl >= (int)sizeof h) { snprintf(r->error, sizeof r->error, "request headers too long"); goto done; }
+#define HDR(...) do { if (hl >= 0 && hl < (int)sizeof h) { \
+        int k_ = snprintf(h + hl, sizeof h - (size_t)hl, __VA_ARGS__); hl = k_ < 0 ? -1 : hl + k_; } } while (0)
+    if (au && au->key && *au->key)     HDR("X-Client-Id: %s\r\n", au->key);
+    if (au && au->token && *au->token) HDR("Authorization: Bearer %s\r\n", au->token);
+    if (has_body) HDR("X-Save-Modified: %lld\r\nContent-Type: application/octet-stream\r\n", modified);
+#undef HDR
+    if (hl < 0 || hl >= (int)sizeof h) { snprintf(r->error, sizeof r->error, "request headers too long"); goto done; }
     if (hl) {
         wh = widen(h, NULL);
         if (!wh || !WinHttpAddRequestHeaders(req, wh, (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE)) {
