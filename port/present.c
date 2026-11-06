@@ -41,6 +41,17 @@ void present_content_rect(int filter, int win_w, int win_h,
                           int sw, int sh, int dw, int dh,
                           int *x, int *y, int *w, int *h)
 {
+    present_content_rect_ex(filter, win_w, win_h, sw, sh, dw, dh, 0, x, y, w, h);
+}
+
+static int g_top;
+
+void present_set_portrait_top(int on) { g_top = on != 0; }
+
+void present_content_rect_ex(int filter, int win_w, int win_h,
+                             int sw, int sh, int dw, int dh, int top,
+                             int *x, int *y, int *w, int *h)
+{
     int uw = (filter == FILTER_INTEGER) ? sw : dw;      /* the unit to scale/fit */
     int uh = (filter == FILTER_INTEGER) ? sh : dh;
     if (uw <= 0 || uh <= 0 || win_w <= 0 || win_h <= 0) {
@@ -62,7 +73,7 @@ void present_content_rect(int filter, int win_w, int win_h,
         ch = win_h; cw = win_h * uw / uh;           /* height-bound */
     }
     if (x) *x = (win_w - cw) / 2;
-    if (y) *y = (win_h - ch) / 2;
+    if (y) *y = (top && win_h > win_w) ? 0 : (win_h - ch) / 2;
     if (w) *w = cw;
     if (h) *h = ch;
 }
@@ -143,7 +154,7 @@ int present_render(SDL_Renderer *ren, SDL_Texture *src,
     int ow = 0, oh = 0;
     if (SDL_GetRendererOutputSize(ren, &ow, &oh) != 0) return -1;
     int x, y, w, h;
-    present_content_rect(filter, ow, oh, sw, sh, dw, dh, &x, &y, &w, &h);
+    present_content_rect_ex(filter, ow, oh, sw, sh, dw, dh, g_top, &x, &y, &w, &h);
     if (w <= 0 || h <= 0) return -1;
     SDL_Rect dst = { x, y, w, h };
 

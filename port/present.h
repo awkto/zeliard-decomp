@@ -40,6 +40,15 @@ void present_content_rect(int filter, int win_w, int win_h,
                           int sw, int sh, int dw, int dh,
                           int *x, int *y, int *w, int *h);
 
+/* The same, but with `top` set a window taller than wide puts the picture at
+ * the top edge instead of the middle, which leaves the free space below it for
+ * the touch controls (#54).  present_set_portrait_top() makes present_render()
+ * use that. */
+void present_content_rect_ex(int filter, int win_w, int win_h,
+                             int sw, int sh, int dw, int dh, int top,
+                             int *x, int *y, int *w, int *h);
+void present_set_portrait_top(int on);
+
 /* The integer pre-scale factor sharp-bilinear uses: floor of the scale from a
  * sw x sh source to the cw x ch content rectangle, at least 1. */
 int  present_prescale(int cw, int ch, int sw, int sh);

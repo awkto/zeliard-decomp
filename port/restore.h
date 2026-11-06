@@ -51,6 +51,10 @@ typedef struct Restore {
 void restore_open(Restore *r);
 /* one key to the dialog.  RS_CLOSED afterwards = cancelled or accepted (`apply`). */
 void restore_key(Restore *r, Shell *sh, int key, char ch);
+/* touch: the file row (0..4) under a point of the 320x200 frame, or -1; a tap
+ * selects/fills a row, a second tap on it accepts, any tap clears "Not Found" */
+int  restore_row_at(const Restore *r, int fx, int fy);
+void restore_tap(Restore *r, Shell *sh, int fx, int fy);
 /* draw the dialog over `fb` (the frozen frame the engine last drew) */
 void restore_draw(const Restore *r, const Shell *sh, uint8_t *fb);
 /* the accepted name -> the engine: loads STDPLY.BIN / NAME.USR over the player

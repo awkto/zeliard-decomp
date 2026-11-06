@@ -175,6 +175,29 @@ void restore_key(Restore *r, Shell *sh, int key, char ch)
     }
 }
 
+/* touch (#54): the file list is the 5 rows at y 0x3B + 10 i, right of the divider (x 204..268) */
+int restore_row_at(const Restore *r, int fx, int fy)
+{
+    if (r->state != RS_PICK || fx < 204 || fx >= 268 || fy < 0x3B) return -1;
+    int i = (fy - 0x3B) / 10;
+    return i < 5 && r->top + i < r->nfiles ? i : -1;
+}
+
+/* a tap in the 320x200 frame: on a file it highlights it and copies the name
+ * into the box (Space); a second tap on the same one accepts it (Enter) */
+void restore_tap(Restore *r, Shell *sh, int fx, int fy)
+{
+    if (r->state == RS_NOTFOUND) { restore_key(r, sh, RK_TAKE, 0); return; }
+    int row = restore_row_at(r, fx, fy);
+    if (row < 0) return;
+    int idx = r->top + row;
+    const char *f = r->files[idx];
+    size_t n = strlen(f);
+    int same = r->sel == idx && n <= 8 && memcmp(r->name, f, n) == 0 && (n == 8 || r->name[n] == BLANK);
+    r->sel = idx;
+    restore_key(r, sh, same ? RK_ACCEPT : RK_TAKE, 0);
+}
+
 void restore_draw(const Restore *r, const Shell *sh, uint8_t *fb)
 {
     const TextFont *f = &sh->tfont;
