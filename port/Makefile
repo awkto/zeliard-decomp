@@ -67,7 +67,7 @@ zeliard: main.o trace.o $(CORE) $(SDL_ONLY) $(SYNC_OBJ) syncdlg.o $(NET_OBJ)
 # live here so the objects and the test builds stay untouched.  ASYNCIFY lets
 # the blocking frame loops in main.c yield to the browser (emscripten_sleep);
 # IDBFS is how the saves/states/zeliard.ini under SDL_GetPrefPath persist.
-WEB_ASYNC ?= -sASYNCIFY
+WEB_ASYNC ?= -sASYNCIFY -sASYNCIFY_ONLY=@../packaging/web/asyncify_only.txt
 WEB_LDFLAGS = -sUSE_SDL=2 $(WEB_ASYNC) -sASYNCIFY_STACK_SIZE=262144 -sSTACK_SIZE=2097152 \
               -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=67108864 -lidbfs.js \
               -sINVOKE_RUN=0 -sEXIT_RUNTIME=0 -sFORCE_FILESYSTEM=1 \
