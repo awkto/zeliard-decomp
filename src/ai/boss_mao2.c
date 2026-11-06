@@ -60,11 +60,13 @@
  *   1 (A8E5, sound 0x3A): type 0x24 (class 4, immune); starts at (col + 5 if
  *     facing right else col, row + 4); ages 0..2 fall one row per frame,
  *     ages 0..8 move one column per frame in the facing direction, frame 0
- *     then (age&3)+1; gone at age 11 (A7B8..A852).
+ *     below age 3 (A805 cmp ah,3 / jc), then (age&3)+1; gone at age 11 (A7B8..A852).
  *   2 (A90E): type 0x25 (class 5, immune); starts at (col + 8 - 1 if facing
  *     right else col - 1, row + 4); falls one row per frame for 3 frames
- *     (frame 2) then flies horizontally 1 column per frame (frame 0) until
- *     its column leaves 0x10..0x38 (A85B..A8E4).
+ *     (frame 2) while it already moves 1 column per frame (A86F: the column
+ *     step is not gated by age), frame 0 after, until its column leaves
+ *     0x10..0x38 -- tested after the part is drawn, so the last step still
+ *     shows (A8D0..A8DF).
  *
  * Start: nothing is drawn until [FF21] != 0 (A3A0; the byte is not written
  * by fight.bin — its only other reference is the enddemo overlay), then one

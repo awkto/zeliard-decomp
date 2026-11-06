@@ -104,21 +104,25 @@ static void mao2_shots(Game *g)
     if (ST(S_S1ON)) {                                   /* A7B8 */
         uint8_t age = ST(S_S1AGE);
         if (age < 3) ST(S_S1ROW) = (uint8_t)((ST(S_S1ROW) + 1) & 0x3F);
-        if (age < 9) S1COL = (uint16_t)(S1COL + (ST(S_S1DIR) ? 1 : -1));
+        if (age < 9) S1COL = (uint8_t)(S1COL + (ST(S_S1DIR) ? 1 : -1));   /* ac29 is a byte */
+        /* A805..A815: frame 0 below age 3 (`cmp ah,3 / jc`), then (age & 3) + 1.
+         * A7EC: vec 27 CF just skips the part; the age below ticks anyway (A83F). */
         part_facing(g, S1COL, ST(S_S1ROW), 0x24,
-                    (uint8_t)(age == 0 ? 0 : (age & 3) + 1), (uint8_t)(ST(S_S1DIR) ? 0x80 : 0));
+                    (uint8_t)(age < 3 ? 0 : (age & 3) + 1), (uint8_t)(ST(S_S1DIR) ? 0x80 : 0));
         if (++ST(S_S1AGE) >= 11) ST(S_S1ON) = 0;
     }
     if (ST(S_S2ON)) {                                   /* A85B */
+        /* A862: the first 3 frames also fall one row (frame 2); the column steps
+         * EVERY frame (A86F..A87F), then vec 27 (A886: CF skips the part, A8C8),
+         * and only after the draw the age ticks and the 0x10..0x38 test ends it
+         * (A8CC..A8DF): the last step is still drawn. */
         uint8_t age = ST(S_S2AGE);
-        uint8_t frame;
+        uint8_t frame = 0;
         if (age < 3) { ST(S_S2ROW) = (uint8_t)((ST(S_S2ROW) + 1) & 0x3F); frame = 2; }
-        else { S2COL = (uint16_t)(S2COL + (ST(S_S2DIR) ? 1 : -1)); frame = 0; }
-        if (S2COL < 0x10 || S2COL > 0x38) ST(S_S2ON) = 0;
-        else {
-            part_facing(g, S2COL, ST(S_S2ROW), 0x25, frame, (uint8_t)(ST(S_S2DIR) ? 0x80 : 0));
-            ST(S_S2AGE)++;
-        }
+        S2COL = (uint8_t)(S2COL + (ST(S_S2DIR) ? 1 : -1));       /* ac2e is a byte */
+        part_facing(g, S2COL, ST(S_S2ROW), 0x25, frame, (uint8_t)(ST(S_S2DIR) ? 0x80 : 0));
+        ST(S_S2AGE)++;
+        if ((uint8_t)S2COL < 0x10 || (uint8_t)S2COL >= 0x39) ST(S_S2ON) = 0;
     }
     boss_parts_end(g);
 }

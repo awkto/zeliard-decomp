@@ -362,8 +362,8 @@ projectile 2), flickers out, vanishes until the projectile is gone.  Hurtable on
 cells/frame, columns 0x10..0x35), jumps over obstacles (14-frame 6-up/16-forward/6-down arc
 `A666`), throws (1/16 per frame at range); **regenerates 80 HP every 32 frames (sound 0x3C)
 and returns to phase 1 at 800**.  Projectiles are contact parts (80, immune, unblockable):
-1 = thrown object falling 3 rows and flying 9 cells, gone after 11 frames; 2 = bolt falling
-3 rows then flying across the room 1 cell/frame.  Damage: sword ×½, everything else ×¼
+1 = thrown object (frame 0 for ages 0-2, then (age&3)+1) falling 3 rows and flying 9 cells, gone after 11 frames; 2 = bolt falling
+3 rows (it steps 1 column a frame from the start) across the room, drawn up to the frame its column leaves 0x10..0x38 (A8D0).  Damage: sword ×½, everything else ×¼
 (sound 0x39).  Death: 40 frames, poses `ABF9`, sound 0x23 every 8th; 10000 EXP, no gold.
 
 ## 4. Corrections to FIGHT.md (not applied there)
