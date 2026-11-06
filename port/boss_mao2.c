@@ -183,13 +183,15 @@ static void mao2_teleport(Game *g)
     g->boss.row = 9;
 }
 
-/* AB88: +80 HP every 32 frames; back to 800 resumes phase 1 at the flicker-out */
+/* AB88: +80 HP every 32 frames.  Only a sum PAST 800 (AB95..AB9D: `cmp 0x320,hp+0x50 / jnc`)
+ * clamps to 800 and resumes phase 1 at the flicker-out; landing exactly on 800 just stores it
+ * and stays in phase 2 (AC32 untouched, AC22 unchanged), after which AB88 returns at once (#114). */
 static void mao2_regenerate(Game *g)
 {
     Boss *b = &g->boss;
     if (b->hp >= b->hp0) return;
     unsigned hp = (unsigned)b->hp + 80;
-    if (hp >= b->hp0) {
+    if (hp > b->hp0) {
         hp = b->hp0;
         ST(S_PHASE2) = 0; ST(S_STEP) = 10; ST(S_TELE) = 0xFF; ST(S_TYPEBITS) = 0x60;
     }

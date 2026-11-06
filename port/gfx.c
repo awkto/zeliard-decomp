@@ -149,7 +149,7 @@ int gfx_load_hero(HeroGfx *h, const char *dir)
      * f55/f81) and one at x+0 crouching (sword_kinds f62), which is
      * {00, 80, 02} -- plane A low byte clear, plane B 0x8002 (#94).  Rounding
      * the count down instead cost two pixels of Garland's sleeve per swing. */
-    static const uint8_t ARENA_TAIL[3] = {0x00, 0x80, 0x02};   /* arena:7FF0.. */
+    static const uint8_t ARENA_TAIL[3] = {0x20, 0x44, 0x01};   /* arena:7FF0.. */
     int n = (int)((len - 0x333 + 31) / 32);
     if (n > 256) n = 256;
     for (int i = 0; i < n; i++) {

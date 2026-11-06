@@ -57,8 +57,10 @@ void hero_die(Game *g)
 {
     g->deaths++;
     if (!g->jashiin_defeated) {                                         /* 99AD */
-        unsigned bonus = (unsigned)(2 * g->level) >= 127 ? 0 : 127 - 2 * (unsigned)g->level;
-        exp_add(g, bonus);                                              /* 99C6: exp += 127 - 2*level */
+        /* 99BB..99C6: al = 0x7F - 2*level in 8 bits (add al,al / neg al / add al,7F), ah = 0, so from
+         * level 64 on it wraps: LV99 gives 0xB9 = 185, not 0 (#114) */
+        unsigned bonus = (uint8_t)(0x7F - (uint8_t)(2 * g->level));
+        exp_add(g, bonus);                                              /* 99C6 -> 9715 */
         g->gold = 0;                                                    /* 99C9: the 24-bit GOLD is lost */
         g->almas >>= 1;                                                 /* 99D4: ALMAS halved */
     } else g->town_map = 0x80;                                          /* 99B4: the ending goes to the castle */
