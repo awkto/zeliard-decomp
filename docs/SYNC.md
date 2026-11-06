@@ -344,7 +344,8 @@ accepted.
    * Exit codes: 0 ok, 1 error, 3 unlinked key (decision needed), 4 offline, 5 built
      without libcurl, 6 no bundle on the server.
    * libcurl is optional (pkg-config); without it `--sync` says "built without network
-     support".  The test round trip uses a local `saves-api.py`, not `docker run`, and a
+     support".  The Windows build links `net_winhttp.c` (WinHTTP, `make WINHTTP=1`, #57).
+     The test round trip uses a local `saves-api.py`, not `docker run`, and a
      generated fixture bundle rather than a capture from the web build.
 2. **Lifecycle hooks + ask-before-link UI.** **DONE (#55 step 2, see port/README.md "Save sync").** Pull before the first town load
    (before `shell_init` reads the dir, so nothing races), push after each
