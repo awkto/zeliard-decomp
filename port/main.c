@@ -141,6 +141,7 @@ typedef struct {
     int      esc_edge;                  /* Esc was pressed; what that means is the caller's */
     char     title_base[900];           /* the engine's own title, re-applied when pause flips */
 #endif
+    int yield_test;                     /* web only: --yield-test yields to the browser at every present, even headless (ASYNCIFY coverage under node) */
 } App;
 
 /* STICK's F1 / F2 hotkeys (docs/SERVICES.md 01E3).  Kept outside the SDL block
@@ -204,6 +205,11 @@ static void osd_draw(App *a)
  * display filter and present it.  The content shape is the aspect-corrected
  * display size, or the framebuffer itself under --aspect 1:1; present.c owns
  * the sampling.  Presentation only: `make verify` never reaches this path. */
+#ifdef __EMSCRIPTEN__
+#define YIELD_TEST(a) do { if ((a)->yield_test) emscripten_sleep(0); } while (0)
+#else
+#define YIELD_TEST(a) do { (void)(a); } while (0)
+#endif
 static void present_frame(App *a, int sw, int sh)
 {
     int dw = sw, dh = sh;
@@ -1027,6 +1033,7 @@ static void trace_wait(Game *g, Town *t, const char *site) { trace_boundary_at(a
 static void cutscene_present(Cutscene *c)
 {
     App *a = c->user;
+    YIELD_TEST(a);
     static uint8_t rgb[FB_W * FB_H * 3];
     audio_advance_ms(CS_FRAME_MS);
     a->restore_req = 0;                 /* no F7 in a cutscene */
@@ -1111,6 +1118,7 @@ static int run_cutscenes(App *a, const char *dir)
 static void present(Game *g)
 {
     App *a = app_of(g->user);
+    YIELD_TEST(a);
     a->sk_combo = 0;                    /* a stale save/load combo must not suppress input */
     statekeys_osd_tick(&a->sk);
     audio_advance_ms(a->frame_ms);
@@ -1187,6 +1195,7 @@ static void present(Game *g)
 static void town_present(Town *t)
 {
     App *a = app_of(t->user);
+    YIELD_TEST(a);
     a->sk_combo = 0;                    /* a stale save/load combo must not suppress input */
     statekeys_osd_tick(&a->sk);
     audio_advance_ms(a->frame_ms);
@@ -1429,6 +1438,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--intro-act") && i + 1 < argc) { a.intro_act = atoi(argv[++i]); a.intro = 1; a.intro_only = 1; }
         else if (!strcmp(argv[i], "--ending")) { a.ending = 1; a.intro = 1; a.intro_only = 1; }
         else if (!strcmp(argv[i], "--cutscene-frames") && i + 1 < argc) a.cs_frames = (unsigned)atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--yield-test")) a.yield_test = 1;
         else if (!strcmp(argv[i], "--verbose") || !strcmp(argv[i], "-v")) a.verbose = 1;
         else if (!strcmp(argv[i], "--trace") && i + 1 < argc) { a.trace_dir = argv[++i]; a.headless = 1; explicit_start = 1; }
         else if (!strcmp(argv[i], "--state-save-at") && i + 2 < argc) { a.state_save_at = (unsigned)atoi(argv[++i]); a.state_save = argv[++i]; explicit_start = 1; }
