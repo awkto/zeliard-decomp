@@ -1,3 +1,13 @@
 <resources>
     <string name="app_name">Zeliard (C port)</string>
+    <string name="picker_first">Zeliard needs its original game files (ZELRES1.SAR, ZELRES2.SAR, ZELRES3.SAR, GAME.BIN and the rest). They are copyrighted and not included with this app.\n\nPick the folder that holds them, or a .zip of that folder. They are copied into the app; file names may be in any case.</string>
+    <string name="picker_repick">Choose the game files again. New files replace the old ones; your saves are kept.</string>
+    <string name="picker_folder">Choose game folder</string>
+    <string name="picker_zip">Choose .zip file</string>
+    <string name="picker_play">Play with the current files</string>
+    <string name="picker_copying">Copying game files...</string>
+    <string name="picker_invalid">Those files do not look like Zeliard: ZELRES1.SAR, ZELRES2.SAR and ZELRES3.SAR were not found.</string>
+    <string name="picker_failed">Could not read the game files.</string>
+    <string name="shortcut_pick_short">Game files</string>
+    <string name="shortcut_pick_long">Choose game files</string>
 </resources>

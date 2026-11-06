@@ -1365,7 +1365,8 @@ static void no_game_files(const char *cfgpath, const char *datadir, int headless
         "They are copyrighted and are not included with this app.  Copy the\n"
         "original files (ZELRES1.SAR, ZELRES2.SAR, ZELRES3.SAR, GAME.BIN, ...)\n"
         "into this folder on the phone (a file manager or 'adb push'):\n\n    %s\n\n"
-        "then start the app again.", datadir[0] ? datadir : "Android/data/com.awkto.zeliard.port/files/game");
+        "or long-press the app icon and choose \"Choose game files\" to pick\n"
+        "the folder or a .zip.  Then start the app again.", datadir[0] ? datadir : "Android/data/com.awkto.zeliard.port/files/game");
 #endif
     fprintf(stderr, "%s\n", msg);
 #ifdef HAVE_SDL
