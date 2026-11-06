@@ -210,6 +210,8 @@ int shell_enter_cavern(Shell *s, int sys_map, int col, int row, int face_left,
 {
     Game *g = &s->g;
     int slot = s->cur ^ 1;
+    /* the walk-in's HUD still has the place of the screen the hero came from (#117) */
+    const uint8_t *left_place = s->in_town ? town_place_record(&s->tmap) : map_place_record(g->map);
     if (map_load_system(&s->maps[slot], s->dir, sys_map)) {
         fprintf(stderr, "[town] cannot load cavern map %d\n", sys_map);
         return 0;
@@ -231,11 +233,17 @@ int shell_enter_cavern(Shell *s, int sys_map, int col, int row, int face_left,
     }
     if (from_cave_record) row = row - 10 + s->maps[slot].row_bias;       /* 7005 / 7D2D */
     game_place(g, col, row, face_left);
-    /* 7D61 -> 6042 .. 6266: with [49] set the hero dies on the restart's first pass, before
-     * the walk-in (hero_entering stays 0 in the oracle's first frame; #113) */
-    if (g->jashiin_defeated) game_force_death_check(g);                 /* 6266 -> 98FC */
-    else if (g->boss_room) game_boss_room_intro(g);                     /* 61A8 */
-    else game_start_walk_in(g, face_left);                              /* 7C6E */
+    /* 7D61 -> 6042 .. 6266: with [49] set the hero dies on the restart's first pass -- after the
+     * walk-in (the oracle's walk pictures, cave_forced_death f4; hero_entering is 0 in its first
+     * frame, #113), whose HUD still has his LIFE (#117) */
+    if (g->jashiin_defeated && g->boss_room) game_force_death_check(g);
+    else {
+        if (g->boss_room) game_boss_room_intro(g);                      /* 61A8 */
+        else game_start_walk_in(g, face_left);                          /* 7C6E */
+        if (g->jashiin_defeated) game_force_death_check(g);             /* 6266 -> 98FC */
+    }
+    g->walk_place = left_place;
+    g->walk_variant = 0;                                                /* 7A6F: xor al,al; [301E] */
     g->cur_map = (uint8_t)sys_map;
     s->in_town = 0;
     s->transitions++;
@@ -251,6 +259,11 @@ static int on_door(Game *g, const Door *d)
     Shell *s = g->user;
     if (d->dest_row == 0xFF)                                    /* 7B76: dest_map | 0x80 = a town */
     {
+        if (!(d->dflags & 0x80)) {                              /* 7C11: not the Tear's exit door */
+            g->walk_place = map_place_record(g->map);           /* the HUD is still the cavern's */
+            game_start_walk_in(g, (d->letter & 0x40) != 0);     /* 7C6E */
+            game_run_walk_in(g);
+        }
         if (!shell_enter_town(g, d->dest_map & 0x7F, d->dest_col, 0)) return 0;
         /* fight.bin -> town.bin [6000] = 6026 ([7C43] = 0): 6084..6092 arm the
          * 61B4 walk-in when the town is underground (town_flags bit 0) */
@@ -271,6 +284,7 @@ static int on_door(Game *g, const Door *d)
     shell_load_enemy_banks(s, &s->maps[slot]);
     cavern_score_idx(g, &s->maps[slot]);
     uint8_t keep_cnt = g->obj_index;
+    g->walk_place = map_place_record(g->map);                   /* still on screen during the walk-in (#117) */
     game_enter(g, &s->maps[slot], &s->tiles[slot], d->dest_col, d->dest_row, (d->letter & 0x40) != 0);
     /* a [E6] room (MP90) goes 6179 -> 619E -> 61A8, past 623D/6263's 9659: the enemy count in
      * [FF4A] is still the map just left (jashiin_fight frame 27) */
@@ -283,10 +297,10 @@ static int on_door(Game *g, const Door *d)
     if (d->dflags & 0x80) {                                     /* 7C18 */
         LOG(s, "[tear] a Tear of Esmesanti (%u of 9)\n", (unsigned)(g->page[0xA0] + 1));
         tear_cutscene(s);
-    } else if (g->boss_room)
-        game_boss_room_intro(g);                                /* 61A8 */
-    else
+    } else {
         game_start_walk_in(g, (d->letter & 0x40) != 0);         /* 7C6E */
+        if (g->boss_room) g->walk_then_intro = 1;               /* the restart's 6179 -> 61A8 comes after it */
+    }
     /* every branch reaches 7CF4 and ends in 7D61 `jmp 6042`, the loop
      * restart: 6049..6053 zero 9F20..9F22 (the counter rise() bumps on the
      * very Up that took the door) and 628A both press edges (#75:
@@ -325,6 +339,7 @@ int shell_init(Shell *s, const char *dir_hint, int map_idx)
      * frame, the strip above the playfield and the grey HUD panel once. */
     if (gfx_load_screen_frame(&s->frame, s->dir)) fprintf(stderr, "note: no mole.bin (no screen frame)\n");
     if (gfx_load_encounter(&s->encnt, s->dir)) fprintf(stderr, "note: no encnt.grp (blank encounter card)\n");
+    if (gfx_load_cavemouth(&s->mouth, s->dir)) fprintf(stderr, "note: no roka.grp (black walk-in backdrop)\n");
     /* rokademo's hero cells + gfmcga's sword/sparkle art + GMMCGA's Tear icon
      * + GAME.BIN's nine slot positions (docs/CUTSCENES.md §5) */
     tear_art_load(&s->tear_art, s->dir);
@@ -333,7 +348,7 @@ int shell_init(Shell *s, const char *dir_hint, int map_idx)
     game_init(g, &s->maps[0], &s->tiles[0]);
     g->user = s; g->present = s->present; g->frame_end = s->frame_end; g->on_door = on_door; g->on_town = shell_enter_town;
     g->font = &s->tfont; g->pics = &s->pics;                            /* select.bin needs both */
-    g->screen = &s->frame; g->encnt = &s->encnt;
+    g->screen = &s->frame; g->encnt = &s->encnt; g->mouth = &s->mouth;
     g->post_boss = post_boss_banks;
     /* STDPLY.BIN is the fresh player record: HP, the training sword and the
      * per-town shop stock masks (docs/TOWN.md §7). */

@@ -76,7 +76,7 @@ new file mode 100644
 index 0000000..052d3f5
 --- /dev/null
 +++ b/src/misc/zel_oracle.cpp
-@@ -0,0 +1,509 @@
+@@ -0,0 +1,517 @@
 +/*
 + * zel_oracle.cpp -- Zeliard differential-test oracle (decomp-zel docs/HARNESS.md).
 + *
@@ -92,7 +92,7 @@ index 0000000..052d3f5
 + *   ORACLE_OUT        output directory (frames.jsonl, base.bin, frame_NNNNN.png, oracle.log)
 + *   ORACLE_SCRIPT     input script in the port's --script language, or a path to a file holding it
 + *   ORACLE_LOAD       "1" = F7-restore the only *.USR in the game dir before tracing
-+ *   ORACLE_PNG_EVERY  K: write frame_NNNNN.png every K trace frames (0 = never)
++ *   ORACLE_PNG_EVERY  K: write frame_NNNNN.png every K trace frames (0 = never); also walk_NNNNN_KKK.png for the walk-in (7C6E)
 + *   ORACLE_SETTLE     town boundaries to wait after the intro before F7 (default 20)
 + *   ORACLE_MAX_MS     emulated-ms watchdog for the whole run (default 600000)
 + *   ORACLE_STALL_MS   while tracing, give up after this many emulated ms without any boundary (default 120000)
@@ -490,6 +490,14 @@ index 0000000..052d3f5
 +        mem_writeb(SegPhys(ds) + 0xFF1A, 0);
 +        reg_eip += 5;
 +        return;
++    }
++    /* the walk-in (fight.bin 7C6E) has no frame boundary: its 26 passes are not trace frames.  With PNGs on,
++     * the picture on screen while each pass waits (7C95 / 7CD4: the hero was just drawn, 7F82 is next) goes to
++     * walk_<last boundary + 1>_<k>.png, k counting up over the run; the port writes the same names (#117) */
++    if (state == ST_TRACE && png_every && (ip == 0x7C95 || ip == 0x7CD4) && p[0] == 0xE8) {
++        static unsigned walk_k = 0;
++        char name[64]; snprintf(name, sizeof name, "/walk_%05lu_%03u.png", frame, walk_k++);
++        write_png(outdir + name);
 +    }
 +    if (ip == 0x0918) dbg_0918++;
 +    if (ip == 0x0918 && state == ST_TRACE && memcmp(p, RNG_ENTRY, 4) == 0) {

@@ -133,6 +133,11 @@ scenario must not move that list or copy from it (Space) -- the names differ.
   concatenated (frame `n` at offset `n*65536`).
 - `DIR/frame_NNNNN.png` (optional, every `--png-every K` frames): the 320x200 screen
   from VGA memory + DAC.
+- `DIR/walk_NNNNN_KKK.png` (with `--png-every`, #117): the walk-in (fight.bin `7C6E`, 26 passes at every
+  cave mouth, door and restart) has no boundary, so its pictures are not frames.  The oracle writes the
+  screen as each pass waits (`7C95` / `7CD4`: the hero was just drawn, `7F82` is next) under the
+  number of the next boundary and a running index K; the port writes the same names from its
+  walk-in presents.  `pixdiff.py` compares them like frames (a walk on one side only fails).
 
 - **The exit record (#81).** When the game leaves for DOS (the Sage's "No", kenjpro A934
   `jmp far [FF00]` -> INT 21h AH=4Ch, AL 0) the oracle's hook in `DOS_Terminate` writes one
@@ -450,6 +455,12 @@ only in frames A-B (or one frame A), before judging; the reason after ` -- ` (or
 dash) is mandatory and the line should cite the filed issue. The first differing frame's
 oracle|port|diff image goes to `DIR/NAME/pixdiff/`. Passing scenarios have their PNGs
 deleted (`--png` keeps them); failing ones keep them.
+**Walk-in pictures (#117).** The cave-mouth walk-in (`7C6E`: the backdrop `gfmcga [301E]` paints from
+roka.grp, remapped by the door letter & 7, the hero stepping 8 px a pass with a black trail, the HUD still
+the map just left) is diffed the same way from the `walk_*.png` files above; `cave_door` (town mouth and a
+cavern door), `key_door` / `gate_walking` (door to a town), `cave_forced_death` and `jashiin_kill` (the
+door into the [E6] room) cover it.  An oracle built before #117 writes none: rebuild it
+(`tools/harness/build-oracle.sh`).
 **Scenarios that end in a cutscene (`# ends: stall`).**  The oracle writes a boundary only at the
 sites of section 1 (and the ending's `end:wait`, §6), so a script that ends in a cutscene without
 sites (none is left in the library since #113: the ending has them) leaves it

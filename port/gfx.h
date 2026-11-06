@@ -119,6 +119,21 @@ int gfx_load_screen_frame(ScreenFrame *f, const char *dir);
 typedef struct EncounterCard { uint8_t px[ENCNT_W * ENCNT_H]; int loaded; } EncounterCard;
 int gfx_load_encounter(EncounterCard *c, const char *dir);
 
+/* roka.grp (ZELRES3[52]; ZELRES2[57] is a byte-identical copy) -- the cave-mouth
+ * backdrop fight.bin shows while the hero walks in (7C6E).  7A4B / 7BD0 load the
+ * 124-cell bank to arena:8000 and convert it ([2044]); gfmcga [301E] (4614) then
+ * paints a 28 x 18 cell picture from the 504-byte map at gfmcga 473B over the
+ * whole playfield (224 x 144 at (48,14)), every cell through the colour remap
+ * [46D4 + 2*AL] (AL = the door letter & 7, 0 from a town's cave mouth).  `px`
+ * holds the picture before the remap (6-bit pair indices, as Cell8). */
+#define MOUTH_W 224
+#define MOUTH_H 144
+typedef struct CaveMouth { uint8_t px[MOUTH_W * MOUTH_H]; int loaded; } CaveMouth;
+int gfx_load_cavemouth(CaveMouth *m, const char *dir);
+/* the remap 46DE..4738 gives one 3-bit PC-88 colour; variants 0..4 are real (the
+ * table at 46D4 holds five pointers) */
+uint8_t gfx_mouth_remap(unsigned variant, uint8_t px6);
+
 /* font.grp (ZELRES1[12]) section 2: the 6x7 HUD digit glyphs (docs/VIDEO_DRIVERS.md
  * [F502]).  glyph[d][row] = bits 5..0, left to right. */
 typedef struct { uint8_t glyph[10][7]; int loaded; } DigitFont;

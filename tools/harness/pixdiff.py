@@ -37,6 +37,15 @@ def load_rules(path):
     return rules
 
 
+def walk_frames(d):
+    out = {}
+    for name in os.listdir(d):
+        m = re.fullmatch(r"walk_(\d+)_(\d+)\.png", name)
+        if m:
+            out[(int(m.group(1)), int(m.group(2)))] = os.path.join(d, name)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("oracle_dir")
@@ -47,6 +56,14 @@ def main():
     rules = load_rules(a.scenario) if a.scenario else []
     op, pp = tracediff.png_frames(a.oracle_dir), tracediff.png_frames(a.port_dir)
     common = sorted(set(op) & set(pp))
+    # the walk-in (fight.bin 7C6E) has no frame boundary: both sides write walk_<next boundary>_<k>.png
+    # (#117), keyed here by (frame, k) and compared like frames; one side having more is a difference
+    wo, wp = walk_frames(a.oracle_dir), walk_frames(a.port_dir)
+    walk_missing = sorted(set(wo) ^ set(wp))
+    for k in set(wo) & set(wp):
+        op[k], pp[k] = wo[k], wp[k]
+        common.append(k)
+    common.sort(key=lambda k: k if isinstance(k, tuple) else (k, -1))
     if not common:
         print("PIXDIFF compared=0")
         print("pixdiff: no frame has a PNG on both sides (oracle %d, port %d)" % (len(op), len(pp)))
@@ -59,7 +76,7 @@ def main():
             o = o.resize(p.size, Image.NEAREST)
         d = ImageChops.difference(o, p).convert("L").point(lambda v: 255 if v else 0)
         for x0, y0, x1, y1, fa, fb, _ in rules:
-            if fa <= f <= fb:
+            if fa <= (f[0] if isinstance(f, tuple) else f) <= fb:
                 box = (x0, y0, x1 + 1, y1 + 1)
                 allowed += sum(1 for v in d.crop(box).getdata() if v)
                 d.paste(0, box)
@@ -73,14 +90,35 @@ def main():
         if first is None:
             first = f
             fbb = bb
+    if first is None and walk_missing:
+        print("PIXDIFF compared=%d diff_frames=%d first=%d,%d bbox=0,0,0,0 npix=0 allowed=%d"
+              % (len(common), len(walk_missing), walk_missing[0][0], walk_missing[0][1], allowed))
+        print("pixdiff: %d walk-in picture(s) on only one side (oracle %d, port %d), first %s"
+              % (len(walk_missing), len(wo), len(wp), walk_missing[0]))
+        return 1
     if first is None:
         print("PIXDIFF compared=%d diff_frames=0 allowed=%d" % (len(common), allowed))
         print("pixdiff: %d frames identical (%d allowed pixels ignored)" % (len(common), allowed))
         return 0
-    print("PIXDIFF compared=%d diff_frames=%d first=%d bbox=%d,%d,%d,%d npix=%d allowed=%d"
-          % (len(common), nfr, first, bbox[0], bbox[1], bbox[2] - 1, bbox[3] - 1, npix, allowed))
-    print("pixdiff: first diverging frame %d (bbox %s of that frame); images:" % (first, fbb))
-    tracediff.write_pngs(a.oracle_dir, a.port_dir, first, 1, a.out or os.path.join(a.port_dir, "pixdiff"))
+    nfr += len(walk_missing)
+    fdesc = "%d,%d" % first if isinstance(first, tuple) else "%d" % first
+    print("PIXDIFF compared=%d diff_frames=%d first=%s bbox=%d,%d,%d,%d npix=%d allowed=%d"
+          % (len(common), nfr, fdesc, bbox[0], bbox[1], bbox[2] - 1, bbox[3] - 1, npix, allowed))
+    print("pixdiff: first diverging %s %s (bbox %s of that frame); images:"
+          % ("walk-in picture" if isinstance(first, tuple) else "frame", fdesc, fbb))
+    out = a.out or os.path.join(a.port_dir, "pixdiff")
+    if isinstance(first, tuple):
+        os.makedirs(out, exist_ok=True)
+        o = Image.open(op[first]).convert("RGB"); p = Image.open(pp[first]).convert("RGB")
+        d = ImageChops.difference(o, p)
+        im = Image.new("RGB", (o.width * 3, o.height))
+        for i, x in enumerate((o, p, d)):
+            im.paste(x, (i * o.width, 0))
+        path = os.path.join(out, "walk_%05d_%03d.png" % first)
+        im.save(path)
+        print("  " + path)
+    else:
+        tracediff.write_pngs(a.oracle_dir, a.port_dir, first, 1, out)
     return 1
 
 

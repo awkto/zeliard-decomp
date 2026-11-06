@@ -411,6 +411,7 @@ static int door_check(Game *g)
     if (g->hero_dead) return 1;                                         /* 718C jumped to 98FC */
     g->page[0xC3] = (uint8_t)(d->letter & 0x40);                        /* 7B5F..7B64 */
     g->gf_frame = (uint8_t)(d->letter & 7);     /* 7B4D push (letter & 7) -> 7BBF/7BF5 gfmcga [301E] 4614: [4FFF] = AL */
+    g->walk_variant = g->gf_frame;
     if (g->on_door) g->on_door(g, d);
     return 1;
 }
@@ -1078,7 +1079,11 @@ static void death_begin(Game *g)
  * (the exit door of MPA0 re-enters it, #111). */
 void game_force_death_check(Game *g)
 {
-    if (g->jashiin_defeated) death_begin(g);
+    if (!g->jashiin_defeated) return;
+    /* the restart that reaches 6266 comes after the walk-in (7C6E -> 7CF4 -> 7D61 -> 6042): the
+     * hero walks the cave mouth in with his LIFE intact and dies on the first frame after (#117) */
+    if (g->walk_in) g->walk_then_die = 1;
+    else death_begin(g);
 }
 
 /* 0x9929..0x99A1  One dying frame per game_step: each pass runs 6F9B (one 717F
@@ -1134,9 +1139,12 @@ static void death_step(Game *g)
 void game_step(Game *g)
 {
     if (g->step_begin) g->step_begin(g);
+    /* the walk-in (7C6E, the door / cave-mouth code) runs before 7D61 restarts the loop at 6042,
+     * whose 6078 flashes the encounter card: the walk comes first (#117; the port ran the card's
+     * twelve frames over the start of the walk) */
+    if (g->walk_in) { walk_in_step(g); return; }                        /* 7C6E */
     if (g->encounter_frames) { encounter_step(g); return; }             /* 60E6 */
     if (g->hero_dead) { death_step(g); return; }                        /* 98FC's own loops */
-    if (g->walk_in) { walk_in_step(g); return; }                        /* 7C6E */
     if (g->boss_intro) {            /* 61BE: the [E6] walk-in loop is `call 6f9b` and nothing else -- no input,
                                      * no 62B5 crouch_release count (jashiin_fight f28).  The frame that follows
                                      * the E6 clear is 6247..624D: MPA0's first, again just 6f9b, then 9F26 = 0 */
@@ -1320,6 +1328,14 @@ void game_start_walk_in(Game *g, int face_left)
     if (face_left) g->hero_flags |= FACE_LEFT; else g->hero_flags &= (uint8_t)~FACE_LEFT;
     g->hero_entering = 0xFF;
 }
+static void walk_in_step(Game *g);
+/* a door to a town (7B76 `dest_row == FF`): 7C6E's 26 passes run in fight.bin before 7CFD hands over to
+ * town.bin (the oracle's walk pictures at key_door f65), so the caller has them played out now */
+void game_run_walk_in(Game *g)
+{
+    while (g->walk_in) walk_in_step(g);
+}
+
 static void walk_in_step(Game *g)
 {
     g->hero_anim++;                                                     /* 7C82 */
@@ -1332,5 +1348,7 @@ static void walk_in_step(Game *g)
         g->hero_anim = 0x80;                                            /* 7D36 */
         g->hero_scr_col = 0x0C;                                         /* 7D28 */
         g->hero_scr_row = g->map->row_bias; g->hero_home_row = g->map->row_bias;
+        if (g->walk_then_intro) { g->walk_then_intro = 0; game_boss_room_intro(g); }
+        if (g->walk_then_die) { g->walk_then_die = 0; death_begin(g); }
     }
 }

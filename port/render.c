@@ -102,17 +102,16 @@ static int hero_guard_frame(const Game *g, int base) { return base + shield_clas
  * `add bx,[4FE9]`): word [4F8C + 2*([FF36] & 3)].  The hit flash is 0 or 0xFF,
  * so a hit frame draws Garland with table 3 (4FC8, the yellow/blue/magenta
  * one enemies use for their own hit flash) instead of table 0. */
-static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
+static void draw_hero_at(uint8_t *fb, const Game *g, const HeroGfx *h, int hx, int hy, int entering)
 {
     if (g->hero_hidden) return;
     const uint8_t *pal = PAL2BPP[g->hero_hit_flash & 3];
-    int hx = PF_X + g->hero_scr_col * 8, hy = PF_Y + g->hero_scr_row * 8;
     int left = g->hero_flags & FACE_LEFT;
     int ovl = left ? 49 : 31;                           /* 61B9 / 6117 */
     int crouch_n = g->crouching ? 6 : 9, crouch_s = g->crouching ? 3 : 0;
 
     /* pass 1 (3ABE): behind the body */
-    if (!(g->hero_dead || g->on_ladder || g->hero_entering)) {
+    if (!(g->hero_dead || g->on_ladder || entering)) {
         int sh = shield_class(g);
         if (hero_anim_flag(g)) {                        /* 3ACF: the attack/cast overlays */
             /* facing right the shield arm is the far one and goes behind
@@ -131,7 +130,7 @@ static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
     }
     /* pass 2 (3B80): the body */
     int fr;
-    if (g->hero_entering) fr = 30;
+    if (entering) fr = 30;
     else if (g->on_ladder) fr = 26 + (g->hero_anim & 3);
     else {
         fr = left ? 13 : 0;
@@ -148,7 +147,7 @@ static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
     if (g->hero_dead) return;
 
     /* pass 3 (3C05): in front of the body */
-    if (g->on_ladder || g->hero_entering) {
+    if (g->on_ladder || entering) {
         int sh = shield_class(g);
         if (!sh) return;
         fr = ovl + 14 + (((sh - 1) & 1) ? 3 : 0);
@@ -162,6 +161,12 @@ static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
     else if (g->crouching || g->hero_anim == 0x80) fr = ovl + 3;                    /* 3CA5 */
     else fr = ovl + (g->hero_anim & 3);
     draw_hero_frame(fb, h, pal, fr, crouch_n, crouch_s, hx, hy);
+}
+
+
+static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
+{
+    draw_hero_at(fb, g, h, PF_X + g->hero_scr_col * 8, PF_Y + g->hero_scr_row * 8, g->hero_entering);
 }
 
 /* gfmcga 3E34/3FD0 compute the blade's pixel origin [4FF7] = [4FED] + the
@@ -462,6 +467,33 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
             else if (!fb[i]) fb[i] = sf->px[i];
         }
     }
+    if (g->walk_in) {                                   /* 7C6E: the walk-in cutscene */
+        /* gfmcga [301E] (7BBF / 7BF5 / 7A71) paints the cave-mouth picture over
+         * the whole playfield, remapped by [4FFF] (the door letter & 7; 0 from
+         * a town).  Each loop pass (7C80..7CA6) draws the hero's walk frame at
+         * the next 8-pixel step (3020), waits a frame (7F82: this is the picture
+         * on screen) and then blanks the 8 x 24 strip he just left (2000, al 0),
+         * so a black trail stays on the picture behind him. */
+        if (g->mouth && g->mouth->loaded) {
+            unsigned var = g->walk_variant;
+            for (int y = 0; y < MOUTH_H; y++)
+                for (int x = 0; x < MOUTH_W; x++)
+                    fb[(PF_Y + y) * FB_W + PF_X + x] = gfx_mouth_remap(var, g->mouth->px[y * MOUTH_W + x]);
+        }
+        int left = (g->hero_flags & FACE_LEFT) != 0;
+        int step = g->walk_in_dir, k = 0x1A - g->walk_in;
+        for (int i = 0; i < k; i++) {                   /* 2000 at the 8-px strip behind pass i's hero */
+            int hx = g->walk_in_x + step - (k - i) * step + (left ? 16 : 0);
+            for (int y = 110; y < 134; y++)
+                for (int x = hx; x < hx + 8; x++)
+                    if (x >= 0 && x < FB_W) fb[y * FB_W + x] = 0;
+        }
+        if (!h) return;
+        /* 3016 composes the hero as the frame loop does (shield and sword arm included) with [FF3A] = 0
+         * (7C02), at the 8-pixel step 3020 blits it to: 7C8C adds 2 to bh first */
+        draw_hero_at(fb, g, h, g->walk_in_x + step, 110, 0);
+        return;
+    }
     if (g->encounter_frames) {                          /* 60E6: the encounter card */
         /* 60BC draws the card, then six {wait, clear, wait, draw} pairs, so
          * the twelve half-flashes start with the card up. */
@@ -471,13 +503,6 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
                     memcpy(fb + (40 + y) * FB_W + 48, g->encnt->px + y * ENCNT_W, ENCNT_W);
             else render_window(fb, 48, 40, 224, 40, 1);
         }
-        return;
-    }
-    if (g->walk_in) {                                   /* 7C6E: the walk-in cutscene */
-        if (!h) return;
-        int fr = (g->hero_flags & FACE_LEFT) ? 13 : 0;
-        fr += g->hero_anim & 3;
-        draw_hero_frame(fb, h, PAL2BPP[0], fr, 9, 0, g->walk_in_x, 110);
         return;
     }
     for (int sr = 0; sr < SCREEN_ROWS; sr++) {
@@ -615,6 +640,9 @@ void vid_gauge_bar(uint8_t *fb, int bh, int bl, int w)
 void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
                 const struct TextFont *tf, const uint8_t *place)
 {
+    /* the walk-in (7C6E) runs before the loop restart whose 6185 / 6C55 draws the new map's PLACE
+     * (or a boss room's ENEMY gauge): the HUD still shows the map just left (#117) */
+    if (g->walk_in) place = g->walk_place;
     for (int y = HUD_Y; y < FB_H; y++) memset(fb + y * FB_W, 0, FB_W);
     render_screen_frame(fb, g->screen, HUD_Y, FB_H);
     vid_gauge_bar(fb, 0x02, 0x04, 0x21);            /* LIFE */
@@ -622,7 +650,7 @@ void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
     vid_gauge_bar(fb, 0x02, 0x1C, 0x42);            /* GOLD */
     vid_gauge_bar(fb, 0x48, 0x1C, 0x42);            /* ALMAS */
     /* [E6]-only MP90 (FF34 = 0) takes 6179's ordinary HUD: PLACE, GOLD (jashiin_fight f27) */
-    int boss = g->boss_map && g->boss.active;
+    int boss = g->boss_map && g->boss.active && !g->walk_in;
     if (tf) hud_label(fb, tf, HUD_LIFE);
     if (boss) {
         /* fight.bin 6C55, on a boss-room entry (6082/6237) in place of [2012]:
@@ -648,7 +676,7 @@ void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
     /* docs/VIDEO_DRIVERS.md [2012]/[200A]/[200C]: in a boss room the ENEMY
      * line carries the boss HP — the same red/white pair at (84,175) on the
      * black 6C55 left, [A002]+3 full scale. */
-    if (g->boss_map && g->boss.active && g->boss.hp0) {
+    if (boss && g->boss.hp0) {
         unsigned bmax = g->boss.hp0 / 8, bcur = g->boss.hp / 8;
         if (bmax > 100) bmax = 100;
         if (bcur > bmax) bcur = bmax;

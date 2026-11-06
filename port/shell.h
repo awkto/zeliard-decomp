@@ -30,6 +30,7 @@ typedef struct Shell {
     DigitFont font;
     ScreenFrame frame;                  /* mole.bin: the boot-time screen furniture */
     EncounterCard encnt;                /* encnt.grp: the boss-room card */
+    CaveMouth   mouth;                  /* roka.grp: the walk-in backdrop */
     /* the town side of the loop (docs/TOWN.md) */
     TownMap     tmap;
     TownTiles   ttiles;
