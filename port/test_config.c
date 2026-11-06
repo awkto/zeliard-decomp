@@ -38,8 +38,9 @@ static void t_parse(void)
     Config c; config_init(&c);
     int n = config_parse(&c,
         "dir=/games/zeliard\nscale=4\nfullscreen=1\nvideo=ega\nfilter=integer\n"
-        "aspect=1:1\nmusic=0\nsfx=1\nspeaker=1\nvolume=7\n");
-    ck(n == 10, "all ten keys recognised (got %d)", n);
+        "aspect=1:1\nmusic=0\nsfx=1\nspeaker=1\naudio=tandy\nvolume=7\n");
+    ck(n == 11, "all eleven keys recognised (got %d)", n);
+    ck(!strcmp(c.audio, "tandy"), "audio back end");
     ck(!strcmp(c.dir, "/games/zeliard"), "dir");
     ck(c.scale == 4, "scale");
     ck(c.fullscreen == 1, "fullscreen");
@@ -89,6 +90,7 @@ static void t_roundtrip(void)
     snprintf(a.filter, sizeof a.filter, "smooth");
     snprintf(a.aspect, sizeof a.aspect, "4:3");
     a.music = 0; a.sfx = 1; a.speaker = 1; a.volume = 3;
+    snprintf(a.audio, sizeof a.audio, "tandy");
 
     char text[4096];
     config_render(&a, text, sizeof text);
@@ -96,10 +98,11 @@ static void t_roundtrip(void)
 
     Config b; config_init(&b);
     int n = config_parse(&b, text);
-    ck(n == 10, "every rendered key parses back (got %d)", n);
+    ck(n == 11, "every rendered key parses back (got %d)", n);
     ck(!strcmp(a.dir, b.dir) && a.scale == b.scale && a.fullscreen == b.fullscreen &&
        !strcmp(a.video, b.video) && !strcmp(a.filter, b.filter) && !strcmp(a.aspect, b.aspect) &&
-       a.music == b.music && a.sfx == b.sfx && a.speaker == b.speaker && a.volume == b.volume,
+       a.music == b.music && a.sfx == b.sfx && a.speaker == b.speaker && a.volume == b.volume &&
+       !strcmp(a.audio, b.audio),
        "the round trip is lossless");
 }
 

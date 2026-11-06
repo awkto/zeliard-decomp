@@ -28,7 +28,7 @@ have a copy of the game runs them for real.
 - `src/ai/`, `docs/ENEMIES.md` — all 8 cavern enemy AIs + 11 bosses: stats tables, movement/attack patterns, AI-overlay ABI
 - `docs/DOSBOX_RECIPE.md` — verified key timelines to skip the intro and enter cavern 1 in the harness
 - `port/` also has audio: a from-scratch OPL2 core with the MSC*/SND* drivers ported, cross-checked against the Python converter
-- `tools/msd2mid.py`, `docs/MUSIC.md`, `src/music_{std,adlib}.c` — music score format + drivers; converts every score to MIDI
+- `tools/msd2mid.py`, `docs/MUSIC.md`, `src/music_{std,adlib}.c` — music score format + drivers; converts every score to MIDI (`tools/jrtrace.py` runs the Tandy drivers' machine code to log the SN76496 writes)
 - `docs/SERVICES.md`, `docs/VIDEO_DRIVERS.md` — every kernel service vector (0x10C+) and video-driver vector (0x2000+, all 5 drivers) with args and callers
 - `src/opdemo.c`, `src/enddemo.c`, `src/rokademo.c`, `docs/CUTSCENES.md` — the intro, ending and Tear cutscenes, plus the gd art format
 - `docs/ARCHITECTURE.md` — boot chain, memory map, SAR format, kernel protocol, graphics formats

@@ -27,7 +27,8 @@ an OPL2 core written for this port plays the AdLib arrangement of the original
 `.msd` scores on the original tick model, the town and every cavern get the
 score their level record names, and the `FF75` sound effects run through
 `SNDADLIB.DRV`'s own tracks and patches; `--speaker` plays the PC-speaker
-arrangement instead.  **Every one of the eleven boss overlays is ported** —
+arrangement instead and `--tandy` the Tandy / PCjr one (an SN76496 chip model
+driven by `MSCJR.DRV`'s and `SNDJR.DRV`'s own register writes).  **Every one of the eleven boss overlays is ported** —
 DRGN, AKMA, MAO1 and MAO2 were the last four — and the HUD now draws its own
 gauge troughs, the LIFE / PLACE / GOLD / ALMAS labels and the place name, all
 pixel-identical to the DOSBox captures.  **The screen is complete**: `mole.bin`'s
@@ -52,8 +53,8 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 13 test binaries
 make test            # physics (149) + combat/AI (228) + town (161) + boss (642) + shop (189)
-                     #   + status (87) + playthrough (165) + audio (315) + cutscene (46)
-                     #   + video (70) + config (45) + sync (144) = 2241 assertions.  Needs no game files:
+                     #   + status (87) + playthrough (165) + audio (387) + cutscene (46)
+                     #   + video (70) + config (46) + sync (144) = 2314 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 211 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -67,6 +68,7 @@ make playthrough     # the same two routes as test_playthrough, with the step-by
 ./zeliard --map 0 --potions 0,5,6,7 --spells 1,3,6 # then Enter: the status screen with something in it
 ./zeliard --map 0 --magic 7=5                 # spell 7 selected with five charges (#88)
 ./zeliard --speaker                                # PC-speaker music instead of AdLib
+./zeliard --tandy                                  # Tandy / PCjr (SN76496) music and effects
 ./zeliard --headless --frames 1600 --script ".1600" --music 4 --dump-audio mus1.wav
 ./zeliard --town 2 --town-col 210 --gold 20000 --level 12 --save ZCAV2   # write ZCAV2.usr
 ./zeliard --load ZCAV2                             # ... and resume exactly there
@@ -299,8 +301,9 @@ the town its `[C4]` names at the column `[80]`/`[83]` name),
 `--script "R6 U3 .6 XL2"` (headless input: hold Right 6 frames, Up 3, idle 6,
 sword+Left 2; letters U D L R, X = sword, M = magic combine, `.` = nothing),
 `--frames N`, `--sound` (log every FF75 request), `--verbose` (per-frame state line).
-Sound: `--no-music` (no audio at all), `--speaker` (the PC-speaker back end instead
-of AdLib), `--music N` (pin one score, 0-13 in the `9E53` order `mgt1 ugm1 mgt2 ugm2
+Sound: `--no-music` (no audio at all), `--speaker` / `--tandy` (the PC-speaker or the
+Tandy / PCjr SN76496 back end instead of AdLib; `--audio adlib|speaker|tandy` is the same
+switch by name, and the `audio=` key of `zeliard.ini` remembers it), `--music N` (pin one score, 0-13 in the `9E53` order `mgt1 ugm1 mgt2 ugm2
 mus1..mus8 mbos mmao`; `-1` = effects only) and `--dump-audio FILE.wav` (render the
 sound to a 16-bit mono WAV instead of a sound card — deterministic, works headless).
 **F1** toggles the music and **F2** the sound effects, as STICK's own hotkeys do.
@@ -634,9 +637,23 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   sync counters, the software vibrato, the OPL patch loader and level computation,
   the rhythm track's `BD` register handling and drum levels, the PC-speaker envelope
   and its two-voice output stage, `FF24` fade-out and the `INT 60h` calls the engines
-  make (start / stop / pause / enable / the sfx channel claim).  It can also emit an
+  make (start / stop / pause / enable / the sfx channel claim).  **`MSD_JR`** is the
+  Tandy / PCjr driver (`MSCJR.DRV`) down to the port-C0h bytes: the period and
+  attenuation computation, the envelope generator, vibrato, the noise channel
+  (`E9` / `EA`, the noise-on-key-on patches) and the shadow registers the claim /
+  pause / enable services resend.  It can also emit an
   event log identical to `tools/msd2mid.py --dump`, which is what `test_audio.c`
   diffs against.
+* `sn76496.c` / `sn76496.h` — the SN76496 core of the Tandy 1000 and PCjr: three
+  10-bit tone dividers, the noise LFSR (N/512, N/1024, N/2048 or tone 2's rate;
+  white and periodic; the TI 17-bit feedback of MAME's SN76496 and DOSBox-X's PCjr
+  device by default, `SN_LFSR_NCR` for the Tandy 1000's NCR 8496), 4-bit attenuators
+  in 2 dB steps.  It runs at the chip's own tick (clock/16 = 223.7 kHz for the
+  3.579545 MHz clock) and box-filters down to the output rate.
+* `sndjr.c` / `sndjr.h` — `SNDJR.DRV` in C: the two-voice effect driver for the Tandy
+  chip (chip channels 2 and 1), ticked every `INT 8`, reading its tracks and 10-byte
+  patches out of the original file, claiming chip channels from `MSCJR` with `INT 60h
+  AX=5` and keeping its state across effects the way the original's data segment does.
 * `audio.c` / `audio.h` — the back end: the 236.7 Hz `INT 8` clock derived from the
   sample counter (so the tempo is right whatever the frame rate is), the music driver
   on every second tick and the sound driver on every tick, exactly as STICK calls
@@ -937,7 +954,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     `tools/harness/state_roundtrip.sh`, which now also drives the in-game
     request path (`--state-inject save:N load:N`, the same queue the keys use)
     and requires the whole trace to stay byte-identical.
-* `test_audio.c` — 315 assertions over the sound back end:
+* `test_audio.c` — 387 assertions over the sound back end:
   * **the score parser against `tools/msd2mid.py`**: all 17 scores in all three
     blob-B arrangements (AdLib, Tandy, PC speaker) are run through `msd.c`, and the
     decoded event stream — note on/off with velocity and the legato flag, drum hits,
@@ -970,7 +987,20 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     accounted for separately.
   * **silence and determinism**: the engine hooks are no-ops while audio is off, and
     the same `--dump-audio` script rendered twice is bit-identical.
-* `test_config.c` — 45 assertions over the settings file (#42): the sentinels
+  * **the Tandy / PCjr back end (#34)**: the `sn76496.c` core (a 262 Hz tone from
+    period 427 measured over one second of chip time, 2 dB attenuation steps, period 0
+    = 1024, the four noise rates and the re-seed on a control write, periodic noise
+    repeating, the NCR 8496 quirk, a rendered square wave), `MSCJR`'s `INT 60h`
+    services at the byte level (AX=0 = `9F BF DF FF`, AX=5 claims, CL=0 resends the
+    11 shadow bytes, pause / F1), every pitched tone write of the 14 scores against the
+    event stream `msd2mid.py` already vouches for, and **the register-write stream
+    itself**: `tools/jrtrace.py` runs the real `MSCJR.DRV` / `SNDJR.DRV` machine code
+    under a CPU emulator (Unicorn) and hashes every byte written to port C0h with the
+    `INT 8` tick it came on.  Eleven scripts (six scores from the first tick, effects over
+    music, preemption, a score change mid-effect, AX=3 pause, F1, the `FF24` fade) and
+    all 65 `SNDJR` effects on their own match those hashes.  When python3 with Unicorn
+    is installed (`ZEL_PYTHON=...`) the oracle is also run live from the test.
+* `test_config.c` — 46 assertions over the settings file (#42): the sentinels
   `config_init` leaves, a full `key=value` parse, the lines it ignores (junk, a
   bare `=`, an unknown key, a bad boolean) and the whitespace/CRLF trimming, the
   `on`/`off`/`true`/`no` spellings, a lossless render+parse round trip, the atomic
@@ -1356,11 +1386,10 @@ dialog and the offline path are also driven against a local `saves-api.py` by
   non-zero is in now (`tear_draw_slots`); no capture shows it, because a fresh
   player has no Tears, so it is covered by `test_cutscene` instead.  The sign
   text is not drawn.
-* Music: the MT-32 (`MSCMT.DRV`, blob A) and Tandy/PCjr (`MSCJR.DRV`, SN76496) back
-  ends are not implemented — `msd.c` parses both arrangements (the Tandy tracks feed
-  the speaker) but only OPL2 and the speaker are synthesised.  `SNDJR.DRV`'s effect
-  table is not read.  The `SNDADLIB` proximity/ambient routine at `15A3` (the `FF08`
-  entrance-distance sound) is not ported, and neither is the Esc pause box, so
+* Music: the MT-32 back end (`MSCMT.DRV`, blob A) is not implemented — `msd.c`
+  parses the arrangement but only OPL2, the speaker and the Tandy / PCjr SN76496
+  (`--tandy`, #34) are synthesised.  The `SNDADLIB` / `SNDJR` proximity/ambient routine
+  (`15A3` / `1656`, the `FF08` entrance-distance sound) is not ported, and neither is the Esc pause box, so
   `INT 60h AX=3` has no caller in the port.  The one game-driven fade is the boss
   death (`FF24 = 0x0A`); a music change at a door restarts the score instead of
   fading it.
@@ -1392,6 +1421,34 @@ changes, as `7E93` does.  On top of it the `FF75` effects play on OPL channels 4
 a patch and gives back when both of its tracks end — so the music's two top voices
 drop out for the length of a sword swing exactly as on a real AdLib card.  Killing a
 boss starts the `FF24 = 0x0A` fade-out.
+
+**Tandy / PCjr (`--tandy`).**  `MSCJR.DRV` and `SNDJR.DRV` talk to the SN76496 at port
+C0h, so the port runs their logic and feeds every byte they write into `sn76496.c`.
+The music side (`msd.c`, `MSD_JR`) has the three Tandy tracks on chip channels 0-2:
+`J 0613` turns pitch + octave into a 10-bit period (octave 0 and 1 are the same, and
+their nine lowest notes C..G#, whose period would exceed 1023, are written an octave up;
+`tools/msd2mid.py` maps them straight, which is why `test_audio` allows exactly that
+difference), `J 083D` turns the envelope level, the channel attenuation and the fade
+level into the 4-bit attenuation, instrument bytes 14 / 15 route a patch to the noise
+generator, and the driver keeps shadow copies of every register so that `INT 60h
+AX=2/3/5` can silence the chip and resend it.  `SNDJR` plays the 65 effects on chip
+channels 2 and 1 and claims them (and the noise channel) from the music for as long as
+the effect lasts, which is why the bass and the second voice drop out under a sword swing.
+The music driver's own `/2` prescaler is part of the model here (it is reset on every
+score start), and `INT 8` runs the sound driver first, then the music driver.
+**Verification.**  The register traffic is compared byte for byte, with the `INT 8`
+tick of every write, against the original driver code: `tools/jrtrace.py` loads
+`MSCJR.DRV` at `:0100` and `SNDJR.DRV` at `:1100` in one 64 KiB segment, as the game
+does, executes them with the Unicorn x86 emulator (a far call to `:0100` / `:1100` per
+tick, `INT 60h` through the vector, `OUT C0h` hooked) and logs the writes.  All 14
+cavern/town scores plus `zopn`, `zend` and `mfan` (30000 / 20000 ticks each, one to two minutes of
+music), all 65 effects, and combinations (music with effects, preemption, F1/F2,
+AX=3 pause, a fade, a score change mid-effect) are byte-identical, and `make test`
+pins the hashes.  The DOSBox-X oracle (`machine=tandy`) was not used to capture the
+chip: emulating the driver is the same evidence for the register stream (it *is* the
+driver), and DOSBox-X's SN76496 is only a behavioural model of the chip, which this
+port's core is too.  What is not covered is the analogue end — the chip's real
+output level and filtering — and `SNDJR`'s ambient routine.
 
 **Timing.**  The audio clock is the original's: the sample counter drives a 236.7 Hz
 `INT 8`, the sound driver runs on every tick and the music driver on every second one
@@ -2030,8 +2087,8 @@ earlier, at (36,12), because its copy of the same enemy is one step further
 west when they meet.
 
 3. **The rest of the sound**: the MT-32 driver (`MSCMT.DRV` over blob A, which
-   `tools/msd2mid.py --mt` already decodes) and the Tandy SN76496 pair
-   (`MSCJR.DRV` + `SNDJR.DRV`); `SNDADLIB`'s `15A3` ambient/proximity routine, which
+   `tools/msd2mid.py --mt` already decodes); `SNDADLIB`'s `15A3` and `SNDJR`'s `1656`
+   ambient/proximity routines, which
    needs `FF08` (fight.bin `774E`) to be computed first; and the Esc pause box, which
    is the only caller of `INT 60h AX=3`.
 4. **More ground truth.**  Caverns 4, 5, 6 and 8, four more towns and cavern 7's
