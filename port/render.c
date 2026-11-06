@@ -250,6 +250,7 @@ static void draw_sword(uint8_t *fb, const Game *g, const HeroGfx *h)
 /* gfmcga 3336/33AB: every live object is a 2x2-cell sprite at its ring
  * (row, rcol).  The 5-byte frame {palette, TL, TR, BL, BR} comes from the AI
  * overlay's A030/A070 tables; palette + 3 while the hit flash is on. */
+#define MAX_OBJ_DRAW MAX_OBJS
 static void draw_enemies(uint8_t *fb, const Game *g)
 {
     if (!g->egfx || !g->ai) return;
@@ -263,9 +264,27 @@ static void draw_enemies(uint8_t *fb, const Game *g)
      * never hides.  crab_fight f149: body part 9 (type 0x08, cells {0,0xC1,0,0xC2}
      * -- an empty left column) hides the falling shot part 0x35 right below it,
      * whose row-7 sprite edge is the residue. */
-    static uint8_t hidden[RING_SIZE];
+    static uint8_t hidden[RING_SIZE], claim[RING_SIZE];
     memset(hidden, 0, sizeof hidden);
-    for (int i = 0; i < g->nobj; i++) {
+    memset(claim, 0, sizeof claim);
+    /* 302C scans the ring row by row from (scroll_row - 1, col 3), left to right, so a
+     * sprite is drawn in marker order, not in record order: a later marker's sprite
+     * lands on top of an earlier one's (dragon_kill f306: the flame part, the last
+     * record, sits in the row above the head part whose 2x2 it overlaps). */
+    int order[MAX_OBJ_DRAW], norder = 0;
+    {
+        unsigned key[MAX_OBJ_DRAW];
+        for (int i = 0; i < g->nobj && norder < MAX_OBJ_DRAW; i++) {
+            const MapObj *o = &g->obj[i];
+            if ((o->col >> 8) == 0xFF || o->rcol == 0xFF) continue;
+            unsigned k = (((unsigned)o->row - (unsigned)g->scroll_row + 1u) & 0x3Fu) * 64u + o->rcol;
+            int j = norder++;
+            while (j > 0 && key[j - 1] > k) { key[j] = key[j - 1]; order[j] = order[j - 1]; j--; }
+            key[j] = k; order[j] = i;
+        }
+    }
+    for (int oi = 0; oi < norder; oi++) {
+        int i = order[oi];
         const MapObj *o = &g->obj[i];
         if ((o->col >> 8) == 0xFF || o->rcol == 0xFF) continue;
         /* gfmcga 302C draws the ring's sprite markers (0x80|i), not the C010
@@ -287,9 +306,19 @@ static void draw_enemies(uint8_t *fb, const Game *g)
         int sr = (int)((o->row - g->scroll_row) & 0x3F);
         if (sr > 40) sr -= 64;                  /* a sprite hanging above the window's top row */
         if (sr < -1 || sr >= SCREEN_ROWS + 1) continue;
+        /* 3468 claims 0xFF in E900 for the sprite's TR/BL/BR cells (TL gets 0xFE, which
+         * never hides) and 356e skips a cell whose saved byte is 0xFF: a cell under an
+         * earlier marker's TR/BL/BR is not drawn (dragon_kill f306: the flame's TR sits on
+         * the BL of the neck part scanned a row above). */
+        uint8_t skip[4];
+        for (int k = 0; k < 4; k++) {
+            int cp = game_ring_add(hp, (k & 1) + (k >> 1) * RING_W);
+            skip[k] = claim[cp];
+            if (k) claim[cp] = 1;
+        }
         for (int k = 0; k < 4; k++) {
             int cell = fr[1 + k];
-            if (!cell || cell >= g->egfx->ncells) continue;
+            if (!cell || cell >= g->egfx->ncells || skip[k]) continue;
             int cx = sc + (k & 1), cy = sr + (k >> 1);
             if (cx < -1 || cx > SCREEN_COLS) continue;
             blit2r(fb, &g->egfx->cell[cell], PAL2BPP[pal], PF_X + cx * 8, PF_Y + cy * 8);

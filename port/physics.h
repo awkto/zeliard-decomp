@@ -338,6 +338,7 @@ int  game_passable_wall(const Game *g, uint8_t v);
 int  game_passable_body(const Game *g, uint8_t v);
 int  game_cell_hazard(const Game *g, uint8_t v);  /* 73C0: one of the tileset's 4 hazard cells */
 int  game_ring_index(const Game *g, uint8_t row, uint8_t col);     /* 6D6E ring_addr */
+void game_message_tick(Game *g);                                   /* 7210: the message box's close timer */
 int  game_ring_add(int p, int delta);                              /* 6D82/6D8E wrap */
 int  game_push_hero(Game *g, int left);      /* 66A5 / 684C try_move; 1 = blocked */
 void game_knock_fall(Game *g);               /* 64A2: one row of fall after a knockback */

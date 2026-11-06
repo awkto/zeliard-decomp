@@ -877,6 +877,7 @@ static int elevator_up(Game *g)
     if (!f) return 0;
     if (!fixture_shift_row(g, f, -1, NULL)) return 0;
     g->hero_anim = 0x80;
+    g->vstate = V_GROUND;                                               /* 80FC..8101: [E7] = 80, [FF3D] = 0 */
     scroll_up(g);
     return 1;
 }
@@ -1283,6 +1284,8 @@ static void message_tick(Game *g)
     g->msg_timer = (uint8_t)((g->msg_timer + 1) & 0x1F);
     if (!g->msg_timer) { g->msg_box = 0; g->message[0] = 0; }
 }
+
+void game_message_tick(Game *g) { message_tick(g); }                 /* 7210 from 738F (post-boss transition) */
 
 /* ------------------------------------------------------------- walk-in */
 /* 0x7C6E  after a map transition the hero walks in over 26 frames on a blank

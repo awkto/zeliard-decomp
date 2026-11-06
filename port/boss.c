@@ -345,6 +345,7 @@ int post_boss_transition(Game *g)
     map_parse(m, m->raw, m->rawlen);
     memcpy(m->name, name, sizeof name);
     enemies_load(g);                                                /* 9659's count into FF4A */
+    game_message_tick(g);                                           /* 738F: 7210 once (a box up during the kill, e.g. cavern 7's TOO HOT, ages a frame) */
     /* 73B0 `jmp 6042`: fight.bin restarts on the same map.  6049..6073 clear
      * 9F20..9F22, the shot/magic/spark lists and the boss flags; FF34 is 0
      * now, so 6179 redraws the HUD and 623D refills the ring (6C98), then
