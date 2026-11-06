@@ -254,4 +254,3 @@ wait_poll
 write_atomic
 yes_no
 SDL_Delay
-emscripten_sleep
