@@ -555,6 +555,12 @@ human playtesting. The user's rules apply throughout: never `git commit` unless 
 `run_scenarios.sh` prints one row per scenario (`clean` / `DIVERGES  frame N: field` / `ERROR`) and leaves
 `/root/triage/sc/NAME/{o,p,diff.txt,oracle.out,port.out}`. `--png` makes every frame's PNG (needed in 8.3).
 `monkey` writes `report.md` (grouped by failure, each with a minimal repro command). Use a new `SEED` each pass.
+`make soak` (`monkey.py --soak --check`, up to 6 jobs, droplet only) is the v2 profile: random starts from towns, every
+cavern, the scenario saves (with their `# cave:` / `--magic`), a random-length prefix of the scenario's own script (so the run
+starts inside a boss room or at a door) followed by random input, the ending, and random `--video` / `--audio`. `--check`
+also runs each case under `--trace` and tests per-frame invariants (`check_trace`: LIFE <= max+1, magic counts, EXP and gold
+not falling in a cavern, bounds). The LIFE bound is `max+1` because the original's regeneration (fight.bin 71B1..71B7)
+has no clamp and takes an odd max-1 to max+1.
 Monkey finds crashes/hangs/sanitizer hits only; it does not compare against the oracle. To oracle-check a monkey repro,
 put its script in a scenario file (`tests/scenarios/NAME.zs`, §7) and run it as above.
 
