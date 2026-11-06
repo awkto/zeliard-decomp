@@ -17,6 +17,7 @@
 #include <string.h>
 #include "touch.h"
 #include "physics.h"
+#include "present.h"
 
 static int checks, failures;
 static void ck(int ok, const char *fmt, ...)
@@ -77,6 +78,97 @@ static void t_layout(void)
     ck(b.stick_r > a.stick_r && c.stick_r == b.stick_r, "touch.size scales the stick (%d -> %d), clamped at 200%%", a.stick_r, b.stick_r);
     touch_layout(&a, 1, 1, 100);
     ck(a.unit >= 8, "a degenerate window does not crash or collapse to zero");
+}
+
+/* ---------------------------------------- layout round the game picture */
+static void picture(int w, int h, int *cx, int *cy, int *cw, int *ch)
+{
+    present_content_rect_ex(FILTER_SMOOTH, w, h, 320, 200, 320, 240, 1, cx, cy, cw, ch);
+}
+
+static int meets_pic(const TouchCtl *c, const TouchLayout *L)
+{
+    return c->x < L->cx + L->cw && L->cx < c->x + c->w && c->y < L->cy + L->ch && L->cy < c->y + c->h;
+}
+
+static void t_layout_in(void)
+{
+    printf("layout in view  ");
+    static const struct { const char *name; int w, h, overlay; } S[] = {
+        { "16:9 landscape", 1280, 720, 1 },     /* 160 px pillars: too narrow, so overlay */
+        { "20:9 landscape", 2400, 1080, 0 },    /* 480 px pillars: the controls fit beside the picture */
+        { "phone portrait 9:19.5", 390, 844, 0 },
+        { "tablet 4:3", 1024, 768, 1 },         /* the picture fills the window */
+        { "tall portrait 9:16", 720, 1280, 0 },
+    };
+    for (unsigned s = 0; s < sizeof S / sizeof S[0]; s++) {
+        int cx, cy, cw, ch;
+        picture(S[s].w, S[s].h, &cx, &cy, &cw, &ch);
+        TouchLayout L, nom;
+        touch_layout_in(&L, S[s].w, S[s].h, 100, cx, cy, cw, ch);
+        touch_layout(&nom, S[s].w, S[s].h, 100);
+        int inside = 1, hits = 0, clash = 0, over = 0;
+        for (int i = 0; i < TC_COUNT; i++) {
+            const TouchCtl *c = &L.c[i];
+            if (c->x < 0 || c->y < 0 || c->x + c->w > L.win_w || c->y + c->h > L.win_h || c->w <= 0) inside = 0;
+            hits += meets_pic(c, &L);
+            over += c->over;
+            for (int j = i + 1; j < TC_COUNT; j++) {
+                const TouchCtl *b = &L.c[j];
+                if (c->x < b->x + b->w && b->x < c->x + c->w && c->y < b->y + b->h && b->y < c->y + c->h) clash++;
+            }
+        }
+        ck(inside && clash == 0, "%s: controls inside the window, none overlapping (%d clashes)", S[s].name, clash);
+        ck(L.overlay == S[s].overlay, "%s: overlay=%d, expected %d", S[s].name, L.overlay, S[s].overlay);
+        if (!L.overlay) {
+            ck(hits == 0 && over == 0, "%s: no control touches the picture (%d)", S[s].name, hits);
+            ck(L.unit * 10 >= nom.unit * 7, "%s: controls not shrunk below 70%% (%d vs %d)", S[s].name, L.unit, nom.unit);
+        } else {
+            ck(over > 0 && L.unit == nom.unit, "%s: overlay keeps full size and flags what covers the picture (%d)", S[s].name, over);
+        }
+    }
+    int cx, cy, cw, ch;
+    TouchLayout L;
+    /* portrait: the picture sits at the top, everything is below it, digits first */
+    picture(390, 844, &cx, &cy, &cw, &ch);
+    touch_layout_in(&L, 390, 844, 100, cx, cy, cw, ch);
+    ck(cy == 0 && cw == 390 && ch == 292, "phone portrait: picture at the top, 390x292 (y=%d, %dx%d)", cy, cw, ch);
+    ck(L.c[TC_KEY0].y >= ch && L.c[TC_ESC].y > L.c[TC_KEY0].y && L.stick_cy > L.c[TC_ESC].y, "phone portrait: digits, menu row, then stick, all under the picture");
+    /* the legacy call (picture = whole window) is the plain overlay */
+    touch_layout(&L, 1280, 720, 100);
+    ck(L.overlay && L.c[TC_KEY0].over, "touch_layout() without a picture is the overlay layout");
+    /* landscape beside the picture: stick in the left column, buttons and menu keys in the right */
+    picture(2400, 1080, &cx, &cy, &cw, &ch);
+    touch_layout_in(&L, 2400, 1080, 100, cx, cy, cw, ch);
+    ck(L.c[TC_STICK].x + L.c[TC_STICK].w <= cx && L.c[TC_KEY0 + 10].x + L.c[TC_KEY0 + 10].w <= cx, "20:9: stick and digits in the left column");
+    ck(L.c[TC_SWORD].x >= cx + cw && L.c[TC_MAGIC].x >= cx + cw && L.c[TC_ESC].x >= cx + cw && L.c[TC_QLOAD].x >= cx + cw, "20:9: sword, magic and menu keys in the right column");
+    ck(touch_hit(&L, L.c[TC_KEY0 + 4].x + 2, L.c[TC_KEY0 + 4].y + 2) == TC_KEY0 + 4, "20:9: the gridded digits are hittable");
+    /* a phone held sideways: 844x390 -> 520 px picture, 162 px columns, scaled to fit */
+    picture(844, 390, &cx, &cy, &cw, &ch);
+    touch_layout_in(&L, 844, 390, 100, cx, cy, cw, ch);
+    ck(!L.overlay, "844x390 landscape phone: controls fit in the columns (unit %d)", L.unit);
+    /* touch_to_frame maps the picture to the 320x200 frame */
+    int fx, fy;
+    picture(390, 844, &cx, &cy, &cw, &ch);
+    touch_layout_in(&L, 390, 844, 100, cx, cy, cw, ch);
+    ck(touch_to_frame(&L, 195, 146, 320, 200, &fx, &fy) && fx == 160 && fy == 100, "touch_to_frame: the centre of the picture is (160,100) (%d,%d)", fx, fy);
+    ck(!touch_to_frame(&L, 195, 600, 320, 200, &fx, &fy), "touch_to_frame: below the picture is outside");
+    /* Touch: content and dialog mode, and a tap on nothing is an event */
+    Touch t;
+    touch_init(&t, TOUCH_ON, -1, -1);
+    touch_set_content(&t, 390, 844, cx, cy, cw, ch);
+    ck(!t.L.overlay && t.L.win_h == 844, "touch_set_content lays out for the picture");
+    touch_set_dialog(&t, 1);
+    ck(!strcmp(t.L.c[TC_ITEMS].label, "OK") && !strcmp(t.L.c[TC_ESC].label, "CANCEL") && !strcmp(t.L.c[TC_SWORD].label, "PICK"), "dialog mode relabels Items/Esc/Sword");
+    touch_resize(&t, 400, 800);
+    ck(!strcmp(t.L.c[TC_ITEMS].label, "OK"), "...and keeps them across a resize");
+    touch_set_dialog(&t, 0);
+    ck(!strcmp(t.L.c[TC_ITEMS].label, "ITEMS"), "...and restores them");
+    touch_set_content(&t, 390, 844, cx, cy, cw, ch);
+    TouchEvent e;
+    touch_finger_down(&t, 1, 100, 100);                 /* on the picture, on no control */
+    ck(touch_next_event(&t, &e) && e.kind == TEV_TAP && e.x == 100 && e.y == 100, "a touch on the picture is a TEV_TAP with its position");
+    touch_finger_up(&t, 1);
 }
 
 static void t_hit(void)
@@ -312,10 +404,13 @@ static int shot(const char *dir, const char *ppm)
             p[0] = (uint8_t)(x * 255 / sw); p[1] = (uint8_t)(y * 255 / sh); p[2] = 120;
         }
     }
-    static const char *const names[2] = { "overlay_landscape.png", "overlay_portrait.png" };
-    for (int s = 0; s < 2; s++) {
-        int w = SIZES[s][0] / 2, h = SIZES[s][1] / 2;   /* half size keeps the PNGs small */
-        if (s == 0) { w = 1024; h = 576; } else { w = 576; h = 1024; }
+    static const struct { const char *name; int w, h; } shots[] = {
+        { "overlay_landscape_16x9.png", 1280, 720 }, { "overlay_landscape_20x9.png", 1200, 540 },
+        { "overlay_portrait.png", 390, 844 }, { "overlay_tablet_4x3.png", 1024, 768 },
+        { "overlay_phone_sideways.png", 844, 390 } };
+    for (unsigned s = 0; s < sizeof shots / sizeof shots[0]; s++) {
+        int w = shots[s].w, h = shots[s].h;
+        present_set_portrait_top(1);
         SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
         SDL_Renderer *ren = SDL_CreateSoftwareRenderer(surf);
         if (!surf || !ren) { printf("  software renderer unavailable: skipping the shot\n"); return 0; }
@@ -327,7 +422,7 @@ static int shot(const char *dir, const char *ppm)
 
         Touch t;
         touch_init(&t, TOUCH_ON, -1, -1);
-        touch_resize(&t, w, h);
+        { int cx, cy, cw, ch; picture(w, h, &cx, &cy, &cw, &ch); touch_set_content(&t, w, h, cx, cy, cw, ch); }
         int x, y;
         /* a thumb pushing up-right on the stick, sword held: shows the pressed look */
         touch_finger_down(&t, 1, t.L.stick_cx, t.L.stick_cy);
@@ -340,7 +435,7 @@ static int shot(const char *dir, const char *ppm)
         uint8_t *out = malloc((size_t)w * h * 3);
         SDL_RenderReadPixels(ren, NULL, SDL_PIXELFORMAT_RGB24, out, w * 3);
         char path[1024];
-        snprintf(path, sizeof path, "%s/%s", dir, names[s]);
+        snprintf(path, sizeof path, "%s/%s", dir, shots[s].name);
         int rc = png_write_rgb(path, out, w, h);
         printf("  wrote %s (%dx%d)%s\n", path, w, h, rc ? " FAILED" : "");
         if (rc) failures++;
@@ -359,6 +454,7 @@ static int shot(const char *dir, const char *ppm)
 int main(int argc, char **argv)
 {
     t_layout();     printf("ok\n");
+    t_layout_in();  printf("ok\n");
     t_hit();        printf("ok\n");
     t_stick();      printf("ok\n");
     t_fingers();    printf("ok\n");

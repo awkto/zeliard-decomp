@@ -73,6 +73,8 @@ typedef struct {
      * true end of the frame (state_frame_done), like a loaded save state */
     Restore  rest;
     int      restore_req;
+#define REST_Q_TAP 0x20000000           /* rest_q entry: a touch tap, (fy << 10) | fx in the 320x200 frame */
+    int      touch_prev_dirs, touch_prev_btn;   /* #54: edge detection for the dialogs */
     int      rest_q[16], rest_qn;       /* SDL keys the dialog has not consumed yet */
     int      sync_dlg;                  /* the ask-before-link dialog (#55) owns the keyboard */
     double   frame_ms;
@@ -208,6 +210,18 @@ static void present_frame(App *a, int sw, int sh)
 {
     int dw = sw, dh = sh;
     if (!a->square) video_display_size(a->video, &dw, &dh);
+    /* #54: where the picture goes decides where the controls can; in a portrait
+     * window the picture rides at the top once the overlay is up (the layout is
+     * computed as if it were, so the first touch finds the controls in place) */
+    {
+        int ow = 0, oh = 0, x, y, w, h;
+        if (a->touch.mode != TOUCH_OFF && SDL_GetRendererOutputSize(a->ren, &ow, &oh) == 0) {
+            present_content_rect_ex(a->filter, ow, oh, sw, sh, dw, dh, 1, &x, &y, &w, &h);
+            touch_set_content(&a->touch, ow, oh, x, y, w, h);
+        }
+        present_set_portrait_top(touch_visible(&a->touch));
+        touch_set_dialog(&a->touch, a->rest.state || a->sync_dlg);
+    }
     if (present_render(a->ren, a->tex, sw, sh, dw, dh, a->filter) != 0)
         fprintf(stderr, "[video] present: %s\n", SDL_GetError());
     osd_draw(a);
@@ -332,7 +346,25 @@ static void pump_events(App *a, Game *g)
     }
     /* #54: the touch overlay's one-shot controls go down the keyboard's paths */
     TouchEvent te;
+    int tdirs = touch_dirs(&a->touch);
     while (touch_next_event(&a->touch, &te)) {
+        if (a->rest.state || a->sync_dlg) {      /* the F7 / sync dialogs take touch as keys */
+            int sym = 0;
+            switch (te.kind) {
+            case TEV_ESC:   sym = SDLK_ESCAPE; break;
+            case TEV_ITEMS: sym = SDLK_RETURN; break;
+            case TEV_QSAVE: case TEV_QLOAD: break;
+            case TEV_CHAR:  sym = (te.ch >= 'A' && te.ch <= 'Z') ? te.ch + 32 : te.ch; break;
+            case TEV_TAP: {
+                int fx, fy;
+                if (touch_to_frame(&a->touch.L, te.x, te.y, 320, 200, &fx, &fy)) sym = REST_Q_TAP | (fy << 10) | fx;
+                break;
+            }
+            default: break;
+            }
+            if (sym && a->rest_qn < 16) a->rest_q[a->rest_qn++] = sym;
+            continue;
+        }
         switch (te.kind) {
         case TEV_ESC:   a->esc_edge = 1; break;
         case TEV_ITEMS: if (a->paused) { a->paused = 0; title_apply(a); } break;
@@ -342,6 +374,15 @@ static void pump_events(App *a, Game *g)
         default: break;
         }
     }
+    if (a->rest.state || a->sync_dlg) {          /* stick edges and Sword/Magic: list, caret, Space, Backspace */
+        static const struct { int dir, sym; } dm[] = { { DIR_UP, SDLK_UP }, { DIR_DOWN, SDLK_DOWN }, { DIR_LEFT, SDLK_LEFT }, { DIR_RIGHT, SDLK_RIGHT } };
+        int nb = touch_buttons(&a->touch, 0) & ~a->touch_prev_btn;
+        for (int i = 0; i < 4; i++) if ((tdirs & dm[i].dir) && !(a->touch_prev_dirs & dm[i].dir) && a->rest_qn < 16) a->rest_q[a->rest_qn++] = dm[i].sym;
+        if ((nb & 1) && a->rest_qn < 16) a->rest_q[a->rest_qn++] = SDLK_SPACE;
+        if ((nb & 2) && a->rest_qn < 16) a->rest_q[a->rest_qn++] = SDLK_BACKSPACE;
+    }
+    a->touch_prev_dirs = tdirs;
+    a->touch_prev_btn = touch_buttons(&a->touch, 0);
 }
 
 /* The window title's pause hint, so the state is discoverable without a font:
@@ -703,7 +744,8 @@ static void restore_modal(App *a, Game *g, Town *t)
             if (a->rest_qn) {
                 int sym = a->rest_q[0];
                 memmove(a->rest_q, a->rest_q + 1, (size_t)(--a->rest_qn) * sizeof a->rest_q[0]);
-                key = restore_sdl_key(sym, &ch);
+                if (sym & REST_Q_TAP) restore_tap(r, &a->sh, sym & 1023, (sym >> 10) & 1023);
+                else key = restore_sdl_key(sym, &ch);
             }
         }
 #endif

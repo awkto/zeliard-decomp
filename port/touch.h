@@ -37,10 +37,13 @@ typedef struct {
     int  shape;                          /* TSH_* */
     int  x, y, w, h;                     /* bounding box, window pixels */
     char label[8];
+    int  over;                           /* overlaps the game picture (drawn fainter) */
 } TouchCtl;
 
 typedef struct {
     int win_w, win_h, portrait;
+    int cx, cy, cw, ch;                  /* where the game picture is drawn */
+    int overlay;                         /* 1: no free space, the controls sit over the picture */
     int unit;                            /* the size everything is a multiple of */
     int stick_cx, stick_cy, stick_r;     /* the joystick base; its hit zone is larger */
     TouchCtl c[TC_COUNT];
@@ -54,6 +57,15 @@ typedef struct {
 /* Lay the controls out for a w x h window.  `size_pct` scales every control
  * (100 = default), clamped to the allowed range. */
 void touch_layout(TouchLayout *L, int w, int h, int size_pct);
+/* The same, knowing where the game picture is drawn (cx, cy, cw, ch; present.c's
+ * content rect).  Controls go into the free space round the picture: in
+ * portrait below it (digits and menu keys right under the picture, stick and
+ * buttons at the bottom), in landscape into the pillarbox columns (digits and
+ * menu keys above the stick / buttons) when those are wide enough.  When the
+ * space is not there they overlay the picture and `overlay` is set. */
+void touch_layout_in(TouchLayout *L, int w, int h, int size_pct, int cx, int cy, int cw, int ch);
+/* A window pixel -> the fw x fh game frame under the picture; 0 when it is outside. */
+int  touch_to_frame(const TouchLayout *L, int x, int y, int fw, int fh, int *fx, int *fy);
 
 /* Which control is under window pixel (x, y)?  TC_NONE when none.  The stick's
  * zone reaches past its drawn ring so a thumb that starts slightly off still
@@ -70,8 +82,9 @@ int  touch_stick_dirs(int dx, int dy, int r);
 enum { TOUCH_AUTO = 0, TOUCH_ON, TOUCH_OFF };   /* --touch auto|on|off */
 int  touch_mode_by_name(const char *s);         /* -1 unknown */
 
-enum { TEV_NONE = 0, TEV_ESC, TEV_ITEMS, TEV_QSAVE, TEV_QLOAD, TEV_CHAR };
-typedef struct { int kind; char ch; } TouchEvent;
+/* TEV_TAP: a finger came down on no control (x, y = window pixel) */
+enum { TEV_NONE = 0, TEV_ESC, TEV_ITEMS, TEV_QSAVE, TEV_QLOAD, TEV_CHAR, TEV_TAP };
+typedef struct { int kind; char ch; int x, y; } TouchEvent;
 
 #define TOUCH_MAX_FINGERS 10
 #define TOUCH_EVQ 16
@@ -90,6 +103,7 @@ typedef struct {
     int         mode;                    /* TOUCH_AUTO / ON / OFF */
     int         visible;                 /* shown (and listening) right now */
     int         size, opacity;           /* percent */
+    int         dialog;                  /* a dialog (F7 restore) owns the screen: relabelled buttons */
 } Touch;
 
 /* size_pct / opacity_pct < 0 take the defaults (100 / 50). */
@@ -97,6 +111,10 @@ void touch_init(Touch *t, int mode, int size_pct, int opacity_pct);
 /* Re-lay out for a new window size (cheap when unchanged). */
 void touch_resize(Touch *t, int w, int h);
 int  touch_visible(const Touch *t);
+/* Tell it the window size and where the game picture is (window pixels); re-lays out on a change. */
+void touch_set_content(Touch *t, int w, int h, int cx, int cy, int cw, int ch);
+/* Dialog mode: Esc/Items/Sword/Magic read CANCEL/OK/PICK/DEL. */
+void touch_set_dialog(Touch *t, int on);
 
 /* A finger touched down / moved / lifted at window pixel (x, y).  Ignored while
  * the overlay is hidden in `off`.  In `auto` the first touch shows it. */

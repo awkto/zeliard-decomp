@@ -22,55 +22,146 @@ static void set_circle(TouchLayout *L, int id, int cx, int cy, int r, const char
     set_ctl(L, id, TSH_CIRCLE, cx - r, cy - r, 2 * r, 2 * r, label);
 }
 
-void touch_layout(TouchLayout *L, int w, int h, int size_pct)
+enum { M_OVERLAY, M_BELOW, M_PILLARS };
+
+/* stick bottom-left; sword, magic and the combo above it bottom-right */
+static void bottom_clusters(TouchLayout *L, int w, int h, int u)
+{
+    int m = u / 2;
+    int R = u * 8 / 5;
+    L->stick_r = R;
+    L->stick_cx = m + R;
+    L->stick_cy = h - m - R;
+    set_circle(L, TC_STICK, L->stick_cx, L->stick_cy, R, "");
+    int rs = u * 11 / 10, rm = u * 9 / 10, rc = u * 4 / 5, g = u * 3 / 10;
+    int sx = w - m - rs, sy = h - m - rs;
+    set_circle(L, TC_SWORD, sx, sy, rs, "SWORD");
+    set_circle(L, TC_MAGIC, sx - rs - rm - g, h - m - rm, rm, "MAGIC");
+    set_circle(L, TC_COMBO, sx, sy - rs - rc - g, rc, "COMBO");
+}
+
+/* the two rows 1..9 Y N and Esc/Items/Save/Load, centred in [xlo, xhi) from y0 */
+static void key_rows(TouchLayout *L, int xlo, int xhi, int u, int y0)
+{
+    int m = u / 2, aw = xhi - xlo;
+    int cell = u * 19 / 20;
+    int maxcell = (aw - 2 * m) * 100 / (TC_NKEYS * 100 + (TC_NKEYS - 1) * 12);
+    if (cell > maxcell) cell = maxcell;
+    if (cell < 4) cell = 4;
+    int gap = cell * 12 / 100;
+    int rowW = TC_NKEYS * cell + (TC_NKEYS - 1) * gap;
+    int x0 = xlo + (aw - rowW) / 2;
+    for (int i = 0; i < TC_NKEYS; i++) {
+        char lb[2] = { i < 9 ? (char)('1' + i) : i == 9 ? 'Y' : 'N', 0 };
+        set_ctl(L, TC_KEY0 + i, TSH_RECT, x0 + i * (cell + gap), y0, cell, cell, lb);
+    }
+    int bw = u * 3 / 2, bh = u * 4 / 5, bg = u / 5;
+    int mw = 4 * bw + 3 * bg;
+    if (mw > aw - 2 * m) { bw = (aw - 2 * m - 3 * bg) / 4; mw = 4 * bw + 3 * bg; }
+    int mx = xlo + (aw - mw) / 2, my = y0 + cell + gap + bg;
+    static const char *const lab[4] = { "ESC", "ITEMS", "SAVE", "LOAD" };
+    static const int ids[4] = { TC_ESC, TC_ITEMS, TC_QSAVE, TC_QLOAD };
+    for (int i = 0; i < 4; i++)
+        set_ctl(L, ids[i], TSH_RECT, mx + i * (bw + bg), my, bw, bh, lab[i]);
+}
+
+/* pillarbox mode: the digits as a 3-wide grid in the left column, the four menu
+ * keys as a 2x2 grid in the right one, both from the top */
+static void key_columns(TouchLayout *L, int w, int u)
+{
+    int m = u / 2, pl = L->cx, pr = w - L->cx - L->cw;
+    int cell = u * 19 / 20, mc = (pl - 2 * m) * 100 / 324;     /* 3 cells + 2 gaps of 12% */
+    if (cell > mc) cell = mc;
+    if (cell < 4) cell = 4;
+    int gap = cell * 12 / 100, x0 = (pl - (3 * cell + 2 * gap)) / 2;
+    for (int i = 0; i < TC_NKEYS; i++) {
+        char lb[2] = { i < 9 ? (char)('1' + i) : i == 9 ? 'Y' : 'N', 0 };
+        set_ctl(L, TC_KEY0 + i, TSH_RECT, x0 + (i % 3) * (cell + gap), m + (i / 3) * (cell + gap), cell, cell, lb);
+    }
+    int bw = u * 3 / 2, bh = u * 4 / 5, bg = u / 5;
+    if (2 * bw + bg > pr - 2 * m) bw = (pr - 2 * m - bg) / 2;
+    int mx = L->cx + L->cw + (pr - (2 * bw + bg)) / 2;
+    static const char *const lab[4] = { "ESC", "ITEMS", "SAVE", "LOAD" };
+    static const int ids[4] = { TC_ESC, TC_ITEMS, TC_QSAVE, TC_QLOAD };
+    for (int i = 0; i < 4; i++)
+        set_ctl(L, ids[i], TSH_RECT, mx + (i % 2) * (bw + bg), m + (i / 2) * (bh + bg), bw, bh, lab[i]);
+}
+
+static int meets(const TouchCtl *c, int x, int y, int w, int h)
+{
+    return c->x < x + w && x < c->x + c->w && c->y < y + h && y < c->y + c->h;
+}
+
+/* Every control inside the window, none touching another or the picture? */
+static int layout_ok(const TouchLayout *L)
+{
+    for (int i = 0; i < TC_COUNT; i++) {
+        const TouchCtl *a = &L->c[i];
+        if (a->w <= 0 || a->x < 0 || a->y < 0 || a->x + a->w > L->win_w || a->y + a->h > L->win_h) return 0;
+        if (meets(a, L->cx, L->cy, L->cw, L->ch)) return 0;
+        for (int j = i + 1; j < TC_COUNT; j++)
+            if (meets(a, L->c[j].x, L->c[j].y, L->c[j].w, L->c[j].h)) return 0;
+    }
+    return 1;
+}
+
+static void build(TouchLayout *L, int w, int h, int u, int mode)
+{
+    L->unit = u;
+    L->overlay = mode == M_OVERLAY;
+    bottom_clusters(L, w, h, u);
+    if (mode == M_PILLARS) key_columns(L, w, u);
+    else key_rows(L, 0, w, u, mode == M_BELOW ? L->cy + L->ch + u / 4 : u / 4);
+}
+
+void touch_layout_in(TouchLayout *L, int w, int h, int size_pct, int cx, int cy, int cw, int ch)
 {
     memset(L, 0, sizeof *L);
     if (w < 1) w = 1;
     if (h < 1) h = 1;
     size_pct = clampi(size_pct, TOUCH_SIZE_MIN, TOUCH_SIZE_MAX);
     L->win_w = w; L->win_h = h; L->portrait = h > w;
+    L->cx = cx; L->cy = cy; L->cw = cw < 0 ? 0 : cw; L->ch = ch < 0 ? 0 : ch;
     int mn = w < h ? w : h;
     int u = mn * size_pct / 1000;                 /* 10% of the short side at 100 */
     if (u < 8) u = 8;
-    L->unit = u;
-    int m = u / 2;                                /* margin */
 
-    /* the joystick: bottom-left */
-    int R = u * 8 / 5;
-    L->stick_r = R;
-    L->stick_cx = m + R;
-    L->stick_cy = h - m - R;
-    set_circle(L, TC_STICK, L->stick_cx, L->stick_cy, R, "");
-
-    /* Sword (big), Magic beside it, the combo above it: bottom-right */
-    int rs = u * 11 / 10, rm = u * 9 / 10, rc = u * 4 / 5, g = u * 3 / 10;
-    int sx = w - m - rs, sy = h - m - rs;
-    set_circle(L, TC_SWORD, sx, sy, rs, "SWORD");
-    set_circle(L, TC_MAGIC, sx - rs - rm - g, h - m - rm, rm, "MAGIC");
-    set_circle(L, TC_COMBO, sx, sy - rs - rc - g, rc, "COMBO");
-
-    /* top row: 1..9 Y N, as wide as fits */
-    int cell = u * 19 / 20;
-    int maxcell = (w - 2 * m) * 100 / (TC_NKEYS * 100 + (TC_NKEYS - 1) * 12);
-    if (cell > maxcell) cell = maxcell;
-    if (cell < 4) cell = 4;
-    int gap = cell * 12 / 100;
-    int rowW = TC_NKEYS * cell + (TC_NKEYS - 1) * gap;
-    int x0 = (w - rowW) / 2, y0 = m / 2;
-    for (int i = 0; i < TC_NKEYS; i++) {
-        char lb[2] = { i < 9 ? (char)('1' + i) : i == 9 ? 'Y' : 'N', 0 };
-        set_ctl(L, TC_KEY0 + i, TSH_RECT, x0 + i * (cell + gap), y0, cell, cell, lb);
+    int done = 0;
+    if (L->cw > 0 && L->ch > 0) {
+        if (L->portrait) {
+            build(L, w, h, u, M_BELOW);
+            done = layout_ok(L);
+        } else {
+            /* pillar columns: the bottom clusters need ~5.3 units each side; shrink
+             * the unit to fit, but not below 70% of what was asked */
+            int pw = L->cx < w - L->cx - L->cw ? L->cx : w - L->cx - L->cw;
+            int ue = pw * 100 / 530;
+            if (ue > u) ue = u;
+            if (ue >= 8 && ue * 10 >= u * 7) {
+                build(L, w, h, ue, M_PILLARS);
+                done = layout_ok(L);
+            }
+        }
     }
+    if (!done) {
+        build(L, w, h, u, M_OVERLAY);
+        L->overlay = 1;
+    }
+    for (int i = 0; i < TC_COUNT; i++)
+        L->c[i].over = meets(&L->c[i], L->cx, L->cy, L->cw, L->ch);
+}
 
-    /* second row, centred: Esc, Items, quick save, quick load */
-    int bw = u * 3 / 2, bh = u * 4 / 5, bg = u / 5;
-    int mw = 4 * bw + 3 * bg;
-    if (mw > w - 2 * m) { bw = (w - 2 * m - 3 * bg) / 4; mw = 4 * bw + 3 * bg; }
-    int mx = (w - mw) / 2, my = y0 + cell + gap + bg;
-    static const char *const lab[4] = { "ESC", "ITEMS", "SAVE", "LOAD" };
-    static const int ids[4] = { TC_ESC, TC_ITEMS, TC_QSAVE, TC_QLOAD };
-    for (int i = 0; i < 4; i++)
-        set_ctl(L, ids[i], TSH_RECT, mx + i * (bw + bg), my, bw, bh, lab[i]);
+void touch_layout(TouchLayout *L, int w, int h, int size_pct)
+{
+    touch_layout_in(L, w, h, size_pct, 0, 0, w, h);     /* the picture fills the window */
+}
+
+int touch_to_frame(const TouchLayout *L, int x, int y, int fw, int fh, int *fx, int *fy)
+{
+    if (L->cw <= 0 || L->ch <= 0 || x < L->cx || y < L->cy || x >= L->cx + L->cw || y >= L->cy + L->ch) return 0;
+    if (fx) *fx = (int)((long long)(x - L->cx) * fw / L->cw);
+    if (fy) *fy = (int)((long long)(y - L->cy) * fh / L->ch);
+    return 1;
 }
 
 int touch_hit(const TouchLayout *L, int x, int y)
@@ -122,10 +213,39 @@ void touch_init(Touch *t, int mode, int size_pct, int opacity_pct)
     touch_layout(&t->L, 640, 480, t->size);
 }
 
+static void relabel(Touch *t)
+{
+    if (!t->dialog) return;
+    static const struct { int id; const char *s; } d[] = {
+        { TC_ESC, "CANCEL" }, { TC_ITEMS, "OK" }, { TC_SWORD, "PICK" }, { TC_MAGIC, "DEL" }, { TC_COMBO, "" } };
+    for (unsigned i = 0; i < sizeof d / sizeof d[0]; i++) {
+        strncpy(t->L.c[d[i].id].label, d[i].s, sizeof t->L.c[0].label - 1);
+    }
+}
+
 void touch_resize(Touch *t, int w, int h)
 {
     if (w == t->L.win_w && h == t->L.win_h) return;
-    touch_layout(&t->L, w, h, t->size);
+    touch_layout_in(&t->L, w, h, t->size, 0, 0, w, h);
+    relabel(t);
+}
+
+void touch_set_content(Touch *t, int w, int h, int cx, int cy, int cw, int ch)
+{
+    const TouchLayout *L = &t->L;
+    if (w == L->win_w && h == L->win_h && cx == L->cx && cy == L->cy && cw == L->cw && ch == L->ch) return;
+    touch_layout_in(&t->L, w, h, t->size, cx, cy, cw, ch);
+    relabel(t);
+}
+
+void touch_set_dialog(Touch *t, int on)
+{
+    on = on != 0;
+    if (on == t->dialog) return;
+    t->dialog = on;
+    const TouchLayout *L = &t->L;
+    touch_layout_in(&t->L, L->win_w, L->win_h, t->size, L->cx, L->cy, L->cw, L->ch);   /* restores the labels */
+    relabel(t);
 }
 
 int touch_visible(const Touch *t) { return t->visible && t->mode != TOUCH_OFF; }
@@ -141,7 +261,7 @@ static TouchFinger *find(Touch *t, long long id)
 
 static void push(Touch *t, int kind, char ch)
 {
-    if (t->nev < TOUCH_EVQ) { t->ev[t->nev].kind = kind; t->ev[t->nev].ch = ch; t->nev++; }
+    if (t->nev < TOUCH_EVQ) { memset(&t->ev[t->nev], 0, sizeof t->ev[0]); t->ev[t->nev].kind = kind; t->ev[t->nev].ch = ch; t->nev++; }
 }
 
 void touch_finger_down(Touch *t, long long id, int x, int y)
@@ -160,6 +280,10 @@ void touch_finger_down(Touch *t, long long id, int x, int y)
     case TC_ITEMS: push(t, TEV_ITEMS, 0); break;
     case TC_QSAVE: push(t, TEV_QSAVE, 0); break;
     case TC_QLOAD: push(t, TEV_QLOAD, 0); break;
+    case TC_NONE:
+        push(t, TEV_TAP, 0);
+        if (t->nev) { t->ev[t->nev - 1].x = x; t->ev[t->nev - 1].y = y; }
+        break;
     default:
         if (f->ctl >= TC_KEY0) push(t, TEV_CHAR, t->L.c[f->ctl].label[0]);
         break;
@@ -311,7 +435,8 @@ void touch_draw(Touch *t, SDL_Renderer *ren)
     if (SDL_GetRendererOutputSize(ren, &ow, &oh) != 0 || ow <= 0) return;
     touch_resize(t, ow, oh);
     const TouchLayout *L = &t->L;
-    int a = 255 * t->opacity / 100;
+    int a0 = 255 * t->opacity / 100;           /* over the picture: fainter */
+    int a = L->c[TC_STICK].over ? a0 * 3 / 4 : a0;
     SDL_BlendMode old;
     SDL_GetRenderDrawBlendMode(ren, &old);
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
@@ -333,6 +458,7 @@ void touch_draw(Touch *t, SDL_Renderer *ren)
 
     for (int i = TC_SWORD; i < TC_COUNT; i++) {
         const TouchCtl *c = &L->c[i];
+        a = c->over ? a0 * 3 / 4 : a0;
         int down = touch_ctl_down(t, i);
         int cx = c->x + c->w / 2, cy = c->y + c->h / 2;
         /* a dark backing keeps the label legible over busy art */
