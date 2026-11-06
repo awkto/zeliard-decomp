@@ -34,7 +34,11 @@ LIBS += -lm
 # Only the zeliard binary links curl; the engine test binaries never do.
 CURL_CFLAGS ?= $(shell pkg-config --cflags libcurl 2>/dev/null)
 CURL_LIBS   ?= $(shell pkg-config --libs libcurl 2>/dev/null)
-ifeq ($(strip $(CURL_LIBS)),)
+ifeq ($(WINHTTP),1)
+  # Windows build (#57): WinHTTP ships with the OS, so no extra DLL
+  NET_OBJ  = net_winhttp.o
+  NET_LIBS = -lwinhttp
+else ifeq ($(strip $(CURL_LIBS)),)
   NET_OBJ  = net_stub.o
   NET_LIBS =
 else
@@ -124,6 +128,7 @@ test_sync.o: CFLAGS += -Ithird_party/miniz
 net_curl.o: net_curl.c net.h
 	$(CC) $(CFLAGS) $(CURL_CFLAGS) -c -o $@ $<
 net_stub.o: net_stub.c net.h
+net_winhttp.o: net_winhttp.c net.h
 main.o: sync.h synclife.h syncdlg.h
 
 # The display filters only exist on the SDL path, so this one is built (and run)

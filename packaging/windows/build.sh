@@ -11,9 +11,8 @@
 # The build happens in a scratch copy of port/, so a Linux build tree is never
 # disturbed.  No game data is read or packaged.
 #
-# Save sync (#55): libcurl is NOT bundled (its mingw DLL closure is large and
-# unpinned); the Windows build links net_stub.c and `--sync` says "built without
-# network support".  A WinHTTP backend would be the clean follow-up.
+# Save sync (#55/#57): libcurl is NOT bundled; the Windows build links
+# net_winhttp.c (WinHTTP is part of Windows, so no extra DLL).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -52,14 +51,14 @@ rm -f "$OUT/port/local.mk"
 make -C "$OUT/port" -j"$(nproc)" zeliard CC="$CC" \
   SDL_CFLAGS="-I$SDL/include/SDL2 -Dmain=SDL_main" \
   SDL_LIBS="-L$SDL/lib -lmingw32 -lSDL2main -lSDL2 -static-libgcc" \
-  CURL_CFLAGS= CURL_LIBS=
+  CURL_CFLAGS= CURL_LIBS= WINHTTP=1
 EXE="$OUT/port/zeliard.exe"
 [ -f "$EXE" ] || { echo "no zeliard.exe produced" >&2; exit 1; }
 "$TRIPLE-strip" "$EXE"
 
 # sanity: only Windows system DLLs plus the bundled SDL2.dll
 BAD=$("$TRIPLE-objdump" -p "$EXE" | awk '/DLL Name:/{print tolower($3)}' \
-  | grep -Evx 'sdl2\.dll|kernel32\.dll|msvcrt\.dll|user32\.dll|gdi32\.dll|shell32\.dll|advapi32\.dll|ole32\.dll|oleaut32\.dll|winmm\.dll|imm32\.dll|setupapi\.dll|version\.dll|ws2_32\.dll|api-ms-win-crt-.*\.dll|ucrtbase\.dll' || true)
+  | grep -Evx 'sdl2\.dll|kernel32\.dll|msvcrt\.dll|user32\.dll|gdi32\.dll|shell32\.dll|advapi32\.dll|ole32\.dll|oleaut32\.dll|winmm\.dll|imm32\.dll|setupapi\.dll|version\.dll|ws2_32\.dll|winhttp\.dll|api-ms-win-crt-.*\.dll|ucrtbase\.dll' || true)
 if [ -n "$BAD" ]; then echo "unexpected DLL dependencies:" >&2; echo "$BAD" >&2; exit 1; fi
 "$TRIPLE-objdump" -p "$EXE" | grep "DLL Name"
 

@@ -25,6 +25,7 @@ SDL2.dll           SDL 2.30.9 (zlib licence, see SDL2-LICENSE.txt)
 LICENSE            MIT licence of the port
 README.txt         this file
 
-Not in this build: save sync (--sync) says "built without network support".
+Save sync: --sync talks to a zeliard-wasm saves server over http/https using the
+Windows built-in WinHTTP (no extra DLLs); see docs/SYNC.md.
 
 Source and issues: https://github.com/awkto/zeliard-decomp
