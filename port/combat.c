@@ -302,7 +302,10 @@ static int contact_scan(Game *g, int *p, int rows)
         uint8_t v = g->ring[*p];
         if (!(v & 0x80)) continue;                                      /* 6DCB: CF=1, plain cell */
         int i = v & 0x7F;
-        if (i >= g->nobj) continue;
+        /* 7643..: the marker indexes the record table whatever the list length now is.  A
+         * boss's stale marker (its readback restored the cell at the shifted ring column, and a
+         * shorter part list followed) still reads its old record (jashiin_damage f606) */
+        if (i >= MAX_OBJS) continue;
         MapObj *o = &g->obj[i];
         if (o->type & 0x40) continue;                                   /* harmless */
         if (g->ai) g->contact_damage = (uint16_t)(g->contact_damage + g->ai->contact[o->type & 0xF]);
