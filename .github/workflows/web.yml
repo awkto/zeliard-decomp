@@ -18,7 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build
-        run: ./packaging/web/build.sh
+        env:
+          WEB_ASYNC: "-sASYNCIFY -sASYNCIFY_ADVISE"
+        run: ./packaging/web/build.sh 2>&1 | tee advise.log
       - uses: actions/upload-artifact@v4
         with:
           name: zeliard-web
