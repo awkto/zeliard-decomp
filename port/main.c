@@ -146,6 +146,14 @@ typedef struct {
     int yield_test;                     /* web only: --yield-test yields to the browser at every present, even headless (ASYNCIFY coverage under node) */
 } App;
 
+/* --yield-test (web only): yield to the browser at every present, even headless,
+ * so tools/web/run_scenarios.sh exercises the ASYNCIFY paths under node */
+#ifdef __EMSCRIPTEN__
+#define YIELD_TEST(a) do { if ((a)->yield_test) emscripten_sleep(0); } while (0)
+#else
+#define YIELD_TEST(a) do { (void)(a); } while (0)
+#endif
+
 /* STICK's F1 / F2 hotkeys (docs/SERVICES.md 01E3).  Kept outside the SDL block
  * because the config remembers them (#42): the exit path reads them whichever
  * build this is. */
@@ -207,11 +215,6 @@ static void osd_draw(App *a)
  * display filter and present it.  The content shape is the aspect-corrected
  * display size, or the framebuffer itself under --aspect 1:1; present.c owns
  * the sampling.  Presentation only: `make verify` never reaches this path. */
-#ifdef __EMSCRIPTEN__
-#define YIELD_TEST(a) do { if ((a)->yield_test) emscripten_sleep(0); } while (0)
-#else
-#define YIELD_TEST(a) do { (void)(a); } while (0)
-#endif
 static void present_frame(App *a, int sw, int sh)
 {
     int dw = sw, dh = sh;
