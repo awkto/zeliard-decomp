@@ -278,6 +278,11 @@ struct Game {
     const struct ItemPics *pics;    /* itemp.grp icon sections */
     const struct ScreenFrame *screen; /* mole.bin: the boot-time stone frame + HUD panel */
     const struct EncounterCard *encnt; /* encnt.grp: the boss-room "!" card */
+    uint8_t  walk_then_intro;       /* a door into an [E6] room: the 7C6E walk-in first, then 61A8 (#117) */
+    uint8_t  walk_then_die;         /* [49] set: 6266 kills the hero on the restart after the walk-in (#113/#117) */
+    uint8_t  walk_variant;          /* AL of the walk-in backdrop's gfmcga [301E] call: the door letter & 7, 0 from a town (7A6F) */
+    const uint8_t *walk_place;      /* the HUD place record still on screen during the walk-in (the map just left; 6185 draws the new one later) */
+    const struct CaveMouth *mouth;  /* roka.grp: the cave-mouth backdrop behind the walk-in (7C6E) */
 
     /* messages (7210/73E0): a box stays up for 32 frames */
     uint8_t  msg_timer;             /* 9EED */
@@ -356,6 +361,7 @@ enum { MSG_GOLD50, MSG_GOLD100, MSG_GOLD500, MSG_GOLD1000, MSG_KEY, MSG_RECOVERE
        MSG_HERO_CREST, MSG_RUZERIA, MSG_GLORY_CREST, MSG_PIRIKA, MSG_FERUZA,
        MSG_SILKARN, MSG_ENCHANT_SWORD, MSG_TOO_HOT, MSG_LION_KEY, MSG_COUNT };
 /* 7C6E: start the 26-frame walk-in (face_left = enter from the right) */
+void game_run_walk_in(Game *g);            /* play out a started walk-in now (a door into a town) */
 void game_start_walk_in(Game *g, int face_left);
 
 #endif

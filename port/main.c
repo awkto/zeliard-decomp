@@ -98,6 +98,7 @@ typedef struct {
     const char *trace_dir;
     FILE    *trace_f;
     unsigned trace_n;                   /* the next trace frame number */
+    unsigned walk_n;                    /* walk-in pictures written so far (#117) */
     unsigned png_every;                 /* --png-every K */
     unsigned rng_mark;                  /* g->rng_calls at the previous boundary */
     int      trace_done;                /* script exhausted: the run is stopping */
@@ -1214,6 +1215,12 @@ static void present(Game *g)
                 g->dirs, g->hp, g->attacking, g->attack_var, g->on_hazard ? " HAZARD" : "",
                 g->hero_hit ? " HIT" : "");
     if (a->trace_f) {                                /* inputs move only at the boundaries */
+        if (g->walk_in && a->png_every) {            /* #117: the walk-in (7C6E) has no boundary; its pictures go to */
+            char path[1100];                         /* walk_<next boundary>_<k>.png, diffed by pixdiff.py */
+            snprintf(path, sizeof path, "%s/walk_%05u_%03u.png", a->trace_dir, a->trace_n, a->walk_n++);
+            fb_fight(a, g);
+            fb_write_png(a, path);
+        }
         if (++a->trace_idle > TRACE_IDLE_MAX && !a->quit) {
             fprintf(stderr, "[trace] %u frames without a boundary (a shop or menu waiting on input?): stopping\n", a->trace_idle);
             a->quit = 1; a->trace_done = 1;

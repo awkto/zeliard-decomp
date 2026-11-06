@@ -367,6 +367,16 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   bit 7 is set and the door's story flag is OR-ed into the player page), the
   **26-frame walk-in** after a transition (7C6E) and the **message box** with
   fight.bin's own strings (the 9A1E table) and its 32-frame lifetime (7210).
+* **The walk-in's picture (#117).**  Every cave mouth, door and restart plays fight.bin's `7C6E` walk-in:
+  26 passes, each drawing the hero's walk frame 8 px further (3016/3020, shield and sword arm included),
+  waiting a frame (`7F82`) and blanking the 8 x 24 strip behind him.  The picture behind him is not black:
+  gfmcga `[301E]` (4614) has just painted a 28 x 18 cell backdrop from roka.grp (`gfx_load_cavemouth`: the cell
+  map is gfmcga's own 473B, the cells go through `[2044]`) over the playfield, every colour remapped by `[46D4 +
+  2*AL]` (`gfx_mouth_remap`, AL = the door letter & 7, 0 at a town's cave mouth), and the HUD is still the
+  screen he came from (PLACE of the old map, no ENEMY gauge: 6185/6C55 run on the restart after it).  The port
+  drew the hero on black, started the encounter card's twelve flashes before the walk instead of after it, had
+  no walk for a door into a town or an [E6] room, and killed a [49] hero before it.  `walk_*.png` in the
+  traces make it diffable (docs/HARNESS.md section 4).
 * `enemy.c` — the C010 object table: a live copy per map load, the per-frame enemy
   pass (8D19) with ring markers, the pending-hit → stun conversion (8DB9), the death
   animation (90E6), removal (914C), the off-screen respawn attempt (94FF) **including

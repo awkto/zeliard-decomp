@@ -423,3 +423,46 @@ int gfx_load_encounter(EncounterCard *c, const char *dir)
     c->loaded = 1;
     return 0;
 }
+
+int gfx_load_cavemouth(CaveMouth *m, const char *dir)
+{
+    memset(m, 0, sizeof *m);
+    gfx_pal_init();
+    size_t glen, rlen;
+    uint8_t *gf = sar_load(dir, 1, 6, 1, &glen);            /* ZELRES2[6] = gfmcga.bin @3000 */
+    uint8_t *roka = sar_load(dir, 2, 52, 1, &rlen);         /* ZELRES3[52] = roka.grp */
+    if (!gf || !roka || glen < 0x473B - 0x3000 + 504) { free(gf); free(roka); return -1; }
+    const uint8_t *map = gf + (0x473B - 0x3000);            /* 18 rows x 28 cell indices (4614: si = 473B) */
+    for (int cr = 0; cr < 18; cr++)
+        for (int cc = 0; cc < 28; cc++) {
+            unsigned cell = map[cr * 28 + cc];
+            if (cell >= 0x80 || (cell + 1u) * 48u > rlen) continue;      /* [2044] converts 0x80 cells */
+            Cell8 c8;
+            gfx_decode48(roka + cell * 48, &c8);
+            for (int r = 0; r < 8; r++)
+                memcpy(m->px + (cr * 8 + r) * MOUTH_W + cc * 8, c8.px[r], 8);
+        }
+    free(gf); free(roka);
+    m->loaded = 1;
+    return 0;
+}
+
+/* gfmcga 46DE (0), 46EF (1), 46F8 (2), 4709 (3), 4722 (4): AH = a PC-88 colour 0..7 */
+static unsigned mouth_colour(unsigned v, unsigned c)
+{
+    switch (v) {
+    case 0: return c == 6 ? 3 : c == 7 ? 5 : c;
+    case 1: return c == 4 ? 2 : c;
+    case 2: return c == 4 ? 5 : c == 7 ? 4 : c;
+    case 3: return c == 4 ? 3 : c == 7 ? 5 : c == 6 ? 7 : c;
+    case 4: return c == 7 ? 5 : c == 4 ? 7 : c == 6 ? 4 : c;
+    default: return c;          /* 5..7 read past the table (code bytes): never used by a door letter */
+    }
+}
+
+/* 3081..30B7: a non-zero pixel's left colour (bits 5..3) and right colour (2..0) are mapped apart */
+uint8_t gfx_mouth_remap(unsigned variant, uint8_t px6)
+{
+    if (!px6) return 0;
+    return (uint8_t)(mouth_colour(variant, px6 >> 3) << 3 | mouth_colour(variant, px6 & 7));
+}
