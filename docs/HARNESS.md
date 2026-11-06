@@ -583,6 +583,25 @@ per 64 frames) stays on and the scenario uses `--life 3000` for it and for the D
 must be GROUND after `8074`).  MP80's (57,5) door (`dragon_fight`) lands inside the body; the front
 door lands at (21,15), left of the Dragon's col 30.
 
+**Alguien's front door (#88), where the route stops.**  The Esco start (`--town 9 --town-col 205`,
+MP81 (123,6)) reaches MP81's doors (10,52) (35,43) (151,15) (153,44) (250,38) and, through MP82's
+set A (doors (26,18) (73,25) (88,34) (102,53) (119,24) (174,9)), MP80 (117,32)/(166,31)/(57,16);
+(174,9) puts the hero in MP81's bottom pocket (227,60), whose top rope (col 205, wrap row 63 -> 0)
+leads to MP81's row-5 corridor and the (236,4) door (it sets a story flag) -> MP80 (169,19).  MP81's
+front door (222,19) -> MP8D (21,14) and the MP83 doors (179,35) (228,49) sit in a region no door of
+that set reaches; the way in is MP80 (185,1) -> MP83 (29,52), and (185,1)'s corridor (row 2) is
+reached from MP80 (169,19) by: the elevator at (183,22) down, the walk onto the fix[16] C platform
+((202,30), 189..214, one column a frame; hop off at col ~193 onto the rope, `keys .12 U6` after
+`cell 191,27` does it in that run), the rope up to row 11, east to the fix[5] elevator (227,14),
+down, the SE rooms, the col-249 rope, the row-3 corridor west and (186,2).  Two things stop the
+autopilot there: (a) landing on the C platform with the R10 walk off the elevator waits the SETTLE
+frames for a "settled" hero and is carried 15 columns past the rope (the platform ride edges need a
+live re-pick); (b) fix[5]'s shaft is blocked at (229,22) by a type 0xD0 object (item state 0x10, a
+breakable rock: the elevator's 8024 test refuses a non-zero ring cell), and nothing the hero can
+stand on lets the sword reach row 22 (the elevator tops out at row 21, the down-thrust reaches only
+row+3).  Past that: MP83's B gates (sinking) and C platforms, MP83 (228,49) -> MP81 (rope 205,
+row 20) -> (222,19) with a Key (flag [44] & 20), and the 4-row jump (Feruza shoes).  Untried.
+
 ## 9. Save states (#52, Phase B)
 
 The wasm / DOSBox-X builds snapshot the whole machine.  The port cannot, so it lists
