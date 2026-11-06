@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render zeliard.png (256x256) -- the same sword as zeliard.svg -- using only
+"""Render zeliard-decomp.png (256x256) -- the same sword as zeliard-decomp.svg -- using only
 the standard library, so the build needs no image tooling.  Original artwork;
 nothing here comes from the game's files."""
 import struct, sys, zlib
@@ -41,4 +41,4 @@ def chunk(t, d):
     return c + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
 png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", N, N, 8, 6, 0, 0, 0)) \
       + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b"")
-open(sys.argv[1] if len(sys.argv) > 1 else "zeliard.png", "wb").write(png)
+open(sys.argv[1] if len(sys.argv) > 1 else "zeliard-decomp.png", "wb").write(png)

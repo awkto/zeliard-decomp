@@ -34,13 +34,13 @@ jobs:
         run: |
           docker run --rm -v "$PWD/build:/pkg:ro" debian:12 bash -euxc '
             apt-get update -qq
-            apt-get install -y -qq /pkg/zeliard_*_amd64.deb
-            zeliard --help 2>&1 | head -3'
+            apt-get install -y -qq /pkg/zeliard-decomp_*_amd64.deb
+            zeliard-decomp --help 2>&1 | head -3'
 
       - name: Smoke-test the AppImage with no SDL installed
         run: |
           docker run --rm -v "$PWD/build:/pkg:ro" debian:12 bash -euxc '
-            cp /pkg/Zeliard-*-x86_64.AppImage /tmp/z.AppImage
+            cp /pkg/zeliard-decomp-*-x86_64.AppImage /tmp/z.AppImage
             /tmp/z.AppImage --appimage-extract-and-run --help 2>&1 | head -3'
 
       - name: Upload workflow artifacts (non-tag runs)

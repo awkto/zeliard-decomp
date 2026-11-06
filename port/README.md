@@ -116,16 +116,18 @@ Each release (a `v*` tag) carries two Linux packages, built by
 `.github/workflows/linux-release.yml` in a `debian:12` container so they run on
 anything with glibc 2.36 or newer:
 
-- `zeliard_<ver>_amd64.deb` — `sudo apt install ./zeliard_<ver>_amd64.deb`
-  (depends on `libsdl2-2.0-0`; installs `/usr/bin/zeliard`, a desktop entry and icon).
-- `Zeliard-<ver>-x86_64.AppImage` — `chmod +x` and run; SDL2 is bundled, so
+- `zeliard-decomp_<ver>_amd64.deb` — `sudo apt install ./zeliard-decomp_<ver>_amd64.deb`
+  (depends on `libsdl2-2.0-0` and `libcurl4`; installs `/usr/bin/zeliard-decomp`, a desktop
+  entry "Zeliard (decomp)" and icon).  The package, command and desktop entry are all named
+  `zeliard-decomp` so it installs side by side with the emulated build's `zeliard` package.
+- `zeliard-decomp-<ver>-x86_64.AppImage` — `chmod +x` and run; SDL2 is bundled, so
   nothing else needs installing (it still uses the system's X11/Wayland/audio).
 
 **The game files are not included** (they are copyrighted).  Give the port your
 own copy of the folder holding `ZELRES1-3.SAR`, `GAME.BIN`, ... in any one of
 these ways; the first that has all three `ZELRES*.SAR` wins:
 
-1. `zeliard --dir /path/to/the/files` (the folder is then remembered);
+1. `zeliard-decomp --dir /path/to/the/files` (`zeliard` when built from source; the folder is then remembered);
 2. the folder remembered in `zeliard.ini`;
 3. `~/.local/share/awkto/zeliard/game/` — copy the files here and launching from
    the desktop menu just works (this is `SDL_GetPrefPath("awkto","zeliard")` + `game`);
@@ -139,7 +141,7 @@ To build the packages locally (needs docker and curl; nothing else):
 
     packaging/linux/build.sh            # version from `git describe`
     packaging/linux/build.sh 1.2.3      # or explicit
-    # -> build/zeliard_<ver>_amd64.deb  build/Zeliard-<ver>-x86_64.AppImage
+    # -> build/zeliard-decomp_<ver>_amd64.deb  build/zeliard-decomp-<ver>-x86_64.AppImage
 
 The version of a release is its tag without the `v`.  The icon is original
 artwork drawn by `packaging/linux/make-icon.py` (a sword; it uses no game data).

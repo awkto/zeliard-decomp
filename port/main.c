@@ -1390,7 +1390,7 @@ static void no_game_files(const char *cfgpath, const char *datadir, int headless
         "in one of these folders:\n"
         "    zeliard/    ../zeliard/    ./\n"
         "or, for an installed copy, the per-user folder\n    %s\n"
-        "or point the port at them:  zeliard --dir /path/to/the/files\n\n"
+        "or start it with  --dir /path/to/the/files\n\n"
         "The folder that works is remembered in:\n    %s", datadir[0] ? datadir : "(SDL_GetPrefPath)/game", cfgpath);
 #ifdef __ANDROID__
     snprintf(msg, sizeof msg,

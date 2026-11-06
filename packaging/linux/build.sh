@@ -2,8 +2,8 @@
 # Build the Linux packages for port/zeliard in a debian:12 container (glibc 2.36,
 # so the result runs on anything newer):
 #
-#   build/zeliard_<ver>_amd64.deb
-#   build/Zeliard-<ver>-x86_64.AppImage
+#   build/zeliard-decomp_<ver>_amd64.deb
+#   build/zeliard-decomp-<ver>-x86_64.AppImage
 #
 #   packaging/linux/build.sh [version]
 #
@@ -44,4 +44,4 @@ docker run --rm --memory "${BUILD_MEM:-3g}" --cpus "${BUILD_CPUS:-2}" \
   -v "$REPO:/src:ro" -v "$OUT:/out" \
   "$IMAGE" bash /src/packaging/linux/container-build.sh
 
-ls -l "$OUT"/zeliard_"$VERSION"_amd64.deb "$OUT"/Zeliard-"$VERSION"-x86_64.AppImage
+ls -l "$OUT"/zeliard-decomp_"$VERSION"_amd64.deb "$OUT"/zeliard-decomp-"$VERSION"-x86_64.AppImage
