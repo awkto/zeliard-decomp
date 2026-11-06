@@ -65,6 +65,7 @@ make playthrough     # the same two routes as test_playthrough, with the step-by
 ./zeliard --map 1 --sword 4 --level 40 --life 800   # the cavern-1 boss room (mp1d)
 ./zeliard --town 1 --gold 5000                     # Muralla: the shops are at 39/59/111/138/172
 ./zeliard --map 0 --potions 0,5,6,7 --spells 1,3,6 # then Enter: the status screen with something in it
+./zeliard --map 0 --magic 7=5                 # spell 7 selected with five charges (#88)
 ./zeliard --speaker                                # PC-speaker music instead of AdLib
 ./zeliard --headless --frames 1600 --script ".1600" --music 4 --dump-audio mus1.wav
 ./zeliard --town 2 --town-col 210 --gold 20000 --level 12 --save ZCAV2   # write ZCAV2.usr

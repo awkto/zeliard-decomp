@@ -592,6 +592,7 @@ put its script in a scenario file (`tests/scenarios/NAME.zs`, §7) and run it as
 | `tarso_edge_right` | same | the same with the hero held at the right wall (scroll 14): body columns 52..57 and, for a few frames, the shot (type 0x26) are off the ring (#84) |
 | `dragon_fight` | Pureza 4, LV 25, sword 6 (`DRAGONB`) | MP80's (57,5) door into MP7D from its far side: the hero lands inside the Dragon's body and dies of contact after ~80 frames of DRGN (no kill) |
 | `dragon_kill` | Llama 8, LV 25, **LIFE 3000**, sword 6, one Key, Feruza shoes worn (`--worn 1`) (`DRAGONK`, `# pilot:`) | Llama's right-edge door (col 269) → MP70 (1,22), the ledge climb to the front door (199,33) (the jump-4 rise onto the (195,49) elevator, `8074` sets `[FF3D]` = 0), → MP7D (21,15); Dragon to the kill (sword damage ×½, head ×2, `A33E`), reward (EXP 12000, ALMAS 2500), 72F1's exit door.  Found and fixed (#87): `8074` elevator-up must leave the hero GROUND (`80FC..8101`); DRGN's flame parts are written with +5 = 0 so they never carry the hit flash (`A71A`); the death thrash is 29 frames (`AA02` tests the counter after the `inc`); gfmcga `302C` draws sprites in ring-scan order and `3468` claims the TR/BL/BR cells (a later sprite's cell under one is skipped); `738F` ticks the message box's timer once in the post-boss transition (cavern 7's TOO HOT box is up) |
+| `alguien_route` | Esco 205, LV 25, LIFE 3000, sword 6, 3 Keys, Feruza shoes worn, `--magic 7=5` (spell 7, five charges) (`ALGM`, `# pilot:`) | MP81 (123,6) → MP82 (174,9) → MP81's bottom pocket → door (236,4) → MP80 (169,19): the elevator and the fix[16] C platform, the rope (`cell 191,27; keys .12 U6`), the fix[5] elevator whose shaft is blocked by a breakable rock at (229,22) (type 0xD0, item state 0x10): spell 7 (`8918`, screen-wide, marks every sprite in the window) breaks it, a second cast for the (252,13) rock over the fix[6] elevator, the row-3 corridor to door (185,1) → MP83 (29,53).  First scenario with magic.  Found and fixed (#88): spell 7 sets `[9EED]` = 0xFF (`8918`) and ends in `jmp 6F9B` -- one more whole frame, then back to the caller (`8963..896B`), so that cast frame skips `++crouch_release`; `cast_timer` `[9F2B]` survives a door (only `87E1` and the town entry `79E7` clear it) |
 | `heat_current` | Llama 8, LV 25, one Key (`CALIK`) | MP70 (176,43) → MP72 (cavern 7): into the bottom corridor's rope gap, the fall through the ring, the (116,11) rope hole, then west into the (88..90,25) current that pushes the hero back.  Current cells are one-way walls (`67A3`/`6942`) in every cavern **but** 7 (#87) |
 | `jashiin_fight` | Pureza 4, LV 40, LIFE 999, sword 6, shield 4, one Key (`JASHIIN`), `# cave: 0,29,6,0,0x1B` | Jashiin, the last boss (#111): Pureza's mouth rewritten to MP84 (29,6), the (30,5) door (one Key), MP90's [E6] cutscene (MAO1: 135 frames, three speeches, no boss HUD, no input, `[9F01]`/`[FF4A]`/`[9F0A]` untouched), MPA0 loaded by `61DD` (cur_map stays 1D, `[84]` carried, `[9F26]` clear after the first frame), the score's F1 (`[FF21]`) 158 frames later, then MAO2: both throws (shot 1 pose 9, shot 2 pose 12) until the hero dies (591 frames) |
 
@@ -620,6 +621,24 @@ per 64 frames) stays on and the scenario uses `--life 3000` for it and for the D
 (class 0): six or seven blows.  The same route is where the port's elevator-up bug showed (the hero
 must be GROUND after `8074`).  MP80's (57,5) door (`dragon_fight`) lands inside the body; the front
 door lands at (21,15), left of the Dragon's col 30.
+
+**Alguien's front door (#88), where the route stops.**  `alguien_route` is the part that works: from
+Esco's MP81 (123,6) the way to MP83 is MP82's (174,9) → MP81's bottom pocket (227,60), whose top rope
+(col 205, over the wrap row 63 → 0) leads to the row-5 corridor and door (236,4) (it sets a story
+flag) → MP80 (169,19) → the elevator (183,22), the fix[16] C platform (the autopilot waits out
+`SETTLE` after the walk onto it and is carried 15 columns past the rope: `cell 191,27; keys .12 U6`
+does it by hand), the rope up to row 11, the fix[5] elevator (227,14), the south-east rooms, the
+fix[6] elevator and the col-249 rope, the row-3 corridor west, door (185,1) → MP83 (29,53).  Two
+**breakable rocks** (type 0xD0 = item state 0x10, `8E32`) sit in the elevator shafts, at (229,22)
+and (252,13); an elevator's `8024`/`80AF` test refuses a non-zero ring cell, and the sword cannot
+reach them from the elevator (the thrust reaches row+3 only).  Magic can: the spells mark a sprite
+through `8C4F` like the sword does, and spell 7 hits everything in the window, so `--magic 7=5` and
+`M1` on the elevator (the cast takes 6 frames) opens both.  What is **not** done: MP83's doors (6,13)
+→ MP81 (228,49) and (86,6) → MP81 (179,35), the only ways into the region of MP81 that holds the
+front door (222,19) → MP8D, are not reachable by the autopilot from (29,53): the B gates
+((50,46) (53,44) (56,42), (65,7)..(74,10), (7,30), (124,41); `fixture_ride` 818E, one row a frame
+under the hero) are not nav edges, and a plain walk onto the first one does not move the hero.
+Past that: the 4-row jump (Feruza shoes) onto MP8D's boss pocket, the Key door (flag [44] & 20).
 
 ## 9. Save states (#52, Phase B)
 

@@ -557,6 +557,7 @@ static void usage(void)
         "  --worn N    wear key item N ([9E], also put in the [A1..A5] bag): 1 Feruza shoes\n"
         "              (jump 4), 2 Pirika, 3 Silkarn, 4 Ruzeria shoes, 5 Asbestos cape\n"
         "  --potions L comma list of drug ids 0..7 into the five [A6..AA] slots (Enter -> USE:)\n"
+        "  --magic S[=N]  select spell S (1..7) with N charges (max too), marked learned\n"
         "  --spells L  comma list of spell numbers 1..7 to mark learned at [BB..C1]\n"
         "  --name NAME the NAME.USR the sage's \"Record Experience\" writes\n"
         "  --load NAME restore NAME.USR (town.bin 7592) before starting; the page's\n"
@@ -1399,6 +1400,7 @@ int main(int argc, char **argv)
     int dbg_sword = -1, dbg_shield = -1, dbg_level = -1, dbg_life = -1;
     long dbg_gold = -1, dbg_keys = -1, dbg_bank = -1, dbg_worn = -1;
     const char *dbg_potions = NULL, *dbg_spells = NULL, *cave_poke = NULL;
+    int dbg_magic_sel = 0, dbg_magic_n = 0;
     const char *save_name = "ZELIARD", *load_name = NULL, *save_now = NULL;
     const char *sync_action = NULL, *sync_key_opt = NULL, *sync_base_opt = NULL;   /* #55 */
     int sync_force = 0;
@@ -1474,6 +1476,11 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--potions") && i + 1 < argc) dbg_potions = argv[++i];
         else if (!strcmp(argv[i], "--spells") && i + 1 < argc) dbg_spells = argv[++i];
         else if (!strcmp(argv[i], "--cave") && i + 1 < argc) cave_poke = argv[++i];
+        else if (!strcmp(argv[i], "--magic") && i + 1 < argc) {     /* SEL=COUNT: select spell SEL, COUNT charges */
+            const char *v = argv[++i];
+            dbg_magic_sel = atoi(v); const char *e = strchr(v, '='); dbg_magic_n = e ? atoi(e + 1) : 9;
+            if (dbg_magic_sel < 1 || dbg_magic_sel > 7) { fprintf(stderr, "--magic: want SEL[=COUNT], SEL 1..7\n"); return 2; }
+        }
         else if (!strcmp(argv[i], "--name") && i + 1 < argc) save_name = argv[++i];
         else if (!strcmp(argv[i], "--load") && i + 1 < argc) { load_name = argv[++i]; explicit_start = 1; }
         else if (!strcmp(argv[i], "--save") && i + 1 < argc) { save_now = argv[++i]; explicit_start = 1; }
@@ -1731,6 +1738,12 @@ int main(int argc, char **argv)
             while (*c && *c != ',') c++;
             if (*c) c++;
         }
+    }
+    if (dbg_magic_sel) {                                                /* [9D] selected, [AB..], [B4..], learned [BB..] */
+        int k = dbg_magic_sel - 1;
+        g->magic_sel = (uint8_t)dbg_magic_sel; g->page[0x9D] = (uint8_t)dbg_magic_sel;
+        g->magic_count[k] = g->magic_max[k] = (uint8_t)dbg_magic_n;
+        g->page[0xAB + k] = g->page[0xB4 + k] = (uint8_t)dbg_magic_n; g->page[0xBB + k] = 0xFF;
     }
     for (int f = 0; f < nflags; f++) g->page[flag_at[f]] = flag_val[f];  /* --flag */
     player_page_push(g);
