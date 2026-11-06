@@ -17,7 +17,7 @@ set(SRCS main trace
     ai_eai1 ai_eai2 ai_eai3 ai_eai4 ai_eai5 ai_eai6 ai_eai7 ai_eai8 town
     boss boss_crab boss_tako boss_tori boss_zela boss_meda boss_lega
     boss_drgn boss_akma boss_mao1 boss_mao2 boss_generic
-    text player shop status shell savestate nav playthrough opl2 msd audio
+    text player shop status shell savestate nav playthrough opl2 sn76496 sndjr msd audio
     config statekeys restore gd cutscene tear
     video video_mcga video_cga video_ega video_hgc video_tandy
     present touch input sync synclife syncdlg net_stub)

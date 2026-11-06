@@ -40,7 +40,8 @@ typedef struct Config {
     char aspect[CONFIG_STR_MAX];        /* 4:3 / 1:1; "" = unset */
     int  music;                         /* F1 state; -1 = unset, 0 = off, 1 = on */
     int  sfx;                           /* F2 state; -1 = unset */
-    int  speaker;                       /* 1 = PC speaker, 0 = AdLib; -1 = unset */
+    int  speaker;                       /* 1 = PC speaker, 0 = AdLib; -1 = unset (older files; `audio` wins) */
+    char audio[CONFIG_STR_MAX];         /* sound back end: adlib / speaker / tandy; "" = unset */
     int  volume;                        /* carried if present; -1 = unset */
     int  touch_size;                    /* touch.size, percent of the default; -1 = unset (#54) */
     int  touch_opacity;                 /* touch.opacity, percent; -1 = unset (#54) */

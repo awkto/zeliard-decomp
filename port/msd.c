@@ -16,6 +16,11 @@ static const uint8_t VIBSCALE_A[12] = { 0x13, 0x14, 0x15, 0x16, 0x18, 0x19, 0x1B
 /* S 08B2 / S 08CA: PIT divisor before the octave shift, and the vibrato scale */
 static const uint16_t PITDIV[12] = { 2280, 2152, 2031, 1917, 1809, 1708, 1612, 1521, 1436, 1355, 1279, 1207 };
 static const uint8_t VIBSCALE_S[12] = { 0x80, 0x78, 0x72, 0x6B, 0x65, 0x5F, 0x5A, 0x55, 0x50, 0x4C, 0x47, 0x43 };
+/* J 0A7B / 0A93 / 0A9F: SN76496 tone periods (octave 1..), vibrato scale, noise
+ * control by pitch (`J` = MSCJR.DRV) */
+static const uint16_t JR_PERIOD[12] = { 1709, 1613, 1523, 1437, 1357, 1281, 1209, 1141, 1077, 1016, 959, 905 };
+static const uint8_t JR_VIBSCALE[12] = { 0x60, 0x5A, 0x56, 0x50, 0x4C, 0x48, 0x44, 0x40, 0x3D, 0x39, 0x36, 0x32 };
+static const uint8_t JR_NOISE[12] = { 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6 };
 /* A 0B75 */
 static const uint8_t OPOFF[9] = { 0x00, 0x01, 0x02, 0x08, 0x09, 0x0A, 0x10, 0x11, 0x12 };
 /* A 0B7E: the driver's own percussion patches for OPL channels 6, 7, 8 */
@@ -62,6 +67,248 @@ static int att_to_vel(int units)
     if (r < 8) r = 8;
     if (r > 127) r = 127;
     return (int)r;
+}
+
+
+/* ============================================================ MSCJR.DRV
+ * The SN76496 side of the Tandy / PCjr driver.  `J xxxx` tags are addresses in
+ * disasm/MSCJR.asm; the register traffic is checked byte for byte against the
+ * real driver code (tools/jrtrace.py runs MSCJR.DRV under a CPU emulator). */
+static void sn_out(MsdPlayer *p, uint8_t b) { if (p->sn) p->sn(p->sn_u, b); }
+
+/* J 0A4C: a tone / attenuation byte, unless SNDJR owns the channel or F1 muted the music */
+static void jr_a4c(MsdPlayer *p, MsdChan *c, uint8_t b)
+{ if (c->jr_claimed || p->music_off) return; sn_out(p, b); }
+
+/* J 0A60: noise control */
+static void jr_noisectl(MsdPlayer *p, uint8_t v)
+{
+    uint8_t b = (uint8_t)(v | 0xE0);
+    p->jr_noisectl = b;
+    if (p->jr_noise_claim || p->music_off) return;
+    sn_out(p, b);
+}
+
+/* the shadow registers' initial image, straight from the file (J 0AAB..0AB5) */
+static void jr_ensure_image(MsdPlayer *p)
+{
+    if (p->jr_image) return;
+    static const uint8_t img[11] = { 0x80, 0x00, 0xA0, 0x00, 0xC0, 0x00, 0xE0, 0x9F, 0xBF, 0xDF, 0xFF };
+    memcpy(p->jr_tone, img, 6); p->jr_noisectl = img[6]; memcpy(p->jr_att, img + 7, 4);
+    p->jr_mask = 0x3F;
+    p->jr_image = 1;
+}
+
+/* J 02F9: all four attenuations off, straight to the chip */
+static void jr_silence_raw(MsdPlayer *p)
+{ sn_out(p, 0x9F); sn_out(p, 0xBF); sn_out(p, 0xDF); sn_out(p, 0xFF); }
+
+/* J 02D8: the same, and the shadows follow */
+static void jr_silence_shadow(MsdPlayer *p)
+{
+    jr_ensure_image(p);
+    static const uint8_t a[4] = { 0x9F, 0xBF, 0xDF, 0xFF };
+    for (int i = 0; i < 4; i++) { p->jr_att[i] = a[i]; sn_out(p, a[i]); }
+}
+
+/* J 0196: SNDJR's claim mask -> per-channel flags; claimed channels go quiet */
+static void jr_claim196(MsdPlayer *p, uint8_t cl)
+{
+    uint8_t al = 0;
+    if (cl & 0x38) { al = 0xFF; sn_out(p, 0xFF); }
+    p->jr_noise_claim = al;
+    uint8_t ch = cl;
+    for (int k = 0; k < 3; k++) {
+        int carry = ch & 1; ch >>= 1;
+        p->ch[k].jr_claimed = (uint8_t)(carry ? 0xFF : 0);
+        if (carry) sn_out(p, (uint8_t)((((2 * k + 1) << 4) & 0xFF) | 0x8F));
+    }
+}
+
+/* J 0170: resend everything the music has on the chip */
+static void jr_restore(MsdPlayer *p)
+{
+    jr_ensure_image(p);
+    jr_claim196(p, 0);
+    jr_silence_raw(p);
+    if (p->music_off || p->paused) return;
+    for (int i = 0; i < 6; i++) sn_out(p, p->jr_tone[i]);
+    sn_out(p, p->jr_noisectl);
+    for (int i = 0; i < 4; i++) sn_out(p, p->jr_att[i]);
+}
+
+/* J 0653: write the tone period (period + vibrato offset), unless it overflows 10 bits */
+static void jr_tone(MsdPlayer *p, MsdChan *c)
+{
+    uint16_t cx = (uint16_t)(c->jr_base + (uint16_t)c->vib_offset);
+    if (cx & 0xFC00) return;
+    int ch = c->idx & 3;
+    uint8_t lo = (uint8_t)(0x80 | (ch << 5) | (cx & 0x0F));
+    p->jr_tone[2 * ch] = lo;
+    jr_a4c(p, c, lo);
+    uint8_t hi = (uint8_t)(cx >> 4);
+    p->jr_tone[2 * ch + 1] = hi;
+    jr_a4c(p, c, hi);
+}
+
+/* J 083D: envelope level x channel attenuation x fade -> attenuation nibble */
+static void jr_volume(MsdPlayer *p, MsdChan *c)
+{
+    uint8_t dl = (uint8_t)(~(c->lev[0] >> 3) & 0x0F);
+    uint8_t al = (uint8_t)(c->jr_level & 0xF0);
+    for (int i = 0; i < 4; i++) {
+        int cf = al >> 7;
+        al = (uint8_t)(al << 1);
+        if (cf) al = (uint8_t)(al + dl);
+    }
+    al = (uint8_t)(al + 0x0F);
+    al = al >= p->sync[4] ? (uint8_t)(al - p->sync[4]) : 0;
+    al = (uint8_t)(((al >> 4) & 0x0F) ^ 0x0F);
+    int ch = c->idx & 3;
+    if (!(c->jr_flags & 7)) {
+        uint8_t b = (uint8_t)(al | (((2 * ch + 1) << 4) & 0xFF) | 0x80);
+        p->jr_att[ch] = b;
+        jr_a4c(p, c, b);
+    }
+    if (c->jr_flags & 0x38) return;
+    uint8_t n = (uint8_t)(al | 0xF0);
+    p->jr_att[3] = n;
+    if (p->jr_noise_claim || p->music_off) return;
+    sn_out(p, n);
+}
+
+/* J 0A06: this channel's tone off; noise off too once no channel uses it */
+static void jr_off(MsdPlayer *p, MsdChan *c)
+{
+    int ch = c->idx & 3;
+    uint8_t b = (uint8_t)((((2 * ch + 1) << 4) & 0xFF) | 0x8F);
+    p->jr_att[ch] = b;
+    jr_a4c(p, c, b);
+    if (((p->jr_mask ^ 0x38) & 0x38) != 0) return;
+    p->jr_att[3] = 0xFF;
+    if (p->jr_noise_claim || p->music_off) return;
+    sn_out(p, 0xFF);
+}
+
+/* the per-channel mask bits (J 04AF / 04F2 / 12B7): flags bit k and 3+k of channel k */
+static void jr_set_flags(MsdPlayer *p, MsdChan *c, uint8_t flags6)
+{
+    uint8_t keep = c->jr_mask;
+    p->jr_mask = (uint8_t)((p->jr_mask & keep) | (flags6 & (uint8_t)~keep));
+}
+
+/* J 0613: note -> period */
+static void jr_pitch(MsdChan *c, int pitch)
+{
+    int i = pitch - 1;
+    c->vib_note_scale = JR_VIBSCALE[i];
+    uint16_t ax = (uint16_t)(JR_PERIOD[i] + (int16_t)c->detune);
+    uint8_t cl = (uint8_t)(c->block - 1);
+    if (c->block > 1) {                          /* sub cl,1 ; jna */
+        c->jr_base = cl >= 16 ? 0 : (uint16_t)(ax >> cl);
+        return;
+    }
+    c->jr_base = ax;
+    if (i < 9) c->jr_base = (uint16_t)(ax >> 1);
+}
+
+/* J 0699: note off -> the envelope's release phase */
+static void jr_release(MsdPlayer *p, MsdChan *c)
+{
+    unsigned b = c->patch;
+    uint8_t drop = (uint8_t)(rd8(p, b + 0xC) & 0xF0);
+    c->jr_level = (uint8_t)(c->jr_level >= drop ? c->jr_level - drop : 0);
+    c->jr_phase = 1;
+    c->jr_count = rd8(p, b + 0xB);
+    c->jr_step = rd8(p, b + 0xA);
+    jr_volume(p, c);
+}
+
+/* J 0563..0611 after the pitch is set: key-on, the noise note, the tone write */
+static void jr_note_on(MsdPlayer *p, MsdChan *c, int pitch, int legato)
+{
+    if (!legato) {
+        unsigned b = c->patch;
+        c->jr_level = (uint8_t)(rd8(p, b + 0xD) << 4);
+        c->jr_phase = 0x12;
+        c->jr_count = rd8(p, b + 7);
+        c->jr_step = rd8(p, b + 6);
+        c->jr_wait = 1;
+        jr_volume(p, c);
+        if (c->jr_flags & 0x80) jr_noisectl(p, JR_NOISE[pitch > 12 ? 11 : pitch - 1]);
+    }
+    if (c->jr_flags & 7) return;
+    jr_tone(p, c);
+}
+
+/* J 06FF..07C0: the vibrato step (every other driver tick) */
+static void jr_vibrato(MsdPlayer *p, MsdChan *c)
+{
+    (void)p;
+    if (!(c->nflags & 0x02)) {
+        unsigned sh = c->block > 1 ? (unsigned)(uint8_t)(c->block - 1) : 0;
+        unsigned up = (unsigned)c->vib_mul_up * c->vib_note_scale;
+        unsigned dn = (unsigned)c->vib_mul_down * c->vib_note_scale;
+        if (sh) { up = sh >= 16 ? 0 : up >> sh; dn = sh >= 16 ? 0 : dn >> sh; }
+        c->vib_step_up = (uint16_t)up; c->vib_step_down = (uint16_t)dn;
+        c->vib_half = (uint8_t)(((c->vib_ctl & 0x80) ? c->vib_len_down : c->vib_len_up) >> 1);
+        c->vib_frac = 0x80;
+        c->flags = (uint8_t)((c->flags & 0x7F) | (c->vib_ctl & 0x80));
+        c->nflags |= 0x02;
+    }
+    c->vib_delay = (uint8_t)(c->vib_ctl & 0x1F);
+    if (--c->vib_half == 0) {
+        if (c->flags & 0x80) { c->vib_half = c->vib_len_up; c->flags &= (uint8_t)~0x80; }
+        else                 { c->vib_half = c->vib_len_down; c->flags |= 0x80; }
+    }
+    if (!(c->flags & 0x80)) {
+        unsigned f = c->vib_frac + (c->vib_step_up & 0xFF);
+        c->vib_frac = (uint8_t)f;
+        uint8_t hi = (uint8_t)((c->vib_step_up >> 8) + (f >> 8));
+        if (!hi) return;
+        c->vib_offset = (int16_t)(c->vib_offset + hi);
+    } else {
+        int f = (int)c->vib_frac - (int)(c->vib_step_down & 0xFF);
+        c->vib_frac = (uint8_t)f;
+        uint8_t hi = (uint8_t)((c->vib_step_down >> 8) + (f < 0 ? 1 : 0));
+        if (!hi) return;
+        c->vib_offset = (int16_t)(c->vib_offset - hi);
+    }
+    jr_tone(p, c);
+}
+
+/* J 07CB: the envelope generator */
+static void jr_env(MsdPlayer *p, MsdChan *c)
+{
+    if (--c->jr_wait != 0) return;
+    unsigned b = c->patch;
+    c->jr_wait = (uint8_t)(rd8(p, b + 0xC) & 0x0F);
+    if ((c->jr_phase & 0x0F) == 0) return;
+    int ch = c->jr_level, cl = c->jr_step;
+    if (cl & 1) { cl &= 0xFE; ch = ch >= cl ? ch - cl : 0; }
+    else        { ch = ch + cl > 0xFF ? 0xFF : ch + cl; }
+    if (--c->jr_count == 0) {
+        if (--c->jr_phase == 0x11) {
+            c->jr_count = rd8(p, b + 9);
+            c->jr_step = rd8(p, b + 8);
+            int drop = rd8(p, b + 0xD) & 0xF0;
+            ch = ch >= drop ? ch - drop : 0;
+        }
+    }
+    if (ch == c->jr_level) return;
+    c->jr_level = (uint8_t)ch;
+    jr_volume(p, c);
+}
+
+/* J 06C6: what follows a channel's track step on every score-clock tick */
+static void jr_tail(MsdPlayer *p, MsdChan *c)
+{
+    if (p->jr_fade_flag) jr_volume(p, c);
+    if (c->jr_flags & 7) { if (!p->vib_phase) return; jr_env(p, c); return; }
+    if (!c->jr_phase) return;
+    if (!p->vib_phase) return;
+    if ((c->flags & 0x40) && --c->vib_delay == 0) jr_vibrato(p, c);
+    jr_env(p, c);
 }
 
 /* --------------------------------------------------------------- OPL out */
@@ -157,16 +404,24 @@ static void load_perc(MsdPlayer *p)                            /* A 02C3 */
 
 static void silence(MsdPlayer *p)                              /* A 03D2 */
 {
+    if (p->mode == MSD_JR) { jr_silence_shadow(p); return; }    /* J 02D8 */
     if (p->mode != MSD_ADLIB) { p->speaker_on = 0; return; }
     oplraw(p, 0xBD, 0x00);
     for (int r = 0xB0; r <= 0xB8; r++) oplraw(p, (uint8_t)r, 0x00);
 }
 
 /* ------------------------------------------------------------ note logic */
-static void note_release(MsdPlayer *p, MsdChan *c)             /* A 0778 / S 0570 */
+static void note_log_off(MsdPlayer *p, MsdChan *c)
 {
     if (c->cur_note >= 0) { logev(p, c, MSD_OFF, c->cur_note, 0, 0); c->cur_note = -1; }
-    if (p->mode == MSD_ADLIB) {
+}
+
+static void note_release(MsdPlayer *p, MsdChan *c)             /* A 0778 / S 0570 / J 0699 */
+{
+    note_log_off(p, c);
+    if (p->mode == MSD_JR) {
+        jr_release(p, c);
+    } else if (p->mode == MSD_ADLIB) {
         c->nflags &= (uint8_t)~0x40;
         write_freq(p, c);
     } else {
@@ -186,7 +441,7 @@ static void note_key_on(MsdPlayer *p, MsdChan *c)              /* A 072D / S 050
     if (p->mode == MSD_ADLIB) {
         c->nflags |= 0x40;
         write_freq(p, c);
-    } else {
+    } else if (p->mode == MSD_STD) {
         unsigned e = c->patch + 6;
         c->env_level = (uint8_t)(rd8(p, e + 7) << 4);
         c->env_phase = 0x12;
@@ -199,6 +454,7 @@ static void note_key_on(MsdPlayer *p, MsdChan *c)              /* A 072D / S 050
 static void set_pitch(MsdPlayer *p, MsdChan *c, int pitch)     /* A 074E / S 0548 */
 {
     int i = pitch - 1; if (i < 0) i = 0; if (i > 11) i = 11;
+    if (p->mode == MSD_JR) { jr_pitch(c, i + 1); return; }
     if (p->mode == MSD_ADLIB) {
         c->vib_note_scale = VIBSCALE_A[i];
         c->fnum_block = (uint16_t)((FNUM[i] + (int16_t)c->detune) | (c->block << 10));
@@ -239,6 +495,15 @@ static void select_patch(MsdPlayer *p, MsdChan *c, int n)      /* A 0598 / S 045
     } else {
         c->patch = (uint16_t)(p->instr_tab + 17 * n);
         cmd_vibrato_from(p, c, c->patch);
+        if (p->mode == MSD_JR) {                               /* J 04E4 */
+            uint8_t fl = rd8(p, c->patch + 14);
+            c->jr_flags = fl;
+            jr_set_flags(p, c, (uint8_t)(fl & 0x3F));
+            if (!(fl & 0x08)) {
+                jr_noisectl(p, (uint8_t)(rd8(p, c->patch + 15) / 11 + 4));
+            }
+            jr_off(p, c);
+        }
     }
 }
 
@@ -264,6 +529,7 @@ static void volume_rel(MsdPlayer *p, MsdChan *c, uint8_t nib)  /* A 0699 / S 046
     }
     c->lev[0] = (uint8_t)bl;
     if (p->mode == MSD_ADLIB) set_level(p, c);
+    if (p->mode == MSD_JR) jr_volume(p, c);
 }
 
 static void do_command(MsdPlayer *p, MsdChan *c, uint8_t b)
@@ -284,10 +550,21 @@ static void do_command(MsdPlayer *p, MsdChan *c, uint8_t b)
     case 0xE4: c->block++; return;
     case 0xE5: c->lev[0] = fetch8(p, c);
                if (p->mode == MSD_ADLIB) set_level(p, c);
+               if (p->mode == MSD_JR) jr_volume(p, c);
                logev(p, c, MSD_VOL, cc7(p, c), 0, 0); return;
     case 0xE7: c->nflags |= 0x20; return;
     case 0xE6: case 0xE8: case 0xED: case 0xEE: case 0xEF: return;
     case 0xE9: case 0xEA:
+        if (p->mode == MSD_JR) {
+            uint8_t a = fetch8(p, c);
+            if (b == 0xE9) jr_noisectl(p, (uint8_t)(a / 11 + 4));            /* J 049F */
+            else {                                                           /* J 04AB */
+                c->jr_flags = (uint8_t)((c->jr_flags & 0xC0) | a);
+                jr_set_flags(p, c, a);
+                jr_off(p, c);
+            }
+            return;
+        }
         if (p->mode != MSD_ADLIB) fetch8(p, c);
         return;
     case 0xEB:
@@ -334,7 +611,11 @@ static void flow(MsdPlayer *p, MsdChan *c, uint8_t op, int allow_f4)
     case 0xFE: c->pos = c->ret; c->durtab = c->saved_durtab; return;
     case 0xFF:
         c->flags |= 1;
-        if (++p->tracks_ended >= p->end_count) { p->stopped = 0x3F; silence(p); }
+        if (++p->tracks_ended >= p->end_count) {
+            p->stopped = 0x3F;
+            if (p->mode == MSD_JR) p->jr_mask = 0x3F;          /* J 09F7 */
+            silence(p);
+        }
         return;
     default: return;
     }
@@ -358,6 +639,7 @@ static void do_note(MsdPlayer *p, MsdChan *c, uint8_t b)       /* A 06E8 / S 04B
     logev(p, c, MSD_ON, note, velocity(p, c), legato);
     c->cur_note = note;
     if (!legato) note_key_on(p, c);
+    if (p->mode == MSD_JR) jr_note_on(p, c, pitch, legato);
 }
 
 static void mel_tick(MsdPlayer *p, MsdChan *c)                 /* A 0356 / S 0356 */
@@ -371,7 +653,11 @@ static void mel_tick(MsdPlayer *p, MsdChan *c)                 /* A 0356 / S 035
         uint8_t b = fetch8(p, c);
         if (b < 0x80) { do_note(p, c, b); return; }
         do_command(p, c, b);
-        if (c->flags & 1) { note_release(p, c); return; }
+        if (c->flags & 1) {
+            if (p->mode == MSD_JR) note_log_off(p, c);         /* J 09EE: FF does not release the voice */
+            else note_release(p, c);
+            return;
+        }
     }
     c->flags |= 1;                                             /* runaway guard */
 }
@@ -528,8 +814,14 @@ int msd_start(MsdPlayer *p, const uint8_t *blob, size_t len, int mode)
     void (*o)(void *, uint8_t, uint8_t) = p->opl; void *ou = p->opl_u;
     void (*e)(void *, int, int, int, int, int, int) = p->ev; void *eu = p->ev_u;
     int compat = p->compat_msd2mid;
+    /* what MSCJR keeps in its image across songs: the chip shadows and the noise claim (B69) */
+    void (*sn)(void *, uint8_t) = p->sn; void *snu = p->sn_u;
+    MsdPlayer keep = *p;
     memset(p, 0, sizeof *p);
     p->opl = o; p->opl_u = ou; p->ev = e; p->ev_u = eu; p->compat_msd2mid = compat;
+    p->sn = sn; p->sn_u = snu;
+    p->jr_image = keep.jr_image; memcpy(p->jr_tone, keep.jr_tone, 6); p->jr_noisectl = keep.jr_noisectl;
+    memcpy(p->jr_att, keep.jr_att, 4); p->jr_noise_claim = keep.jr_noise_claim;
     p->b = blob; p->blen = len; p->mode = mode;
     for (int i = 0; i < 6; i++) p->adlib_tr[i] = rd16(p, 1 + 2 * i);
     for (int i = 0; i < 3; i++) p->jr_tr[i] = rd16(p, 0x0D + 2 * i);
@@ -554,6 +846,14 @@ int msd_start(MsdPlayer *p, const uint8_t *blob, size_t len, int mode)
     p->tempo = 0x7F; p->tempo_acc = 0;
     p->fade_wait = 1; p->vib_phase = 0; p->tick = 0;
     p->stopped = 0;
+    if (mode == MSD_JR) {                                      /* J 022E */
+        jr_ensure_image(p);
+        p->jr_mask = 0x3F;
+        uint8_t bh = 0xF6;
+        for (int i = 0; i < 3; i++) { p->ch[i].jr_mask = bh; bh = (uint8_t)((bh << 1) | (bh >> 7)); }
+        p->jr_div = 1;
+        silence(p);
+    }
     if (mode == MSD_ADLIB) {
         silence(p);
         oplraw(p, 0x01, 0x20);
@@ -576,8 +876,10 @@ void msd_driver_tick(MsdPlayer *p)                             /* S 02C3 */
 {
     if (p->stopped || p->paused) return;
     if (p->sync[3]) {                                          /* S 0328 fade */
+        if (p->mode == MSD_JR) p->jr_fade_flag = 0;            /* J 036F */
         if (--p->fade_wait == 0) {
             p->fade_wait = p->sync[3];
+            if (p->mode == MSD_JR) p->jr_fade_flag = 1;
             if (p->sync[4] + 4 > 0xFF) {
                 p->sync[3] = 0; p->stopped = 0xFF; silence(p); p->sync[4] = 0xFF;
                 return;
@@ -593,13 +895,33 @@ void msd_driver_tick(MsdPlayer *p)                             /* S 02C3 */
     unsigned s = (unsigned)p->tempo_acc + p->tempo;
     p->skip_tick = (uint8_t)(s > 0xFF ? 0xFF : 0);
     p->tempo_acc = (uint8_t)s;
+    if (p->mode == MSD_JR) {                                   /* J 035E: track step then tail, channel by channel */
+        for (int i = 0; i < 3; i++) {
+            MsdChan *c = &p->ch[i];
+            if (c->flags & 1) continue;
+            if (!p->skip_tick) mel_tick(p, c);
+            jr_tail(p, c);
+        }
+        if (!p->skip_tick) p->tick++;
+        return;
+    }
     if (!p->skip_tick) msd_score_tick(p);
     if (p->vib_phase) for (int i = 0; i < p->nch; i++) if (!(p->ch[i].opl_ch & 0x80)) vibrato(p, &p->ch[i]);
 }
 
-void msd_stop(MsdPlayer *p)  { silence(p); p->stopped = 0xFF; }
+void msd_stop(MsdPlayer *p)
+{
+    silence(p); p->stopped = 0xFF;
+    if (p->mode == MSD_JR) p->jr_mask = 0x3F;                  /* J 02C8 */
+}
 void msd_pause(MsdPlayer *p, int on)
 {
+    if (p->mode == MSD_JR) {                                   /* J 014D */
+        jr_ensure_image(p);
+        if (on) { jr_silence_raw(p); p->paused = 0xFF; }
+        else { p->paused = 0; jr_restore(p); }
+        return;
+    }
     if (on) { silence(p); p->paused = 0xFF; }
     else {
         p->paused = 0;
@@ -612,6 +934,12 @@ void msd_pause(MsdPlayer *p, int on)
 }
 void msd_enable(MsdPlayer *p, int on)
 {
+    if (p->mode == MSD_JR) {                                   /* J 0137 */
+        jr_ensure_image(p);
+        if (!on) { jr_silence_raw(p); p->music_off = 0xFF; }
+        else { p->music_off = 0; jr_restore(p); }
+        return;
+    }
     if (!on) { silence(p); p->music_off = 0xFF; return; }
     p->music_off = 0;
     if (p->mode == MSD_ADLIB && !p->stopped) {
@@ -633,6 +961,23 @@ void msd_claim_opl(MsdPlayer *p, uint8_t mask)
         if (p->ch[i].muted) { p->ch[i].muted = 0; p->ch[i].nflags &= (uint8_t)~0x40; write_freq(p, &p->ch[i]); }
     if (p->stopped || p->paused || p->music_off) { silence(p); return; }
     load_patch(p, &p->ch[4]); load_patch(p, &p->ch[5]);
+}
+
+/* INT 60h AX=5 (J 016A) */
+void msd_claim_sn(MsdPlayer *p, uint8_t cl)
+{
+    jr_ensure_image(p);
+    if (cl) jr_claim196(p, cl);
+    else jr_restore(p);
+}
+
+/* J 030F: the music half of an INT 8 */
+void msd_jr_int8(MsdPlayer *p)
+{
+    if (p->stopped || p->paused) return;
+    if (--p->jr_div != 0) return;
+    p->jr_div = 2;
+    msd_driver_tick(p);
 }
 
 int msd_all_ended(const MsdPlayer *p) { return p->stopped != 0; }
