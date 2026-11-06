@@ -185,7 +185,7 @@ static void stage_pack(const uint8_t *src, int wbytes, int rows,
 
 /* 30FC — the `ao` recolour: both planes -> 8, plane 0 only -> 10, plane 1 only
  * -> 12, neither -> 0 (weights 8 for "either", 2 for "p0 only", 4 for "p1 only") */
-static void stage_pack_ao(const uint8_t *src, int wbytes, int rows)
+static void stage_pack_ao(const Gd *g, const uint8_t *src, int wbytes, int rows)
 {
     size_t planesz = (size_t)wbytes * rows, w = (size_t)wbytes * 4;
     if (w * rows > sizeof STAGE) return;
@@ -197,7 +197,7 @@ static void stage_pack_ao(const uint8_t *src, int wbytes, int rows)
             uint8_t px[8];
             for (int i = 0; i < 8; i++) {
                 int pa = (a >> (7 - i)) & 1, pb = (b >> (7 - i)) & 1;
-                px[i] = (uint8_t)(!(pa | pb) ? 0 : (pa & pb) ? 8 : pb ? 12 : 10);
+                px[i] = (uint8_t)(!(pa | pb) ? 0 : g->ao2bpp ? ((pa & pb) ? 6 : pb ? 4 : 2) : (pa & pb) ? 8 : pb ? 12 : 10);
             }
             for (int k = 0; k < 4; k++)
                 out[xb * 4 + k] = (uint8_t)((px[2 * k] << 4) | px[2 * k + 1]);
@@ -219,8 +219,20 @@ static void write_row(Gd *g, int x, int y, const uint8_t *row, int n, uint8_t ma
         if (xx < 0 || xx >= GD_W) continue;
         switch (writer) {
         case W_COPY:        if (on) d[xx] = row[i]; break;
-        case W_OR:          if (on) d[xx] |= row[i]; break;
-        case W_TRANSPARENT: if (on && row[i]) d[xx] = row[i]; break;
+        case W_OR:
+            if (g->ao2bpp) { if (on && g->vg->tbl[g->pal_rec][row[i]]) d[xx] = row[i]; break; }
+            if (on) d[xx] |= row[i];
+            break;
+        case W_TRANSPARENT:
+            if (g->ao2bpp) { if (on && g->vg->tbl[g->pal_rec][row[i]]) d[xx] = row[i]; break; }
+            if (g->ega_ornament) {                  /* gdega masks a pixel at a time, not a pair */
+                if (!on) break;
+                if (row[i] & 0xF0) d[xx] = (uint8_t)((d[xx] & 0x0F) | (row[i] & 0xF0));
+                if (row[i] & 0x0F) d[xx] = (uint8_t)((d[xx] & 0xF0) | (row[i] & 0x0F));
+                break;
+            }
+            if (on && row[i]) d[xx] = row[i];
+            break;
         case W_AND:         if (on) d[xx] = 0; break;
         }
     }
@@ -266,7 +278,7 @@ int gd_draw(Gd *g, const uint8_t *src, int x4, int y, int wbytes, int rows,
 int gd_draw_ao(Gd *g, const uint8_t *src, int x4, int y, int wbytes, int rows)
 {                                                                    /* 30FC */
     int w = wbytes * 4;
-    stage_pack_ao(src, wbytes, rows);
+    stage_pack_ao(g, src, wbytes, rows);
     if (dissolve(g, x4 * 4, y, w, rows, W_OR)) return 1;             /* 315E */
     return dissolve(g, x4 * 4, y, w, rows, W_TRANSPARENT);
 }
@@ -389,11 +401,59 @@ void gd_cursor_block(Gd *g, int colour, int x4, int y)              /* 4205 */
     }
 }
 
+int gd_set_wide_font(Gd *g, const char *dir)
+{
+    size_t len = 0;
+    uint8_t *d = sar_load(dir, 0, 12, 0, &len);                     /* font.grp, mode-0 stream */
+    if (!d) return -1;
+    size_t o1 = len >= 6 ? (size_t)(d[2] | d[3] << 8) : 0;
+    if (o1 < 6 + 96u * 16u || o1 > len) { free(d); return -1; }
+    memcpy(g->wide, d + 6, sizeof g->wide);
+    g->use_wide = 1;
+    free(d);
+    return 0;
+}
+
 void gd_putchar(Gd *g, uint8_t ch, int colour, int x, int y)        /* 44DE -> 2022 */
 {
+    if (g->use_wide) {
+        /* gdega 420A -> GMEGA 2958: the 16-px glyph row lands on EGA pixels 2x..2x+15
+         * of the line, written through write mode 2 with map mask 7 -- the three
+         * colour planes take the ink, plane 3 keeps what was there */
+        if (ch < 0x20 || ch >= 0x80) return;
+        const uint8_t *gl = g->wide[ch - 0x20];
+        for (int r = 0; r < 8; r++) {
+            int yy = y + r;
+            if (yy < 0 || yy >= GD_H) continue;
+            unsigned bits = (unsigned)gl[r * 2] << 8 | gl[r * 2 + 1];
+            for (int k = 0; k < 16; k++) {
+                if (!(bits & (0x8000u >> k))) continue;
+                int xx = x + (k >> 1);
+                if (xx < 0 || xx >= GD_W) continue;
+                uint8_t *p = &g->fb[(size_t)yy * GD_W + xx];
+                int sh = (k & 1) ? 0 : 4;                           /* left pixel = high nibble */
+                *p = (uint8_t)((*p & ~(0x0F << sh)) | (((*p >> sh & 8) | (colour & 7)) << sh));
+            }
+        }
+        return;
+    }
     if (!g->font || ch < 0x20 || ch >= 0x80) return;
     /* video_mcga 27E9 with [FF77] set: the ink byte is (colour<<4) | colour */
     uint8_t ink = (uint8_t)(((colour & 0x0F) << 4) | (colour & 0x0F));
+    if (g->vg && g->vg->has_putc && !g->use_wide) {
+        /* gdcga/gdhgc/gdtga map the colour through their own tables and the driver's
+         * pattern, so the glyph is not what the pair (c, c) converts to: pick a pair
+         * that converts to the colour the driver draws (the pair buffer has no other
+         * way to hold it) */
+        const uint8_t *t = g->vg->tbl[g->pal_rec];
+        uint8_t want = g->vg->putc[colour & 7];
+        if (t[ink] != want) {
+            int q = -1;
+            for (int k = 0; k < 16 && q < 0; k++) if (t[k * 17] == want) q = k * 17;     /* a solid pair first */
+            for (int k = 0; k < 256 && q < 0; k++) if (t[k] == want) q = k;
+            if (q >= 0) ink = (uint8_t)q;
+        }
+    }
     const uint8_t *gl = g->font->glyph[ch - 0x20];
     for (int r = 0; r < 8; r++) {
         int yy = y + r;
@@ -463,7 +523,17 @@ const uint8_t *gd_text_line(Gd *g, const uint8_t *s)
         uint8_t c = *s++;
         if (c == 0xFF || c < 0x20) return s;
         if (c == ' ') { x += 8; continue; }
-        if (g->font && c < 0x80 && x + 8 <= GD_W) {
+        if (g->use_wide && c < 0x80 && x + 8 <= GD_W) {
+            /* 32B7 (gdega): the glyph's 16 pixels come from the EGA font; byte k of the
+             * row holds EGA pixels 2k (high nibble) and 2k+1 */
+            const uint8_t *gl = g->wide[c - 0x20];
+            for (int r = 0; r < 8; r++) {
+                unsigned bits = (unsigned)gl[r * 2] << 8 | gl[r * 2 + 1];
+                for (int b = 0; b < 8; b++)
+                    g->textbuf[(size_t)r * GD_W + x + b] = (uint8_t)((bits & (0x8000u >> (2 * b)) ? 0xF0 : 0) |
+                                                                      (bits & (0x4000u >> (2 * b)) ? 0x0F : 0));
+            }
+        } else if (g->font && c < 0x80 && x + 8 <= GD_W) {
             const uint8_t *gl = g->font->glyph[c - 0x20];
             for (int r = 0; r < 8; r++) {
                 uint8_t bits = gl[r];
@@ -547,7 +617,7 @@ void gd_ornament_row(Gd *g, int row)
         uint8_t v[8], t[8];
         for (int k = 0; k < 8; k++) {
             int pa = (a >> (7 - k)) & 1, pb = (b >> (7 - k)) & 1;
-            v[k] = (uint8_t)((pa & pb) + (pb ? 14 : 0));
+            v[k] = g->ao2bpp ? (uint8_t)(pa << 1 | pb << 2 | pb) : (uint8_t)((pa & pb) + (pb ? 14 : 0));
             t[k] = (uint8_t)!(pa | pb);            /* [4503]: 1 = transparent */
         }
         for (int k = 0; k < 4; k++) {
@@ -559,6 +629,40 @@ void gd_ornament_row(Gd *g, int row)
         }
     }
     uint8_t *d = g->fb + (size_t)row * GD_W;
+    if (g->ega_ornament) {
+        for (int i = 0; i < 34; i++) {
+            uint8_t a = g->scratch[(size_t)row * 0x22 + i];
+            uint8_t b = g->scratch[DST_PLANE + (size_t)row * 0x22 + i];
+            for (int k = 0; k < 8; k++) {           /* EGA pixel 8i+k, and its mirror */
+                int pa = (a >> (7 - k)) & 1, pb = (b >> (7 - k)) & 1;
+                if (!(pa | pb)) continue;
+                uint8_t v = (uint8_t)((pa & pb) + (pb ? 14 : 0));    /* 15 / 14 / 0 */
+                int x = i * 8 + k, mx = 639 - x;
+                uint8_t *p = &d[x >> 1], *q = &d[mx >> 1];
+                *p = (uint8_t)((x & 1) ? ((*p & 0xF0) | v) : ((*p & 0x0F) | (v << 4)));
+                *q = (uint8_t)((mx & 1) ? ((*q & 0xF0) | v) : ((*q & 0x0F) | (v << 4)));
+            }
+        }
+        return;
+    }
+    if (g->ao2bpp) {
+        /* gdcga 376F / gdhgc 377F: the packed pixels are looked up and ORed onto the
+         * screen's 2-bit colour (`or [es:di],ax`), with no transparency mask.  In the
+         * pair buffer that is "the pair whose colour is old | new". */
+        const uint8_t *t = g->vg->tbl[g->pal_rec];
+        for (int c = 0; c < 136; c++) {
+            uint8_t mirror = (uint8_t)((px[c] << 4) | (px[c] >> 4));
+            uint8_t *dst[2] = { &d[c], &d[GD_W - 1 - c] };
+            uint8_t src[2] = { px[c], mirror };
+            for (int s = 0; s < 2; s++) {
+                uint8_t nc = t[src[s]], oc = t[*dst[s]];
+                if (!nc || (oc | nc) == oc) continue;
+                for (int p = 0; p < 256; p++)
+                    if (t[p] == (oc | nc)) { *dst[s] = (uint8_t)p; break; }
+            }
+        }
+        return;
+    }
     for (int c = 0; c < 136; c++) {
         uint8_t mirror = (uint8_t)((px[c] << 4) | (px[c] >> 4));
         d[c] = (uint8_t)((d[c] & vis[c]) | px[c]);

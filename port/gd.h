@@ -23,6 +23,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "text.h"
+#include "video_gd.h"
 
 #define GD_W 320
 #define GD_H 200
@@ -44,6 +45,23 @@ typedef struct Gd {
     uint8_t  textbuf[GD_W * 10];        /* 4511: gd_text_line's 320x10 buffer */
     uint8_t  orn[GD_W];                 /* 5191: gd_draw_ornament_row's buffer */
     const TextFont *font;
+    /* gdega.bin draws its text through the EGA font stream: font.grp's mode-0
+     * section, 16-byte glyphs of eight 16-px rows, one EGA pixel per bit
+     * (gd_set_wide_font; NULL for every other mode).  The glyphs are then not
+     * the 8x8 ones doubled, and a pair byte holds two independent pixels. */
+    uint8_t  wide[96][16];
+    int      use_wide;
+    /* gdcga / gdhgc pack the logo's two planes as colours 2 (first plane), 4
+     * (second) and 6 (both) -- gdmcga/gdtga/gdega use 10 / 12 / 8 -- and their
+     * writer treats a pixel as transparent when its *converted* 2-bit colour is
+     * 0, not when the source bits are (CGA 30E9, 3275; HGC 30DA).  `vg` is the
+     * table set to convert with. */
+    int      ao2bpp;
+    /* gdega's ornament (371C) writes the same colours as gdmcga's (15 both, 14 plane 1,
+     * 0 plane 0) but one EGA pixel at a time -- through the bit mask, so a pixel the
+     * picture does not cover is left alone, with no half-transparent pair byte */
+    int      ega_ornament;                  /* (also the ao writer's per-pixel transparency, 3121/314D) */
+    const VideoGd *vg;
     GdWaitFn wait;                      /* NULL = never wait (tests) */
     void    *user;
     int      loaded;
@@ -64,6 +82,8 @@ size_t gd_unpack_rle(const uint8_t *src, size_t len, uint8_t *dst, size_t cap);
 /* loads gdmcga.bin (ZELRES1[5]) and reads the palette base table out of it */
 int  gd_init(Gd *g, const char *dir, uint8_t *fb, uint8_t *scratch, const TextFont *font);
 void gd_free(Gd *g);
+/* switch the text routines to the EGA font stream (font.grp mode 0) */
+int  gd_set_wide_font(Gd *g, const char *dir);
 /* [3008] 4221: DAC[l*16+r] = base[rec][l] + base[rec][r], per component */
 void gd_set_palette(Gd *g, int rec);
 /* one 6-bit DAC component -> 8 bits, the way the VGA does it (docs/CUTSCENES.md §3) */

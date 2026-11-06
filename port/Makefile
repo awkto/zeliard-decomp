@@ -17,7 +17,7 @@ CORE = sar.o gfx.o map.o physics.o render.o png.o enemy.o ai.o combat.o shots.o 
        text.o player.o shop.o status.o shell.o savestate.o nav.o playthrough.o opl2.o msd.o audio.o \
        config.o statekeys.o restore.o \
        gd.o cutscene.o tear.o \
-       video.o video_mcga.o video_cga.o video_ega.o video_hgc.o video_tandy.o
+       video.o video_mcga.o video_cga.o video_ega.o video_hgc.o video_tandy.o video_gd.o
 # SDL-only objects: the display filters (#53) and the key/controller remapping
 # (#42 step 2).  The engine test binaries must stay SDL-free, so these are not
 # in CORE.
@@ -853,6 +853,73 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 		--box 48 14 224 144 --label "Tandy Muralla: the whole playfield"
 	python3 tools/compare_shot.py /tmp/zel_town_tandy.png ../docs/screenshots/town_tandy.png \
 		--box 152 187 30 8 --label "Tandy Muralla: HUD ALMAS digits"
+	# The cutscenes in every video mode (#34).  The captures are DOSBox-X runs of the
+	# real game with `videoDrv:` set to each driver (docs/DOSBOX_RECIPE.md section 10),
+	# cut to the frame port/tools/compare_gdshot.py found for them; each is the whole
+	# screen at the driver's own size.  gdtga's title screen differs by ~110 pixels of
+	# corner scrollwork (a pair byte half covered by the ornament is ORed in the pair
+	# buffer but a Tandy pixel is the converted pair), so that one is a box clear of
+	# the corners.
+	./zeliard --dir ../zeliard --video cga --intro-act 1 --screenshot 548 /tmp/zel_gd_cga_prologue.png
+	python3 tools/compare_shot.py /tmp/zel_gd_cga_prologue.png ../docs/screenshots/gd_cga_prologue.png \
+		--box 0 0 320 200 --label "cga cutscene prologue (gdcga, act 1 frame 548): whole screen"
+	./zeliard --dir ../zeliard --video cga --intro-act 1 --screenshot 3731 /tmp/zel_gd_cga_demon.png
+	python3 tools/compare_shot.py /tmp/zel_gd_cga_demon.png ../docs/screenshots/gd_cga_demon.png \
+		--box 0 0 320 200 --label "cga cutscene demon (gdcga, act 1 frame 3731): whole screen"
+	./zeliard --dir ../zeliard --video cga --intro-act 1 --screenshot 5465 /tmp/zel_gd_cga_title.png
+	python3 tools/compare_shot.py /tmp/zel_gd_cga_title.png ../docs/screenshots/gd_cga_title.png \
+		--box 0 0 320 200 --label "cga cutscene title (gdcga, act 1 frame 5465): whole screen"
+	./zeliard --dir ../zeliard --video cga --intro-act 3 --screenshot 1713 /tmp/zel_gd_cga_storm.png
+	python3 tools/compare_shot.py /tmp/zel_gd_cga_storm.png ../docs/screenshots/gd_cga_storm.png \
+		--box 0 0 320 200 --label "cga cutscene storm (gdcga, act 3 frame 1713): whole screen"
+	./zeliard --dir ../zeliard --video cga2 --intro-act 1 --screenshot 562 /tmp/zel_gd_cga2_prologue.png
+	python3 tools/compare_shot.py /tmp/zel_gd_cga2_prologue.png ../docs/screenshots/gd_cga2_prologue.png \
+		--box 0 0 640 200 --label "cga2 cutscene prologue (gdcga, act 1 frame 562): whole screen"
+	./zeliard --dir ../zeliard --video cga2 --intro-act 1 --screenshot 3767 /tmp/zel_gd_cga2_demon.png
+	python3 tools/compare_shot.py /tmp/zel_gd_cga2_demon.png ../docs/screenshots/gd_cga2_demon.png \
+		--box 0 0 640 200 --label "cga2 cutscene demon (gdcga, act 1 frame 3767): whole screen"
+	./zeliard --dir ../zeliard --video cga2 --intro-act 1 --screenshot 5505 /tmp/zel_gd_cga2_title.png
+	python3 tools/compare_shot.py /tmp/zel_gd_cga2_title.png ../docs/screenshots/gd_cga2_title.png \
+		--box 0 0 640 200 --label "cga2 cutscene title (gdcga, act 1 frame 5505): whole screen"
+	./zeliard --dir ../zeliard --video cga2 --intro-act 3 --screenshot 1725 /tmp/zel_gd_cga2_storm.png
+	python3 tools/compare_shot.py /tmp/zel_gd_cga2_storm.png ../docs/screenshots/gd_cga2_storm.png \
+		--box 0 0 640 200 --label "cga2 cutscene storm (gdcga, act 3 frame 1725): whole screen"
+	./zeliard --dir ../zeliard --video ega --intro-act 1 --screenshot 576 /tmp/zel_gd_ega_prologue.png
+	python3 tools/compare_shot.py /tmp/zel_gd_ega_prologue.png ../docs/screenshots/gd_ega_prologue.png \
+		--box 0 0 640 200 --label "ega cutscene prologue (gdega, act 1 frame 576): whole screen"
+	./zeliard --dir ../zeliard --video ega --intro-act 1 --screenshot 3787 /tmp/zel_gd_ega_demon.png
+	python3 tools/compare_shot.py /tmp/zel_gd_ega_demon.png ../docs/screenshots/gd_ega_demon.png \
+		--box 0 0 640 200 --label "ega cutscene demon (gdega, act 1 frame 3787): whole screen"
+	./zeliard --dir ../zeliard --video ega --intro-act 1 --screenshot 5525 /tmp/zel_gd_ega_title.png
+	python3 tools/compare_shot.py /tmp/zel_gd_ega_title.png ../docs/screenshots/gd_ega_title.png \
+		--box 0 0 640 200 --label "ega cutscene title (gdega, act 1 frame 5525): whole screen"
+	./zeliard --dir ../zeliard --video ega --intro-act 3 --screenshot 1757 /tmp/zel_gd_ega_storm.png
+	python3 tools/compare_shot.py /tmp/zel_gd_ega_storm.png ../docs/screenshots/gd_ega_storm.png \
+		--box 0 0 640 200 --label "ega cutscene storm (gdega, act 3 frame 1757): whole screen"
+	./zeliard --dir ../zeliard --video hgc --intro-act 1 --screenshot 576 /tmp/zel_gd_hgc_prologue.png
+	python3 tools/compare_shot.py /tmp/zel_gd_hgc_prologue.png ../docs/screenshots/gd_hgc_prologue.png \
+		--box 0 0 720 348 --label "hgc cutscene prologue (gdhgc, act 1 frame 576): whole screen"
+	./zeliard --dir ../zeliard --video hgc --intro-act 1 --screenshot 3827 /tmp/zel_gd_hgc_demon.png
+	python3 tools/compare_shot.py /tmp/zel_gd_hgc_demon.png ../docs/screenshots/gd_hgc_demon.png \
+		--box 0 0 720 348 --label "hgc cutscene demon (gdhgc, act 1 frame 3827): whole screen"
+	./zeliard --dir ../zeliard --video hgc --intro-act 1 --screenshot 5585 /tmp/zel_gd_hgc_title.png
+	python3 tools/compare_shot.py /tmp/zel_gd_hgc_title.png ../docs/screenshots/gd_hgc_title.png \
+		--box 0 0 720 348 --label "hgc cutscene title (gdhgc, act 1 frame 5585): whole screen"
+	./zeliard --dir ../zeliard --video hgc --intro-act 3 --screenshot 1741 /tmp/zel_gd_hgc_storm.png
+	python3 tools/compare_shot.py /tmp/zel_gd_hgc_storm.png ../docs/screenshots/gd_hgc_storm.png \
+		--box 0 0 720 348 --label "hgc cutscene storm (gdhgc, act 3 frame 1741): whole screen"
+	./zeliard --dir ../zeliard --video tandy --intro-act 1 --screenshot 582 /tmp/zel_gd_tandy_prologue.png
+	python3 tools/compare_shot.py /tmp/zel_gd_tandy_prologue.png ../docs/screenshots/gd_tandy_prologue.png \
+		--box 0 0 320 200 --label "tandy cutscene prologue (gdtga, act 1 frame 582): whole screen"
+	./zeliard --dir ../zeliard --video tandy --intro-act 1 --screenshot 3771 /tmp/zel_gd_tandy_demon.png
+	python3 tools/compare_shot.py /tmp/zel_gd_tandy_demon.png ../docs/screenshots/gd_tandy_demon.png \
+		--box 0 0 320 200 --label "tandy cutscene demon (gdtga, act 1 frame 3771): whole screen"
+	./zeliard --dir ../zeliard --video tandy --intro-act 1 --screenshot 5525 /tmp/zel_gd_tandy_title.png
+	python3 tools/compare_shot.py /tmp/zel_gd_tandy_title.png ../docs/screenshots/gd_tandy_title.png \
+		--box 48 30 224 130 --label "tandy cutscene title (gdtga, act 1 frame 5525): the logo and pendant, clear of the corners"
+	./zeliard --dir ../zeliard --video tandy --intro-act 3 --screenshot 1717 /tmp/zel_gd_tandy_storm.png
+	python3 tools/compare_shot.py /tmp/zel_gd_tandy_storm.png ../docs/screenshots/gd_tandy_storm.png \
+		--box 0 0 320 200 --label "tandy cutscene storm (gdtga, act 3 frame 1717): whole screen"
 	# and the gd decoders themselves against tools/grp2png.py's, the reference
 	# implementation that produced docs/screenshots/intro_art.png
 	python3 tools/compare_gdart.py ../zeliard

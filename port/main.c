@@ -1082,12 +1082,14 @@ static void cutscene_present(Cutscene *c)
 {
     App *a = c->user;
     YIELD_TEST(a);
-    static uint8_t rgb[FB_W * FB_H * 3];
+    static uint8_t rgb[VIDEO_MAX_W * VIDEO_MAX_H * 3];
+    int vw, vh;
+    cutscene_size(c, &vw, &vh);
     audio_advance_ms(CS_FRAME_MS);
     a->restore_req = 0;                 /* no F7 in a cutscene */
     if (a->shot_path && c->frames == a->shot_frame) {
         cutscene_to_rgb(c, rgb);
-        if (png_write_rgb(a->shot_path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", a->shot_path);
+        if (png_write_rgb(a->shot_path, rgb, vw, vh)) fprintf(stderr, "cannot write %s\n", a->shot_path);
         else fprintf(stderr, "wrote %s (cutscene act %d, frame %u, beat %d)\n",
                      a->shot_path, c->act, c->frames, c->beat);
     }
@@ -1102,8 +1104,8 @@ static void cutscene_present(Cutscene *c)
     }
 #ifdef HAVE_SDL
     cutscene_to_rgb(c, rgb);
-    SDL_UpdateTexture(a->tex, NULL, rgb, FB_W * 3);
-    present_frame(a, FB_W, FB_H);
+    SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+    present_frame(a, vw, vh);
     static Uint64 next = 0;
     Uint64 now = SDL_GetPerformanceCounter(), freq = SDL_GetPerformanceFrequency();
     if (next == 0 || now > next + freq) next = now;
@@ -1152,11 +1154,13 @@ static void cutscene_boundary(Cutscene *c)
     }
     trace_write_site(a->trace_f, a->trace_n, "end:wait", 0, in);
     if (a->png_every && a->trace_n % a->png_every == 0) {
-        static uint8_t rgb[FB_W * FB_H * 3];
+        static uint8_t rgb[VIDEO_MAX_W * VIDEO_MAX_H * 3];
+        int vw, vh;
+        cutscene_size(c, &vw, &vh);
         char path[1100];
         snprintf(path, sizeof path, "%s/frame_%05u.png", a->trace_dir, a->trace_n);
         cutscene_to_rgb(c, rgb);
-        if (png_write_rgb(path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", path);
+        if (png_write_rgb(path, rgb, vw, vh)) fprintf(stderr, "cannot write %s\n", path);
     }
     a->trace_n++;
     harness_advance(a);
@@ -1171,6 +1175,8 @@ static int run_cutscenes(App *a, const char *dir)
         fprintf(stderr, "cannot load gdmcga (ZELRES1[5]): no intro\n");
         return -1;
     }
+    if (cutscene_set_video(&a->cs, a->video))
+        fprintf(stderr, "cannot read the %s gd tables: the cutscenes stay MCGA\n", video_mode_name(a->video));
     a->cs.user = a; a->cs.present = cutscene_present;
     a->cs.max_frames = a->cs_frames;
     if (a->trace_f && a->ending) a->cs.boundary = cutscene_boundary;

@@ -42,14 +42,25 @@ int video_hgc_line(int y)
 
 void video_hgc_to_rgb(const uint8_t *fb, uint8_t *rgb)
 {
+    static uint8_t idx[FB_W * FB_H];
+    for (int y = 0; y < FB_H; y++)
+        for (int x = 0; x < FB_W; x++) {
+            uint8_t bd, f = fb[y * FB_W + x];
+            idx[y * FB_W + x] = video_town_pixel(VID_HGC, y, f, &bd) ? bd : VID_CGA_PAIR[f & 63];
+        }
+    video_hgc_idx_to_rgb(idx, rgb);
+}
+
+/* the screen as the driver's 2-bit values (0..3 = 0, 1, 1, 2 lit pixels) */
+void video_hgc_idx_to_rgb(const uint8_t *idx, uint8_t *rgb)
+{
     memset(rgb, 0, (size_t)HGC_W * HGC_H * 3);
     for (int y = 0; y < FB_H; y++) {
         int line = video_hgc_line(y);
         if (line < 0 || line >= HGC_H) continue;
         uint8_t *row = rgb + ((size_t)line * HGC_W + HGC_MARGIN) * 3;
         for (int x = 0; x < FB_W; x++) {
-            uint8_t bd, f = fb[y * FB_W + x];
-            unsigned v = video_town_pixel(VID_HGC, y, f, &bd) ? bd : VID_CGA_PAIR[f & 63];   /* 2 bits = 2 mono px */
+            unsigned v = idx[y * FB_W + x] & 3;                 /* 2 bits = 2 mono px */
             for (int b = 0; b < 2; b++) {
                 uint8_t on = (v >> (1 - b)) & 1 ? HGC_ON : 0x00;
                 uint8_t *o = row + (x * 2 + b) * 3;

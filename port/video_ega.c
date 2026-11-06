@@ -56,6 +56,22 @@ static void ega_rgb(uint8_t v, uint8_t *out)
 
 #define EGA_W 640
 
+/* a gdega.bin screen: every pixel is one 4-bit PC-88 colour, shown through the
+ * 16 palette registers of the current record (gdega @416A + 16*rec) */
+void video_ega_regs_to_rgb(const uint8_t *fb, const uint8_t regs[16], uint8_t *rgb)
+{
+    uint8_t pal[16][3];
+    for (int c = 0; c < 16; c++) ega_rgb(regs[c], pal[c]);
+    for (int y = 0; y < FB_H; y++)
+        for (int x = 0; x < FB_W; x++) {
+            unsigned p = fb[y * FB_W + x];
+            const uint8_t *l = pal[p >> 4], *r = pal[p & 15];
+            uint8_t *o = rgb + ((size_t)y * EGA_W + x * 2) * 3;
+            o[0] = l[0]; o[1] = l[1]; o[2] = l[2];
+            o[3] = r[0]; o[4] = r[1]; o[5] = r[2];
+        }
+}
+
 void video_ega_to_rgb(const uint8_t *fb, uint8_t *rgb)
 {
     uint8_t pal[8][3];

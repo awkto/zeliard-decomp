@@ -31,6 +31,15 @@ static const uint8_t TGA_RGB[16][3] = {
     { 0xFF, 0x55, 0x55 }, { 0xFF, 0x55, 0xFF }, { 0xFF, 0xFF, 0x55 }, { 0xFF, 0xFF, 0xFF },
 };
 
+/* the screen as the driver's 4-bit colours */
+void video_tandy_idx_to_rgb(const uint8_t *idx, uint8_t *rgb)
+{
+    for (int i = 0; i < FB_W * FB_H; i++) {
+        const uint8_t *p = TGA_RGB[idx[i] & 15];
+        rgb[i * 3] = p[0]; rgb[i * 3 + 1] = p[1]; rgb[i * 3 + 2] = p[2];
+    }
+}
+
 void video_tandy_to_rgb(const uint8_t *fb, uint8_t *rgb)
 {
     for (int i = 0; i < FB_W * FB_H; i++) {

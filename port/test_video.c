@@ -15,6 +15,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "video.h"
+#include "video_gd.h"
+#include "gd.h"
 #include "sar.h"
 #include "render.h"
 #include "gfx.h"
@@ -299,6 +301,84 @@ static void t_town_tables(const char *dir)
     ck(video_town_pixel(VID_CGA, 150, FB_BD_CK | (1 << 4) | (1 << 1), &o) && o == VID_CK_GND_C[4 | 1], "ckpd ground strips: bits 5 4 2 1");
 }
 
+/* The cutscene renderer's own tables (issue #34): each gd*.bin carries a
+ * palette-setting routine of its own and video_gd.c reads the tables out of the
+ * overlay, so check them back against the bytes at the addresses the routines
+ * use (ZELRES1[1..4] loaded at 3000). */
+static void t_gd_tables(const char *dir)
+{
+    printf("gd tables       ");
+    static const struct { int mode, res; unsigned base; int ega; } M[] = {
+        { VID_CGA, 2, 0x40FD, 0 }, { VID_HGC, 3, 0x4288, 0 }, { VID_TANDY, 4, 0x41E4, 0 }, { VID_EGA, 1, 0x416A, 1 },
+    };
+    int any = 0;
+    for (unsigned i = 0; i < sizeof M / sizeof *M; i++) {
+        size_t len = 0;
+        uint8_t *b = sar_load(dir, 0, M[i].res, 1, &len);
+        VideoGd v;
+        if (!b) continue;
+        any = 1;
+        ck(video_gd_load(&v, M[i].mode, dir) == 0 && v.loaded, "%s: gd tables load", video_mode_name(M[i].mode));
+        for (int rec = M[i].ega ? 0 : 1; rec < 10; rec++) {
+            unsigned a = M[i].base + (M[i].ega ? 16u : 256u) * (unsigned)(M[i].ega ? rec : rec - 1);
+            size_t n = M[i].ega ? 16 : 256;
+            ck(a - 0x3000 + n <= len && !memcmp(M[i].ega ? v.regs[rec] : v.tbl[rec], b + (a - 0x3000), n),
+               "%s record %d @%04X", video_mode_name(M[i].mode), rec, a);
+        }
+        free(b);
+    }
+    if (!any) { printf("(ZELRES not available in %s: skipping the gd table check) ", dir); return; }
+
+    /* record 1 (the pendant, 2-plane): the table's own values, not the pair table's.
+     * 3 = white in CGA / HGC, 0xF in Tandy; blk+blk is always black */
+    VideoGd c, h, t, e;
+    ck(!video_gd_load(&c, VID_CGA, dir) && !video_gd_load(&h, VID_HGC, dir) &&
+       !video_gd_load(&t, VID_TANDY, dir) && !video_gd_load(&e, VID_EGA, dir), "all four load");
+    ck(c.tbl[1][0x00] == 0 && c.tbl[1][0x11] == 2 && c.tbl[1][0x44] == 3 && c.tbl[1][0xFF] == 3, "gdcga record 1: 0x00 black, 0x11 red, 0x44 and 0xFF white");
+    ck(!memcmp(c.tbl[1], h.tbl[1], 9 * 256), "gdcga and gdhgc carry byte-identical tables for records 1-9");
+    ck(t.tbl[1][0x00] == 0 && t.tbl[1][0x44] == 0xF, "gdtga record 1: 0x00 black, 0x44 bright white");
+    ck(e.regs[1][0] == 0x00 && e.regs[1][1] != 0 , "gdega record 1: colour 0 is register value 0");
+
+    /* gd_putchar's colour is the driver's, not the pair's: gdcga maps 1 -> 5 -> pattern 0
+     * (black), Tandy maps 0 -> 8 (dark grey); gdega has no such stage */
+    ck(c.has_putc && c.putc[7] == 3 && c.putc[1] == 0 && c.putc[2] == 2 && c.putc[5] == 1, "gdcga putchar colours 7 / 1 / 2 / 5 = white, black, red, cyan");
+    ck(h.has_putc && !memcmp(c.putc, h.putc, 8), "gdhgc's putchar colours are gdcga's");
+    ck(t.has_putc && t.putc[0] == 8 && t.putc[7] == 15 && t.putc[1] == 9, "gdtga putchar colours 0 / 1 / 7 = 8, 9, 15");
+    ck(!e.has_putc, "gdega draws text through GMEGA's own colour write");
+
+    /* gdega's text is the 16-px font stream, one EGA pixel a bit: 'A' row 0 is 0x0300,
+     * the two pixels 6 and 7 of the glyph = the pair at byte x+3, both nibbles lit */
+    {
+        static uint8_t gfb[320 * 200], gscr[0x10000];
+        Gd g;
+        if (!gd_init(&g, dir, gfb, gscr, NULL)) {
+            ck(gd_set_wide_font(&g, dir) == 0 && g.use_wide, "the EGA font stream loads (16 B glyphs)");
+            gd_putchar(&g, 'A', 7, 40, 10);
+            ck(gfb[10 * 320 + 40 + 3] == 0x77 && gfb[10 * 320 + 40 + 2] == 0 && gfb[10 * 320 + 40 + 4] == 0,
+               "'A' row 0 puts exactly pixels 6 and 7 of the 16-px glyph on the line");
+            gfb[10 * 320 + 40 + 3] = 0x88;
+            gd_putchar(&g, 'A', 7, 40, 10);
+            ck(gfb[10 * 320 + 40 + 3] == 0xFF, "write mode 2, map mask 7: ink in the low three bits, plane 3 kept");
+            gd_free(&g);
+        }
+    }
+
+    /* the conversion: a frame of 0x44 pixels through each stage */
+    static uint8_t fb[320 * 200], rgb[VIDEO_MAX_W * VIDEO_MAX_H * 3];
+    memset(fb, 0x44, sizeof fb);
+    video_gd_to_rgb(&c, 1, fb, rgb);
+    ck(rgb[0] == 0xFF && rgb[1] == 0xFF && rgb[2] == 0xFF, "cga record 1, pair 0x44: white");
+    video_gd_to_rgb(&h, 1, fb, rgb);
+    ck(rgb[((size_t)video_hgc_line(0) * 720 + 40) * 3] == 0xAA, "hgc record 1, pair 0x44: lit");
+    video_gd_to_rgb(&t, 1, fb, rgb);
+    ck(rgb[0] == 0xFF && rgb[1] == 0xFF && rgb[2] == 0xFF, "tandy record 1, pair 0x44: bright white");
+    video_gd_to_rgb(&e, 1, fb, rgb);
+    ck(rgb[0] == rgb[3] && rgb[1] == rgb[4] && rgb[2] == rgb[5], "ega: both halves of pair 0x44 are the same colour");
+    fb[0] = 0x10; fb[1] = 0x01;                 /* two different pixels: left/right halves split on EGA */
+    video_gd_to_rgb(&e, 1, fb, rgb);
+    ck(memcmp(rgb, rgb + 3, 3) != 0 || e.regs[1][1] == e.regs[1][0], "ega: pair 0x10 shows colour 1 left of colour 0");
+}
+
 /* The drivers all drew for a 4:3 monitor, so the presentation shape is not the
  * framebuffer shape (issue #43).  This is the only place the distinction is
  * asserted -- `make verify` deliberately never goes through it. */
@@ -336,6 +416,7 @@ int main(int argc, char **argv)
     t_display_aspect(); printf("ok\n");
     t_tables(dir); printf("ok\n");
     t_town_tables(dir); printf("ok\n");
+    t_gd_tables(dir); printf("ok\n");
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;
 }
