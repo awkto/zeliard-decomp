@@ -250,41 +250,34 @@ static void draw_sword(uint8_t *fb, const Game *g, const HeroGfx *h)
 /* gfmcga 3336/33AB: every live object is a 2x2-cell sprite at its ring
  * (row, rcol).  The 5-byte frame {palette, TL, TR, BL, BR} comes from the AI
  * overlay's A030/A070 tables; palette + 3 while the hit flash is on. */
-#define MAX_OBJ_DRAW MAX_OBJS
 static void draw_enemies(uint8_t *fb, const Game *g)
 {
     if (!g->egfx || !g->ai) return;
-    /* gfmcga 302C's row scan draws the ring's sprite markers (0x80|i) one by
-     * one, and 3468 saves the cell's old E900 bytes before writing the sprite's
-     * 2x2 block: 0xFE at the top-left and 0xFF at the rest (3472/347A).  356e
-     * draws a cell only when its saved E900 byte is not 0xFF/0xFC, so a sprite
-     * whose marker sits in an earlier sprite's 0xFF cells is skipped.  The
-     * bottom-left byte stays 0xFF only while the earlier sprite's own bottom-left
-     * cell is empty (an empty cell never overwrites it); the top-left's 0xFE
-     * never hides.  crab_fight f149: body part 9 (type 0x08, cells {0,0xC1,0,0xC2}
-     * -- an empty left column) hides the falling shot part 0x35 right below it,
-     * whose row-7 sprite edge is the residue. */
-    static uint8_t hidden[RING_SIZE], claim[RING_SIZE];
-    memset(hidden, 0, sizeof hidden);
-    memset(claim, 0, sizeof claim);
-    /* 302C scans the ring row by row from (scroll_row - 1, col 3), left to right, so a
-     * sprite is drawn in marker order, not in record order: a later marker's sprite
-     * lands on top of an earlier one's (dragon_kill f306: the flame part, the last
-     * record, sits in the row above the head part whose 2x2 it overlaps). */
-    int order[MAX_OBJ_DRAW], norder = 0;
-    {
-        unsigned key[MAX_OBJ_DRAW];
-        for (int i = 0; i < g->nobj && norder < MAX_OBJ_DRAW; i++) {
-            const MapObj *o = &g->obj[i];
-            if ((o->col >> 8) == 0xFF || o->rcol == 0xFF) continue;
-            unsigned k = (((unsigned)o->row - (unsigned)g->scroll_row + 1u) & 0x3Fu) * 64u + o->rcol;
-            int j = norder++;
-            while (j > 0 && key[j - 1] > k) { key[j] = key[j - 1]; order[j] = order[j - 1]; j--; }
-            key[j] = k; order[j] = i;
-        }
-    }
-    for (int oi = 0; oi < norder; oi++) {
-        int i = order[oi];
+    /* gfmcga 302C scans the visible ring cells row-major and draws each sprite
+     * marker (0x80|i) the moment the scan reaches it, through one of four
+     * routines.  Each one first swaps the E900 screen-copy bytes under the
+     * sprite for sentinels (a word xchg, so the write is unconditional), saving
+     * the old bytes, and 356E then draws a cell only when its saved byte is not
+     * 0xFF/0xFC:
+     *   3468 (marker at screen col 0..26)  TL<-FE, TR<-FF, BL<-FF, BR<-FF; saved
+     *        TL,TR,BL,BR each gate their own cell; row 17 skips the bottom pair
+     *   34E3 (col 27)   TL<-FE, BL<-FF; only the left column is on screen
+     *   33E3 (col -1)   TR<-FF, BR<-FF; only the right column is on screen
+     *   3363 (row -1, pre-scan)  E900[c], E900[c+1] <- FF; draws BL (gated by its
+     *        saved byte) and BR (never gated) at row 0;  3326 (col -1): [0] <- FF
+     * Every sentinel is gone by the end of the frame (the scan then visits the
+     * cell: a plain cell turns FF into FE via 3124, a marker cell writes its own
+     * FE), so the old bytes a sprite sees are the FFs written by sprites drawn
+     * earlier in the same scan: a later sprite's cell is skipped exactly when an
+     * earlier sprite's TR/BL/BR (or a row -1 sprite's pair) covers it.  Hence
+     * the draw order here is the scan order (row, then column), not the object
+     * index order.  (dragon_kill f306: the flame part, the last record, sits above the head part whose 2x2 it overlaps; crab_fight f149: body part 9's BL covers the falling shot
+     * 0x35's TL and TR, whose row-7 sprite edge is the residue.) */
+    enum { FFW = SCREEN_COLS };
+    static uint8_t ff[(SCREEN_ROWS + 3) * SCREEN_COLS];
+    memset(ff, 0, sizeof ff);
+    int order[256], key[256], n = 0;
+    for (int i = 0; i < g->nobj && n < 256; i++) {
         const MapObj *o = &g->obj[i];
         if ((o->col >> 8) == 0xFF || o->rcol == 0xFF) continue;
         /* gfmcga 302C draws the ring's sprite markers (0x80|i), not the C010
@@ -292,33 +285,54 @@ static void draw_enemies(uint8_t *fb, const Game *g)
          * record left by TORI's A647 death pass) is not on screen. */
         int hp = game_ring_index(g, o->row, o->rcol);
         if (g->ring[hp] != (uint8_t)(0x80 | i)) continue;
-        if (hidden[hp]) continue;
+        int sc = (int)o->rcol - 4;
+        int sr = (int)((o->row - g->scroll_row) & 0x3F);
+        if (sr > 40) sr -= 64;                  /* a sprite hanging above the window's top row */
+        if (sr < -1 || sr >= SCREEN_ROWS + 1) continue;
+        int k = n++;
+        while (k > 0 && key[k - 1] > (sr + 1) * 64 + sc + 1) {       /* insertion sort, stable */
+            key[k] = key[k - 1]; order[k] = order[k - 1]; k--;
+        }
+        key[k] = (sr + 1) * 64 + sc + 1; order[k] = i;
+    }
+    for (int j = 0; j < n; j++) {
+        int i = order[j];
+        const MapObj *o = &g->obj[i];
         const uint8_t *fr = ai_frame(g->ai, o->type, o->hit, o->phase);
         if (!fr) continue;
-        if (!fr[1] && !fr[3]) {                 /* the sprite's left column is empty */
-            hidden[hp] = 1;
-            hidden[game_ring_add(hp, RING_W)] = 1;
-        }
         int pal = fr[0];
         if ((o->hit & 0x20) && !g->boss_map) pal += 3;                  /* hit flash */
         if (pal < 0 || pal > 4) pal %= 5;
         int sc = (int)o->rcol - 4;
         int sr = (int)((o->row - g->scroll_row) & 0x3F);
-        if (sr > 40) sr -= 64;                  /* a sprite hanging above the window's top row */
-        if (sr < -1 || sr >= SCREEN_ROWS + 1) continue;
-        /* 3468 claims 0xFF in E900 for the sprite's TR/BL/BR cells (TL gets 0xFE, which
-         * never hides) and 356e skips a cell whose saved byte is 0xFF: a cell under an
-         * earlier marker's TR/BL/BR is not drawn (dragon_kill f306: the flame's TR sits on
-         * the BL of the neck part scanned a row above). */
-        uint8_t skip[4];
-        for (int k = 0; k < 4; k++) {
-            int cp = game_ring_add(hp, (k & 1) + (k >> 1) * RING_W);
-            skip[k] = claim[cp];
-            if (k) claim[cp] = 1;
+        if (sr > 40) sr -= 64;
+        uint8_t skip[4] = {0, 0, 0, 0};                 /* saved byte was FF: that cell is not drawn */
+        if (sr == -1) {
+            if (sc == -1) { if (ff[0]) continue; ff[0] = 1; skip[0] = skip[1] = skip[2] = 1; }
+            else if (sc >= 0 && sc < SCREEN_COLS) {
+                skip[2] = ff[sc];
+                ff[sc] = 1; ff[sc + 1] = 1;
+            }
+        } else if (sr >= 0 && sr < 18) {
+            uint8_t *t = &ff[sr * FFW + sc];
+            if (sc >= 0 && sc <= SCREEN_COLS - 2) {                    /* 3468 */
+                skip[0] = t[0]; skip[1] = t[1]; skip[2] = t[FFW]; skip[3] = t[FFW + 1];
+                t[0] = 0; t[1] = 1; t[FFW] = 1; t[FFW + 1] = 1;
+            } else if (sc == SCREEN_COLS - 1) {                        /* 34E3 */
+                skip[0] = t[0]; skip[2] = t[FFW];
+                t[0] = 0; t[FFW] = 1;
+            } else if (sc == -1) {                                     /* 33E3 */
+                t = &ff[sr * FFW];
+                skip[1] = t[0]; skip[3] = t[FFW];
+                t[0] = 1; t[FFW] = 1;
+            }
+            if (sr == 17) skip[2] = skip[3] = 1;                       /* 3468: [4FF1]==1, no bottom pair */
         }
+        if (sr < -1 || sr >= SCREEN_ROWS + 1) continue;
         for (int k = 0; k < 4; k++) {
             int cell = fr[1 + k];
-            if (!cell || cell >= g->egfx->ncells || skip[k]) continue;
+            if (skip[k]) continue;
+            if (!cell || cell >= g->egfx->ncells) continue;
             int cx = sc + (k & 1), cy = sr + (k >> 1);
             if (cx < -1 || cx > SCREEN_COLS) continue;
             blit2r(fb, &g->egfx->cell[cell], PAL2BPP[pal], PF_X + cx * 8, PF_Y + cy * 8);
