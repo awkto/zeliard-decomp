@@ -238,6 +238,7 @@ static void spell_spawn_spread(Game *g)
 /* 0x8918  spell 7: hit every sprite in the window at once, then stop. */
 static void spell_screen_wide(Game *g)
 {
+    g->msg_timer = 0xFF;                                                /* 8918 ([9EEE] = 0xFF too: the second box's timer, untraced) */
     if (!(g->boss_map && g->boss_cutscene)) {
         int p = game_ring_add(game_win(g), -RING_W);
         for (int r = 0; r < 0x13; r++) {
@@ -248,6 +249,7 @@ static void spell_screen_wide(Game *g)
     g->magic_active = 0;                                                /* 8954 */
     g->sfx_request = 0x19;
     g->gf_frame = 0;            /* 895E gfmcga [3018] 42F7: [4FFF] = 0x36, then 0 (4314 / 431C) */
+    g->magic_extra_frame = 1;   /* 8963..896B: [FF1E] = 0, 73B3, jmp 6F9B */
 }
 
 /* 0x87B0  the magic button: a 6-frame cast, the charge spent on frame 4. */

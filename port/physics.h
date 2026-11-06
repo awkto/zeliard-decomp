@@ -220,6 +220,7 @@ struct Game {
     uint8_t  magic_active;          /* FF3E */
     uint8_t  cast_timer;            /* 9F2B */
     uint8_t  magic_hit_any;         /* 9F2A */
+    uint8_t  magic_extra_frame;     /* spell 7's 8954..896B ends in `jmp 6F9B`: one more whole frame, then back to the caller (not saved: it never outlives a game_step) */
     uint8_t  btn2_edge;             /* FF1E */
     unsigned magic_casts, shots_fired;  /* port counters for the tests */
     uint8_t  heat_timer;            /* 9F25 */

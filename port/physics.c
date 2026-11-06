@@ -1137,6 +1137,12 @@ void game_step(Game *g)
     if (g->hero_dead) return;                                           /* 718C jumped to 98FC */
     if (g->loop_restart) { g->loop_restart = 0; return; }               /* 73B0 jmp 6042: 629C starts over */
     magic_input(g);                                                     /* 87B0 */
+    if (g->magic_extra_frame) {                                         /* 8963..896B: `jmp 6F9B`, its ret returns to the 87B0 caller */
+        g->magic_extra_frame = 0;
+        frame(g);
+        if (g->hero_dead) return;                                       /* 718C jumped to 98FC */
+        if (g->loop_restart) { g->loop_restart = 0; return; }
+    }
     unstick_from_wall(g);
     hero_knockback(g);                                                  /* 6412 */
     if (++g->crouch_release == 2) g->crouching = 0;
@@ -1180,7 +1186,7 @@ void game_place(Game *g, int col, int row, int face_left)
     g->hero_anim = 0x80; g->vstate = V_GROUND; g->on_ladder = 0; g->crouching = 0;
     g->fall_rows = g->rise_rows = 0; g->diag_jump = 0;
     g->attacking = 0; g->attack_var = 0; g->hero_dead = 0; g->death_anim = 0; g->death_anim_b = 0; g->death_phase = 0;
-    g->casting = g->magic_active = g->cast_timer = 0;
+    g->casting = g->magic_active = 0;     /* [9F2B] cast_timer survives a door: only 87E1 (a new cast) and 79E7 (the town entry) clear it */
     shots_clear(g);                                                     /* 83DB */
     for (int i = 0; i < 4; i++) { g->magic[i].live = 0; g->orbs[i].phase = 0xFF; }
     g->entry_col = col; g->entry_row = row; g->entry_face = (uint8_t)(face_left ? 1 : 0);
