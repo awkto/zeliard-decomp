@@ -1091,6 +1091,7 @@ static void cutscene_present(Cutscene *c)
         else fprintf(stderr, "wrote %s (cutscene act %d, frame %u, beat %d)\n",
                      a->shot_path, c->act, c->frames, c->beat);
     }
+    if (a->headless && a->cs.boundary) return;      /* --trace: the harness tokens are taken at the boundaries */
     if (a->headless) {
         /* --script drives the two abort keys: any X / E / Space token aborts
          * the act, exactly as [FF1D] / [FF29] do */
@@ -1135,6 +1136,33 @@ static void cutscene_present(Cutscene *c)
 #endif
 }
 
+/* --trace inside the ending (#113): a wait ran to its end.  Same bookkeeping as
+ * trace_boundary_at without the game's fields (the cutscene has none): the
+ * line, the picture, then the next token-frame of the script. */
+static void cutscene_boundary(Cutscene *c)
+{
+    App *a = c->user;
+    if (!a->trace_f || a->trace_done) return;
+    Town *t = &a->sh.town;
+    char in[12];
+    trace_input_token(in, t->dirs, t->buttons, t->menu_key);
+    if (a->trace_char) {
+        size_t n = in[0] == '.' ? 0 : strlen(in);
+        in[n] = '\''; in[n + 1] = a->trace_char == 0x08 ? '<' : (char)a->trace_char; in[n + 2] = 0;
+    }
+    trace_write_site(a->trace_f, a->trace_n, "end:wait", 0, in);
+    if (a->png_every && a->trace_n % a->png_every == 0) {
+        static uint8_t rgb[FB_W * FB_H * 3];
+        char path[1100];
+        snprintf(path, sizeof path, "%s/frame_%05u.png", a->trace_dir, a->trace_n);
+        cutscene_to_rgb(c, rgb);
+        if (png_write_rgb(path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", path);
+    }
+    a->trace_n++;
+    harness_advance(a);
+    if (a->trace_done) c->quit = 1;
+}
+
 /* GAME.BIN at boot with no command-line argument: `jmp [0x6002]` into opdemo,
  * which hands back with AX = 0xFFFF when the demo has run (opdemo 6A41). */
 static int run_cutscenes(App *a, const char *dir)
@@ -1145,6 +1173,7 @@ static int run_cutscenes(App *a, const char *dir)
     }
     a->cs.user = a; a->cs.present = cutscene_present;
     a->cs.max_frames = a->cs_frames;
+    if (a->trace_f && a->ending) a->cs.boundary = cutscene_boundary;
     if (a->ending) cutscene_ending(&a->cs);
     else if (a->intro_act) {
         size_t len = 0;
@@ -1405,7 +1434,7 @@ int main(int argc, char **argv)
     const char *sync_action = NULL, *sync_key_opt = NULL, *sync_base_opt = NULL;   /* #55 */
     int sync_force = 0;
     const char *pilot_route = NULL, *emit_path = NULL;
-    int nflags = 0; uint8_t flag_at[0x49], flag_val[0x49];
+    int nflags = 0; uint8_t flag_at[0x4A], flag_val[0x4A];
     a.pilot_tail = 10;
     /* the intro runs on a plain interactive launch, the way GAME.BIN runs
      * opdemo when it was given no command-line argument; anything that names a
@@ -1520,13 +1549,13 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--png-every") && i + 1 < argc) a.png_every = (unsigned)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--trace-fields")) { trace_list_fields(stdout); return 0; }
         else if (!strcmp(argv[i], "--flag") && i + 1 < argc) {
-            /* the story-flag array BASE:0000-0048 (docs/STATE_PAGE.md), e.g.
+            /* the story-flag array BASE:0000-0049 ([49] = Jashiin's end-game flag), e.g.
              * `--flag 12=08`: bsmp's sentry steps aside for the Hero's Crest */
             char *e; const char *v = argv[++i];
             long n = strtol(v, &e, 16), val = 0xFF;
             if (*e == '=') { const char *w = e + 1; val = strtol(w, &e, 16); if (e == w) n = -1; }
-            if (*e || e == v || n < 0 || n > 0x48 || val < 0 || val > 0xFF || nflags >= 0x49) {
-                fprintf(stderr, "--flag %s: want N[=V], hex, N 0..48, V 0..FF\n", v); return 2;
+            if (*e || e == v || n < 0 || n > 0x49 || val < 0 || val > 0xFF || nflags >= 0x4A) {
+                fprintf(stderr, "--flag %s: want N[=V], hex, N 0..49, V 0..FF\n", v); return 2;
             }
             flag_at[nflags] = (uint8_t)n; flag_val[nflags++] = (uint8_t)val;
         }
@@ -1745,7 +1774,10 @@ int main(int argc, char **argv)
         g->magic_count[k] = g->magic_max[k] = (uint8_t)dbg_magic_n;
         g->page[0xAB + k] = g->page[0xB4 + k] = (uint8_t)dbg_magic_n; g->page[0xBB + k] = 0xFF;
     }
-    for (int f = 0; f < nflags; f++) g->page[flag_at[f]] = flag_val[f];  /* --flag */
+    for (int f = 0; f < nflags; f++) {                                   /* --flag */
+        g->page[flag_at[f]] = flag_val[f];
+        if (flag_at[f] == 0x49) g->jashiin_defeated = flag_val[f];
+    }
     player_page_push(g);
     shell_load_enemy_banks(sh, &sh->maps[0]);
     int explicit_pos = pos_col >= 0;
@@ -1948,7 +1980,7 @@ int main(int argc, char **argv)
         shell_frame(sh);
         if (shop_exit_request) a.quit = 1;      /* sage "No" (kenjpro A934) / the ending (omoypro A0A9) */
     }
-    if (shop_exit_request == SHOP_EXIT_ENDING && !a.trace_f) {      /* enddemo.bin, never to return */
+    if (shop_exit_request == SHOP_EXIT_ENDING && !(a.trace_f && a.trace_done)) {      /* enddemo.bin, never to return */
         a.quit = 0; a.ending = 1;
         run_cutscenes(&a, sh->dir);
     }

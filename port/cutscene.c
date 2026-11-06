@@ -50,6 +50,14 @@ static void cs_frame(Cutscene *c)
     if (c->max_frames && c->frames >= c->max_frames) c->quit = 1;
 }
 
+/* a wait ran to its end: the one boundary the harness sees inside a cutscene
+ * (the oracle's "end:wait", docs/HARNESS.md section 6).  The ticks the original spends drawing
+ * between two waits are not modelled, so a wait is one boundary however long it ran. */
+static void cs_boundary(Cutscene *c)
+{
+    if (c->boundary) c->boundary(c);
+}
+
 /* 63AB / 6456 / 6A07 — wait AL ticks, aborting on Space or Return */
 static int cs_wait(Cutscene *c, int ticks)
 {
@@ -59,7 +67,8 @@ static int cs_wait(Cutscene *c, int ticks)
         if (c->abort || c->quit) return 1;
     }
     c->ticks = 0;
-    return 0;
+    cs_boundary(c);
+    return c->quit;
 }
 
 /* the same, but deaf to the abort flag: the teardown dissolves still play */
@@ -70,7 +79,8 @@ static int cs_wait_hard(Cutscene *c, int ticks)
         if (c->quit) return 1;
     }
     c->ticks = 0;
-    return 0;
+    cs_boundary(c);
+    return c->quit;
 }
 
 /* gdmcga's own waits (31B4 between dissolve passes, 3437 between storm passes,
@@ -781,6 +791,7 @@ static int end_run_script(Cutscene *c)
             while (audio_active() && audio_music_sync0() == 0) { cs_frame(c); if (c->quit) return 1; }
             audio_music_sync0_clear();
             c->ff50 = 0;
+            cs_boundary(c); if (c->quit) return 1;
             continue;
         case 0xF8:                                                   /* 676E */
             c->pause_ticks = (int)(*IMG(c, c->script_p) | (*IMG(c, c->script_p + 1) << 8));
@@ -790,6 +801,7 @@ static int end_run_script(Cutscene *c)
             end_cursor(c, 0);
             while ((int)c->ff50 < c->pause_ticks) { cs_frame(c); if (c->quit) return 1; }
             c->ff50 = 0;
+            cs_boundary(c); if (c->quit) return 1;
             continue;
         case 0xFA: c->char_delay = *IMG(c, c->script_p++); continue;  /* 6793 */
         case 0xFB:                                    /* 679E: row then column */

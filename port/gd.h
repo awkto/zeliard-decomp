@@ -137,7 +137,7 @@ void gd_tile_map(Gd *g, const uint8_t *map, const uint8_t *ttl2);
 void gd_ornament_row(Gd *g, int row);
 
 /* [3028] the 0x44-step horizontal aperture wipe of a full-screen picture */
-int  gd_wipe(Gd *g, const uint8_t *src);
+int  gd_wipe(Gd *g, uint8_t *src);                  /* patches the window frames into `src` first (3FEF) */
 /* [302A] / [302C] the ending's iris open / close over a 47 x 114 picture */
 int  gd_end_open(Gd *g, const uint8_t *src);
 int  gd_end_close(Gd *g, const uint8_t *src);

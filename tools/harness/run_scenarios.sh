@@ -13,7 +13,8 @@
 #   --png    keep the PNGs of passing scenarios too, and write tracediff's images
 #            (failing scenarios always keep theirs; passing ones are cleaned up)
 #   NAME     run only these (a name from tests/scenarios/ or a path to a .zs)
-# env: ORACLE_DOSBOX / ORACLE_BUILD as for tools/oracle.sh.
+# env: ORACLE_DOSBOX / ORACLE_BUILD as for tools/oracle.sh.  ORACLE_MAX_MS defaults to 1200000 here
+#      (the ending, jashiin_ending, is ~530 s of emulated time; the oracle's own default is 600 s).
 #
 # Meant for the claude-test droplet (docs/HARNESS.md §5): it builds nothing.
 # port/zeliard and the oracle binary must already exist.  A start save that is
@@ -33,7 +34,7 @@
 #                              coords, optional frame range) ignored by the pixel compare;
 #                              the reason is mandatory (tools/harness/pixdiff.py)
 #   # ends: stall              optional: the scenario ends in a cutscene the oracle has no
-#                              boundary site for (the ending, #111): the oracle's stall exit (6)
+#                              boundary site for (the ending had none until #113): the oracle's stall exit (6)
 #                              after ORACLE_STALL_MS (default 60 s here, long enough for the tear scene) is the expected end of its
 #                              trace, and the port's trace is compared up to that frame
 #   SCRIPT                     the first non-comment line: the --script input
@@ -86,7 +87,7 @@ run_one() {
   cave=$(hdr "$f" cave); cargs=; [ -n "$cave" ] && cargs="--cave $cave"
   ends=$(hdr "$f" ends); stall=
   [ "$ends" = stall ] && stall=${ORACLE_STALL_MS:-60000}
-  (cd "$ROOT" && env ORACLE_CAVE="$cave" ${stall:+ORACLE_STALL_MS=$stall} tools/oracle.sh "$script" --load "$load" --out "$d/o" --png-every $pe) >"$d/oracle.out" 2>&1
+  (cd "$ROOT" && env ORACLE_MAX_MS=${ORACLE_MAX_MS:-1200000} ORACLE_CAVE="$cave" ${stall:+ORACLE_STALL_MS=$stall} tools/oracle.sh "$script" --load "$load" --out "$d/o" --png-every $pe) >"$d/oracle.out" 2>&1
   orc=$?
   if [ $orc != 0 ] && ! { [ -n "$stall" ] && [ $orc = 6 ]; }; then
     printf 'ERROR\t-\toracle exit %s (%s/oracle.out, o/oracle.log)\n' "$orc" "$d" >"$d/result"; return

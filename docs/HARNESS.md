@@ -21,7 +21,7 @@ with the same instruction, `C6 06 1A FF 00` = `mov byte [0xff1a],0`:
 At that point the frame's logic and drawing are finished. Inputs applied at a
 boundary are what the *next* frame reads. The same instruction elsewhere (the text
 printer's glyph wait `7084`, the shops' timed waits, `6292`/`7FAB` on transitions)
-is not a boundary: those loops read no input. Cutscenes are out of scope.
+is not a boundary: those loops read no input. The one cutscene with sites is the ending (enddemo.bin, `end:wait`, §6).
 
 Town NPC dialogue needs nothing extra: its page and end waits (`655D`, `65AB`,
 `65C8`) call the town frame `68AC`, so they are ordinary `68ED` frames. Cavern
@@ -296,6 +296,34 @@ MP80 (111,21)) into MP84 one column left of its (30,5) door; the walk-in moves h
 - `FF6C` player_name: the original stores the restored save's file name there (`CAVE`),
   the port `ZELIARD` — a real port difference, not an oracle artefact.
 
+### The ending: `end:wait` (#113)
+
+enddemo.bin (started by omoypro `A03D`; docs/CUTSCENES.md §4) has no game frame and reads no input,
+it is paced by the 236.7 Hz tick `[FF1A]`.  Its boundary is therefore the **completion of a wait**,
+not an elapsed-tick rate: how many ticks the original spends drawing between two waits is emulated
+CPU speed, which the port does not model.  Tracing of it starts when the CPU reaches enddemo's entry
+`6002` (recognised by its code bytes); from then on every one of these is a boundary, site
+`end:wait` (and an `ip` as for the other wait sites):
+
+- the exit of any `cmp [cs:FF1A],x ; jc back` loop: enddemo's own `62EE` (act 1) and `6945` (credits),
+  and gdmcga's seven pass waits (`31B4` dissolve, the wipe `3E8B`, the sand `38E6` rings, `3544`,
+  `3CEE`, `3F1E`, `40B1`, `4193`), seen as the instruction after the `jc` being reached;
+- the credits' two other waits: `0xF7` (`[FF21]` set by the score, exit at `6760`) and `0xF9`
+  (`[FF50]` reached, exit at `678A`).
+
+The line has no fields in the port (`trace_write_site`: site, `rng_calls` 0, the input); `tracediff`
+compares the site and the count (the site has no field mode), and the **PNG of the boundary is the
+evidence**, so a scenario through the ending needs `--png-every`.  The port's `Cutscene.boundary`
+callback fires at the end of `cs_wait` / `cs_wait_hard` (every gd wait goes through the latter) and at
+the two credit waits; `main.c cutscene_boundary` writes the line and PNG and takes the next token
+(`--script` tokens are consumed per boundary there, not per rendered frame).  The same count came out
+of the oracle and the port at the first try (3691 boundaries, 872..4562 in `jashiin_ending`).  The
+oracle run is long in emulated time (the ending is ~390 s; `run_scenarios.sh` raises
+`ORACLE_MAX_MS` to 1200000), short in real time (1.5 min).  The oracle's last boundary is the
+credits' final wait; after it enddemo spins in its hotkey poller (`66C8`) forever, so a script
+must have exactly as many tokens as boundaries to end there ("script done"), else the oracle stalls
+(exit 6, `# ends: stall`).
+
 ### What the port must emit at wait-loop boundaries
 
 **Implemented (#64).** `port/town.h` `WaitClock` (`wait_arm` / `wait_tick` /
@@ -423,7 +451,8 @@ dash) is mandatory and the line should cite the filed issue. The first differing
 oracle|port|diff image goes to `DIR/NAME/pixdiff/`. Passing scenarios have their PNGs
 deleted (`--png` keeps them); failing ones keep them.
 **Scenarios that end in a cutscene (`# ends: stall`).**  The oracle writes a boundary only at the
-sites of section 1, so a script that ends in a cutscene (enddemo.bin, `jashiin_kill`) leaves it
+sites of section 1 (and the ending's `end:wait`, §6), so a script that ends in a cutscene without
+sites (none is left in the library since #113: the ending has them) leaves it
 without a boundary until `ORACLE_STALL_MS` runs out and it exits 6.  A scenario with the header
 `# ends: stall` takes that as the end of the oracle's trace (the stall limit is 60 s of emulated
 time unless `ORACLE_STALL_MS` is set; the Tear scene before it is shorter) and the port's trace has to end on
@@ -602,7 +631,9 @@ put its script in a scenario file (`tests/scenarios/NAME.zs`, §7) and run it as
 | `heat_current` | Llama 8, LV 25, one Key (`CALIK`) | MP70 (176,43) → MP72 (cavern 7): into the bottom corridor's rope gap, the fall through the ring, the (116,11) rope hole, then west into the (88..90,25) current that pushes the hero back.  Current cells are one-way walls (`67A3`/`6942`) in every cavern **but** 7 (#87) |
 | `jashiin_fight` | Pureza 4, LV 40, LIFE 999, sword 6, shield 4, one Key (`JASHIIN`), `# cave: 0,29,6,0,0x1B` | Jashiin, the last boss (#111): Pureza's mouth rewritten to MP84 (29,6), the (30,5) door (one Key), MP90's [E6] cutscene (MAO1: 135 frames, three speeches, no boss HUD, no input, `[9F01]`/`[FF4A]`/`[9F0A]` untouched), MPA0 loaded by `61DD` (cur_map stays 1D, `[84]` carried, `[9F26]` clear after the first frame), the score's F1 (`[FF21]`) 158 frames later, then MAO2: both throws (shot 1 pose 9, shot 2 pose 12) until the hero dies (591 frames) |
 | `jashiin_damage` | Pureza 4, LV 99, LIFE 4000, sword 6, shield 4, one Key (`JASHD`), `# cave: 0,29,6,0,0x1B` | `jashiin_fight`'s route, then the autopilot's `boss` step against MAO2 (`fight_lookahead`, #111): sword blows take HP /2 (`A362`), phase 2 below 200 (`AC32`), the 80-HP regeneration every 32 frames (`AB88`) back to 800 and phase 1 (frame 2101); 2151 frames. Port fixes it found: the hit flash (`A763`) goes on the body parts only, never the shots; the crouch patch (`A6F1`) writes row 8 of columns 0/1 (right) or 4/5 (left); contact reads a stale boss marker's old record (`7643`, no `nobj` guard). No kill: the autopilot's blows never outpace the regeneration |
-| `jashiin_kill` | same save as `jashiin_damage` (`JASHD`), `# cave: 0,29,6,0,0x1B`, `# ends: stall` | The kill and the ending's hand-off (#111): `jashiin_fight`'s route, the autopilot's `boss` step with `kill_lookahead` (MAO2 within two blows of dead: two-leg stick plans over 40 frames, scored on the kill), Jashiin dead at f~660 (death `ABC4`, reward `71CC`, 72F1's exit door), the door (`U` at the hero's column; its target is MPA0 itself, system map 0x1E), the patch list of MPA0 firing on the second load (`6BFC`: flag [47] -> the door records and **[49] = 0xFF**, the ending flag), the Tear scene, `6266` `[49]` -> `98FC` death (63 frames, `hero_die` with `99B4`: town 0x80), Felishika's Castle entered *alive* (`6055` clears `[E8]`: no Sage, ordinary `61B1` entry), the advisor's auto-talk ("Brave knight, you have awakened ..."), X, 62 columns right to Princess Felicia's door (95), `U`: omoypro's `A03D` `[49] != 0` -> enddemo.bin.  The oracle has no site in the ending (cutscenes are out of scope, section 1), so the trace ends there (`# ends: stall`: its stall exit is the expected end, the port's trace ends at the same frame); 872 frames, clean on fields and pixels.  Found and fixed: the pose-parity of MAO2's phase-2 walk (`A536`/`A55D`: closing in, an odd pose steps two cells), `6BFC` writes a patch's word wherever it points (below 0x100 the player page: MPA0's `[49]`), the death return with `[49]` set is an ordinary entry (`6055`), `6266`, GT_FLUSH runs in dialogue frames (`68AC`) and skips the cells under the dialogue box |
+| `jashiin_kill` | same save as `jashiin_damage` (`JASHD`), `# cave: 0,29,6,0,0x1B` | The kill and the ending's hand-off (#111): `jashiin_fight`'s route, the autopilot's `boss` step with `kill_lookahead` (MAO2 within two blows of dead: two-leg stick plans over 40 frames, scored on the kill), Jashiin dead at f~660 (death `ABC4`, reward `71CC`, 72F1's exit door), the door (`U` at the hero's column; its target is MPA0 itself, system map 0x1E), the patch list of MPA0 firing on the second load (`6BFC`: flag [47] -> the door records and **[49] = 0xFF**, the ending flag), the Tear scene, `6266` `[49]` -> `98FC` death (63 frames, `hero_die` with `99B4`: town 0x80), Felishika's Castle entered *alive* (`6055` clears `[E8]`: no Sage, ordinary `61B1` entry), the advisor's auto-talk ("Brave knight, you have awakened ..."), X, 62 columns right to Princess Felicia's door (95), `U`: omoypro's `A03D` `[49] != 0` -> enddemo.bin.  Since #113 the ending has boundary sites (`end:wait`, section 6): the script's last 40 idle frames run into enddemo's first waits; clean on fields and pixels.  Found and fixed: the pose-parity of MAO2's phase-2 walk (`A536`/`A55D`: closing in, an odd pose steps two cells), `6BFC` writes a patch's word wherever it points (below 0x100 the player page: MPA0's `[49]`), the death return with `[49]` set is an ordinary entry (`6055`), `6266`, GT_FLUSH runs in dialogue frames (`68AC`) and skips the cells under the dialogue box |
+| `jashiin_ending` | same save and route as `jashiin_kill`, `# cave: 0,29,6,0,0x1B`, ends with 3650 idle tokens (one per boundary) | The whole ending (#113): `jashiin_kill`'s route, omoypro's `A03D` -> enddemo.bin, act 1 (the nine tableaux, the narration with its five lip-sync speakers, the wipe, the sand dissolves) and the credits roll to the end: 3691 `end:wait` boundaries (frames 872..4562), 4563 frames, clean on pixels at every boundary (`tracediff` compares only the site and the count there).  Found and fixed: the wipe's prologue `3FEF` bakes the two picture windows' frames into the picture (`gd_wipe`), and the fast/normal draw of an odd-sized picture leaves its last 4 staged pixels at what the previous picture left (`33D6`, `shr cx,1`: the 0xA0 mouth, 5 x 11) |
+| `cave_forced_death` | Satono 4 `--flag 49=FF` (`FLAG49`) | Entering a cavern from a town with `[49]` set (#113): cave_door's route (R13, U2), fight.bin `7D2D..7D61` -> `6042` -> `6266 test [49],FF / jnz 98FC`: the hero dies on the restart's first pass, **before the walk-in** (`[hero_entering]` stays 0), the dying frames, `99B4`, Felishika's Castle; 361 frames clean |
 
 **Jashiin (#111).**  Three things the port got wrong and the oracle showed, all in the [E6] / MPA0
 hand-over, now fixed with their addresses in the code: MP90 is an [E6]-only room (FF34 = 0), so fight.bin
