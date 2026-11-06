@@ -1074,6 +1074,13 @@ static void death_begin(Game *g)
     g->death_phase = 1;                                                 /* 9929 */
 }
 
+/* 6266 `test [49],FF / jnz 98FC`: every fight.bin (re)start with Jashiin's flag set dies at once
+ * (the exit door of MPA0 re-enters it, #111). */
+void game_force_death_check(Game *g)
+{
+    if (g->jashiin_defeated) death_begin(g);
+}
+
 /* 0x9929..0x99A1  One dying frame per game_step: each pass runs 6F9B (one 717F
  * boundary; with [E8] set it returns right after it, 7184) and the code up to
  * the next 6F9B call.  The original's frame count, measured with the oracle:

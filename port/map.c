@@ -144,7 +144,7 @@ void map_from_text(Map *m, int width, const char *const rows[MAP_ROWS])
  * (*flag_ptr & mask) != 0 each addr (a BASE offset) is set to val.  The
  * shipped lists poke the map image itself (door records, tile stream, object
  * table), so the port applies them to the raw .mdt and re-parses it. */
-int map_apply_patches(Map *m, const uint8_t page[256])
+int map_apply_patches(Map *m, uint8_t page[256])
 {
     if (!m->raw || !m->patches) return 0;
     uint8_t *d = m->raw;
@@ -166,6 +166,12 @@ int map_apply_patches(Map *m, const uint8_t page[256])
                     d[addr - BASE] = (uint8_t)val;
                     d[addr - BASE + 1] = (uint8_t)(val >> 8);
                     applied++;
+                } else if (addr < 0xFF && page) {
+                    /* 6C28 `mov [di],ax` writes the word wherever DI points: below 0x100 it is the
+                     * player page.  MPA0's list: flag [47] -> the door records and [49] = 0xFF
+                     * (word, so [4A] = 0), the ending flag (#111) */
+                    page[addr] = (uint8_t)val;
+                    page[addr + 1] = (uint8_t)(val >> 8);
                 }
             }
             o += 4;

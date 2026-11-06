@@ -111,8 +111,12 @@ int shell_enter_town(Game *g, int idx, int col, int died)
      * set in town until something rewrites it; town.bin only touches bit 0) */
     s->town.hero_flags = (uint8_t)((g->hero_flags & ~FACE_LEFT) | (face_left ? FACE_LEFT : 0));
     s->town.hero_anim = 0;                                              /* 6050: both entries zero [E7] */
-    s->town_entry = died ? 2 : 1;                                       /* 616B: [E8] -> kenjpro, else 61B1 */
-    s->town_walk_in = 0;            /* 6078; on_door sets it (a restore/boot comes in at 601E: [7C43]) */
+    /* 6055: with Jashiin's flag set the death return enters the town "alive" ([E8] = 0): no
+     * Sage, the ordinary 61B1 entry, and 6084 arms the walk-in of an underground town as for
+     * any entry from a cavern -- the ending's castle (#111) */
+    int ending = died && g->jashiin_defeated;
+    s->town_entry = (died && !ending) ? 2 : 1;                          /* 616B: [E8] -> kenjpro, else 61B1 */
+    s->town_walk_in = ending ? (s->tmap.town_flags & 1) != 0 : 0;   /* 6078; on_door sets it (a restore/boot comes in at 601E: [7C43]) */
     g->cur_map = (uint8_t)(0x80 | idx);
     /* [C5] town_map is NOT the town just entered: nothing in town.bin or
      * fight.bin writes it but the ending (99B4); it is STDPLY's 0x81 or what
@@ -121,8 +125,8 @@ int shell_enter_town(Game *g, int idx, int col, int died)
     s->transitions++;
     LOG(s, "[town] %s (%d columns, %s, %d NPCs, %d patches)%s: hero at column %d\n",
         s->tmap.label, s->tmap.width, s->tmap.tileset == 0 ? "cpat" : s->tmap.tileset == 1 ? "mpat" : "dpat",
-        s->tmap.nnpcs, np, died ? " - the Sage revives you" : "", town_hero_col(&s->town));
-    if (died) snprintf(s->town.message, sizeof s->town.message,
+        s->tmap.nnpcs, np, (died && !ending) ? " - the Sage revives you" : "", town_hero_col(&s->town));
+    if (died && !ending) snprintf(s->town.message, sizeof s->town.message,
                        "While you were unconscious, the spirits brought you here...");
     return 1;
 }
@@ -255,7 +259,9 @@ static int on_door(Game *g, const Door *d)
         fprintf(stderr, "[door] cannot load system map %02x\n", d->dest_map);
         return 0;
     }
+    uint8_t flag49 = g->page[0x49];
     int np = map_apply_patches(&s->maps[slot], g->page);        /* 6BFC */
+    if (g->page[0x49] != flag49) g->jashiin_defeated = g->page[0x49];   /* MPA0's patch list sets [49] */
     if (np) LOG(s, "[map] %d C00C patches applied\n", np);
     if (gfx_load_tileset(&s->tiles[slot], s->dir, s->maps[slot].tileset)) return 0;
     s->cur = slot;
@@ -285,6 +291,7 @@ static int on_door(Game *g, const Door *d)
     g->ice_slide = g->ice_steps = g->walk_dir = 0;
     g->btn1_edge = g->btn2_edge = 0;
     s->transitions++;
+    game_force_death_check(g);                                   /* 6266, reached through 7D61 -> 6042 */
     LOG(s, "[door] entered %s (cavern %d, %d cols, tileset MPP%c) at hero (%d,%d)\n", s->maps[slot].name,
         s->maps[slot].cavern, s->maps[slot].width, "123456789AB"[s->maps[slot].tileset],
         game_hero_map_col(g), game_hero_map_row(g));

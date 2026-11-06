@@ -173,11 +173,14 @@ static void town_sound(Town *t)
 }
 
 static void town_draw_frame(Town *t);
+static void town_flush_rows(Town *t);
 /* the dialogue's waits call the full town frame 68AC: the NPCs keep moving
  * (6B1C), only the talker is frozen (type 7, check_talk) */
 static void dlg_frame(Town *t)
 {
     town_npc_update(t);                                                 /* 68AC -> 6B1C */
+    town_flush_rows(t);                                                 /* 68B5: GT_FLUSH steps the animated sky cells (the castle's
+                                                                         * flag, jashiin_kill f743: it kept still under a text box) */
     t->dlg.hero_shown = 0;                                              /* the hero is redrawn */
     t->frame_no++;
     if (t->present) t->present(t);
@@ -1053,6 +1056,15 @@ static void town_flush_rows(Town *t)
         if (mc < 0 || mc >= t->map->width) continue;
         for (int r = 0; r < 3; r++) {
             uint8_t v = t->map->grid[mc][r], cp = t->scr_copy[c][r];
+            /* a cell the dialogue box covers is not flushed (the box lives in video memory; the
+             * original keeps GT_FLUSH off it): the animated cell neither draws nor steps until
+             * the box is gone, and the copy is forced so its first flush after redraws it
+             * (jashiin_kill f778: the castle's pennants resume one step on from where they froze) */
+            if (t->dlg.active && t->dlg.w4) {
+                int x0 = 48 + c * 8, y0 = 78 + r * 8;
+                int bx0 = t->dlg.x8 * 8, bx1 = bx0 + t->dlg.w4 * 4, by0 = t->dlg.y, by1 = by0 + t->dlg.h;
+                if (x0 < bx1 && x0 + 8 > bx0 && y0 < by1 && y0 + 8 > by0) { t->scr_copy[c][r] = 0xFE; continue; }
+            }
             if (cp == v) continue;                                      /* 3086 cmpsb */
             t->scr_copy[c][r] = 0xFE;                                   /* 31DB */
             if (cp == 0xFF) continue;                                   /* 31DF..31E3 */
