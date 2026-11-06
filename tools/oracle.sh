@@ -35,6 +35,7 @@ rm -rf "$OUT/stage" "$OUT"/frame_*.png "$OUT"/boot_*.png "$OUT/frames.jsonl" "$O
 G="$OUT/stage/dos/zeliard"
 mkdir -p "$G"
 for f in "$ROOT"/zeliard/*; do
+  [ -f "$f" ] || continue   # a stray subdirectory (e.g. states/) is not game data
   case "$f" in *.usr|*.USR) ;; *) cp "$f" "$G/" ;; esac
 done
 LOADFLAG=0
