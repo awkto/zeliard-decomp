@@ -26,9 +26,13 @@
   <input id="dir" type="file" webkitdirectory multiple>
   <label for="zip">or a zip of it</label>
   <input id="zip" type="file" accept=".zip,application/zip">
+  <div id="saved" style="display:none">
+    <button id="play">Play</button> <button id="forget">Forget game files</button>
+    <small>(keeps your saves)</small>
+  </div>
   <div id="status">Loading engine...</div>
   <div id="err"></div>
-  <p><small>Saves (.usr), save states and settings are kept in this browser (IndexedDB).</small></p>
+  <p><small>Saves (.usr), save states and settings are kept in this browser (IndexedDB), along with the game files you picked, so you only choose them once.</small></p>
 </div>
 <div id="stage"><canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas></div>
 <script>
@@ -49,21 +53,40 @@ function syncfs(populate) {
   return new Promise((res, rej) => Module.FS.syncfs(populate, e => e ? rej(e) : res()));
 }
 
-// SDL_GetPrefPath("awkto","zeliard") is /libsdl/awkto/zeliard/ under Emscripten
+// Two IndexedDB-backed mounts, both loaded before main() runs:
+//   /libsdl  SDL_GetPrefPath("awkto","zeliard") = /libsdl/awkto/zeliard/ : zeliard.ini, save states
+//   /game    the game files the player picked, and the .usr saves (the port writes them next to the files)
+const isUsr = n => /\.usr$/i.test(n);
+const hasGame = () => Module.FS.readdir('/game').some(n => n.toLowerCase() === 'zelres1.sar');
+
 async function setupPersistence() {
   const FS = Module.FS;
-  FS.mkdir('/libsdl');
-  FS.mount(Module.IDBFS, {}, '/libsdl');
-  try { await syncfs(true); } catch (e) { fail('Could not open browser storage: ' + e); }
-  try { FS.mkdir('/libsdl/usr'); } catch (e) {}
+  for (const d of ['/libsdl', '/game']) { FS.mkdir(d); FS.mount(Module.IDBFS, {}, d); }
+  try { await syncfs(true); } catch (e) { fail('Could not open browser storage (private window?): ' + e); }
   ready = true;
-  status('Choose your game folder or zip.');
-  $('dir').disabled = $('zip').disabled = false;
+  showPick();
 }
 $('dir').disabled = $('zip').disabled = true;
 
+function showPick() {
+  $('dir').disabled = $('zip').disabled = false;
+  const have = hasGame();
+  $('saved').style.display = have ? '' : 'none';
+  status(have ? 'Your game files are stored in this browser.' : 'Choose your game folder or zip.');
+  if (have) $('play').focus();
+}
+$('play').onclick = () => begin(null);
+$('forget').onclick = async () => {
+  if (started) return;
+  const FS = Module.FS;
+  for (const n of FS.readdir('/game')) if (n[0] !== '.' && !isUsr(n)) FS.unlink('/game/' + n);
+  try { await syncfs(false); } catch (e) { fail('syncfs: ' + e); }
+  showPick();
+};
+
 // ---- reading the files -------------------------------------------------
 async function inflateRaw(bytes) {
+  if (typeof DecompressionStream === 'undefined') throw new Error('This browser cannot unzip; pick the folder instead.');
   const s = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
   return new Uint8Array(await new Response(s).arrayBuffer());
 }
@@ -74,12 +97,15 @@ async function unzip(buf) {                      // minimal reader: stored + def
   if (e < 0) throw new Error('not a zip file');
   let n = dv.getUint16(e + 10, true), p = dv.getUint32(e + 16, true);
   while (n--) {
-    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
+    if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('damaged zip (bad directory)');
+    const flags = dv.getUint16(p + 8, true), method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
     const nl = dv.getUint16(p + 28, true), el = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true);
     const lho = dv.getUint32(p + 42, true);
-    const name = new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nl));
+    const name = new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nl)).replace(/\\/g, '/');
     p += 46 + nl + el + cl;
-    if (name.endsWith('/')) continue;
+    if (name.endsWith('/') || /(^|\/)__MACOSX\//.test(name)) continue;
+    if (flags & 1) throw new Error('the zip is encrypted');
+    if (method !== 0 && method !== 8) throw new Error('unsupported zip compression (method ' + method + ')');
     const ds = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true);
     const raw = u8.subarray(ds, ds + csize);
     out.push({ path: name, data: method === 0 ? raw : await inflateRaw(raw) });
@@ -87,24 +113,23 @@ async function unzip(buf) {                      // minimal reader: stored + def
   return out;
 }
 
-// files: [{path, data}] -> /game, rooted at the folder that holds ZELRES1.SAR
+// files: [{path, data}] -> /game, rooted at the folder that holds ZELRES1.SAR (any case, any depth)
 function installGame(files) {
   const FS = Module.FS;
-  const key = files.find(f => /(^|\/)zelres1\.sar$/i.test(f.path));
-  if (!key) throw new Error('ZELRES1.SAR not found: that is not a Zeliard folder.');
-  const root = key.path.slice(0, key.path.length - 'zelres1.sar'.length);
-  try { FS.mkdir('/game'); } catch (e) {}
+  const keys = files.filter(f => /(^|\/)zelres1\.sar$/i.test(f.path)).sort((a, b) => a.path.length - b.path.length);
+  if (!keys.length) throw new Error('ZELRES1.SAR not found: that is not a Zeliard folder.');
+  const root = keys[0].path.slice(0, keys[0].path.length - 'zelres1.sar'.length);
+  const existing = FS.readdir('/game').filter(n => n[0] !== '.');
   let n = 0;
   for (const f of files) {
     if (!f.path.startsWith(root)) continue;
     const rel = f.path.slice(root.length);
     if (!rel || rel.includes('/')) continue;      // the game dir is flat
+    // a name that is already stored (any case) is replaced, except saves: those from earlier visits win
+    const old = existing.find(x => x.toLowerCase() === rel.toLowerCase());
+    if (old && isUsr(rel)) continue;
+    if (old && old !== rel) FS.unlink('/game/' + old);
     FS.writeFile('/game/' + rel, f.data); n++;
-  }
-  // saves from earlier visits win over any .usr that came in the folder
-  for (const f of FS.readdir('/libsdl/usr')) {
-    if (f[0] === '.') continue;
-    FS.writeFile('/game/' + f, FS.readFile('/libsdl/usr/' + f));
   }
   return n;
 }
@@ -112,25 +137,28 @@ function installGame(files) {
 async function begin(files) {
   if (started) return;
   try {
-    status('Reading files...');
-    const n = installGame(files);
+    let n = '';
+    if (files) { status('Reading files...'); n = installGame(files) + ' files loaded. '; }
+    else if (!hasGame()) throw new Error('no stored game files');
     started = true;
-    status(n + ' files loaded.');
+    status(n + 'Starting...');
     start();
-  } catch (e) { fail(e.message || String(e)); status('Choose your game folder or zip.'); }
+  } catch (e) { fail(e.message || String(e)); showPick(); }
 }
 
 $('dir').onchange = async ev => {
   const fl = [...ev.target.files];
   if (!fl.length) return;
-  const files = [];
-  for (const f of fl) files.push({ path: f.webkitRelativePath || f.name, data: new Uint8Array(await f.arrayBuffer()) });
-  begin(files);
+  try {
+    const files = [];
+    for (const f of fl) files.push({ path: f.webkitRelativePath || f.name, data: new Uint8Array(await f.arrayBuffer()) });
+    begin(files);
+  } catch (e) { fail(e.message || String(e)); }
 };
 $('zip').onchange = async ev => {
   const f = ev.target.files[0];
   if (!f) return;
-  try { begin(await unzip(await f.arrayBuffer())); } catch (e) { fail(e.message); }
+  try { begin(await unzip(await f.arrayBuffer())); } catch (e) { fail(e.message || String(e)); }
 };
 
 // ---- running -------------------------------------------------------------
@@ -146,31 +174,39 @@ function start() {
   $('stage').style.display = 'flex';
   fit(); addEventListener('resize', fit);
   new MutationObserver(fit).observe($('canvas'), { attributes: true, attributeFilter: ['width', 'height'] });
-  // this runs inside the file-input change event, so the browser lets SDL start audio
+  audioUnlock();
   persistLoop();
+  // callMain runs inside a click/change handler or just after one, so SDL may start audio
   Module.callMain(['--dir', '/game', '--scale', '3', '--touch', 'auto']);
   $('canvas').focus();
 }
 
-// .usr saves are written next to the game files; mirror them (and everything
-// under /libsdl: states, zeliard.ini) into IndexedDB
-const seen = {};
-function persistLoop() {
-  const FS = Module.FS;
-  const scan = copy => {
-    for (const f of FS.readdir('/game')) {
-      if (!/\.usr$/i.test(f)) continue;
-      const st = FS.stat('/game/' + f), sig = st.mtime.getTime() + ':' + st.size;
-      if (seen[f] !== sig) { seen[f] = sig; if (copy) FS.writeFile('/libsdl/usr/' + f, FS.readFile('/game/' + f)); }
-    }
+// Browsers start an AudioContext suspended until a user gesture.  SDL's own
+// unlock hook only covers some events, so resume it on every gesture (cheap: a no-op while running).
+function audioCtx() { return Module.SDL2 && Module.SDL2.audioContext; }
+function audioUnlock() {
+  const evs = ['pointerdown', 'touchend', 'mousedown', 'keydown', 'click'];
+  const tryResume = () => {
+    const c = audioCtx();
+    if (!c) return;
+    if (c.state !== 'running') c.resume().catch(() => {});   // also after the browser re-suspends it (iOS interruptions)
   };
-  scan(false);                                                    // as installed: not a save
-  setInterval(() => {
-    try {
-      scan(true);
-      syncfs(false).catch(e => console.warn('syncfs: ' + e));
-    } catch (e) { console.warn('persist: ' + e); }
-  }, 3000);
+  evs.forEach(e => addEventListener(e, tryResume, true));
+  tryResume();
+}
+
+// Mirror /libsdl (states, zeliard.ini) and /game (.usr saves, game files) into IndexedDB.
+// syncfs only writes what changed, so a periodic call is cheap; also flush when the page is hidden.
+let syncing = false;
+function flush() {
+  if (syncing) return Promise.resolve();
+  syncing = true;
+  return syncfs(false).catch(e => console.warn('syncfs: ' + e)).finally(() => { syncing = false; });
+}
+function persistLoop() {
+  setInterval(flush, 2000);
+  addEventListener('pagehide', flush);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
 }
 </script>
 <script async src="zeliard.js"></script>
