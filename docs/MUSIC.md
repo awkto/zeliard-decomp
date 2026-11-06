@@ -132,7 +132,7 @@ the return address; `FF` pops it).
 Pitch → MIDI note (from the chip formulas): **ADLIB** block b → `12·(b+1) + pitch − 1`
 (block 4, pitch 1 = f-number 0x156 = 259 Hz ≈ C4); **JR** octave o →
 `12·(max(o,1)+2) + pitch − 1` (SN divisor `1709 >> (o−1)`, 3.58 MHz/32/427 = 262 Hz = C4
-at o=3); **STD** octave o → `12·(o+3) + pitch − 1` (PIT divisor `2280 >> o << 3`,
+at o=3; for o ≤ 1 the real driver writes C..G# an octave higher than this, §4b); **STD** octave o → `12·(o+3) + pitch − 1` (PIT divisor `2280 >> o << 3`,
 1.193 MHz/2280 = 523 Hz = C5 at o=3) — the speaker plays the Tandy tracks **one octave
 above** the Tandy chip. (A finding, not a typo: `0548`/`0878` vs `0613`/`0A60`.)
 
@@ -293,6 +293,66 @@ Pitch: the game's f-number table sits a uniform ≈14 cents flat of A=440 (so
   once by MTINIT.COM at boot (docs/ARCHITECTURE.md). Stop/pause = CC 7B (all notes off)
   on channels 2-9.
 
+## 4b. The Tandy / PCjr back end in the port (`--tandy`, #34)
+
+`port/msd.c` (`MSD_JR`), `port/sndjr.c` and `port/sn76496.c` implement the SN76496 side
+of `MSCJR.DRV` / `SNDJR.DRV`; the register stream is verified byte for byte against the
+real driver code (`tools/jrtrace.py`, below).  What the disassembly says, in the order
+the driver does it:
+
+* **Chip bytes** (port `C0h`): tone `1 cc 0 pppp` + `0 0 pppppp` (10-bit period),
+  attenuation `1 cc 1 aaaa` (`cc` = channel, 3 = noise), noise control `E0 | FNN`.
+  `MSCJR` keeps shadow copies (`0AAB..0AB5`: 3 x {latch, data}, noise control, four
+  attenuations) so `AX=2/3/5` can resend them: `0170` = claims off, `02F9` (4 silence
+  bytes), then the 11 shadow bytes unless music is off or paused; `02D8` = the same
+  silence with the shadows following (AX=0 end, AX=1, the end of the fade, the last `FF`).
+* **Period** (`0613`): `(period[pitch] + detune) >> (octave - 1)`, `period` = 1709 1613
+  1523 1437 1357 1281 1209 1141 1077 1016 959 905 (the same table at `SNDJR 1632`).  For
+  octave 0 and 1 there is no shift, and the nine notes C..G# are then halved: their
+  period would be above 1023 and the chip cannot make it, so they sound an octave up.
+  `tools/msd2mid.py --jr` maps them straight, so about 13 % of the pitched notes of the
+  14 scores differ by an octave between the MIDI and the chip (`test_audio` allows exactly
+  that and nothing else).  A tone write is skipped when `period + vibrato >= 1024`.
+* **Attenuation** (`083D`): `L = envelope >> 4`, `v = 15 - (channel attenuation >> 3)`,
+  product `L * v`, `+ 0xF - FF25 (fade)`, clamp at 0, `>> 4`, `^ 0xF`.  It is written to the
+  channel's tone unless instrument byte 14 has bits 0-2 set (noise only), and to the
+  noise generator (`F0 | nibble`) unless byte 14 has bits 3-5 set.
+* **Instrument byte 14** (`[di+33]`, `04E4`): bit 7 = write a noise control on every
+  key-on (`0A9F`: 4,4,4,4,5,5,5,5,6,6,6,6 by pitch, i.e. white noise at the three
+  shift rates), bits 0-5 = per-channel "tone muted" (0-2) / "no noise" (3-5), mirrored in
+  `0B68`; byte 15 = the noise control value when bit 3 is clear (`/11 + 4`).  `EA` sets
+  the same flags from the track, `E9` the noise control; both end by switching the
+  channel off (`0A06`), which also silences the noise generator once `0B68 & 38` is full.
+* **Envelope, vibrato**: the same 17-byte records and phases as the speaker driver
+  (§3.3) but run on the **second** driver tick only (`0B5D` toggles), with no zero
+  guard on the wait / half-period reloads, and the vibrato step is shifted by
+  `octave - 1` (not the octave).  `FF` does not release the voice: it stays at its last
+  attenuation until the third track ends and `02D8` silences the chip.
+* **Tick order**: per channel the track step (skipped on the tempo carry ticks) and
+  then its tail (`06C6`: fade-step volume refresh, vibrato, envelope), channel by
+  channel; the music driver divides `INT 8` by 2 itself (`0B5A`, reset by AX=0) and the
+  sound driver runs first.
+* **`SNDJR.DRV`**: records at `170E`, patches 10 bytes at `2195` (bytes 0-7 the envelope
+  as in the 17-byte record, 8 = flags, 9 = noise value), channels at `21E8` / `220F`
+  (chip channels 2 and 1, masks `DB` / `ED`), tempo `FF`-style accumulator at `2238`,
+  every `out` goes straight to the chip, and each patch / `EA` ends in `1623`: `INT 60h
+  AX=5` with `CL = ~mask & 3F`, claiming the channels (bits 0-2, noise 3-5) from `MSCJR`;
+  the second `FF` releases everything with `CL = 0`.  The channel structs and `[223D]`
+  survive from effect to effect (only the fields `1169` names are reset).  `1656` is the
+  proximity routine (`FF08`), not ported.
+
+### Checking the stream against the driver
+
+`tools/jrtrace.py` (needs `pip install unicorn`) maps `MSCJR.DRV` at `:0100` and
+`SNDJR.DRV` at `:1100` of one segment, executes them with a 16-bit x86 emulator (a far
+call to `:0100` for the music tick, to `:1100` for the sound tick, `INT 60h` through the
+vector, `OUT C0h` hooked) at the `INT 8` rate and logs `tick byte` for every write.
+Script items: `music:mus1 sfx:3 run:400 stop pause:1 enable:0 fade:3`.  The port's
+`audio_chip_tap()` produces the same log; for all 14 table scores plus `zopn`, `zend`,
+`mfan`, all 65 effects and the service/claim combinations they are identical, and
+`make test` pins the hashes of a set of them.
+
+
 ## 5. Blob A (MT-32) format
 
 ```
@@ -372,7 +432,8 @@ part is the drum-kit slot).
 
 * The pitch mappings are derived from the chip formulas, not measured; the
   STD-vs-JR octave difference (§3.1) should be confirmed in DOSBox with the two
-  drivers.
+  drivers.  (The JR chip writes themselves are confirmed against the real driver code,
+  §4b.)
 * JR tracks use octave 7 with noise patches for hi-hat-like sounds (mus1 track 0
   reaches "D8"); the Tandy MIDI renders them as tones.
 * AX=7 / `FF76` has no caller; it is presumably the MT-32 master-volume path of the

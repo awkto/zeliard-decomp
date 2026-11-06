@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 /* test_audio.c — the sound back end: the score parser, the tick/tempo model,
- * the FF75 -> SND*.DRV effect mapping and the OPL2 core.
+ * the FF75 -> SND*.DRV effect mapping, the OPL2 core and the Tandy / PCjr
+ * (SN76496) back end.
  *
  * The parser check is a full cross-check against tools/msd2mid.py: every one
  * of the 17 scores is run through msd.c in all three blob-B arrangements
@@ -16,6 +17,7 @@
 #include "sar.h"
 #include "msd.h"
 #include "opl2.h"
+#include "sn76496.h"
 #include "audio.h"
 #include "enemy.h"
 #include "cutscene.h"
@@ -608,6 +610,403 @@ static void t_intro_silence(void)
     audio_shutdown();
 }
 
+
+/* ============================ 6. the Tandy / PCjr back end ============= */
+/* The register-write stream of MSCJR.DRV / SNDJR.DRV.  tools/jrtrace.py runs the
+ * real driver code under a CPU emulator and hashes every byte written to port C0h
+ * (with the INT 8 tick it was written on); the hashes below were produced that
+ * way, and when python3 + unicorn are available the test runs the oracle live
+ * as well.  A script is `music:NAME sfx:ID run:N stop pause:0/1 enable:0/1 fade:RATE`. */
+typedef struct { uint32_t h; int n; } ChipLog;
+
+static void chip_tap(void *u, int tick, uint8_t b)
+{
+    ChipLog *l = u;
+    uint8_t v[5] = { (uint8_t)tick, (uint8_t)(tick >> 8), (uint8_t)(tick >> 16), (uint8_t)(tick >> 24), b };
+    for (int i = 0; i < 5; i++) { l->h ^= v[i]; l->h *= 16777619u; }
+    l->n++;
+}
+
+static int run_script(const char *script, ChipLog *l)
+{
+    char buf[512];
+    snprintf(buf, sizeof buf, "%s", script);
+    l->h = 2166136261u; l->n = 0;
+    audio_init(G_DIR, AUDIO_TANDY, 0);
+    audio_chip_tap(chip_tap, l);
+    int n; const MusicRes *tab = audio_music_table(&n);
+    for (char *tok = strtok(buf, " "); tok; tok = strtok(NULL, " ")) {
+        char *c = strchr(tok, ':');
+        if (c) *c++ = 0;
+        int v = c ? atoi(c) : 0;
+        if (!strcmp(tok, "music")) {
+            if (!strcmp(c, "zopn")) audio_music_play_res(0, 39);
+            else for (int k = 0; k < n; k++) if (!strcmp(tab[k].name, c)) audio_music_force(k);
+        }
+        else if (!strcmp(tok, "sfx")) audio_sfx_request(v);
+        else if (!strcmp(tok, "run")) audio_run_ticks(v);
+        else if (!strcmp(tok, "stop")) audio_music_stop();
+        else if (!strcmp(tok, "pause")) audio_music_pause(v);
+        else if (!strcmp(tok, "enable")) audio_music_enable(v);
+        else if (!strcmp(tok, "fade")) audio_music_fade(v);
+        else { audio_shutdown(); return -1; }
+    }
+    audio_shutdown();
+    return 0;
+}
+
+/* does `python3 tools/jrtrace.py` work here (Unicorn installed)? */
+static const char *oracle_python(void)
+{
+    static const char *py = NULL;
+    static int tried = 0;
+    if (tried) return py;
+    tried = 1;
+    const char *want = getenv("ZEL_PYTHON");
+    static char cmd[600];
+    snprintf(cmd, sizeof cmd, "%s -c 'import unicorn' >/dev/null 2>&1", want ? want : "python3");
+    if (system(cmd) == 0) py = want ? want : "python3";
+    return py;
+}
+
+static int oracle_run(const char *script, uint32_t *h, int *n)
+{
+    const char *py = oracle_python();
+    if (!py) return -1;
+    char cmd[1200];
+    snprintf(cmd, sizeof cmd, "%s %s/tools/jrtrace.py --quiet --root %s --zeliard %s %s 2>/dev/null",
+             py, ROOT, ROOT, G_DIR, script);
+    FILE *f = popen(cmd, "r");
+    if (!f) return -1;
+    char line[128]; unsigned hh = 0; int nn = -1, got = 0;
+    while (fgets(line, sizeof line, f)) {
+        if (sscanf(line, "fnv32 %x", &hh) == 1) got |= 1;
+        if (sscanf(line, "count %d", &nn) == 1) got |= 2;
+    }
+    pclose(f);
+    if (got != 3) return -1;
+    *h = hh; *n = nn;
+    return 0;
+}
+
+static double chip_hz(const Sn76496 *c, int ch) { return SN_CLOCK_TANDY / 32.0 / c->period[ch]; }
+
+static void t_tandy_chip(void)
+{
+    Sn76496 s;
+    sn76496_init(&s, SN_CLOCK_TANDY, 44100.0);
+    /* reset: everything attenuated to nothing */
+    CHECK(sn76496_tick(&s) == 0.0, "a reset chip is silent");
+    /* tone 0, period 427: 3.579545 MHz / 32 / 427 = 262 Hz (the driver's C4) */
+    sn76496_write(&s, 0x80 | (427 & 15)); sn76496_write(&s, (uint8_t)(427 >> 4));
+    sn76496_write(&s, 0x90);                                  /* attenuation 0 */
+    CHECK(s.reg[0] == 427 && s.period[0] == 427, "latch + data byte make a 10-bit period (%d)", s.reg[0]);
+    CHECK(fabs(chip_hz(&s, 0) - 262.0) < 0.5, "period 427 is %.1f Hz", chip_hz(&s, 0));
+    int toggles = 0, last = s.out[0];
+    long ticks = (long)(SN_CLOCK_TANDY / 16.0);               /* one second of chip time */
+    for (long i = 0; i < ticks; i++) {
+        sn76496_tick(&s);
+        if (s.out[0] != last) { toggles++; last = s.out[0]; }
+    }
+    CHECK(abs(toggles / 2 - 262) <= 1, "one second of ticks = %d square-wave cycles (want 262)", toggles / 2);
+    /* attenuation: 2 dB a step, 15 = off */
+    CHECK(fabs(s.vol[0] / s.vol[1] - pow(10.0, 0.1)) < 0.001, "2 dB per attenuation step");
+    CHECK(s.vol[15] == 0.0, "attenuation 15 is off");
+    sn76496_write(&s, 0x9F);
+    double mx = 0;
+    for (int i = 0; i < 20000; i++) { double v = sn76496_tick(&s); if (v > mx) mx = v; }
+    CHECK(mx == 0.0, "attenuation 15 mutes the channel");
+    /* a period of 0 behaves as 1024 */
+    sn76496_write(&s, 0x80); sn76496_write(&s, 0x00);
+    CHECK(s.period[0] == 0x400, "period 0 counts as 1024");
+    /* noise: shift rates N/512, N/1024, N/2048, then tone 2's rate */
+    sn76496_write(&s, 0xE4); CHECK(s.period[3] == 32,  "noise rate 0 shifts every 32 ticks");
+    sn76496_write(&s, 0xE5); CHECK(s.period[3] == 64,  "noise rate 1 every 64");
+    sn76496_write(&s, 0xE6); CHECK(s.period[3] == 128, "noise rate 2 every 128");
+    sn76496_write(&s, 0xC0 | 5); sn76496_write(&s, 0x02);     /* tone 2 period 0x25 */
+    sn76496_write(&s, 0xE7); CHECK(s.period[3] == 2 * s.period[2], "noise rate 3 follows tone 2 (%d)", s.period[3]);
+    sn76496_write(&s, 0xE4);
+    uint32_t seed = s.rng;
+    CHECK(seed == s.fb_mask, "a noise-control write re-seeds the shift register");
+    sn76496_write(&s, 0xF0);                                  /* noise attenuation 0 */
+    int ones = 0, flips = 0, prev = s.out[3];
+    for (int i = 0; i < 32 * 4096; i++) {
+        sn76496_tick(&s);
+        ones += s.out[3]; if (s.out[3] != prev) { flips++; prev = s.out[3]; }
+    }
+    double frac = (double)ones / (32 * 4096);
+    CHECK(frac > 0.4 && frac < 0.6, "white noise is balanced (%.3f ones)", frac);
+    CHECK(flips > 1500, "white noise flips often (%d flips in 4096 shifts)", flips);
+    /* periodic noise (FB = 0) repeats; white noise does not within the same span */
+    Sn76496 q; sn76496_init(&q, SN_CLOCK_TANDY, 44100.0);
+    sn76496_write(&q, 0xE0);                                  /* periodic, fastest */
+    int bits[200], period = 0;
+    for (int i = 0; i < 200; i++) { for (int k = 0; k < 32; k++) sn76496_tick(&q); bits[i] = q.out[3]; }
+    for (int p = 1; p <= 100 && !period; p++) {
+        int ok = 1;
+        for (int i = 20; i + p < 200; i++) if (bits[i] != bits[i + p]) { ok = 0; break; }
+        if (ok) period = p;
+    }
+    CHECK(period > 0, "periodic noise is a short repeating pattern (period %d)", period);
+    /* the NCR 8496 variant ignores data bytes for noise control and volumes */
+    Sn76496 r; sn76496_init(&r, SN_CLOCK_TANDY, 44100.0); sn76496_set_lfsr(&r, SN_LFSR_NCR);
+    sn76496_write(&r, 0xE5); uint16_t before = r.reg[6]; sn76496_write(&r, 0x02);
+    CHECK(r.reg[6] == before, "NCR: a data byte after the noise latch is ignored");
+    /* sampling: a held 262 Hz note renders a 262 Hz square wave */
+    Sn76496 w; sn76496_init(&w, SN_CLOCK_TANDY, 44100.0);
+    sn76496_write(&w, 0x80 | (427 & 15)); sn76496_write(&w, (uint8_t)(427 >> 4)); sn76496_write(&w, 0x90);
+    int cross = 0; double pv = 0, lo = 9, hi = -9;
+    for (int i = 0; i < 44100; i++) {
+        double v = sn76496_sample(&w);
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+        if ((v > 0.125) != (pv > 0.125)) cross++;
+        pv = v;
+    }
+    CHECK(abs(cross / 2 - 262) <= 2, "the sample stream is a 262 Hz square wave (%d cycles)", cross / 2);
+    CHECK(lo == 0.0 && hi > 0.2 && hi <= 0.25 + 1e-9, "one full-level channel swings 0..0.25 (%.3f..%.3f)", lo, hi);
+}
+
+
+/* a byte recorder for the unit checks below */
+typedef struct { uint8_t b[512]; int n; } Rec;
+static void rec_sink(void *u, uint8_t b) { Rec *r = u; if (r->n < 512) r->b[r->n++] = b; }
+
+static void t_tandy_regs(void)
+{
+    const uint8_t *blob; size_t bl; uint8_t *own;
+    if (!load_score(4, &blob, &bl, &own)) return;               /* mus1 */
+    MsdPlayer p; Rec r;
+    memset(&p, 0, sizeof p); memset(&r, 0, sizeof r);
+    p.sn = rec_sink; p.sn_u = &r;
+    /* INT 60h AX=0 ends in J 02D8: all four attenuations to "off" */
+    msd_start(&p, blob, bl, MSD_JR);
+    CHECK(r.n == 4 && r.b[0] == 0x9F && r.b[1] == 0xBF && r.b[2] == 0xDF && r.b[3] == 0xFF,
+          "AX=0 writes 9F BF DF FF (%d bytes, %02X ...)", r.n, r.b[0]);
+    /* the first instrument select (J 04E4) turns that channel's tone off again */
+    r.n = 0;
+    msd_jr_int8(&p);
+    CHECK(r.n > 0 && (r.b[0] & 0x90) == 0x90, "the first tick starts with an attenuation byte (%02X)", r.b[0]);
+    /* AX=5: SNDJR takes chip channel 0 and the noise generator (J 0196) */
+    r.n = 0;
+    msd_claim_sn(&p, 0x09);
+    CHECK(r.n == 2 && r.b[0] == 0xFF && r.b[1] == 0x9F,
+          "claiming tone 0 + noise silences them (%d bytes: %02X %02X)", r.n, r.b[0], r.b[1]);
+    CHECK(p.ch[0].jr_claimed && !p.ch[1].jr_claimed && p.jr_noise_claim, "the claim flags");
+    r.n = 0;
+    for (int i = 0; i < 4000; i++) msd_jr_int8(&p);
+    int own0 = 0;
+    for (int i = 0; i < r.n; i++) if ((r.b[i] & 0xE0) == 0x80 && (r.b[i] & 0x80)) own0++;
+    CHECK(own0 == 0, "while claimed, the music never writes tone 0's latch bytes (%d)", own0);
+    /* CL = 0: give everything back, silence the chip, resend the shadow registers (J 0170) */
+    r.n = 0;
+    msd_claim_sn(&p, 0);
+    CHECK(r.n == 15 && r.b[0] == 0x9F && r.b[1] == 0xBF && r.b[2] == 0xDF && r.b[3] == 0xFF,
+          "CL=0 sends 4 silence bytes and 11 shadow bytes (%d)", r.n);
+    CHECK(r.n == 15 && r.b[10] == p.jr_noisectl && r.b[11] == p.jr_att[0] && r.b[14] == p.jr_att[3],
+          "the shadow image is tone x3, noise control, four attenuations");
+    CHECK(!p.ch[0].jr_claimed && !p.jr_noise_claim, "and the claims are cleared");
+    /* AX=3 pause: silence now, resend on resume */
+    r.n = 0;
+    msd_pause(&p, 1);
+    CHECK(r.n == 4 && r.b[0] == 0x9F, "pause writes the four silence bytes");
+    r.n = 0;
+    for (int i = 0; i < 10; i++) msd_jr_int8(&p);
+    CHECK(r.n == 0, "a paused driver does not tick");
+    msd_pause(&p, 0);
+    CHECK(r.n == 15, "resume resends the registers (%d)", r.n);
+    /* AX=2 F1: music off is silent and stays silent */
+    r.n = 0;
+    msd_enable(&p, 0);
+    for (int i = 0; i < 400; i++) msd_jr_int8(&p);
+    CHECK(r.n == 4, "F1 off writes silence once and then nothing at all (%d bytes)", r.n);
+    free(own);
+}
+
+/* the chip stream and the (msd2mid-checked) event stream have to agree on pitch */
+typedef struct { int type, a, b, c; } SemItem;
+typedef struct { SemItem *it; int n, cap; } SemLog;
+static void sem_ev(void *u, int tick, int tr, int kind, int a, int b, int c)
+{
+    SemLog *l = u; (void)tick;
+    if (kind != MSD_ON || l->n >= l->cap) return;
+    l->it[l->n++] = (SemItem){ 0, tr, a, c };
+}
+static void sem_sn(void *u, uint8_t b)
+{
+    SemLog *l = u;
+    if (l->n < l->cap) l->it[l->n++] = (SemItem){ 1, b, 0, 0 };
+}
+
+static void t_tandy_pitch(void)
+{
+    int nsc; const MusicRes *tab = audio_music_table(&nsc);
+    SemLog l; l.cap = 400000; l.it = malloc((size_t)l.cap * sizeof *l.it);
+    long total = 0, exact = 0, octave = 0, other = 0;
+    for (int k = 0; k < nsc; k++) {
+        const uint8_t *blob; size_t bl; uint8_t *own;
+        if (!load_score(k, &blob, &bl, &own)) continue;
+        MsdPlayer p; memset(&p, 0, sizeof p);
+        p.ev = sem_ev; p.ev_u = &l; p.sn = sem_sn; p.sn_u = &l;
+        l.n = 0;
+        msd_start(&p, blob, bl, MSD_JR);
+        for (int i = 0; i < 12000 && !p.stopped && l.n < l.cap - 64; i++) msd_jr_int8(&p);
+        for (int i = 0; i < l.n; i++) {
+            if (l.it[i].type != 0 || l.it[i].c) continue;           /* a fresh (non-legato) note-on */
+            int ch = l.it[i].a, note = l.it[i].b;
+            for (int j = i + 1; j < l.n && j < i + 60; j++) {
+                if (l.it[j].type == 0 && l.it[j].a == ch) break;
+                if (l.it[j].type == 1 && (l.it[j].a & 0xF0) == (0x80 | ch << 5) &&
+                    j + 1 < l.n && l.it[j + 1].type == 1 && !(l.it[j + 1].a & 0x80)) {
+                    int per = (l.it[j + 1].a << 4) | (l.it[j].a & 15);
+                    int m = (int)lround(69 + 12 * log2(SN_CLOCK_TANDY / 32.0 / per / 440.0));
+                    total++;
+                    if (m == note || (per < 24 && abs(m - note) <= 1)) exact++;   /* a tiny period quantises coarsely */
+                    /* the driver cannot make periods above 1023: the low notes of octave 0/1 are
+                     * written an octave up (J 0646) while tools/msd2mid.py maps them straight */
+                    else if (m == note + 12 && note >= 36 && note <= 44) octave++;
+                    else { other++; if (other < 4) fprintf(stderr, "  %s ch%d note %d sounds as %d\n", tab[k].name, ch, note, m); }
+                    break;
+                }
+            }
+        }
+        free(own);
+    }
+    free(l.it);
+    CHECK(total > 8000, "the 14 scores yield %ld pitched tone writes", total);
+    CHECK(other == 0, "every note the score names is written at its pitch on its chip channel (%ld exact, "
+                      "%ld an octave up where the 10-bit period runs out, %ld other)", exact, octave, other);
+    CHECK(octave * 4 < total, "the octave clamp is the exception, not the rule (%ld of %ld)", octave, total);
+}
+
+static const struct { const char *script; uint32_t h; int n; } TANDY_SCRIPTS[] = {
+    { "music:mgt1 run:3000", 0x226792abu, 4689 },
+    { "music:mus1 run:4000", 0xaf66a49cu, 4370 },
+    { "music:mbos run:3000", 0x910c0ad6u, 3538 },
+    { "music:ugm2 run:3000", 0xa012f79au, 3659 },
+    { "music:mmao run:3000", 0x1c77bb6au, 4551 },
+    { "music:zopn run:3000", 0x7659102bu, 3180 },
+    /* effects over music: the claim traffic (AX=5), preemption, a fresh score mid-effect */
+    { "music:mus3 run:300 sfx:3 run:400 sfx:6 run:300 sfx:7 run:900", 0xcffd534eu, 3220 },
+    { "music:mus5 run:100 sfx:44 run:50 sfx:55 run:1500 sfx:30 run:20 sfx:12 run:600", 0x9ad7f9beu, 4587 },
+    { "music:mus8 run:200 sfx:20 run:30 music:mus4 run:500 sfx:21 run:200", 0x59983a49u, 1206 },
+    /* AX=3 pause, AX=2 F1, the fade to silence (FF24) */
+    { "music:mus2 run:300 pause:1 run:50 sfx:9 run:100 pause:0 run:300 enable:0 run:100 sfx:9 run:200 enable:1 run:300",
+      0xb9d81b07u, 1078 },
+    { "music:mus6 run:300 fade:3 run:3000", 0x30d1f41eu, 1693 },
+};
+
+/* SNDJR effect 1..65, each on its own after AX=1, 3000 INT 8 ticks */
+static const struct { uint32_t h; int n; } TANDY_SFX[65] = {
+    { 0xcf6e4498u, 44 }, { 0x80d9011cu, 109 }, { 0x02822453u, 91 }, { 0xdd83a150u, 123 }, 
+    { 0x72501514u, 44 }, { 0x5a4f381du, 193 }, { 0xfc2b5ed5u, 152 }, { 0xcbf6e461u, 113 }, 
+    { 0x88791123u, 136 }, { 0x85780278u, 62 }, { 0x3cb34449u, 150 }, { 0x446e12bfu, 76 }, 
+    { 0x9d5b193fu, 76 }, { 0x1cfa5424u, 150 }, { 0x475af826u, 2452 }, { 0xbe107d62u, 80 }, 
+    { 0x898aca65u, 79 }, { 0xd14ec1d1u, 165 }, { 0x9a51f8b5u, 44 }, { 0x521b58dcu, 153 }, 
+    { 0xbf004608u, 145 }, { 0x3462dbddu, 145 }, { 0xc048a629u, 51 }, { 0x4de4d286u, 154 }, 
+    { 0xe8190767u, 132 }, { 0xfd5c433bu, 64 }, { 0x0453b645u, 194 }, { 0xd2af811au, 96 }, 
+    { 0x04b79a3bu, 202 }, { 0x1b10e61cu, 204 }, { 0x74329d97u, 151 }, { 0xd8f5ad34u, 313 }, 
+    { 0xfca8d556u, 251 }, { 0xad6825b5u, 180 }, { 0xa1e0b362u, 232 }, { 0xe32bbeacu, 183 }, 
+    { 0xd200679bu, 183 }, { 0x274a4dddu, 177 }, { 0x1a7cd1fau, 101 }, { 0x87216493u, 560 }, 
+    { 0x511bf3dbu, 162 }, { 0xa2cb3cfau, 305 }, { 0x5bea1f51u, 121 }, { 0xc96381d4u, 768 }, 
+    { 0x719dfdb5u, 99 }, { 0xb8b9ae62u, 85 }, { 0x04c8c99du, 197 }, { 0xae221ce6u, 455 }, 
+    { 0xadb862b5u, 88 }, { 0xb7298e57u, 281 }, { 0x0e935b75u, 388 }, { 0xe72c6249u, 118 }, 
+    { 0xaca31719u, 76 }, { 0x6f324c04u, 167 }, { 0x4abccbdbu, 874 }, { 0x5769f35fu, 123 }, 
+    { 0x9157f708u, 206 }, { 0x382c7eafu, 55 }, { 0xd2bdbfbfu, 73 }, { 0x2f3f9e89u, 73 }, 
+    { 0xb6e5df2bu, 50 }, { 0xff544b1fu, 50 }, { 0x72fe45a3u, 50 }, { 0xc97a5f6du, 50 }, 
+    { 0xea91388fu, 50 },
+};
+
+static void t_tandy_streams(void)
+{
+    ChipLog l;
+    int live = oracle_python() != NULL;
+    if (!live) fprintf(stderr, "  (no python3 with unicorn: the live MSCJR/SNDJR oracle is skipped, golden hashes only)\n");
+    for (size_t i = 0; i < sizeof TANDY_SCRIPTS / sizeof TANDY_SCRIPTS[0]; i++) {
+        CHECK(run_script(TANDY_SCRIPTS[i].script, &l) == 0, "script runs");
+        CHECK(l.h == TANDY_SCRIPTS[i].h && l.n == TANDY_SCRIPTS[i].n,
+              "chip writes for `%s`: %08x/%d (want %08x/%d)", TANDY_SCRIPTS[i].script,
+              l.h, l.n, TANDY_SCRIPTS[i].h, TANDY_SCRIPTS[i].n);
+        uint32_t oh; int on;
+        if (live && oracle_run(TANDY_SCRIPTS[i].script, &oh, &on) == 0)
+            CHECK(oh == l.h && on == l.n, "the real driver code writes the same bytes for `%s` (%08x/%d vs %08x/%d)",
+                  TANDY_SCRIPTS[i].script, oh, on, l.h, l.n);
+    }
+    int bad = 0, nonempty = 0;
+    for (int id = 1; id <= 65; id++) {
+        char sc[64];
+        snprintf(sc, sizeof sc, "stop sfx:%d run:3000", id);
+        run_script(sc, &l);
+        if (l.h != TANDY_SFX[id - 1].h || l.n != TANDY_SFX[id - 1].n) {
+            bad++;
+            fprintf(stderr, "  effect %d: %08x/%d (want %08x/%d)\n", id, l.h, l.n, TANDY_SFX[id - 1].h, TANDY_SFX[id - 1].n);
+        }
+        if (l.n > 6) nonempty++;
+    }
+    CHECK(bad == 0, "all 65 SNDJR effects write the bytes the real driver writes (%d differ)", bad);
+    CHECK(nonempty == 65, "and every one of them makes sound (%d)", nonempty);
+    if (live) {
+        int obad = 0;
+        for (int id = 1; id <= 65; id += 4) {                    /* the live oracle on every 4th effect */
+            char sc[64]; uint32_t oh; int on;
+            snprintf(sc, sizeof sc, "stop sfx:%d run:3000", id);
+            run_script(sc, &l);
+            if (oracle_run(sc, &oh, &on) != 0 || oh != l.h || on != l.n) obad++;
+        }
+        CHECK(obad == 0, "the live oracle agrees on effects 1, 5, 9 ... (%d differ)", obad);
+    }
+}
+
+/* the Tandy back end through the front door: selection, WAV render */
+static void t_tandy_backend(void)
+{
+    CHECK(audio_backend_by_name("tandy") == AUDIO_TANDY && audio_backend_by_name("pcjr") == AUDIO_TANDY,
+          "--audio tandy / pcjr");
+    CHECK(audio_backend_by_name("adlib") == AUDIO_ADLIB && audio_backend_by_name("speaker") == AUDIO_SPEAKER,
+          "--audio adlib / speaker");
+    CHECK(audio_backend_by_name("sb16") < 0 && audio_backend_by_name(NULL) < 0, "unknown names are rejected");
+    CHECK(!strcmp(audio_backend_key(AUDIO_TANDY), "tandy"), "the ini spelling");
+    CHECK(audio_sfx_load(G_DIR, AUDIO_TANDY) == 0, "SNDJR.DRV loads");
+    CHECK(audio_sfx_count() == 65, "SNDJR.DRV defines the same 65 effects (%d)", audio_sfx_count());
+    int prio; unsigned t0, t1, dt;
+    CHECK(audio_sfx_entry(0x02, &prio, &t0, &t1, &dt) == 0 && prio == 0xFF,
+          "SNDJR effect 02 also has priority FF (%02X)", prio);
+    CHECK(audio_sfx_entry(3, &prio, &t0, &t1, &dt) == 0 && prio == 0 && t0 > 0x170E && dt > 0x170E,
+          "the effect table at 170E: sword swing tracks %04X %04X, durations %04X", t0, t1, dt);
+    audio_shutdown();
+
+    const char *wav = "/tmp/zel_tandy_test.wav";
+    audio_init(G_DIR, AUDIO_TANDY, 0);
+    CHECK(!strcmp(audio_backend_name(), "Tandy / PCjr (SN76496)"), "backend name");
+    CHECK(audio_dump_open(wav) == 0, "WAV dump opens");
+    audio_music_force(4);
+    audio_advance_ms(2000);
+    audio_sfx_request(6);
+    audio_advance_ms(500);
+    audio_dump_close();
+    audio_shutdown();
+    FILE *f = fopen(wav, "rb");
+    CHECK(f != NULL, "the Tandy WAV was written");
+    if (f) {
+        fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 44, SEEK_SET);
+        long samples = (sz - 44) / 2, nz = 0, clip = 0;
+        double peak = 0;
+        for (long i = 0; i < samples; i++) {
+            unsigned char b[2];
+            if (fread(b, 1, 2, f) != 2) break;
+            int v = (int16_t)(b[0] | b[1] << 8);
+            if (v) nz++;
+            if (abs(v) > peak) peak = abs(v);
+            if (abs(v) >= 30000) clip++;
+        }
+        fclose(f);
+        CHECK(samples >= 2 * 44100, "2.5 s of audio (%ld samples)", samples);
+        CHECK(nz > samples / 2, "the score is audible (%ld non-zero samples)", nz);
+        CHECK(peak > 2000 && clip == 0, "at a sensible level (peak %.0f, %ld clipped)", peak, clip);
+        remove(wav);
+    }
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -624,6 +1023,9 @@ int main(int argc, char **argv)
         {"score parser", t_parser}, {"volume clamp", t_volume_clamp},
         {"FF75 effects", t_sfx}, {"OPL2 core", t_opl}, {"note pitch", t_pitch},
         {"silence/dump", t_silence}, {"intro silence", t_intro_silence},
+        {"SN76496 core", t_tandy_chip}, {"MSCJR services", t_tandy_regs},
+        {"Tandy pitch", t_tandy_pitch}, {"Tandy streams", t_tandy_streams},
+        {"Tandy backend", t_tandy_backend},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = fails;

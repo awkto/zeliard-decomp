@@ -522,7 +522,7 @@ static void usage(void)
         "usage: zeliard [--dir GAMEDIR] [--map N] [--pos COL ROW] [--town N] [--headless]\n"
         "               [--screenshot N out.png] [--script SCRIPT] [--scale N] [--aspect A] [--filter F] [--fullscreen] [--speed N]\n"
         "               [--frames N] [--sound] [--verbose]\n"
-        "               [--no-music] [--speaker] [--music N] [--dump-audio FILE.wav]\n"
+        "               [--no-music] [--speaker | --tandy | --audio adlib|speaker|tandy] [--music N] [--dump-audio FILE.wav]\n"
         "  --dir       directory holding ZELRES1-3.SAR (default: the folder the config\n"
         "              remembered, else zeliard/, ../zeliard/, ./)\n"
         "  --map N     system map index (0 = MP10 .. 0x1E = MPA0; default 0)\n"
@@ -1375,6 +1375,7 @@ static void config_capture(Config *c, const App *a, const char *dir, int backend
     snprintf(c->aspect, sizeof c->aspect, "%s", a->square ? "1:1" : "4:3");
     c->music = music_on; c->sfx = sfx_on;
     c->speaker = backend == AUDIO_SPEAKER ? 1 : 0;
+    snprintf(c->audio, sizeof c->audio, "%s", audio_backend_key(backend));
 }
 
 /* #42 first run: the game files are copyrighted and stay user-supplied, so say
@@ -1492,6 +1493,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--sound")) sound_set_log(1);
         else if (!strcmp(argv[i], "--no-music")) { want_audio = 0; have_music = 1; }
         else if (!strcmp(argv[i], "--speaker")) { audio_backend = AUDIO_SPEAKER; have_speaker = 1; }
+        else if (!strcmp(argv[i], "--tandy")) { audio_backend = AUDIO_TANDY; have_speaker = 1; }
+        else if (!strcmp(argv[i], "--audio") && i + 1 < argc) {
+            int b = audio_backend_by_name(argv[++i]);
+            if (b < 0) { fprintf(stderr, "unknown --audio %s (adlib speaker tandy)\n", argv[i]); return 2; }
+            audio_backend = b; have_speaker = 1;
+        }
         else if (!strcmp(argv[i], "--dump-audio") && i + 1 < argc) wav_path = argv[++i];
         else if (!strcmp(argv[i], "--music") && i + 1 < argc) music_force = (int)strtol(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--sword") && i + 1 < argc) dbg_sword = atoi(argv[++i]);
@@ -1578,6 +1585,7 @@ int main(int argc, char **argv)
         if (!have_music && cfg.music >= 0) music_on = cfg.music;
         if (cfg.sfx >= 0) sfx_on = cfg.sfx;
         if (!have_speaker && cfg.speaker >= 0) audio_backend = cfg.speaker ? AUDIO_SPEAKER : AUDIO_ADLIB;
+        if (!have_speaker && cfg.audio[0]) { int b = audio_backend_by_name(cfg.audio); if (b >= 0) audio_backend = b; }
     }
 #ifdef HAVE_SDL
     touch_init(&a.touch, touch_mode, a.headless ? -1 : cfg.touch_size, a.headless ? -1 : cfg.touch_opacity);

@@ -2,6 +2,9 @@
  * and the SDL2 / WAV back ends.  docs/MUSIC.md is the spec for the score side,
  * disasm/SND{ADLIB,STD}.asm for the effects.
  *
+ * Back ends: AdLib (OPL2), PC speaker, Tandy / PCjr (SN76496, MSCJR.DRV +
+ * SNDJR.DRV; sn76496.c, sndjr.c).
+ *
  * Nothing here runs unless main.c calls audio_init(): the test binaries and
  * `--headless` without `--dump-audio` never touch it, so they stay silent and
  * deterministic. */
@@ -10,15 +13,19 @@
 #include <stdint.h>
 #include <stddef.h>
 
-enum { AUDIO_ADLIB = 0, AUDIO_SPEAKER = 1 };
+enum { AUDIO_ADLIB = 0, AUDIO_SPEAKER = 1, AUDIO_TANDY = 2 };
 
 /* Open the sound hardware (SDL2) and load SND*.DRV from `dir`.  `backend` is
- * AUDIO_ADLIB or AUDIO_SPEAKER; `want_sdl` = 0 leaves the device closed (the
+ * AUDIO_ADLIB, AUDIO_SPEAKER or AUDIO_TANDY; `want_sdl` = 0 leaves the device closed (the
  * --dump-audio path).  Returns 0 when audio is running. */
 int  audio_init(const char *dir, int backend, int want_sdl);
 void audio_shutdown(void);
 int  audio_active(void);
 const char *audio_backend_name(void);
+/* the spellings used by --audio and the `audio=` ini key: adlib speaker tandy (also pcjr, pc-speaker, opl2).
+ * -1 = unknown. */
+int  audio_backend_by_name(const char *s);
+const char *audio_backend_key(int backend);
 
 /* Render to a 16-bit mono WAV instead of a sound card (deterministic). */
 int  audio_dump_open(const char *path);
@@ -66,5 +73,11 @@ int  audio_sfx_count(void);                     /* effects in the loaded SND*.DR
 int  audio_sfx_entry(int id, int *prio, unsigned *t0, unsigned *t1, unsigned *durtab);
 int  audio_sfx_load(const char *dir, int backend);   /* load SND*.DRV only */
 double audio_int8_hz(void);
+/* Tandy back end: call `fn` for every byte the music and sound drivers write to
+ * the SN76496 (port C0h), with the INT 8 tick it was written on; and run n INT 8
+ * ticks without rendering any audio.  Both are for test_audio.c. */
+void audio_chip_tap(void (*fn)(void *u, int tick, uint8_t byte), void *u);
+void audio_run_ticks(int n);
+int  audio_int8_count(void);
 
 #endif

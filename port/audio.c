@@ -4,7 +4,9 @@
  *   MSC*.DRV   the score interpreter (msd.c), ticked every 2nd INT 8
  *   SND*.DRV   the sound-effect interpreter below, ticked every INT 8, reading
  *              its tracks and OPL patches straight out of the .DRV file
- *   the chip   opl2.c (AdLib) or a PIT-style square wave (PC speaker)
+ *              (the Tandy / PCjr one is sndjr.c)
+ *   the chip   opl2.c (AdLib), a PIT-style square wave (PC speaker) or
+ *              sn76496.c (Tandy / PCjr, fed by MSCJR's and SNDJR's port C0h writes)
  * The INT 8 clock is the original's 236.7 Hz, derived from the sample counter,
  * so the tempo is right whatever the frame rate is.
  *
@@ -13,6 +15,8 @@
 #include "audio.h"
 #include "msd.h"
 #include "opl2.h"
+#include "sn76496.h"
+#include "sndjr.h"
 #include "sar.h"
 #include <math.h>
 #include <stdio.h>
@@ -344,8 +348,14 @@ typedef struct Audio {
     int      on, backend, rate;
     const char *dir;
     Opl2     opl;
+    Sn76496  sn;
     MsdPlayer music;
     Sfx      sfx;
+    SndJr    jr;
+    /* test tap: every byte that reaches the SN76496, with the INT 8 tick it came on */
+    void   (*tap)(void *u, int tick, uint8_t byte);
+    void    *tap_u;
+    int      int8_count;
     uint8_t *score;                  /* the resource the player is reading */
     int      music_idx, music_locked, music_hold;
     int      sfx_request;
@@ -372,6 +382,21 @@ static Audio A;
 
 static void opl_sink(void *u, uint8_t reg, uint8_t val) { opl2_write(&((Audio *)u)->opl, reg, val); }
 
+/* port C0h: MSCJR.DRV and SNDJR.DRV both write here */
+static void sn_sink(void *u, uint8_t byte)
+{
+    Audio *a = u;
+    sn76496_write(&a->sn, byte);
+    if (a->tap) a->tap(a->tap_u, a->int8_count, byte);
+}
+/* INT 60h AX=5 from SNDJR.DRV */
+static void sn_claim(void *u, uint8_t cl) { msd_claim_sn(&((Audio *)u)->music, cl); }
+
+static int music_mode(void)
+{
+    return A.backend == AUDIO_ADLIB ? MSD_ADLIB : A.backend == AUDIO_TANDY ? MSD_JR : MSD_STD;
+}
+
 static void audio_lock(void)
 {
 #ifdef HAVE_SDL
@@ -389,6 +414,12 @@ static void audio_unlock(void)
  * second one (STICK's [FF10] then [FF0C], docs/MUSIC.md section 1) */
 static void int8_tick(void)
 {
+    if (A.backend == AUDIO_TANDY) {
+        sndjr_tick(&A.jr, &A.sfx_request);
+        msd_jr_int8(&A.music);
+        A.int8_count++;
+        return;
+    }
     uint8_t was = A.sfx.claim;
     sfx_tick(&A.sfx, &A.sfx_request);
     if (A.backend == AUDIO_ADLIB && A.sfx.claim != was) msd_claim_opl(&A.music, A.sfx.claim);
@@ -417,7 +448,8 @@ static void render(float *out, int n)
     for (int i = 0; i < n; i++) {
         A.tick_acc += INT8_HZ / A.rate;
         while (A.tick_acc >= 1.0) { A.tick_acc -= 1.0; int8_tick(); }
-        double v = A.backend == AUDIO_ADLIB ? opl2_sample(&A.opl) : speaker_sample();
+        double v = A.backend == AUDIO_ADLIB ? opl2_sample(&A.opl)
+                 : A.backend == AUDIO_TANDY ? sn76496_sample(&A.sn) : speaker_sample();
         double y = v - A.dc_x1 + 0.9993 * A.dc_y1;
         A.dc_x1 = v; A.dc_y1 = y; v = y;
         if (v > 1.0) v = 1.0;
@@ -444,6 +476,8 @@ static void sdl_cb(void *u, Uint8 *stream, int bytes)
 
 int audio_sfx_load(const char *dir, int backend)
 {
+    if (backend == AUDIO_TANDY) { free(A.sfx.drv); A.sfx.drv = NULL; return sndjr_load(&A.jr, dir); }
+    sndjr_free(&A.jr);
     return sfx_load(&A.sfx, dir, backend == AUDIO_ADLIB);
 }
 
@@ -452,11 +486,16 @@ int audio_init(const char *dir, int backend, int want_sdl)
     audio_shutdown();                   /* a re-init must not orphan A.sfx.drv / A.score */
     memset(&A, 0, sizeof A);
     A.dir = dir; A.backend = backend; A.rate = 44100; A.music_idx = -1; A.div2 = 1;
-    if (sfx_load(&A.sfx, dir, backend == AUDIO_ADLIB) != 0)
+    A.jr.sn = sn_sink; A.jr.sn_u = &A; A.jr.claim = sn_claim; A.jr.claim_u = &A;
+    if (backend == AUDIO_TANDY) {
+        if (sndjr_load(&A.jr, dir) != 0) fprintf(stderr, "note: no SNDJR.DRV (no sound effects)\n");
+    } else if (sfx_load(&A.sfx, dir, backend == AUDIO_ADLIB) != 0)
         fprintf(stderr, "note: no %s (no sound effects)\n",
                 backend == AUDIO_ADLIB ? "SNDADLIB.DRV" : "SNDSTD.DRV");
     A.sfx.opl = &A.opl;
     A.music.opl = opl_sink; A.music.opl_u = &A;
+    A.music.sn = sn_sink; A.music.sn_u = &A;
+    A.music.mode = music_mode();
     A.music.stopped = 0xFF;
 #ifdef HAVE_SDL
     if (want_sdl) {
@@ -476,6 +515,7 @@ int audio_init(const char *dir, int backend, int want_sdl)
     (void)want_sdl;
 #endif
     opl2_reset(&A.opl, A.rate);
+    sn76496_init(&A.sn, SN_CLOCK_TANDY, A.rate);
     A.on = 1;
 #ifdef HAVE_SDL
     if (A.dev_open) SDL_PauseAudioDevice(A.dev, 0);
@@ -492,12 +532,26 @@ void audio_shutdown(void)
     if (A.dev_open) { SDL_CloseAudioDevice(A.dev); A.dev_open = 0; }
 #endif
     free(A.sfx.drv); A.sfx.drv = NULL;
+    sndjr_free(&A.jr);
     free(A.score); A.score = NULL;
     A.on = 0;
 }
 
 int audio_active(void) { return A.on; }
-const char *audio_backend_name(void) { return A.backend == AUDIO_ADLIB ? "AdLib (OPL2)" : "PC speaker"; }
+const char *audio_backend_name(void)
+{
+    return A.backend == AUDIO_ADLIB ? "AdLib (OPL2)" : A.backend == AUDIO_TANDY ? "Tandy / PCjr (SN76496)" : "PC speaker";
+}
+
+int audio_backend_by_name(const char *s)
+{
+    if (!s) return -1;
+    if (!strcmp(s, "adlib") || !strcmp(s, "opl2") || !strcmp(s, "opl")) return AUDIO_ADLIB;
+    if (!strcmp(s, "speaker") || !strcmp(s, "pc-speaker") || !strcmp(s, "pcspeaker")) return AUDIO_SPEAKER;
+    if (!strcmp(s, "tandy") || !strcmp(s, "pcjr") || !strcmp(s, "jr") || !strcmp(s, "sn76496")) return AUDIO_TANDY;
+    return -1;
+}
+const char *audio_backend_key(int b) { return b == AUDIO_SPEAKER ? "speaker" : b == AUDIO_TANDY ? "tandy" : "adlib"; }
 
 /* ------------------------------------------------------------ WAV dump */
 static void wav_header(FILE *f, int rate, long frames)
@@ -567,8 +621,8 @@ void audio_music(int idx)
     free(A.score);
     A.score = res;
     A.music.opl = opl_sink; A.music.opl_u = &A;
-    if (msd_start(&A.music, A.score + (blob - res), bl,
-                  A.backend == AUDIO_ADLIB ? MSD_ADLIB : MSD_STD) != 0)
+    A.music.sn = sn_sink; A.music.sn_u = &A;
+    if (msd_start(&A.music, A.score + (blob - res), bl, music_mode()) != 0)
         A.music.stopped = 0xFF;
     A.music_idx = idx;
     audio_unlock();
@@ -610,8 +664,8 @@ void audio_music_play_res(int archive, int index)
     free(A.score);
     A.score = res;
     A.music.opl = opl_sink; A.music.opl_u = &A;
-    if (msd_start(&A.music, A.score + (blob - res), bl,
-                  A.backend == AUDIO_ADLIB ? MSD_ADLIB : MSD_STD) != 0)
+    A.music.sn = sn_sink; A.music.sn_u = &A;
+    if (msd_start(&A.music, A.score + (blob - res), bl, music_mode()) != 0)
         A.music.stopped = 0xFF;
     A.music_idx = -1;
     audio_unlock();
@@ -692,6 +746,7 @@ int audio_sfx_enable(int on)
 {
     if (!A.on) return 0;
     audio_lock();
+    if (A.backend == AUDIO_TANDY) { sndjr_enable(&A.jr, on); if (!on) A.sfx_request = 0; audio_unlock(); return on; }
     A.sfx.off = (uint8_t)(on ? 0 : 0xFF);
     if (!on) { A.sfx.idle = 0xFF; A.sfx.prio = 0; A.sfx.claim = 0; A.sfx_request = 0; }
     audio_unlock();
@@ -704,11 +759,12 @@ void audio_sfx_request(int id)
     audio_lock(); A.sfx_request = id; audio_unlock();
 }
 
-int audio_sfx_count(void) { return (int)A.sfx.neff; }
+int audio_sfx_count(void) { return A.jr.drv ? (int)A.jr.neff : (int)A.sfx.neff; }
 
 int audio_sfx_entry(int id, int *prio, unsigned *t0, unsigned *t1, unsigned *durtab)
 {
     Sfx *s = &A.sfx;
+    if (A.jr.drv && !s->drv) return sndjr_entry(&A.jr, id, prio, t0, t1, durtab);
     if (!s->drv || id <= 0 || (unsigned)id > s->neff) return -1;
     unsigned rec = s->tab + s->entry * (unsigned)(id - 1);
     if (prio) *prio = sb(s, rec);
@@ -717,3 +773,15 @@ int audio_sfx_entry(int id, int *prio, unsigned *t0, unsigned *t1, unsigned *dur
     if (durtab) *durtab = sw(s, rec + 1 + 2 * s->nch);
     return 0;
 }
+
+/* ------------------------------------------------------- test hooks */
+void audio_chip_tap(void (*fn)(void *u, int tick, uint8_t byte), void *u)
+{ A.tap = fn; A.tap_u = u; }
+
+void audio_run_ticks(int n)
+{
+    if (!A.on) return;
+    for (int i = 0; i < n; i++) int8_tick();
+}
+
+int audio_int8_count(void) { return A.int8_count; }

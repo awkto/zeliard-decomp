@@ -81,6 +81,7 @@ int config_set(Config *c, const char *key, const char *val)
     if (!strcmp(key, "aspect"))         { copy_str(c->aspect, sizeof c->aspect, val); return 1; }
     if (!strcmp(key, "music"))          { int v; if (!parse_bool(val, &v)) return 0; c->music = v; return 1; }
     if (!strcmp(key, "sfx"))            { int v; if (!parse_bool(val, &v)) return 0; c->sfx = v; return 1; }
+    if (!strcmp(key, "audio"))          { copy_str(c->audio, sizeof c->audio, val); return 1; }
     if (!strcmp(key, "speaker"))        { int v; if (!parse_bool(val, &v)) return 0; c->speaker = v; return 1; }
     if (!strcmp(key, "volume"))         { int v; if (!parse_int(val, &v)) return 0; c->volume = v; return 1; }
     if (!strcmp(key, "touch.size"))     { int v; if (!parse_int(val, &v)) return 0; c->touch_size = v; return 1; }
@@ -135,6 +136,7 @@ void config_render(const Config *c, char *out, size_t n)
     if (c->music >= 0)  EMIT("music=%d\n", c->music);
     if (c->sfx >= 0)    EMIT("sfx=%d\n", c->sfx);
     if (c->speaker >= 0) EMIT("speaker=%d\n", c->speaker);
+    if (c->audio[0])    EMIT("audio=%s\n", c->audio);
     if (c->volume >= 0) EMIT("volume=%d\n", c->volume);
     if (c->touch_size >= 0)    EMIT("touch.size=%d\n", c->touch_size);
     if (c->touch_opacity >= 0) EMIT("touch.opacity=%d\n", c->touch_opacity);

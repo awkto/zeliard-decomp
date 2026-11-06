@@ -14,7 +14,7 @@ CORE = sar.o gfx.o map.o physics.o render.o png.o enemy.o ai.o combat.o shots.o 
        ai_eai1.o ai_eai2.o ai_eai3.o ai_eai4.o ai_eai5.o ai_eai6.o ai_eai7.o ai_eai8.o town.o \
        boss.o boss_crab.o boss_tako.o boss_tori.o boss_zela.o boss_meda.o boss_lega.o \
        boss_drgn.o boss_akma.o boss_mao1.o boss_mao2.o boss_generic.o \
-       text.o player.o shop.o status.o shell.o savestate.o nav.o playthrough.o opl2.o msd.o audio.o \
+       text.o player.o shop.o status.o shell.o savestate.o nav.o playthrough.o opl2.o sn76496.o sndjr.o msd.o audio.o \
        config.o statekeys.o restore.o \
        gd.o cutscene.o tear.o \
        video.o video_mcga.o video_cga.o video_ega.o video_hgc.o video_tandy.o
@@ -150,7 +150,7 @@ test_present: test_present.o present.o
 test_touch: test_touch.o touch.o statekeys.o png.o present.o
 	$(CC) -o $@ $^ $(LIBS)
 
-%.o: %.c sar.h gfx.h map.h physics.h render.h video.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h savestate.h nav.h playthrough.h opl2.h msd.h audio.h gd.h cutscene.h tear.h trace.h present.h config.h statekeys.h input.h touch.h
+%.o: %.c sar.h gfx.h map.h physics.h render.h video.h png.h enemy.h town.h boss.h text.h player.h shop.h status.h shell.h savestate.h nav.h playthrough.h opl2.h sn76496.h sndjr.h msd.h audio.h gd.h cutscene.h tear.h trace.h present.h config.h statekeys.h input.h touch.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Every binary's "N checks" line is collected so the last step can compare the
