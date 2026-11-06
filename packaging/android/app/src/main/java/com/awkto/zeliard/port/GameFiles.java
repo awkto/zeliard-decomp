@@ -135,6 +135,11 @@ public final class GameFiles {
             if (!f.isFile() || skipName(f.getName())) continue;
             String folded = foldName(f.getName());
             File[] old = gameDir.listFiles();
+            if (folded.endsWith(".USR") && old != null) {     // never let a re-import roll back saves
+                boolean have = false;
+                for (File o : old) if (o.isFile() && o.getName().equalsIgnoreCase(folded)) have = true;
+                if (have) continue;
+            }
             if (old != null) for (File o : old)
                 if (o.isFile() && o.getName().equalsIgnoreCase(folded) && !o.delete())
                     throw new IOException("cannot replace " + o);

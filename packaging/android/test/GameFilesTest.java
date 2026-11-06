@@ -83,6 +83,15 @@ public class GameFilesTest {
         GameFiles.extractZip(new ByteArrayInputStream(zip("a/b/c/d/e/zelres1.sar", "A")), st6);
         check(GameFiles.locateGameDir(st6) == null, "too deep ignored");
 
+        // a re-import whose source carries old .usr saves must not roll back the device's saves
+        File st7 = tmp(), g7 = tmp();
+        Files.write(new File(g7, "HERO.USR").toPath(), "NEW".getBytes());
+        GameFiles.extractZip(new ByteArrayInputStream(zip("ZELRES1.SAR", "A", "ZELRES2.SAR", "B", "ZELRES3.SAR", "C",
+                "hero.usr", "OLD", "other.usr", "O")), st7);
+        GameFiles.install(st7, g7);
+        check(read(new File(g7, "HERO.USR")).equals("NEW"), "existing save not overwritten by re-import");
+        check(read(new File(g7, "OTHER.USR")).equals("O"), "new save from the import is added");
+
         System.out.println(fails == 0 ? "ALL PASS" : fails + " FAILED");
         System.exit(fails == 0 ? 0 : 1);
     }
