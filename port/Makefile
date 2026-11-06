@@ -66,6 +66,11 @@ zeliard: main.o trace.o $(CORE) $(SDL_ONLY) $(SYNC_OBJ) syncdlg.o $(NET_OBJ)
 # Web build (packaging/web/build.sh: emmake make zeliard.js).  The link flags
 # live here so the objects and the test builds stay untouched.  ASYNCIFY lets
 # the blocking frame loops in main.c yield to the browser (emscripten_sleep);
+# only the functions in packaging/web/asyncify_only.txt (the game code and the
+# SDL render/event path that can sit on the stack at a yield) are instrumented.
+# After adding a yield point or a new engine file, regenerate it: link once with
+# WEB_ASYNC='-sASYNCIFY -sASYNCIFY_ADVISE' and keep the advised game and
+# SDL present/swap/event names; a missing name shows as 'unreachable' at runtime;
 # IDBFS is how the saves/states/zeliard.ini under SDL_GetPrefPath persist.
 WEB_ASYNC ?= -sASYNCIFY -sASYNCIFY_ONLY=@../packaging/web/asyncify_only.txt
 WEB_LDFLAGS = -sUSE_SDL=2 $(WEB_ASYNC) -sASYNCIFY_STACK_SIZE=262144 -sSTACK_SIZE=2097152 \
