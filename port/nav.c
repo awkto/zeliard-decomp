@@ -500,7 +500,7 @@ static int hero_carried(const Game *g)
  * moves a half-speed platform while the live one moves on every other frame,
  * and the two phases drift apart over a multi-frame ride.  The placement plus
  * a one-column window is what actually reproduces.) */
-static int run_macro(Nav *n, Game *p, int mi, int fx, int *touched)
+static int run_macro_(Nav *n, Game *p, int mi, int fx, int *touched)
 {
     const Macro *m = &MACRO[mi];
     int f = 0;
@@ -521,6 +521,23 @@ static int run_macro(Nav *n, Game *p, int mi, int fx, int *touched)
         if (p->hero_dead) break;
     }
     return f;
+}
+
+/* The cavern-2/7 walker AI keeps its shot range in a file-static (A6D6/A491, enemy.h
+ * ai_priv_get), which `memcpy` of a Game does not carry: every probe, survey and
+ * prediction replay drew new ranges from it and left the live game a different
+ * walker than a plain replay of the emitted script (the pilot run and its
+ * --script diverged at cavern 7's tall walkers, #89).  Probes put it back. */
+typedef struct { uint8_t dr, dl; } AiPriv;
+static AiPriv priv_get(const Game *g) { AiPriv q; ai_priv_get(g, &q.dr, &q.dl); return q; }
+static void   priv_set(Game *g, AiPriv q) { ai_priv_set(g, q.dr, q.dl); }
+
+static int run_macro(Nav *n, Game *p, int mi, int fx, int *touched)
+{
+    AiPriv keep = priv_get(p);
+    int r = run_macro_(n, p, mi, fx, touched);
+    priv_set(p, keep);
+    return r;
 }
 
 static void probe_reset(Nav *n, const Game *g)
@@ -912,6 +929,7 @@ static void snap_hook(Game *g)
     Nav *n = snap_nav;
     if (!n) return;
     memcpy(&n->snap, g, sizeof n->snap);
+    n->snap_priv_dr = priv_get(g).dr; n->snap_priv_dl = priv_get(g).dl;
     n->snap_ok = 1; n->snap_nin = 0;
 }
 /* which boundary of the pass is this (0 = the first)?  Every boundary of it
@@ -972,6 +990,8 @@ static int predict_run(Nav *n, const Game *g, const uint8_t *sd, const uint8_t *
     memcpy(&n->predmap, g->map, sizeof n->predmap);     /* a door may unlock */
     Game *p = &n->probe;
     memcpy(p, &n->snap, sizeof *p);
+    AiPriv live_priv = priv_get(g);
+    priv_set(p, (AiPriv){n->snap_priv_dr, n->snap_priv_dl});
     p->map = &n->predmap;
     p->step_begin = NULL; p->on_door = NULL; p->on_town = NULL; p->post_boss = NULL;
     p->status = NULL; p->user = NULL;
@@ -984,6 +1004,7 @@ static int predict_run(Nav *n, const Game *g, const uint8_t *sd, const uint8_t *
         game_step(p);
         n->steps++;
     }
+    priv_set(p, live_priv);
     n->preds++;
     if (PR.bad) { n->pred_bad++; return -2; }
     return PR.done ? PR.node : -1;

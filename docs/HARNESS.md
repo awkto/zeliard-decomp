@@ -494,6 +494,13 @@ the Tarso fight (`fight_lookahead`: twelve frames of each stick/swing choice, sc
 boss's LIFE lost against the hero's).  `tarso_fight` is the first route through moving
 platforms; the Dragon/Alguien routes (MP71, MP81 lifts) are separate follow-ups.
 
+**Probes must not leak (#89).**  The pilot's surveys and prediction replays step *copies* of the
+`Game`, and cavern 2's / cavern 7's walker AI keeps its shot range (`A6D6`/`A491`) in a file-static
+that a copy does not carry, so the replays drew new ranges and the live walkers behaved differently
+from a plain replay of the emitted script (the first divergence was frame 148 of `gate_ride`).
+`nav.c` now saves and restores it around `run_macro` and `predict_run` (`priv_get`/`priv_set`); the
+pilot run and its `--script` are byte-identical again.
+
 Every scenario must be clean. `death_sage` goes on from the dying `717F` frames
 through the Sage's text (`71EC`) back to Muralla; `status_cave`, `drug_buy`,
 `bank_menu`, `npc_talk` and `npc_yesno` cover the other wait loops (#64);
@@ -505,9 +512,11 @@ Caverns 4-6 (#49): `ice_crawler`, `ice_icicles` (EAI4), `water_slimes`, `water_c
 cavern-5 tall spitter, the cavern-6 tall ghost in a fight (it is on screen in `fire_fish`),
 a hero standing in a current.  Caverns 7-8 (#49): `heat_hedgehog`, `heat_spitter`, `heat_current` (EAI7, heat),
 `absor_gunner`, `milagro_gunner` (EAI8).  Cavern 9 is MP90 only (Jashiin's room: MP84's (30,5) door, no town mouth) and MPA0 (the fight): `jashiin_fight`
-reaches both with a `# cave:` start (section 6).  The Dragon is killed by `dragon_kill`.  Not reached yet: any B gate or
-C platform in caverns 7/8 (MP80's (72..78,29..31) gates are not reachable from the Pureza
-mouth on foot), the cavern-7 tall ranged walker, a cavern-8 tall charger in the open, the
+reaches both with a `# cave:` start (section 6).  The Dragon is killed by `dragon_kill`.  `gate_ride` and `platform_ride` (#89) ride an MP71
+fixture-B gate and fixture-C platform, and `gate_ride` fights cavern 7's tall ranged walkers.
+Not reached yet: MP80's (72..78,29..31) B gates (not reachable from the Pureza mouth on foot,
+nor from the MP70/MP71 doors the pilot reaches: MP71's (128/131,9) gates sit behind doors the
+survey graph cannot get to), a cavern-8 tall charger in the open, the
 Asbestos cape (`--worn 5` now sets it, #86: not used by a scenario yet).
 
 ## 8. Triage runbook (for agents) (#51)
@@ -628,6 +637,8 @@ put its script in a scenario file (`tests/scenarios/NAME.zs`, §7) and run it as
 | `dragon_fight` | Pureza 4, LV 25, sword 6 (`DRAGONB`) | MP80's (57,5) door into MP7D from its far side: the hero lands inside the Dragon's body and dies of contact after ~80 frames of DRGN (no kill) |
 | `dragon_kill` | Llama 8, LV 25, **LIFE 3000**, sword 6, one Key, Feruza shoes worn (`--worn 1`) (`DRAGONK`, `# pilot:`) | Llama's right-edge door (col 269) → MP70 (1,22), the ledge climb to the front door (199,33) (the jump-4 rise onto the (195,49) elevator, `8074` sets `[FF3D]` = 0), → MP7D (21,15); Dragon to the kill (sword damage ×½, head ×2, `A33E`), reward (EXP 12000, ALMAS 2500), 72F1's exit door.  Found and fixed (#87): `8074` elevator-up must leave the hero GROUND (`80FC..8101`); DRGN's flame parts are written with +5 = 0 so they never carry the hit flash (`A71A`); the death thrash is 29 frames (`AA02` tests the counter after the `inc`); gfmcga `302C` draws sprites in ring-scan order and `3468` claims the TR/BL/BR cells (a later sprite's cell under one is skipped); `738F` ticks the message box's timer once in the post-boss transition (cavern 7's TOO HOT box is up) |
 | `alguien_route` | Esco 205, LV 25, LIFE 3000, sword 6, 3 Keys, Feruza shoes worn, `--magic 7=5` (spell 7, five charges) (`ALGM`, `# pilot:`) | MP81 (123,6) → MP82 (174,9) → MP81's bottom pocket → door (236,4) → MP80 (169,19): the elevator and the fix[16] C platform, the rope (`cell 191,27; keys .12 U6`), the fix[5] elevator whose shaft is blocked by a breakable rock at (229,22) (type 0xD0, item state 0x10): spell 7 (`8918`, screen-wide, marks every sprite in the window) breaks it, a second cast for the (252,13) rock over the fix[6] elevator, the row-3 corridor to door (185,1) → MP83 (29,53).  First scenario with magic.  Found and fixed (#88): spell 7 sets `[9EED]` = 0xFF (`8918`) and ends in `jmp 6F9B` -- one more whole frame, then back to the caller (`8963..896B`), so that cast frame skips `++crouch_release`; `cast_timer` `[9F2B]` survives a door (only `87E1` and the town entry `79E7` clear it) |
+| `gate_ride` | Llama 8, LV 25, LIFE 30000, sword 6, one Key, Feruza shoes worn (`GATES`, `# pilot:`) | Llama's right-edge door (269) -> MP70 (1,22) -> the (165,43) door -> MP71 (171,33), west along the row-33 gallery: cavern 7's tall ranged walkers (EAI7 class 0: they fall down the shaft, shoot, one is killed with the sword), then the hero waits on MP71's first fixture-B gate (139,25) and rides it down (`818E`/`81A8`: one row a frame while it carries him) (#89).  Found and fixed: `818E` is a `call`, so after a gate sinks (`81A8 jc 6B2E`) `6967` goes on to the conveyor and floor tests and the hero lands on the gate in that frame (crouch from the 10-row fall); the port returned from `gravity` right after the ride and landed a frame late |
+| `platform_ride` | same save | the same arrival, then west to MP71's fixture-C platform (125,33) (lim 118..130, half speed): the hero steps on, is carried east (`8244`/`8252`, `684C`), and jumps off at (128,30) (#89) |
 | `heat_current` | Llama 8, LV 25, one Key (`CALIK`) | MP70 (176,43) → MP72 (cavern 7): into the bottom corridor's rope gap, the fall through the ring, the (116,11) rope hole, then west into the (88..90,25) current that pushes the hero back.  Current cells are one-way walls (`67A3`/`6942`) in every cavern **but** 7 (#87) |
 | `jashiin_fight` | Pureza 4, LV 40, LIFE 999, sword 6, shield 4, one Key (`JASHIIN`), `# cave: 0,29,6,0,0x1B` | Jashiin, the last boss (#111): Pureza's mouth rewritten to MP84 (29,6), the (30,5) door (one Key), MP90's [E6] cutscene (MAO1: 135 frames, three speeches, no boss HUD, no input, `[9F01]`/`[FF4A]`/`[9F0A]` untouched), MPA0 loaded by `61DD` (cur_map stays 1D, `[84]` carried, `[9F26]` clear after the first frame), the score's F1 (`[FF21]`) 158 frames later, then MAO2: both throws (shot 1 pose 9, shot 2 pose 12) until the hero dies (591 frames) |
 | `jashiin_damage` | Pureza 4, LV 99, LIFE 4000, sword 6, shield 4, one Key (`JASHD`), `# cave: 0,29,6,0,0x1B` | `jashiin_fight`'s route, then the autopilot's `boss` step against MAO2 (`fight_lookahead`, #111): sword blows take HP /2 (`A362`), phase 2 below 200 (`AC32`), the 80-HP regeneration every 32 frames (`AB88`) back to 800 and phase 1 (frame 2101); 2151 frames. Port fixes it found: the hit flash (`A763`) goes on the body parts only, never the shots; the crouch patch (`A6F1`) writes row 8 of columns 0/1 (right) or 4/5 (left); contact reads a stale boss marker's old record (`7643`, no `nobj` guard). No kill: the autopilot's blows never outpace the regeneration |

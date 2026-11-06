@@ -84,6 +84,7 @@ typedef struct Nav {
      * can be replayed from exactly the live state (nav.c, `predict`) */
     Game     snap;
     int      snap_ok, snap_nin;
+    uint8_t  snap_priv_dr, snap_priv_dl;   /* the walker AI's file-static shot range at snap time */
     uint8_t  snap_dirs[16], snap_btn[16];
     int      cur_pred;              /* the macro in flight was predicted from the live state */
     int      pred_to;               /* where the last successful prediction landed */
