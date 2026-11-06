@@ -607,6 +607,15 @@ static void t_intro_silence(void)
     audio_music_hold(0);
     audio_music(0);                            /* shell_enter_town -> town.bin 60A9 */
     CHECK(!audio_music_stopped(), "the town score starts once the demo is over");
+
+    /* town.bin 6E7E run_shop: 6EA0 `int 60h AX=1` stops the score for the visit; 6EF8
+     * restarts it on the way out (#115) */
+    audio_music_stop();
+    CHECK(audio_music_stopped(), "entering a shop stops the town score (6EA0)");
+    audio_music_restart(0);
+    CHECK(!audio_music_stopped(), "leaving the shop restarts it (6EF8)");
+    audio_music_restart(0);
+    CHECK(!audio_music_stopped(), "and a restart while it still plays is fine");
     audio_shutdown();
 }
 
