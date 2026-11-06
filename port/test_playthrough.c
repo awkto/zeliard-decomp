@@ -13,6 +13,7 @@
 #include "savestate.h"
 #include "statekeys.h"
 #include "restore.h"
+#include "speed.h"
 #include "text.h"
 
 static int checks, failures;
@@ -603,6 +604,35 @@ static void type_name(Restore *r, Shell *s, const char *t)
 {
     for (; *t; t++) restore_key(r, s, RK_CHAR, *t);
 }
+/* F9 "Speed change" (#116): STICK 07B6.  A digit d sets FF33 = 10 - d, the digit is
+ * drawn, any other key closes; the loader default is 5 = 84.5 ms a frame. */
+static void speed_unit(const char *dir)
+{
+    static Shell ss; static SpeedDlg d; static uint8_t fb[320 * 200], fb2[320 * 200];
+    shell_free(&ss); memset(&ss, 0, sizeof ss); ss.quiet = 1;
+    if (shell_init(&ss, dir, 0)) { ck(0, "speed: shell_init"); return; }
+    ck(SPEED_FRAME_MS(SPEED_DEFAULT) > 84.4 && SPEED_FRAME_MS(SPEED_DEFAULT) < 84.6, "speed: default FF33 5 = 84.5 ms");
+    speed_open(&d, SPEED_DEFAULT);
+    ck(d.state == SP_DIGIT && d.digit == 5, "speed: F9 opens the digit prompt");
+    memset(fb, 0, sizeof fb); memset(fb2, 0, sizeof fb2);
+    speed_draw(&d, &ss, fb);
+    ck(memcmp(fb, fb2, sizeof fb), "speed: the box is drawn");
+    ck(speed_key(&d, SPK_ANY, 0) == 0 && d.state == SP_DIGIT, "speed: only a digit leaves read_digit");
+    ck(speed_key(&d, SPK_DIGIT, 9) == 1 && d.state == SP_ANY && d.speed == 1, "speed: 9 = FF33 1 (fastest)");
+    uint8_t fb3[320 * 200]; memset(fb3, 0, sizeof fb3);
+    speed_draw(&d, &ss, fb3);
+    ck(memcmp(fb, fb3, sizeof fb), "speed: the digit is drawn after it is typed");
+    ck(speed_key(&d, SPK_NONE, 0) == 0 && d.state == SP_ANY, "speed: no key, the box stays");
+    ck(speed_key(&d, SPK_DIGIT, 0) == 0 && d.state == SP_CLOSED && d.speed == 1, "speed: any key (even a digit) restores the screen, FF33 unchanged");
+    speed_open(&d, 1);
+    ck(d.digit == 9, "speed: the current digit is 10 - FF33");
+    ck(speed_key(&d, SPK_DIGIT, 0) == 10 && SPEED_FRAME_MS(10) > 168.9 && SPEED_FRAME_MS(10) < 169.1, "speed: 0 = FF33 10 (slowest, 169 ms)");
+    speed_key(&d, SPK_ANY, 0);
+    speed_open(&d, 5);
+    ck(speed_key(&d, SPK_CANCEL, 0) == 0 && d.state == SP_CLOSED && d.speed == 5, "speed: Esc backs out unchanged (port courtesy)");
+    shell_free(&ss);
+}
+
 static void restore_unit(const char *dir)
 {
     static Shell rs; static Restore r; static uint8_t fb[320 * 200], fb2[320 * 200];
@@ -846,6 +876,7 @@ int main(int argc, char **argv)
     state_roundtrip_unit(dir);
     statekeys_unit();
     restore_unit(dir);
+    speed_unit(dir);
 
     /* teardown, so `make SAN=1 test` proves the load-once allocations all
      * have an owner and a shell_free that reaches them */
