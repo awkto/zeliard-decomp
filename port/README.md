@@ -51,9 +51,9 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 13 test binaries
-make test            # physics (149) + combat/AI (228) + town (160) + boss (642) + shop (189)
+make test            # physics (149) + combat/AI (228) + town (161) + boss (642) + shop (189)
                      #   + status (87) + playthrough (165) + audio (315) + cutscene (46)
-                     #   + video (70) + config (45) + sync (144) = 2240 assertions.  Needs no game files:
+                     #   + video (70) + config (45) + sync (144) = 2241 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 211 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -846,7 +846,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   (level 0 + 120 EXP -> level 1, 120/120 LIFE, 70 EXP left) and the one-level
   clamp; and the first-visit spell + `[E5]` bit (Yasmin teaches spell 1, Marid
   teaches none).
-* `test_town.c` — 160 assertions: the mrmp header, doors, cave record, exits, NPCs,
+* `test_town.c` — 161 assertions: the mrmp header, doors, cave record, exits, NPCs,
   walker range and dialogue; the mpat block list; the walk/scroll model and the block
   list; the door ±1 window; the edge exit; NPC markers, the type-1 walker's 2-frame
   cadence and the type-3 facing rule; Space dialogue in and out of range; the

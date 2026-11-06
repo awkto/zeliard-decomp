@@ -302,6 +302,11 @@ static void t_handoff(const char *dir)
     CHECK(G.exp == 127 - 2 * 3, "death awards 127 - 2*level = %u exp, got %u", 127 - 6, G.exp);
     CHECK(G.hp == G.max_hp, "hp restored to %u", G.max_hp);
     CHECK(G.cur_map == 0x81, "cur_map = town_map (%02x)", G.cur_map);
+    /* 99BB: the bonus is 8-bit (0x7F - 2*level), so LV99 gets 0xB9 = 185 (#114) */
+    game_init(&G, &cm, &ct);
+    G.level = 99; G.exp = 0; G.hp = 0; G.town_map = 0x81;
+    hero_die(&G);
+    CHECK(G.exp == 185, "LV99 death awards 0xB9 = 185 exp (8-bit wrap), got %u", G.exp);
 }
 
 /* the two dialogue opcodes that open the 74D3 widget (docs/TOWN.md Â§6) */
