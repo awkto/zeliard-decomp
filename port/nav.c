@@ -1133,7 +1133,7 @@ static void nav_step_live(Nav *n, Game *g)
         fprintf(stderr, "   [fight] f%u hero %d hp %u boss col %d row %d hp %u pose %u st %02x%02x%02x\n", g->frame_no, hc, g->hp,
                 (int)g->boss.col, (int)g->boss.row, g->boss.hp, g->boss.pose, g->boss.st[0], g->boss.st[2], g->boss.st[4]);
 #endif
-        if (g->boss.active && g->boss.index == BOSS_LEGA && !g->boss_cutscene && fight_lookahead(n, g) == 0) return;
+        if (g->boss.active && (g->boss.index == BOSS_LEGA || g->boss.index == BOSS_MAO2) && !g->boss_cutscene && fight_lookahead(n, g) == 0) return;
         if (g->hp * 3 < g->max_hp) n->stall = 1;                /* retreat */
         else if (g->hp * 3 >= g->max_hp * 2) n->stall = 0;
         uint8_t d = 0;

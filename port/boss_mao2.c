@@ -84,8 +84,10 @@ static void mao2_draw(Game *g)
                boss_img16(g, (right ? M2_LIST_R : M2_LIST_L) + 2 * pose),
                boss_img16(g, (right ? M2_BM_R   : M2_BM_L)   + 2 * pose));
     if (pose == 5) {                                    /* A6EA: the crouch patch */
-        buf[2 * M2_H + 8] = right ? 0x23 : 0x1F;
-        buf[3 * M2_H + 8] = right ? 0x1F : 0x21;
+        /* A6F1..A709: right: [AC41] (column 0) = 0x23, [AC4A] (column 1) = 0x1F; left: [AC65]
+         * (column 4) = 0x1F, [AC6E] (column 5) = 0x21 -- row 8 of the 9-byte columns at AC39 */
+        if (right) { buf[0 * M2_H + 8] = 0x23; buf[1 * M2_H + 8] = 0x1F; }
+        else       { buf[4 * M2_H + 8] = 0x1F; buf[5 * M2_H + 8] = 0x21; }
     }
     for (int c = 0; c < M2_W; c++)
         for (int r = 0; r < M2_H; r++) {
@@ -93,7 +95,9 @@ static void mao2_draw(Game *g)
             if (v == 0xFF) continue;
             part_facing(g, (uint16_t)(b->col + c), (uint8_t)((b->row + r) & 0x3F),
                         (uint8_t)(((v >> 4) & 0x0F) | ST(S_TYPEBITS)), v,
-                        (uint8_t)(right ? 0x80 : 0));
+                        /* A75B..A76A: +5 = facing bit 7, ORed with bit 5 while a hit was read back
+                         * this frame ([AC1D]); the shots' own writes (A7EC, A8A9) carry the facing only */
+                        (uint8_t)((right ? 0x80 : 0) | g->boss.part_hit));
         }
 }
 
