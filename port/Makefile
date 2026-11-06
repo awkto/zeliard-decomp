@@ -70,8 +70,17 @@ zeliard: main.o trace.o $(CORE) $(SDL_ONLY) $(SYNC_OBJ) syncdlg.o $(NET_OBJ)
 # Web build (packaging/web/build.sh: emmake make zeliard.js).  The link flags
 # live here so the objects and the test builds stay untouched.  ASYNCIFY lets
 # the blocking frame loops in main.c yield to the browser (emscripten_sleep);
+# the default is a denylist (packaging/web/asyncify_remove.txt: modules that never
+# yield -- miniz, png, sync, config, loaders, audio, video, AI tables, libc stdio,
+# SDL audio/joystick).  packaging/web/asyncify_only.txt is the smaller allowlist
+# alternative (WEB_ASYNC='-sASYNCIFY -sASYNCIFY_ONLY=@../packaging/web/asyncify_only.txt');
+# a wrong entry in either shows as 'unreachable' at runtime, so after changing
+# the engines run tools/web/run_scenarios.sh (every scenario through the wasm
+# build, traces diffed against native).  -O2 matters at link time: without it
+# the wasm is not optimised and the JS keeps its assertions.
 # IDBFS is how the saves/states/zeliard.ini under SDL_GetPrefPath persist.
-WEB_LDFLAGS = -sUSE_SDL=2 -sASYNCIFY -sASYNCIFY_STACK_SIZE=262144 -sSTACK_SIZE=2097152 \
+WEB_ASYNC ?= -sASYNCIFY -sASYNCIFY_REMOVE=@../packaging/web/asyncify_remove.txt
+WEB_LDFLAGS = -O2 -sUSE_SDL=2 $(WEB_ASYNC) -sASYNCIFY_STACK_SIZE=262144 -sSTACK_SIZE=2097152 \
               -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=67108864 -lidbfs.js \
               -sINVOKE_RUN=0 -sEXIT_RUNTIME=0 -sFORCE_FILESYSTEM=1 \
               -sEXPORTED_RUNTIME_METHODS=FS,callMain,IDBFS -sEXPORTED_FUNCTIONS=_main
