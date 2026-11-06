@@ -86,6 +86,11 @@ alone and a count holds nothing more.  It is a **port-only token**: it is ignore
 frames start after the restore), so no scenario uses it; `test_playthrough.c`'s
 `restore_unit` covers the dialog and the load in-process.
 
+`S` (#116) presses **F9**, the kernel's "Speed change / Select 0-9:" (`[114]`, STICK 07B6): the
+tokens that follow are the dialog's keys until it closes: `'5` (a digit) sets `FF33 = 10 - digit`
+and draws it, then any other token (a direction, `X`, `E`, `'A`) restores the screen; `M` backs out
+of the digit prompt.  Port-only like `F`: ignored under `--trace` (the oracle has no site for it).
+
 The oracle applies frame `n`'s inputs at boundary `n-1`. It writes the kernel's
 input state directly (`FF17` dirs, `FF16` buttons, `FF1D`/`FF1E` press edges,
 `FF18` key mask), exactly as STICK's INT 9 would leave it. This is deterministic

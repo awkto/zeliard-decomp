@@ -53,8 +53,8 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 13 test binaries
 make test            # physics (149) + combat/AI (228) + town (162) + boss (642) + shop (189)
-                     #   + status (87) + playthrough (165) + audio (387) + cutscene (46)
-                     #   + video (91) + config (46) + sync (144) = 2336 assertions.  Needs no game files:
+                     #   + status (87) + playthrough (176) + audio (387) + cutscene (46)
+                     #   + video (91) + config (46) + sync (144) = 2347 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 215 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -196,6 +196,7 @@ build's.
 | F1 / F2 | toggle the music / the sound effects (STICK's own hotkeys) |
 | F3 | **cycle the display filter**: integer → sharp-bilinear → smooth → crt (presentation only; remembered in the config) |
 | F7 | **Restore Game** (the original's own hotkey, #42): *Sure?(Y/N)*, then the *Input name:* box with the `*.usr` list; see below |
+| F9 | **Speed change** (the original's own hotkey, #116): *Select 0-9:*; see below |
 | touch | on-screen controls (`--touch auto\|on\|off`, see `touch.c`): joystick, Sword, Magic, Combo, 1-9/Y/N, Esc, Items, quick save/load |
 | F12 | dump the framebuffer to the `--screenshot` file |
 | F11 / Alt+Enter | toggle fullscreen (the window is resizable; `--fullscreen` starts there) |
@@ -215,6 +216,24 @@ modal over the frozen frame and presentation only.  Differences: not honoured in
 status screen or an NPC dialogue box (their wait loops are not re-entered), and not under
 `--trace`; the dialog ignores key remapping and the controller.
 
+**F9 Speed change** (#116) is the kernel's `[114]` (STICK 07B6), polled in the same per-frame chain
+as the pause and F7 services (fight.bin 715F, town.bin 68CD, select.bin AA5D).  It draws the same
+box as F7 with *Speed change / Select 0-9:* (0845), waits for F9 to be released and reads a digit
+(`read_digit` 085E: anything but a digit is ignored).  The digit is drawn next to the prompt, `FF33`
+becomes 10 minus the digit (**9 is the fastest**, `FF33` = 1; **0 the slowest**, `FF33` = 10; the
+loader's default is 5, the key `5`), the effect `FF75` = 1 plays, and the box stays up until any
+key, direction or fire press restores the screen.  A frame is 4 x `FF33` ticks of the 236.7 Hz
+timer (16.9 ms x `FF33`), and the real-time loop follows `FF33` live, so the new speed applies to
+the very next frame; `--speed N` is only the starting value (1..10).  Like the original, the
+choice is **not saved**: `zeliard.ini` has no speed option and every start is back at 5 (or
+`--speed`).  Esc in the digit prompt backs out unchanged (a port courtesy: `read_digit` has no
+way out).  Same restrictions as F7 (not inside a shop, the status screen or a dialogue box; not
+under `--trace`); the key is remappable (`key.speed`), the dialog's digits are the number keys
+and the keypad.  `speed.c` owns the dialog; headless, the `--script` token `S` presses F9 and the
+tokens after it are the dialog's keys (`'7` = a digit, any other token = "any key"), a port-only
+token like `F` (docs/HARNESS.md §2); `test_playthrough` covers the dialog.  The kernel's box
+spins on `FF18`/`FF29` with no poll site, so no oracle scenario can reach it.
+
 ### Town (town.bin)
 
 | key | action |
@@ -226,6 +245,7 @@ status screen or an NPC dialogue box (their wait loops are not re-entered), and 
 | F1 / F2 | toggle the music / the sound effects |
 | F3 | cycle the display filter (integer → sharp-bilinear → smooth → crt) |
 | F7 | **Restore Game**, as in the cavern |
+| F9 | **Speed change**, as in the cavern |
 | F11 / Alt+Enter | toggle fullscreen |
 | Esc | **pause** — Esc or Enter resumes, **Q** quits |
 
@@ -892,7 +912,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   `menu_result = 8`; selecting a spell into `[9D]` and wearing an item into
   `[9E]` through the real cursor; the row change; the Enter debounce; and the
   window frames and header colours in the rendered framebuffer.
-* `test_playthrough.c` — 165 assertions over two autopilot runs, two fixture
+* `test_playthrough.c` — 176 assertions over two autopilot runs, two fixture
   crossings and a survey of cavern 1's topology (`make playthrough` prints the
   routes step by step):
   * **route 1, the opening**, played end to end with nobody at the keyboard: the
@@ -1044,7 +1064,7 @@ Actions (default keys; controller defaults in brackets):
 * `sword` Space, X (+ Left/Right Ctrl in the cavern) (X) — Space is the original's fire key · `magic` cavern C, Left/Right Alt;
   town C, Left/Right Alt, Backspace (Y)
 * `menu` Return, Keypad Enter: the status screen (Start) · `pause` Escape (Back)
-* `music` F1 · `sfx` F2 · `filter` F3 · `restore` F7 · `fullscreen` F11 · `screenshot` F12
+* `music` F1 · `sfx` F2 · `filter` F3 · `restore` F7 · `speed` F9 · `fullscreen` F11 · `screenshot` F12
 * `quicksave` Ctrl+. · `quickload` Ctrl+\ · `save1`..`save9` Ctrl+1..9 · `load1`..`load9` Alt+1..9
   (a `key.*` binding replaces both the cavern and the town default set)
 

@@ -28,6 +28,7 @@
 #include "playthrough.h"
 #include "present.h"
 #include "restore.h"
+#include "speed.h"
 #include "config.h"
 #include "sync.h"
 #include "synclife.h"
@@ -77,7 +78,10 @@ typedef struct {
     int      touch_prev_dirs, touch_prev_btn;   /* #54: edge detection for the dialogs */
     int      rest_q[16], rest_qn;       /* SDL keys the dialog has not consumed yet */
     int      sync_dlg;                  /* the ask-before-link dialog (#55) owns the keyboard */
-    double   frame_ms;
+    double   frame_ms;                  /* SPEED_FRAME_MS(speed): follows FF33 live (F9, --speed) */
+    int      speed;                     /* FF33: 1 fastest .. 10 slowest, loader default 5 */
+    SpeedDlg spd;                       /* F9 "Speed change" (#116) */
+    int      speed_req;
     int      scale;
     int      square;                /* --aspect 1:1: present the framebuffer unscaled in shape */
     int      filter;                /* --filter: FILTER_INTEGER / SHARP / SMOOTH / CRT (#53) */
@@ -229,7 +233,7 @@ static void present_frame(App *a, int sw, int sh)
             touch_set_content(&a->touch, ow, oh, x, y, w, h);
         }
         present_set_portrait_top(touch_visible(&a->touch));
-        touch_set_dialog(&a->touch, a->rest.state || a->sync_dlg);
+        touch_set_dialog(&a->touch, a->rest.state || a->spd.state || a->sync_dlg);
     }
     if (present_render(a->ren, a->tex, sw, sh, dw, dh, a->filter) != 0)
         fprintf(stderr, "[video] present: %s\n", SDL_GetError());
@@ -293,11 +297,12 @@ static void pump_events(App *a, Game *g)
 #endif
             touch_note_other_input(&a->touch);       /* #54: keyboard use hides the overlay */
             /* the F7 dialog owns the keyboard while it is up */
-            if (a->rest.state || a->sync_dlg) {
+            if (a->rest.state || a->spd.state || a->sync_dlg) {
                 if (!e.key.repeat && a->rest_qn < 16) a->rest_q[a->rest_qn++] = (int)e.key.keysym.sym;
                 break;
             }
             if (input_event_match(&a->in, ACT_RESTORE, &e.key)) { if (!e.key.repeat) a->restore_req = 1; break; }
+            if (input_event_match(&a->in, ACT_SPEED, &e.key)) { if (!e.key.repeat) a->speed_req = 1; break; }
             /* #42: every hotkey is looked up in the one binding table
              * (input.c); the defaults are the keys this used to hard-code.
              * Esc used to quit outright, with no confirmation -- one reflex
@@ -357,7 +362,7 @@ static void pump_events(App *a, Game *g)
     TouchEvent te;
     int tdirs = touch_dirs(&a->touch);
     while (touch_next_event(&a->touch, &te)) {
-        if (a->rest.state || a->sync_dlg) {      /* the F7 / sync dialogs take touch as keys */
+        if (a->rest.state || a->spd.state || a->sync_dlg) {      /* the F7 / F9 / sync dialogs take touch as keys */
             int sym = 0;
             switch (te.kind) {
             case TEV_ESC:   sym = SDLK_ESCAPE; break;
@@ -383,7 +388,7 @@ static void pump_events(App *a, Game *g)
         default: break;
         }
     }
-    if (a->rest.state || a->sync_dlg) {          /* stick edges and Sword/Magic: list, caret, Space, Backspace */
+    if (a->rest.state || a->spd.state || a->sync_dlg) {          /* stick edges and Sword/Magic: list, caret, Space, Backspace */
         static const struct { int dir, sym; } dm[] = { { DIR_UP, SDLK_UP }, { DIR_DOWN, SDLK_DOWN }, { DIR_LEFT, SDLK_LEFT }, { DIR_RIGHT, SDLK_RIGHT } };
         int nb = touch_buttons(&a->touch, 0) & ~a->touch_prev_btn;
         for (int i = 0; i < 4; i++) if ((tdirs & dm[i].dir) && !(a->touch_prev_dirs & dm[i].dir) && a->rest_qn < 16) a->rest_q[a->rest_qn++] = dm[i].sym;
@@ -616,6 +621,13 @@ static int script_next(App *a)
         if (!s[a->script_pos]) return 0;
         uint8_t d = 0, b = 0;
         a->script_char = 0; a->script_char_new = 0;
+        if (s[a->script_pos] == 'S' || s[a->script_pos] == 's') {
+            /* S presses F9 (#116): the kernel's [114] opens "Speed change /
+             * Select 0-9:" at the next frame; the tokens that follow are the
+             * dialog's keys (see speed_modal).  Port-only, like F. */
+            a->speed_req = 1;
+            a->script_pos++;
+        } else
         if (s[a->script_pos] == 'F' || s[a->script_pos] == 'f') {
             /* F presses F7 (docs/HARNESS.md §2): the kernel's [11E] opens
              * "Restore Game / Sure?(Y/N)" at the next frame; nothing is held.
@@ -773,6 +785,81 @@ static void restore_modal(App *a, Game *g, Town *t)
     }
     if (a->quit && r->state) { r->state = RS_CLOSED; audio_music_pause(0); }
     a->restore_req = 0;
+}
+
+/* ------------------------------------------- F9 "Speed change" (#116) */
+/* Kernel [114] (STICK 07B6), polled next to [11E] in the same frame chain
+ * (fight.bin 715F, town.bin 68C8).  Same modal shape as restore_modal: the
+ * frozen frame under speed.c's box, keys from SDL or --script tokens (headless:
+ * 'C a digit, any other token is "any key", M closes).  A digit sets FF33,
+ * which paces every later frame (a->frame_ms), including the dialog's own. */
+#ifdef HAVE_SDL
+static int speed_sdl_key(int sym, int *digit)
+{
+    *digit = -1;
+    if (sym >= SDLK_0 && sym <= SDLK_9) { *digit = sym - SDLK_0; return SPK_DIGIT; }
+    if (sym >= SDLK_KP_1 && sym <= SDLK_KP_9) { *digit = sym - SDLK_KP_1 + 1; return SPK_DIGIT; }
+    if (sym == SDLK_KP_0) { *digit = 0; return SPK_DIGIT; }
+    if (sym == SDLK_ESCAPE) return SPK_CANCEL;
+    return sym ? SPK_ANY : SPK_NONE;
+}
+#endif
+
+static void speed_apply(App *a, int ff33)
+{
+    a->speed = ff33;
+    a->frame_ms = SPEED_FRAME_MS(ff33);
+    fprintf(stderr, "[speed] FF33 = %d (%.1f ms per frame)\n", ff33, a->frame_ms);
+}
+
+static void speed_modal(App *a, Game *g, Town *t)
+{
+    SpeedDlg *d = &a->spd;
+    a->speed_req = 0;
+    if (a->trace_f || a->quit) return;
+    if (t ? (t->shop || t->status || t->dlg.active) : (g->status || g->tear)) return;
+    speed_open(d, a->speed);
+    a->rest_qn = 0;
+#ifdef HAVE_SDL
+    static Uint64 next = 0;
+    next = 0;
+#endif
+    while (d->state && !a->quit) {
+        if (t) fb_town(a, t); else fb_fight(a, g);
+        speed_draw(d, &a->sh, a->fb);
+        int key = SPK_NONE, digit = -1;
+        if (a->headless) {
+            if (a->shot_path) fb_write_png(a, a->shot_path);    /* the dialog's last picture stays */
+            if (!script_next(a)) { d->state = SP_CLOSED; break; }
+            if (a->script_char_new) {
+                a->script_char_new = 0;
+                if (a->script_char >= '0' && a->script_char <= '9') { key = SPK_DIGIT; digit = a->script_char - '0'; }
+                else key = SPK_ANY;
+            }
+            else if (a->script_btns & 2) key = d->state == SP_DIGIT ? SPK_CANCEL : SPK_ANY;
+            else if (a->script_dirs || a->script_btns) key = SPK_ANY;
+            a->speed_req = 0; a->restore_req = 0;
+        }
+#ifdef HAVE_SDL
+        else {
+            int vw, vh;
+            const uint8_t *rgb = video_out(a, &vw, &vh);
+            SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+            present_frame(a, vw, vh);
+            frame_wait(a, g, &next);
+            if (a->rest_qn) {
+                int sym = a->rest_q[0];
+                memmove(a->rest_q, a->rest_q + 1, (size_t)(--a->rest_qn) * sizeof a->rest_q[0]);
+                if (sym & REST_Q_TAP) key = SPK_ANY;        /* a tap is a fire press */
+                else key = speed_sdl_key(sym, &digit);
+            }
+        }
+#endif
+        int v = speed_key(d, key, digit);
+        if (v) speed_apply(a, v);
+    }
+    if (a->quit) d->state = SP_CLOSED;
+    a->speed_req = 0;
 }
 
 /* ------------------------------------------------- save sync lifecycle (#55 step 2) */
@@ -1084,7 +1171,7 @@ static void cutscene_present(Cutscene *c)
     YIELD_TEST(a);
     static uint8_t rgb[FB_W * FB_H * 3];
     audio_advance_ms(CS_FRAME_MS);
-    a->restore_req = 0;                 /* no F7 in a cutscene */
+    a->restore_req = 0; a->speed_req = 0;   /* no F7 / F9 in a cutscene */
     if (a->shot_path && c->frames == a->shot_frame) {
         cutscene_to_rgb(c, rgb);
         if (png_write_rgb(a->shot_path, rgb, FB_W, FB_H)) fprintf(stderr, "cannot write %s\n", a->shot_path);
@@ -1199,6 +1286,7 @@ static void present(Game *g)
     a->sk_combo = 0;                    /* a stale save/load combo must not suppress input */
     statekeys_osd_tick(&a->sk);
     audio_advance_ms(a->frame_ms);
+    if (a->speed_req) speed_modal(a, g, NULL);          /* kernel [114] at fight.bin 715F */
     if (a->restore_req) restore_modal(a, g, NULL);          /* kernel [11E] at fight.bin 716E */
     if (a->verbose)
         fprintf(stderr, "frame %4u  hero map (%3d,%2d) scr (%2d,%2d) scroll (%3d,%2d) v=%02x anim=%02x flags=%02x "
@@ -1276,6 +1364,7 @@ static void town_present(Town *t)
     a->sk_combo = 0;                    /* a stale save/load combo must not suppress input */
     statekeys_osd_tick(&a->sk);
     audio_advance_ms(a->frame_ms);
+    if (a->speed_req) speed_modal(a, t->g, t);          /* kernel [114] at town.bin 68CD */
     if (a->restore_req) restore_modal(a, t->g, t);          /* kernel [11E] at town.bin 68DC */
     if (a->verbose)
         fprintf(stderr, "town frame %4u  hero map col %3d scr %3d scroll %3d anim %u flags %02x%s%s\n",
@@ -1415,7 +1504,7 @@ static void no_game_files(const char *cfgpath, const char *datadir, int headless
 int main(int argc, char **argv)
 {
     static App a; memset(&a, 0, sizeof a);
-    a.frame_ms = FRAME_MS_DEFAULT; a.scale = 3; a.video = VID_MCGA;
+    a.frame_ms = FRAME_MS_DEFAULT; a.speed = SPEED_DEFAULT; a.scale = 3; a.video = VID_MCGA;
     a.filter = FILTER_SHARP;                    /* #53: the fidelity-first default */
     Config cfg; char cfgpath[CONFIG_PATH_MAX];
     config_resolve_path(cfgpath, sizeof cfgpath, argv[0]);
@@ -1484,7 +1573,7 @@ int main(int argc, char **argv)
             have_video = 1;
         }
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) { a.max_frames = (unsigned)atoi(argv[++i]); explicit_start = 1; }
-        else if (!strcmp(argv[i], "--speed") && i + 1 < argc) a.frame_ms = FRAME_MS_DEFAULT * atoi(argv[++i]) / 5.0;
+        else if (!strcmp(argv[i], "--speed") && i + 1 < argc) { int v = atoi(argv[++i]); a.speed = v < 1 ? 1 : v > 10 ? 10 : v; a.frame_ms = SPEED_FRAME_MS(a.speed); }
         else if (!strcmp(argv[i], "--town") && i + 1 < argc) { start_in_town = (int)strtol(argv[++i], NULL, 0); explicit_start = 1; }
         else if (!strcmp(argv[i], "--town-col") && i + 1 < argc) town_col = (int)strtol(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--town-scr") && i + 1 < argc) town_scr = (int)strtol(argv[++i], NULL, 0);

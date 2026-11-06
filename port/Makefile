@@ -15,7 +15,7 @@ CORE = sar.o gfx.o map.o physics.o render.o png.o enemy.o ai.o combat.o shots.o 
        boss.o boss_crab.o boss_tako.o boss_tori.o boss_zela.o boss_meda.o boss_lega.o \
        boss_drgn.o boss_akma.o boss_mao1.o boss_mao2.o boss_generic.o \
        text.o player.o shop.o status.o shell.o savestate.o nav.o playthrough.o opl2.o sn76496.o sndjr.o msd.o audio.o \
-       config.o statekeys.o restore.o \
+       config.o statekeys.o restore.o speed.o \
        gd.o cutscene.o tear.o \
        video.o video_mcga.o video_cga.o video_ega.o video_hgc.o video_tandy.o
 # SDL-only objects: the display filters (#53) and the key/controller remapping
