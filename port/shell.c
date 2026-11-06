@@ -261,7 +261,11 @@ static int on_door(Game *g, const Door *d)
     s->cur = slot;
     shell_load_enemy_banks(s, &s->maps[slot]);
     cavern_score_idx(g, &s->maps[slot]);
+    uint8_t keep_cnt = g->obj_index;
     game_enter(g, &s->maps[slot], &s->tiles[slot], d->dest_col, d->dest_row, (d->letter & 0x40) != 0);
+    /* a [E6] room (MP90) goes 6179 -> 619E -> 61A8, past 623D/6263's 9659: the enemy count in
+     * [FF4A] is still the map just left (jashiin_fight frame 27) */
+    if (g->boss_room) g->obj_index = keep_cnt;
     g->cur_map = d->dest_map;                                   /* 7B6D..7B79: [C4] = record +4 */
     g->hero_entering = 0; g->menu_debounce = 0xFF;              /* 7C02 [FF3A] / 7C07 [9EF5] */
     /* 7C11: the door record's byte +8 bit 7 (cached at [9F1D]) is set on every
@@ -456,17 +460,35 @@ void shell_frame(Shell *s)
      * counter no longer matches and the save is refused as non-resumable.) */
     if (s->in_town) { town_frame(s); if (s->frame_done) s->frame_done(s); return; }
     int was_intro = s->g.boss_room != 0;
+    int clock = s->g.score_clock;
     game_step(&s->g);
+    if (clock) { audio_clock_frame(); s->g.ff21 = (uint8_t)audio_clock_sync0(); }   /* [FF21]: F1 */
     /* 61BE/61DB: the [E6] intro ends when the boss overlay clears [E6]
      * (boss_mao1 A36A); the main loop then loads system map 0x1E and puts the
      * hero at (0x18,0x0D) for the last fight. */
     if (was_intro && !s->g.boss_room && !s->g.hero_dead) {
-        s->g.boss_intro = 0;
         LOG(s, "[boss] the [E6] walk-in is over: loading MPA0 at (0x18,0x0D)\n");
         /* 61DD loads MPA0 through [10C]: STICK 0CDC drops a Space latched at
          * the last intro boundary (FF1E stays; 628A after 624A's frame is not modelled) */
         s->g.btn1_edge = 0;
+        /* 61DD..6234 writes only [80]/[82] (7DC1), [83], [9F00], [9F1A], [9F1C] and loads the map:
+         * the hero's screen row [84] (MP90's 0x0D), the enemy count [FF4A] and gfmcga's frame
+         * counter [4FFF] carry over.  6FB8 in the frame then walks [84] to [9F00] = 0x0C, which
+         * scrolls the map one row (oracle: scroll_row 3, hero row 15 at the first MPA0 frame) */
+        uint8_t keep_row = s->g.hero_scr_row, keep_cnt = s->g.obj_index, keep_gf = s->g.gf_frame;
         shell_enter_cavern(s, 0x1E, 0x18, 0x0D + 1, 0, 0);   /* 7DC1 puts him a row below the entry cell */
+        s->g.hero_scr_row = keep_row; s->g.obj_index = keep_cnt; s->g.gf_frame = keep_gf;
+        s->g.cur_map = 0x1D;            /* 61DD loads MPA0 through [10C] only: [C4] still names MP90 */
+        s->g.boss_intro = 0xFF;         /* [9F26] stays set until 624D, after MPA0's first frame (game_step) */
+        /* 61F3..6234 is not the door/cave entry: no 7C6E walk-in, and 6150 is reached by `jmp`,
+         * past the 60E6 encounter card */
+        s->g.walk_in = 0; s->g.hero_entering = 0; s->g.encounter_frames = 0;
+        /* 61F3 7E93 restarts the score; F1 (sync 0, [FF21]) comes 1625 driver ticks in.  The load
+         * between the music start and the first MPA0 frame's boss call took ~40 of them (oracle: the boss first
+         * sees FF21 in frame 159 counted from that first frame, so P = 35..44; 40 is the middle) */
+        s->g.ff21 = 0;
+        s->g.score_clock = audio_clock_start(s->dir, s->g.page[0xC8], 40) == 0;
+        if (s->g.score_clock) s->g.ff21 = (uint8_t)audio_clock_sync0();
     }
     if (s->frame_done) s->frame_done(s);                /* #52: the frame is complete */
 }

@@ -73,10 +73,10 @@ index e31e63f..b521035 100644
 +libmisc_a_SOURCES = clipboard.cpp cross.cpp ethernet.cpp ethernet_pcap.cpp ethernet_slirp.cpp ethernet_ethnet.cpp ethernet_nothing.cpp messages.cpp programs.cpp setup.cpp support.cpp regionalloctracking.cpp savestates.cpp shiftjis.cpp iconvpp.cpp mkdir_p.cpp zel_oracle.cpp
 diff --git a/src/misc/zel_oracle.cpp b/src/misc/zel_oracle.cpp
 new file mode 100644
-index 0000000..603e584
+index 0000000..dba9964
 --- /dev/null
 +++ b/src/misc/zel_oracle.cpp
-@@ -0,0 +1,466 @@
+@@ -0,0 +1,483 @@
 +/*
 + * zel_oracle.cpp -- Zeliard differential-test oracle (decomp-zel docs/HARNESS.md).
 + *
@@ -146,6 +146,7 @@ index 0000000..603e584
 +bool armed = false;                  /* a wait loop was just entered: its first poll is a boundary */
 +unsigned long menu_boundaries = 0;
 +bool do_load = false;
++std::string cave_poke;                 /* ORACLE_CAVE="I,COL,ROW,SIDE,MAP": town cave record I rewritten at frame 0 */
 +unsigned long ms = 0;                /* emulated ms since start */
 +unsigned long phase_ms = 0;          /* ms at which the current boot phase started */
 +unsigned town_boundaries = 0;
@@ -232,6 +233,7 @@ index 0000000..603e584
 +    if ((s = getenv("ORACLE_MENU_TICKS"))) menu_ticks = (unsigned)atoi(s);
 +    if ((s = getenv("ORACLE_DEBUG_MS"))) debug_ms = strtoul(s, nullptr, 10);
 +    if ((s = getenv("ORACLE_LOAD"))) do_load = atoi(s) != 0;
++    if ((s = getenv("ORACLE_CAVE"))) cave_poke = s;
 +    unknown = new std::map<uint16_t, unsigned long>();
 +    state = ST_WAIT_BASE;
 +    logf("on: out=%s load=%d png_every=%u settle=%u script=%zu chars", outdir.c_str(), do_load, png_every, settle, script.size());
@@ -325,6 +327,21 @@ index 0000000..603e584
 +        logf("warning: town frame before the restore key sequence ended; not frame 0");
 +    if (state == ST_WAIT_FRAME0 && site == 0x68ED) {
 +        state = ST_TRACE;
++        if (!cave_poke.empty()) {
++            /* harness start option (docs/HARNESS.md section 6): rewrite one 5-byte cave record
++             * {u16 col, u8 row, u8 side, u8 map} of the town map at BASE:C000 (its table is at [C00B]),
++             * so the real cave-mouth code (town.bin 6FF8..703D, fight.bin 7D2D) carries the hero
++             * to another cavern.  Same bytes the port's --cave writes into its town map. */
++            long v[5]; char *e = nullptr; const char *q = cave_poke.c_str(); int n = 0;
++            for (; n < 5; n++) { v[n] = strtol(q, &e, 0); if (e == q) break; q = (*e == ',') ? e + 1 : e; }
++            uint8_t *b = base_ptr(0);
++            if (n == 5 && v[0] >= 0 && v[0] < 8) {
++                uint16_t tab = (uint16_t)(b[0xC00B] | (b[0xC00C] << 8));
++                uint8_t *r = b + tab + 5 * v[0];
++                r[0] = (uint8_t)v[1]; r[1] = (uint8_t)(v[1] >> 8); r[2] = (uint8_t)v[2]; r[3] = (uint8_t)v[3]; r[4] = (uint8_t)v[4];
++                logf("cave poke: record %ld at %04X := col %ld row %ld side %ld map %02lX", v[0], (unsigned)(tab + 5 * v[0]), v[1], v[2], v[3], v[4]);
++            } else logf("cave poke: bad ORACLE_CAVE '%s'", cave_poke.c_str());
++        }
 +        frame = 0; rng = 0; rng_calls = 0; prev_btns = 0; cur_input = ".";
 +        f_jsonl = fopen((outdir + "/frames.jsonl").c_str(), "w");
 +        f_base = fopen((outdir + "/base.bin").c_str(), "wb");

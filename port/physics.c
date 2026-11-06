@@ -1130,6 +1130,14 @@ void game_step(Game *g)
     if (g->encounter_frames) { encounter_step(g); return; }             /* 60E6 */
     if (g->hero_dead) { death_step(g); return; }                        /* 98FC's own loops */
     if (g->walk_in) { walk_in_step(g); return; }                        /* 7C6E */
+    if (g->boss_intro) {            /* 61BE: the [E6] walk-in loop is `call 6f9b` and nothing else -- no input,
+                                     * no 62B5 crouch_release count (jashiin_fight f28).  The frame that follows
+                                     * the E6 clear is 6247..624D: MPA0's first, again just 6f9b, then 9F26 = 0 */
+        int room = g->boss_room;
+        frame(g);
+        if (!room) g->boss_intro = 0;
+        return;
+    }
     if (g->on_ladder) { ladder_step(g); return; }
     sword_input(g);                                                     /* 6E3B */
     ice_slide_step(g);

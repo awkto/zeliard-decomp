@@ -379,13 +379,12 @@ and returns to phase 1 at 800**.  Projectiles are contact parts (80, immune, unb
 
 ## 5. Not decoded / uncertain
 
-* `[FF21]` (MAO2 start gate) — who sets it (enddemo.bin is the only other reference).
+* ~~`[FF21]` (MAO2 start gate)~~ — the mmao score's `F1` (sync 0), 1625 driver ticks in; the oracle (`jashiin_fight`, #111) sees it set 158 frames after MPA0 loads.
 * EAI8 left-facing gun shot damage 1 (`A673`) — data bug or intended, unverified in play.
 * The exact pixel/colour of drop ids 0xB (100 G vs shoes) — from `fight.bin 8E14` only.
 * Boss sprite banks: ZEL2 shares ZELA.GRP (same cell numbers, palette 0); which
   ZELRES3[64..] bank MAO1/MAO2 use is inferred from the level record (+4 = 16/17).
-* MAO1's post-script behaviour (fight.bin's normal enemy pass over the left-over records
-  after `[E6] = 0`) and how mp90 transitions to mpa0.
+* ~~MAO1's post-script behaviour and how mp90 transitions to mpa0~~ — `61BE` loop, then `61DB..6234` (docs/HARNESS.md §7, #111).
 * Ghidra output for DRGN/AKMA/MAO1 is unusable (header decoded as code); those three were
   read from `ndisasm` listings only — the composed sprite layouts were verified by part
   counts, not rendered.

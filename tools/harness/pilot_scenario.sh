@@ -16,6 +16,7 @@ TAIL=10
 hdr() { sed -n "s/^# $2: *//p" "$1" | head -1; }
 save=$(hdr "$f" start); name=${save%.*}
 route=$(hdr "$f" pilot)
+cave=$(hdr "$f" cave); cargs=; [ -n "$cave" ] && cargs="--cave $cave"
 [ -n "$route" ] || { echo "pilot_scenario: $f has no '# pilot:' line" >&2; exit 2; }
 PORT="$ROOT/port/zeliard"
 if [ ! -f "$ROOT/zeliard/$save" ] && [ ! -f "$ROOT/zeliard/$name.USR" ]; then
@@ -23,7 +24,7 @@ if [ ! -f "$ROOT/zeliard/$save" ] && [ ! -f "$ROOT/zeliard/$name.USR" ]; then
 fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-(cd "$ROOT" && "$PORT" --dir zeliard --load "$name" --trace "$tmp/p" --pilot "$route" \
+(cd "$ROOT" && "$PORT" --dir zeliard --load "$name" --trace "$tmp/p" --pilot "$route" $cargs \
    --pilot-tail "$TAIL" --emit-script "$tmp/script") >"$tmp/out" 2>&1 || { cat "$tmp/out" >&2; exit 1; }
 grep '^\[pilot\]' "$tmp/out" >&2
 { grep '^#' "$f"; cat "$tmp/script"; } >"$tmp/new"

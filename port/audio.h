@@ -42,6 +42,13 @@ void audio_music_stop(void);          /* INT 60h AX=1 */
  * load ZELRES{archive+1}[index] and start it, exactly as INT 60h AX=0 does. */
 void audio_music_play_res(int archive, int index);
 int  audio_music_stopped(void);       /* [FF26]: the score has ended */
+/* a silent score player stepped by game frames (10 driver ticks each), for [FF21] as a game
+ * input (MAO2's start gate): independent of the audio device, deterministic in frames */
+int  audio_clock_start(const char *dir, int music_idx, int pre_ticks);
+void audio_clock_stop(void);
+int  audio_clock_on(void);
+void audio_clock_frame(void);
+int  audio_clock_sync0(void);
 int  audio_music_sync0(void);         /* [FF21]: bumped by score opcode F1 */
 void audio_music_sync0_clear(void);
 void audio_music_pause(int on);       /* INT 60h AX=3 */

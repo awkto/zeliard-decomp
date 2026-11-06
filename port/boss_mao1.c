@@ -25,6 +25,7 @@
  * and 7..0x0A classes 3..6 (12-17 parts): Jashiin grows into the demon.
  */
 #include "boss.h"
+#include <stdio.h>
 #include <string.h>
 
 enum { S_INIT, S_POSE, S_TEXT };
@@ -40,8 +41,7 @@ enum { S_INIT, S_POSE, S_TEXT };
 #define M1_H 8
 
 /* A376: the video [2000] text box is cleared and [202A] prints the string at
- * its own x.  The port has no cavern text box of its own, so the line goes
- * through the message box fight.bin 73E0 uses. */
+ * its own x: the box fight.bin 73E0 draws, kept up by Game.boss_text. */
 static void mao1_text(Game *g, unsigned n)
 {
     unsigned p = boss_img16(g, M1_TEXTS + 2u * n);
@@ -55,7 +55,11 @@ static void mao1_text(Game *g, unsigned n)
         buf[i++] = (char)(c == '\\' ? '\'' : c);        /* the font's apostrophe */
     }
     buf[i] = 0;
-    game_message(g, buf, (int)(x + 0x3A));              /* A376: [202A] BX = x + 0x3A */
+    /* A376: [202A] BX = x + 0x3A.  Not game_message: 73E0's 9EED/9EEF bookkeeping and the 32-frame
+     * timer are fight.bin's; this box stays until the script's 0xC0 clears it (jashiin_fight f36) */
+    snprintf(g->message, sizeof g->message, "%.*s", (int)sizeof g->message - 1, buf);
+    g->msg_x = (uint16_t)(x + 0x3A);
+    g->boss_text = 0xFF;
 }
 
 /* A2A1 */
@@ -88,15 +92,12 @@ void boss_mao1_entry(Game *g)
     if (!(c & 0x80)) ST(S_POSE) = c;
     else switch (c & 0xF0) {
     case 0x80: mao1_text(g, c & 0x0F); break;           /* A376 */
-    case 0xC0: break;                                   /* A3A2: force a redraw */
+    case 0xC0: g->boss_text = 0; g->message[0] = 0; break;   /* A3A2: force a redraw */
     case 0xE0: g->sfx_request = 0x38; break;            /* A370 */
     default:
-        if (c == 0xFF) {                                /* A36A: [E6] = 0 */
-            g->boss_room = 0;
-            g->boss.active = 0;
-            boss_parts_begin(g); boss_parts_end(g);
-            return;
-        }
+        /* A364..A36A: [E6] = 0, then `ret` to A290 like every command (A350 pushed it): the last
+         * pose is drawn once more, the parts stay in the list for this frame (jashiin_fight f160) */
+        if (c == 0xFF) g->boss_room = 0;
         break;
     }
     g->boss.col = (uint16_t)(ST(S_POSE) < 3 ? 0x10 : 0x0D);      /* A290 */

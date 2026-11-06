@@ -205,6 +205,29 @@ wall (22 s emulated); then ≈160 game frames per wall second (2040 frames in 12
 it is kept because every DOSBox capture in docs/ was taken at 3000 and the 84.5 ms frame
 (20 ticks at speed 5) is never overrun there. `frameskip` makes no difference.
 
+### Start option: `ORACLE_CAVE` / `--cave` (#111)
+
+Some rooms have no route a script can walk (MP90 and MPA0, Jashiin's: MP8D is Alguien's room,
+and its exit door leads back to MP84; MP84's own (30,5) door to MP90 is only a long walk from
+anywhere).  The start save can only be a town (the restore ends in town.bin, section 1), so the
+harness may rewrite **one town cave record** and let the game's own cave-mouth code do the rest:
+
+    ORACLE_CAVE=I,COL,ROW,SIDE,MAP  tools/oracle.sh ...        # oracle
+    port/zeliard --load NAME --cave I,COL,ROW,SIDE,MAP ...     # port
+    # cave: I,COL,ROW,SIDE,MAP                                 # a scenario header line
+
+`I` is the record's index in the town map's C00B table (5 bytes each: `u16 col, u8 row, u8 side,
+u8 map`), `MAP` the system map index (0x1B = MP84, 0x1D = MP90).  The oracle patches the five bytes at
+`BASE:[C00B] + 5*I` once, at frame 0 (the first town boundary, before its record is written;
+`oracle.log`: "cave poke"); the port writes the same five bytes into its town map (`TownMap.raw`
+and `caves[]`) after the town loads.  Everything after is the original's code on both sides
+(town.bin `6FF8`..`703D`, fight.bin `7D2D`), so the hero arrives exactly as he would from that mouth;
+the trace compares the town's C000 image too, so the patch has to be the same bytes.
+`tools/harness/run_scenarios.sh` and `pilot_scenario.sh` pass the header's value to both sides.
+It changes no gameplay: it is a different destination, not a state edit (no flag, no stat, no
+[FF21] is poked).  `jashiin_fight` uses `0,29,6,0,0x1B`: Pureza's left-edge mouth (record 0, normally
+MP80 (111,21)) into MP84 one column left of its (30,5) door; the walk-in moves him one column.
+
 ### Boot sequence (all in emulated time)
 
 1. BASE = segment of the INT 61h vector, accepted once its offset is `0109` and
@@ -446,8 +469,8 @@ Caverns 4-6 (#49): `ice_crawler`, `ice_icicles` (EAI4), `water_slimes`, `water_c
 (EAI5), `fire_fish`, `fire_beast` (EAI6); table at the end of §8.  Not reached yet: the
 cavern-5 tall spitter, the cavern-6 tall ghost in a fight (it is on screen in `fire_fish`),
 a hero standing in a current.  Caverns 7-8 (#49): `heat_hedgehog`, `heat_spitter`, `heat_current` (EAI7, heat),
-`absor_gunner`, `milagro_gunner` (EAI8).  Cavern 9 is MP90 only (Jashiin's room, reached
-from MP8D, no town mouth): the boss scenarios cover it.  The Dragon is killed by `dragon_kill`.  Not reached yet: any B gate or
+`absor_gunner`, `milagro_gunner` (EAI8).  Cavern 9 is MP90 only (Jashiin's room: MP84's (30,5) door, no town mouth) and MPA0 (the fight): `jashiin_fight`
+reaches both with a `# cave:` start (section 6).  The Dragon is killed by `dragon_kill`.  Not reached yet: any B gate or
 C platform in caverns 7/8 (MP80's (72..78,29..31) gates are not reachable from the Pureza
 mouth on foot), the cavern-7 tall ranged walker, a cavern-8 tall charger in the open, the
 Asbestos cape (`--worn 5` now sets it, #86: not used by a scenario yet).
@@ -570,6 +593,21 @@ put its script in a scenario file (`tests/scenarios/NAME.zs`, §7) and run it as
 | `dragon_fight` | Pureza 4, LV 25, sword 6 (`DRAGONB`) | MP80's (57,5) door into MP7D from its far side: the hero lands inside the Dragon's body and dies of contact after ~80 frames of DRGN (no kill) |
 | `dragon_kill` | Llama 8, LV 25, **LIFE 3000**, sword 6, one Key, Feruza shoes worn (`--worn 1`) (`DRAGONK`, `# pilot:`) | Llama's right-edge door (col 269) → MP70 (1,22), the ledge climb to the front door (199,33) (the jump-4 rise onto the (195,49) elevator, `8074` sets `[FF3D]` = 0), → MP7D (21,15); Dragon to the kill (sword damage ×½, head ×2, `A33E`), reward (EXP 12000, ALMAS 2500), 72F1's exit door.  Found and fixed (#87): `8074` elevator-up must leave the hero GROUND (`80FC..8101`); DRGN's flame parts are written with +5 = 0 so they never carry the hit flash (`A71A`); the death thrash is 29 frames (`AA02` tests the counter after the `inc`); gfmcga `302C` draws sprites in ring-scan order and `3468` claims the TR/BL/BR cells (a later sprite's cell under one is skipped); `738F` ticks the message box's timer once in the post-boss transition (cavern 7's TOO HOT box is up) |
 | `heat_current` | Llama 8, LV 25, one Key (`CALIK`) | MP70 (176,43) → MP72 (cavern 7): into the bottom corridor's rope gap, the fall through the ring, the (116,11) rope hole, then west into the (88..90,25) current that pushes the hero back.  Current cells are one-way walls (`67A3`/`6942`) in every cavern **but** 7 (#87) |
+| `jashiin_fight` | Pureza 4, LV 40, LIFE 999, sword 6, shield 4, one Key (`JASHIIN`), `# cave: 0,29,6,0,0x1B` | Jashiin, the last boss (#111): Pureza's mouth rewritten to MP84 (29,6), the (30,5) door (one Key), MP90's [E6] cutscene (MAO1: 135 frames, three speeches, no boss HUD, no input, `[9F01]`/`[FF4A]`/`[9F0A]` untouched), MPA0 loaded by `61DD` (cur_map stays 1D, `[84]` carried, `[9F26]` clear after the first frame), the score's F1 (`[FF21]`) 158 frames later, then MAO2: both throws (shot 1 pose 9, shot 2 pose 12) until the hero dies (591 frames) |
+
+**Jashiin (#111).**  Three things the port got wrong and the oracle showed, all in the [E6] / MPA0
+hand-over, now fixed with their addresses in the code: MP90 is an [E6]-only room (FF34 = 0), so fight.bin
+takes `6078 jz 6179` (ordinary HUD with PLACE / GOLD, no `60E6` card, no `6150` so `[9F01]` stays 0), the
+walk-in loop `61BE` is `call 6f9b` and nothing else (no input, no `62B5` `[9F0A]` count) and `A350`
+returns to `A290`, so the last pose is drawn once more; MPA0 is entered by `61DD`..`6234`, which
+writes only `[80]/[82]` (`7DC1`), `[83]`, `[9F00]` and loads the map: `[C4]` stays 1D, the hero's screen row
+`[84]` (0xD) carries and `6FB8` walks it to 0xC (one map scroll), `[FF4A]`/`[4FFF]` carry, `[9F26]` is cleared
+by `624D` after MPA0's first frame.  **`[FF21]`** is not written by fight.bin: it is the mmao score's `F1`,
+1625 driver ticks (162.5 frames) after the score starts.  The port keeps a silent score player stepped by
+game frames (`audio_clock_*`, 10 driver ticks per frame, independent of the audio device); the shell starts it when
+MPA0 loads with 40 ticks already played (the load between the score start `7E93` and the first frame; the oracle's
+first started MAO2 frame fixes it to 35..44) and MAO2's `A3A7` gate reads it.  Drawing: MAO2's overlapping arm
+parts (f328) needed #109's per-cell E900 rule rather than hiding a whole sprite; it came in from main meanwhile.
 
 **The Dragon's front door (#87).**  `dragon_kill` is the route.  The survey-based attempts all
 started from Llama's column-8 door (MP70 (152,7)); Llama's *right* edge door (col 269, cavern entry

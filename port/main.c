@@ -528,6 +528,8 @@ static void usage(void)
         "  --map N     system map index (0 = MP10 .. 0x1E = MPA0; default 0)\n"
         "  --pos C R   hero top-left map cell (default: the MURALLA door in MP10, 61 7)\n"
         "  --town N    start in town N (0 cmap .. 9 esmp; 1 = Muralla) instead of a cavern\n"
+        "  --cave I,COL,ROW,SIDE,MAP   harness start option: town cave record I now leads to system map\n"
+        "              MAP at COL,ROW (oracle: ORACLE_CAVE, docs/HARNESS.md section 6)\n"
         "  --town-col C / --town-scr S / --town-anim F FACE / --town-npc I F\n"
         "              exact town placement, used by `make verify`\n"
         "  --screenshot N FILE   dump the framebuffer after N rendered frames (implies --headless)\n"
@@ -1396,7 +1398,7 @@ int main(int argc, char **argv)
     int touch_mode = 0;                         /* #54: --touch auto|on|off (auto = first touch shows it) */
     int dbg_sword = -1, dbg_shield = -1, dbg_level = -1, dbg_life = -1;
     long dbg_gold = -1, dbg_keys = -1, dbg_bank = -1, dbg_worn = -1;
-    const char *dbg_potions = NULL, *dbg_spells = NULL;
+    const char *dbg_potions = NULL, *dbg_spells = NULL, *cave_poke = NULL;
     const char *save_name = "ZELIARD", *load_name = NULL, *save_now = NULL;
     const char *sync_action = NULL, *sync_key_opt = NULL, *sync_base_opt = NULL;   /* #55 */
     int sync_force = 0;
@@ -1471,6 +1473,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--worn") && i + 1 < argc) dbg_worn = atol(argv[++i]);
         else if (!strcmp(argv[i], "--potions") && i + 1 < argc) dbg_potions = argv[++i];
         else if (!strcmp(argv[i], "--spells") && i + 1 < argc) dbg_spells = argv[++i];
+        else if (!strcmp(argv[i], "--cave") && i + 1 < argc) cave_poke = argv[++i];
         else if (!strcmp(argv[i], "--name") && i + 1 < argc) save_name = argv[++i];
         else if (!strcmp(argv[i], "--load") && i + 1 < argc) { load_name = argv[++i]; explicit_start = 1; }
         else if (!strcmp(argv[i], "--save") && i + 1 < argc) { save_now = argv[++i]; explicit_start = 1; }
@@ -1842,6 +1845,23 @@ int main(int argc, char **argv)
 
     if (start_in_town >= 0) {
         if (!shell_enter_town(g, start_in_town, town_col, 0)) return 1;   /* -> audio_music */
+        if (cave_poke) {                           /* harness start option, the oracle's ORACLE_CAVE */
+            long v[5]; char *e = NULL; const char *q = cave_poke; int n = 0;
+            for (; n < 5; n++) { v[n] = strtol(q, &e, 0); if (e == q) break; q = (*e == ',') ? e + 1 : e; }
+            TownMap *tm = &sh->tmap;
+            if (n != 5 || v[0] < 0 || v[0] >= tm->ncaves || !tm->raw) {
+                fprintf(stderr, "--cave: want I,COL,ROW,SIDE,MAP naming one of this town's %d cave records\n", tm->ncaves);
+                return 2;
+            }
+            TownCave *c = &tm->caves[v[0]];
+            c->col = (uint16_t)v[1]; c->row = (uint8_t)v[2]; c->side = (uint8_t)v[3]; c->map = (uint8_t)v[4];
+            size_t o = (size_t)((tm->raw[0xB] | tm->raw[0xC] << 8) - 0xC000) + 5 * (size_t)v[0];   /* the C000 image too */
+            if (o + 5 <= tm->rawlen) {
+                tm->raw[o] = (uint8_t)v[1]; tm->raw[o + 1] = (uint8_t)(v[1] >> 8); tm->raw[o + 2] = (uint8_t)v[2];
+                tm->raw[o + 3] = (uint8_t)v[3]; tm->raw[o + 4] = (uint8_t)v[4];
+            }
+            fprintf(stderr, "[cave] record %ld := col %ld row %ld side %ld map %02lX\n", v[0], v[1], v[2], v[3], v[4]);
+        }
         if (town_scr >= 0) {                       /* exact scroll/hero placement for make verify */
             sh->town.scroll_col = town_scr;
             /* the Muralla captures --town-scr reproduces were all reached by
