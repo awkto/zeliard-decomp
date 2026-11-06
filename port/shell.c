@@ -382,6 +382,7 @@ static void town_frame(Shell *s)
         town_tail_frame(t);                                             /* 6EE6 */
         t->btn1_edge = t->btn2_edge = 0;
         t->hero_anim = 1;
+        audio_music_restart(s->tmap.music);                             /* 6EF8: the death entry skips run_shop's stop, but returns through the same restart */
         return;
     }
     town_step(t);
@@ -439,6 +440,11 @@ static void town_frame(Shell *s)
         LOG(s, "[shop] entering %s (town id %u)\n",
             (const char *[]){"king", "omoya", "sage", "armour", "drug", "church", "bank", "inn"}[dest],
             s->tmap.town_id);
+        /* 6E7E run_shop: FF24 = 4 (fade), overlay load, 6E9B the dissolve, 6EA0
+         * `int 60h AX=1` -- the music is *stopped* for the whole visit (no shop
+         * overlay touches INT 60h; src/shops.c).  The port has no dissolve to
+         * fade across, so the stop lands at once. */
+        audio_music_stop();
         if (shop_run(t, dest)) fprintf(stderr, "[shop] cannot load the overlay\n");
         t->btn1_edge = 0;   /* 6ECA 6AA2 reloads through [10C]: STICK 0CDC clears FF1D (FF1E stays) */
         town_apply_patches(&s->tmap, g->page);                          /* 6EDE */

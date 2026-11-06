@@ -724,6 +724,13 @@ void audio_music_stop(void)
     if (!A.on) return;
     audio_lock(); msd_stop(&A.music); A.music_idx = -1; audio_unlock();
 }
+/* town.bin 6EF8..6F05: the shop's return restarts the town score from its
+ * first bar (INT 60h AX=0 on arena:3000 again), whether or not it was stopped. */
+void audio_music_restart(int idx)
+{
+    audio_music_stop();
+    audio_music(idx);
+}
 void audio_music_pause(int on)
 {
     if (!A.on) return;

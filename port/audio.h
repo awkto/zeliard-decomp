@@ -44,6 +44,7 @@ void audio_music_force(int music_idx);
  * and the intro runs.  audio_music_play_res(), the cutscenes' own INT 60h
  * AX=0, is never held.  audio_music_force() clears the hold. */
 void audio_music_hold(int on);
+void audio_music_restart(int music_idx);   /* stop + start: town.bin 6EF8 after a shop */
 void audio_music_stop(void);          /* INT 60h AX=1 */
 /* the cutscenes play scores that are not in the 9E53 table (zopn/zend/mfan):
  * load ZELRES{archive+1}[index] and start it, exactly as INT 60h AX=0 does. */
