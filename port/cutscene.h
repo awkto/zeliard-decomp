@@ -24,6 +24,7 @@
 #define ZEL_CUTSCENE_H
 #include <stdint.h>
 #include "gd.h"
+#include "video_gd.h"
 #include "text.h"
 
 /* the original waits on [FF1A] at 236.7 Hz; the port renders a frame every
@@ -47,6 +48,8 @@ typedef void (*CutscenePresentFn)(Cutscene *c);
 
 struct Cutscene {
     Gd        gd;
+    VideoGd   vgd;                      /* the gd*.bin tables of the --video mode (video_gd.c) */
+    int       vmode;                    /* VID_MCGA unless cutscene_set_video() said otherwise */
     const char *dir;
     const TextFont *font;
     uint8_t   fb[GD_W * GD_H];          /* A000:0000 */
@@ -99,7 +102,10 @@ int  cutscene_ending(Cutscene *c);
 
 /* what the cutscene has on screen, and its own 256-entry palette */
 const uint8_t *cutscene_framebuffer(const Cutscene *c);
-void cutscene_to_rgb(const Cutscene *c, uint8_t *rgb);
+/* the frame through the --video mode chosen with cutscene_set_video (default MCGA) */
+int  cutscene_set_video(Cutscene *c, int mode);
+void cutscene_size(const Cutscene *c, int *w, int *h);
+void cutscene_to_rgb(const Cutscene *c, uint8_t *rgb);   /* video_size(mode)*3 bytes */
 
 /* --- exposed for test_cutscene.c --------------------------------------- */
 /* load resource `res` (the 1-based number in the overlay's request block) of

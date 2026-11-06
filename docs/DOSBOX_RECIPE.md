@@ -247,3 +247,29 @@ Muralla, and the deterministic stops are each town's right edge.
 phase 0), `town_edge_walkin.png` is Muralla the moment after the edge exit (scroll_col 0,
 phase 8 — cmap's, carried), and `town_edge_walked.png` is Muralla 22 columns in.  Eleven
 frames of this one walk are what pinned the parallax phase rule in docs/TOWN.md §4.3.
+
+
+## 10. Cutscenes in the other video modes (issue #34)
+
+The opening needs no keys: `KEYS=""` shows the prologue from 4 s, the demon from ≈58 s and the
+title from ≈80 s; `6:Return` skips to the STAFF credits and `6:Return 9:Return` to the storm-demo
+(act 3, from ≈16 s).  Capture each of the six drivers with
+
+    DOSBOX=/path/to/dosbox-x KEYS="" port/tools/capture_video_mode.sh cga /tmp/gd_cga 12 30 66 96
+
+and sweep the port against a capture (the port is deterministic by frame, DOSBox by wall clock, so
+the tool finds the frame that matches; frame ≈ (t − 2.7 s) · 59.2 in act 1, (t − 6.6 s) · 59.2 in
+act 2, (t − 15.5 s) · 59.2 in act 3):
+
+    port/tools/compare_gdshot.py cga 1 /tmp/gd_cga/shot_96.png 5300 5600 1
+
+Notes from taking them with DOSBox-X (the oracle build) instead of the stock DOSBox the town
+captures used: the script now passes `windowresolution=original`, `showmenu=false` (DOSBox-X draws a
+menu bar and scales the window otherwise) and `monochrome_pal=white` (its Hercules default is green);
+the MCGA capture comes out 640×400 (`compare_shot.py`/`compare_gdshot.py` sample it back down).
+Check afterwards that no `dosbox-x` is still running: a DOSBox whose Xvfb died writes an X error to
+`dosbox.log` in a tight loop (two runs wrote 80 and 100 GB before they were noticed).
+
+`docs/screenshots/gd_<mode>_<scene>.png`: `prologue` (pendant with the scrolling text), `demon`
+(the typed "Beware" line), `title` (the logo and corner scrollwork), `storm` (the opening demo's
+narration over the balcony), at each driver's own resolution.

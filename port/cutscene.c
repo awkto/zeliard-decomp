@@ -14,6 +14,7 @@
 #include "cutscene.h"
 #include "sar.h"
 #include "audio.h"
+#include "video.h"
 
 #define IMG(c, addr) ((c)->img + ((addr) - 0x6000))
 #define OK(c, addr)  ((size_t)((addr) - 0x6000) < (c)->imglen)
@@ -155,7 +156,24 @@ void cutscene_free(Cutscene *c)
 }
 
 const uint8_t *cutscene_framebuffer(const Cutscene *c) { return c->fb; }
-void cutscene_to_rgb(const Cutscene *c, uint8_t *rgb) { gd_to_rgb(&c->gd, c->fb, rgb); }
+int cutscene_set_video(Cutscene *c, int mode)
+{
+    c->vmode = VID_MCGA;
+    if (mode == VID_MCGA) return 0;
+    if (video_gd_load(&c->vgd, mode, c->dir)) return -1;
+    if (mode == VID_EGA && gd_set_wide_font(&c->gd, c->dir)) return -1;
+    c->gd.ega_ornament = mode == VID_EGA;
+    c->gd.vg = &c->vgd;
+    c->gd.ao2bpp = mode == VID_CGA || mode == VID_CGA2 || mode == VID_HGC;
+    c->vmode = mode;
+    return 0;
+}
+void cutscene_size(const Cutscene *c, int *w, int *h) { video_size(c->vmode, w, h); }
+void cutscene_to_rgb(const Cutscene *c, uint8_t *rgb)
+{
+    if (c->vmode == VID_MCGA) gd_to_rgb(&c->gd, c->fb, rgb);
+    else video_gd_to_rgb(&c->vgd, c->gd.pal_rec, c->fb, rgb);
+}
 
 /* ------------------------------------------------------- the scrollers */
 /* 6358 / 6497 / 6D04 — clear the scratch, then for each line of the block

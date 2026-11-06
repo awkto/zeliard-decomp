@@ -52,6 +52,14 @@ void video_ega_to_rgb  (const uint8_t *fb, uint8_t *rgb);              /* 640x20
 void video_hgc_to_rgb  (const uint8_t *fb, uint8_t *rgb);              /* 720x348 */
 void video_tandy_to_rgb(const uint8_t *fb, uint8_t *rgb);              /* 320x200 */
 
+/* the stages from a screen of the driver's own colour values (0..3 CGA / 0..15
+ * Tandy), which is what the gd*.bin cutscene renderer produces */
+void video_cga_idx_to_rgb  (const uint8_t *idx, uint8_t *rgb);
+void video_cga2_idx_to_rgb (const uint8_t *idx, uint8_t *rgb);
+void video_hgc_idx_to_rgb  (const uint8_t *idx, uint8_t *rgb);
+void video_tandy_idx_to_rgb(const uint8_t *idx, uint8_t *rgb);
+void video_ega_regs_to_rgb (const uint8_t *fb, const uint8_t regs[16], uint8_t *rgb);
+
 /* the tables the drivers carry, exported so the tests can check them against
  * the binaries in zeliard/ */
 extern const uint8_t VID_CGA_PAIR[64];      /* GMCGA.BIN @290B / GMHGC.BIN @2994 */

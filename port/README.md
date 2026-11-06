@@ -54,9 +54,9 @@ cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 13 test binaries
 make test            # physics (149) + combat/AI (228) + town (162) + boss (642) + shop (189)
                      #   + status (87) + playthrough (165) + audio (387) + cutscene (46)
-                     #   + video (91) + config (46) + sync (144) = 2336 assertions.  Needs no game files:
+                     #   + video (149) + config (46) + sync (144) = 2394 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
-make verify          # 215 headless renders diffed against the DOSBox captures in docs/screenshots/,
+make verify          # 235 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
 make playthrough     # the same two routes as test_playthrough, with the step-by-step log
 ./zeliard            # the real boot: the opening demo, then Felishika's Castle
@@ -1693,12 +1693,40 @@ driver behaviour rather than an approximation:
 None of this affects a cell, a tile or a scroll offset, which is why the cavern
 playfield is exact everywhere.
 
-### What `--video` does not cover
+### Cutscenes in every mode (#34)
 
-The cutscenes (`--intro`, `--ending`, the Tear scene) still render MCGA-only: they
-do not go through the pair buffer at all but through `gd.c`'s own 256-entry DAC out
-of `gdmcga.bin`, and each mode has its own `gd*.bin` with its own palette records
-(`gdcga.bin` is ZELRES1[2], `gdega.bin` [3] …).  Porting those is a separate job.
+`--intro`, `--ending` and `--intro-act` honour `--video`.  The cutscenes do not go
+through the pair buffer: they draw through `gd{ega,cga,hgc,tga,mcga}.bin`
+(ZELRES1[1..5]), each with its own palette routine, and `gd.c` keeps its frame as
+the MCGA byte `l<<4 | r` and converts at present time through the tables
+`video_gd.c` reads out of the matching overlay (CGA/HGC/Tandy: a 256-byte table per
+record 1..9; EGA: 16 palette registers per record).  Where the builds *write*
+different values than gdmcga, `gd.c` follows them: the logo's `ao` planes and the
+corner ornaments in gdcga/gdhgc (docs/CUTSCENES.md §7), per-pixel masks in gdega,
+the video drivers' own putchar colours, and gdega's 16-px font stream.
+
+Ground truth is DOSBox-X captures of the real game at 36 moments of the opening
+(prologue, demon, title, STAFF credits, storm demo) in each driver
+(`tools/capture_video_mode.sh`, `tools/compare_gdshot.py`, docs/DOSBOX_RECIPE.md §10),
+the whole screen compared at the driver's own size, best-aligned frame:
+
+| mode | before (cutscenes ignored `--video`) | after: shots at 100 % of 36 | worst shot | mean |
+|---|---|---|---|---|
+| mcga (unchanged) | 29 / 36 | 29 | 97.69 % | 99.82 % |
+| cga | 8 shots: mean 72.9 % (35.8 % on the title) | 33 | 97.44 % | 99.90 % |
+| cga2 | 0 % (a 640x200 screen against a 320x200 frame) | 33 | 98.32 % | 99.92 % |
+| ega | 0 % (the same) | 35 | 99.91 % | 99.99 % |
+| hgc | 0 % (720x348 against 320x200) | 34 | 99.37 % | 99.97 % |
+| tandy | 8 shots: mean 72.7 % (36.6 % on the title) | 31 | 98.05 % | 99.91 % |
+
+The shots below 100 % are the scrolling text mid-step (MCGA has the same ones: the
+DOSBox scroll does not land on a port frame) and about a hundred pixels of the title
+screen's corner scrollwork on EGA/Tandy.  Twenty of the captures are in
+`docs/screenshots/gd_<mode>_<scene>.png` and in `make verify`.  What is *not*
+verified: the ending (a DOSBox run reaches it only after killing Jashiin; the
+video-mode logic it shares with the opening is, its own typewriter text and cursor
+are not), and the storm's lightning flash in the three 320-wide modes (record 0 has
+no table there).
 
 ## Design notes
 
@@ -1725,7 +1753,7 @@ of `gdmcga.bin`, and each mode has its own `gd*.bin` with its own palette record
 
 ## Ground truth
 
-`make verify` compares 215 boxes of headless renders against the DOSBox captures
+`make verify` compares 235 boxes of headless renders against the DOSBox captures
 in `docs/screenshots/`; all of them are at 100 % — `tools/compare_shot.py` exits
 non-zero on anything less, so the target fails on the first regression — and
 **eight** of them are the whole 320×200 screen — including all five intro captures (`intro_prologue`,

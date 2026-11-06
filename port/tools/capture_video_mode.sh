@@ -55,11 +55,14 @@ echo "videoDrv -> $(grep videoDrv "$OUT/dos/zeliard/RESOURCE.CFG")  (machine=$MA
 cat > "$OUT/zel.conf" <<EOC
 [sdl]
 output=surface
+windowresolution=original
+showmenu=false
 [dosbox]
 machine=$MACHINE
 [render]
 aspect=false
 scaler=none
+monochrome_pal=white
 [cpu]
 cycles=3000
 [autoexec]
@@ -86,7 +89,7 @@ kill -0 $XPID 2>/dev/null || { echo "Xvfb :$D failed to start:"; cat "$OUT/xvfb.
 export DISPLAY=":$D"
 trap 'kill $DPID $XPID 2>/dev/null || true' EXIT INT TERM
 
-dosbox -conf "$OUT/zel.conf" >"$OUT/dosbox.log" 2>&1 &
+${DOSBOX:-dosbox} -conf "$OUT/zel.conf" >"$OUT/dosbox.log" 2>&1 &
 DPID=$!
 
 EVENTS=$( { for k in $KEYS; do echo "${k%%:*} key ${k#*:}"; done; for i in $TIMES; do echo "$i shot"; done; } | sort -n -s )

@@ -41,6 +41,15 @@ static const uint8_t CGA5_RGB[4][3] = {
     { 0xFF, 0xFF, 0xFF },       /* 3 white       (15) */
 };
 
+/* the screen as the driver's 2-bit colours (0..3), 320x200 -> mode 5 */
+void video_cga_idx_to_rgb(const uint8_t *idx, uint8_t *rgb)
+{
+    for (int i = 0; i < FB_W * FB_H; i++) {
+        const uint8_t *p = CGA5_RGB[idx[i] & 3];
+        rgb[i * 3] = p[0]; rgb[i * 3 + 1] = p[1]; rgb[i * 3 + 2] = p[2];
+    }
+}
+
 void video_cga_to_rgb(const uint8_t *fb, uint8_t *rgb)
 {
     for (int i = 0; i < FB_W * FB_H; i++) {
@@ -51,6 +60,19 @@ void video_cga_to_rgb(const uint8_t *fb, uint8_t *rgb)
 }
 
 #define CGA2_W 640
+
+void video_cga2_idx_to_rgb(const uint8_t *idx, uint8_t *rgb)
+{
+    for (int y = 0; y < FB_H; y++)
+        for (int x = 0; x < FB_W; x++) {
+            unsigned v = idx[y * FB_W + x] & 3;
+            for (int b = 0; b < 2; b++) {
+                uint8_t on = (v >> (1 - b)) & 1 ? 0xFF : 0x00;
+                uint8_t *o = rgb + ((size_t)y * CGA2_W + x * 2 + b) * 3;
+                o[0] = o[1] = o[2] = on;
+            }
+        }
+}
 
 void video_cga2_to_rgb(const uint8_t *fb, uint8_t *rgb)
 {

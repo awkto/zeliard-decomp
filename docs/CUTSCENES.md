@@ -549,7 +549,65 @@ were ported into `port/` (`port/gd.c`, `port/cutscene.c`):
   the mode pair, `3A5F` twenty-four 8-byte patterns, `3B1F` the 196-byte border
   script and `3BE3` the 51-byte inward spiral.
 
-Still not decoded:
+Still not decoded: nothing in the gd renderer itself; the non-MCGA builds are
+§7.
 
-* The gd renderer's four non-MCGA builds (`gdega/gdcga/gdhgc/gdtga`) were not
-  read; only the 25-slot table is assumed common (as it is for `gm*`/`gf*`).
+---
+
+## 7. The four non-MCGA builds (`gdega` `gdcga` `gdhgc` `gdtga`, issue #34)
+
+`gd{ega,cga,hgc,tga}.bin` = ZELRES1[1..4].  The 25 slots are the same calls, but
+each build has its own packer and its own idea of a palette, and **none of them
+programs a 256-entry DAC** — that is gdmcga only.  What they do instead:
+
+| | `gd_set_palette` (slot 4) | pixel |
+|---|---|---|
+| gdcga `40EF` | `dec ax; mul 0x100; add 0x40FD`: a pointer to a **256-byte table per record 1..9** | the packer `49FD` turns each pair of PC-88 pixels (two 4-bit colours, `l<<4\|r`) into one table lookup: a 2-bit CGA colour, 8 px of 320 per word |
+| gdhgc `427A` | the same, base `4288` (records 1..9 byte-identical to gdcga's; record 0 is not) | the same lookup, the 2 bits shown as two mono px (the HGC line mapping of §2.4) |
+| gdtga `41D6` | the same, base `41E4` | the same lookup, a 4-bit Tandy colour |
+| gdega `4134` | 16 EGA palette registers per record at `416A + 16*rec`, written to the attribute controller | **no packing**: planar, every PC-88 pixel is its own 4-bit EGA pixel of 640 |
+
+(Record 0 has no table in the three 320-wide builds — `dec ax` wraps and the
+pointer lands 256 bytes early; only the storm's flash selects it.)
+So a cutscene frame is still the byte `l<<4 | r` of §1 and the mode is a pure
+function of it plus the record number: `port/video_gd.c` reads the tables out of
+the overlay and `Cutscene` converts through them (`--video` now applies to the
+opening and the ending, not only to the game).  Unlike MCGA, a palette change does
+not recolour what is already on screen — the original converts as it draws —
+while the port keeps the pair buffer and converts at present time.  That is
+exact whenever the picture is redrawn after the record change, which is what
+the captures below exercise; a frame that straddles a change would differ.
+
+Where the builds differ from gdmcga in *what they write* (each found against a
+DOSBox capture and then read in the disassembly):
+
+* **`gd_draw_2plane_ao` (`301A`, the ZELIARD logo)**: gdmcga/gdtga/gdega write
+  the planes as 12 / 10 / 8 and make a pixel transparent when its source bits
+  are 0; **gdcga and gdhgc write 4 (second plane), 2 (first), 6 (both) and make
+  a pixel transparent when its *converted 2-bit colour* is 0** (writer `3275`).
+  The logo's colours come from different table entries, which is what turned
+  the title screen white-and-cyan on CGA.
+* **`gd_draw_ornament_row` (`301E`)**: gdcga/gdhgc pack plane A as bit 1 and
+  plane B as bits 2 and 0 (colours 2 / 5 / 7) and **OR** the converted colour
+  onto the screen (`or [es:di],ax`, `376F`/`377F`) — no AND mask, no opaque
+  black as in `37B4`.  (The pair buffer holds "the pair whose colour is old|new".)
+* **Text through the video driver** (`gd_putchar`, `gd_puts`): gdcga/gdhgc/gdtga
+  first map the colour through an 8-byte table of their own (`4A97`/`4C23`/`4BD4`
+  = 0 5 2 7 3 4 6 1) and then the driver's pattern table (GMCGA `259A`, GMHGC
+  `2600`, GMTGA `262E`).  The colour a glyph ends up in is therefore *not* what
+  the pair `(c,c)` converts to — Tandy draws colour 0 as dark grey (8), CGA
+  draws colour 1 as black — so the port picks a pair that converts to the
+  driver's colour (`Gd.vg->putc`).  gdega passes the colour straight to GMEGA's
+  `vid_putchar` (write mode 2, map mask 7: plane 3 keeps what was there).
+* **gdega's text is a different font.**  `gd_text_line` (`32B7`) copies 16-byte
+  glyphs (eight words, one EGA pixel a bit) from `[F500]`, which on EGA is
+  font.grp's *mode-0 stream*, not the 8x8 glyphs doubled that every other mode
+  uses; the strokes are one pixel wide.  `gd_set_wide_font` loads it.
+* `gd_sky_dither` (`3018`) is a bare `ret` in gdcga and gdhgc: the title screen
+  has a black sky there.
+
+Ground truth: DOSBox-X window captures of the real game with `videoDrv:` set to
+each driver (`port/tools/capture_video_mode.sh`, docs/DOSBOX_RECIPE.md §10),
+swept against the port by `port/tools/compare_gdshot.py`; the title, prologue,
+demon and storm-demo frames are `docs/screenshots/gd_*.png` and sit in
+`make verify`.  Numbers are in port/README.md.
