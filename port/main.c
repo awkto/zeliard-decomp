@@ -367,6 +367,9 @@ static void frame_wait(App *a, Game *g, Uint64 *next)
     Uint64 freq = SDL_GetPerformanceFrequency(), now = SDL_GetPerformanceCounter();
     if (*next == 0 || now > *next + freq) *next = now;
     *next += (Uint64)(a->frame_ms / 1000.0 * (double)freq);
+#ifdef __EMSCRIPTEN__
+    int slept = 0;
+#endif
     for (;;) {
         pump_events(a, g);
 #ifdef __ANDROID__
@@ -378,10 +381,15 @@ static void frame_wait(App *a, Game *g, Uint64 *next)
         now = SDL_GetPerformanceCounter();
         if (now >= *next) break;
         Uint64 rem = (*next - now) * 1000 / freq;
+#ifdef __EMSCRIPTEN__
+        slept = 1;
+        emscripten_sleep((unsigned)(rem ? rem : 1));    /* ASYNCIFY: sleep to the frame deadline in the browser instead of spinning */
+#else
         SDL_Delay(rem > 2 ? 1 : 0);
+#endif
     }
 #ifdef __EMSCRIPTEN__
-    emscripten_sleep(0);        /* ASYNCIFY: always hand the thread back to the browser once a frame */
+    if (!slept) emscripten_sleep(0);   /* ASYNCIFY: still hand the thread back once a frame */
 #endif
 }
 
@@ -1044,6 +1052,9 @@ static void cutscene_present(Cutscene *c)
     Uint64 now = SDL_GetPerformanceCounter(), freq = SDL_GetPerformanceFrequency();
     if (next == 0 || now > next + freq) next = now;
     next += (Uint64)(CS_FRAME_MS / 1000.0 * (double)freq);
+#ifdef __EMSCRIPTEN__
+    int slept = 0;
+#endif
     for (;;) {
         pump_events(a, NULL);
         /* Esc skips the rest of the cutscene; it used to quit the game, which
@@ -1054,10 +1065,15 @@ static void cutscene_present(Cutscene *c)
         now = SDL_GetPerformanceCounter();
         if (now >= next || a->quit || c->quit) break;
         Uint64 rem = (next - now) * 1000 / freq;
+#ifdef __EMSCRIPTEN__
+        slept = 1;
+        emscripten_sleep((unsigned)(rem ? rem : 1));    /* see frame_wait */
+#else
         SDL_Delay(rem > 2 ? 1 : 0);
+#endif
     }
 #ifdef __EMSCRIPTEN__
-    emscripten_sleep(0);        /* ASYNCIFY: yield to the browser (see frame_wait) */
+    if (!slept) emscripten_sleep(0);        /* ASYNCIFY: yield to the browser (see frame_wait) */
 #endif
     const Uint8 *k = SDL_GetKeyboardState(NULL);
     c->key = (uint8_t)(k[SDL_SCANCODE_SPACE] || k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]);
