@@ -53,8 +53,8 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 13 test binaries
 make test            # physics (149) + combat/AI (228) + town (162) + boss (642) + shop (189)
-                     #   + status (87) + playthrough (165) + audio (387) + cutscene (46)
-                     #   + video (149) + config (46) + sync (144) = 2394 assertions.  Needs no game files:
+                     #   + status (87) + playthrough (165) + audio (390) + cutscene (46)
+                     #   + video (149) + config (46) + sync (144) = 2397 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 235 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -966,7 +966,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     `tools/harness/state_roundtrip.sh`, which now also drives the in-game
     request path (`--state-inject save:N load:N`, the same queue the keys use)
     and requires the whole trace to stay byte-identical.
-* `test_audio.c` — 387 assertions over the sound back end:
+* `test_audio.c` — 390 assertions over the sound back end:
   * **the score parser against `tools/msd2mid.py`**: all 17 scores in all three
     blob-B arrangements (AdLib, Tandy, PC speaker) are run through `msd.c`, and the
     decoded event stream — note on/off with velocity and the legato flag, drum hits,
