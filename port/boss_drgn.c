@@ -93,6 +93,8 @@ static void drgn_draw(Game *g)
               boss_img16(g, (high ? DR_FLAME2_LIST : DR_FLAME_LIST) + 2 * k),
               boss_img16(g, (high ? DR_FLAME2_BM   : DR_FLAME_BM)   + 2 * k));
         int fx = (int)b->col - 10 + (pose == 5 ? 4 : 0);
+        uint8_t flash = b->part_hit;
+        b->part_hit = 0;               /* A71A: the flame's parts are written with +5 = 0, no hit flash */
         for (int c = 0; c < 13; c++)
             for (int r = 0; r < 8; r++) {
                 uint8_t v = fb[c * 8 + r];
@@ -100,6 +102,7 @@ static void drgn_draw(Game *g)
                 boss_part(g, (uint16_t)(fx + c), (uint8_t)(b->row + 4 + r),
                           (uint8_t)(((v >> 4) & 0x0F) | 0x20), v);
             }
+        b->part_hit = flash;
     }
     boss_parts_end(g);
 }
@@ -138,13 +141,13 @@ static void flame_step(Game *g)
     if (++ST(S_FLAMECNT) >= 10) ST(S_BREATH) = 0;
 }
 
-/* A9F2: 40 frames; the first 30 thrash between poses 2 and 3 with sound 0x37
+/* A9F2: 40 frames; the first 29 thrash between poses 2 and 3 with sound 0x37
  * every 4th frame, then pose 0x0A (collapsed). */
 static void drgn_death(Game *g)
 {
     uint8_t t = g->boss.death_cnt;
     if (boss_death_tick(g) >= 0x28) { boss_parts_begin(g); boss_parts_end(g); return; }
-    if (t < 0x1E) {
+    if (t + 1 < 0x1E) {                                             /* AA02: the counter was bumped first */
         ST(S_FRAME)++;
         ST(S_POSE) = (uint8_t)(2 + (ST(S_FRAME) & 1));
         if (!(ST(S_FRAME) & 3)) g->sfx_request = 0x37;

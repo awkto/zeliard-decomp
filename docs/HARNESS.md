@@ -447,7 +447,7 @@ Caverns 4-6 (#49): `ice_crawler`, `ice_icicles` (EAI4), `water_slimes`, `water_c
 cavern-5 tall spitter, the cavern-6 tall ghost in a fight (it is on screen in `fire_fish`),
 a hero standing in a current.  Caverns 7-8 (#49): `heat_hedgehog`, `heat_spitter`, `heat_current` (EAI7, heat),
 `absor_gunner`, `milagro_gunner` (EAI8).  Cavern 9 is MP90 only (Jashiin's room, reached
-from MP8D, no town mouth): the boss scenarios cover it.  Not reached yet: any B gate or
+from MP8D, no town mouth): the boss scenarios cover it.  The Dragon is killed by `dragon_kill`.  Not reached yet: any B gate or
 C platform in caverns 7/8 (MP80's (72..78,29..31) gates are not reachable from the Pureza
 mouth on foot), the cavern-7 tall ranged walker, a cavern-8 tall charger in the open, the
 Asbestos cape (`--worn 5` now sets it, #86: not used by a scenario yet).
@@ -566,36 +566,20 @@ put its script in a scenario file (`tests/scenarios/NAME.zs`, §7) and run it as
 | `edge_press` | Muralla 12 (`EDGEP`) | #79: Space on the frame before each town edge (Muralla → castle → Muralla) is latched (FF1D = FF) and dropped by `6D30`'s `[10C]` loads (STICK `0CDC`) and `60C3` |
 | `tarso_fight` | Dorado 4, LV 25, sword 6, one Key, Feruza shoes worn (`--worn 1`), `--flag 2B=08` (`TARSO`, `# pilot:`) | Dorado's left edge → MP61, across its C platforms (live prediction, #90) to the (12,27) door → MP60, round the seam to the front door (309,41) → MP6D; Tarso to the kill (LEGA, #86), reward, 72F1's door out to MP60 (28,47).  Also: EAI6's beast turns at a wall when the step down is refused (`A947`), its `A90A` bounce is dead code; the tall-sprite step's marker test is rows -1..+3 of the column (`A595`, -2 going left, EAI2/5-8); death sparks spawn inside the 302C scan, interleaved with the cavern-6 cell animation's KRN_RANDOM draws; `94FF` writes the ring column into a refused respawn's +3 (tall pairs: upper record only, rows -1..+3, ED20 = 0) |
 | `dragon_fight` | Pureza 4, LV 25, sword 6 (`DRAGONB`) | MP80's (57,5) door into MP7D from its far side: the hero lands inside the Dragon's body and dies of contact after ~80 frames of DRGN (no kill) |
+| `dragon_kill` | Llama 8, LV 25, **LIFE 3000**, sword 6, one Key, Feruza shoes worn (`--worn 1`) (`DRAGONK`, `# pilot:`) | Llama's right-edge door (col 269) → MP70 (1,22), the ledge climb to the front door (199,33) (the jump-4 rise onto the (195,49) elevator, `8074` sets `[FF3D]` = 0), → MP7D (21,15); Dragon to the kill (sword damage ×½, head ×2, `A33E`), reward (EXP 12000, ALMAS 2500), 72F1's exit door.  Found and fixed (#87): `8074` elevator-up must leave the hero GROUND (`80FC..8101`); DRGN's flame parts are written with +5 = 0 so they never carry the hit flash (`A71A`); the death thrash is 29 frames (`AA02` tests the counter after the `inc`); gfmcga `302C` draws sprites in ring-scan order and `3468` claims the TR/BL/BR cells (a later sprite's cell under one is skipped); `738F` ticks the message box's timer once in the post-boss transition (cavern 7's TOO HOT box is up) |
 | `heat_current` | Llama 8, LV 25, one Key (`CALIK`) | MP70 (176,43) → MP72 (cavern 7): into the bottom corridor's rope gap, the fall through the ring, the (116,11) rope hole, then west into the (88..90,25) current that pushes the hero back.  Current cells are one-way walls (`67A3`/`6942`) in every cavern **but** 7 (#87) |
 
-**The Dragon's front door (#87).**  No kill scenario yet: MP70's locked (199,33) door sits in
-a region (the rows 32-36 corridor, the cols 0-37 room with the (26,39)/(29,38)/(32,36) B gates
-and the col-14/16/35 ropes, the rows 41-48 band east of col 192) that, as far as the autopilot's
-survey sees, is entered only through MP72's (127,8) door → (205,45); the (195,49) A elevator
-only takes the hero *down* out of it.  MP72's (127,8) is reached only from its (25,40) entry
-(MP71's (20,9) door): the (101,57) and (76,9) entries are cut off by the floor gaps and the
-one-way currents (`heat_current`), and MP71's (20,9) is not reachable in the survey from its
-(171,32) entry (C platforms, spikes).  All of that under the 704F heat.
-Hand-routing it (#87, follow-up) found more walls than the survey: in cavern 7 the 0x28/0x29
-cells push 2 cells a frame and 0x2A lifts 2 rows (`76A1`), so they are one-way doors, and the
-rise is 2 rows (4 only with the Feruza shoes, which leave the heat on).  MP71's (20,9) sits in
-a component {the cols 0-34 rows 6-12 room, the seam ledge (191..4,14), fix[5]/fix[6]/fix[7],
-the cols 160-195 rows 4-26 updraft loop, the left room rows 21-36} that no MP71 entry reaches
-with the cape: the middle floor (cols 38-82, row 34) is cut from the left room by the col 40-41
-current, the (171,32) pocket from the (160..175,25..26) updraft by 7+ rows, and the seam needs a
-3-row climb to the (188..191,34) ledge.  With the shoes there are two ways in, both by moves the
-survey does not make: (a) seam floor (192,36) → ledge → fix[6] → rope 192 or fix[5] → the
-(188..191,19..23) current/updraft, which carries the hero to (165,11) (checked in the port) →
-fix[15] → seam ledge → fix[7] → rope 14; (b) block (76..85,13) → fix[13] (swept off by the
-(68,14) cell) → block (59..61,14) → fix[9] → the round block's (46..47,12) step → the (35,9)
-elevator → (19,10).  Both start inside MP71's middle/top region, which only the (9,55) entry
-reaches (the wrap fall at cols 40-64), and its MP70 side, the (202,60) pocket (rows 60-63, floor
-row 0 at cols 198..2), cannot be entered: ropes 190 and 5 are 8 and 3 columns from that floor,
-`rise` refuses a jump from a rope and there is no air control.  The bottom band (rows 43-49) may
-drop into MP71's bottom-left room through the (48..70,51..55) current/updraft at its col-70 wall
-(untested).  MP72 itself is fine: from (25,40), rope 40 down → rope 66 up → rope 58 up → rope 40
-up → rope 32 up through the wrap into the bottom corridor → rope 7 down through the wrap → west to
-(126,9); every other entry is fenced by the corridor currents.
+**The Dragon's front door (#87).**  `dragon_kill` is the route.  The survey-based attempts all
+started from Llama's column-8 door (MP70 (152,7)); Llama's *right* edge door (col 269, cavern entry
+`(1,22,0,MP70)`) puts the hero at MP70 (1,22) instead, on the wrap side of the rows 25-31 ceiling, and from
+there the autopilot reaches the rows 41-48 band east of col 192 in ~280 frames.  With the **Feruza shoes**
+(`--worn 1`: rise 4, `6F9B` sets `[9F0D]`) the (195,49) A elevator and the ledge to the locked (199,33)
+door are in reach; the Asbestos cape's rise is 2 and cannot make that climb, so the heat (704F, 15 LIFE
+per 64 frames) stays on and the scenario uses `--life 3000` for it and for the Dragon's contact damage
+(DRGN: 40 head/flame, 30 body, per frame).  The Dragon takes ×½ sword damage (`A33E`), ×2 on the head
+(class 0): six or seven blows.  The same route is where the port's elevator-up bug showed (the hero
+must be GROUND after `8074`).  MP80's (57,5) door (`dragon_fight`) lands inside the body; the front
+door lands at (21,15), left of the Dragon's col 30.
 
 ## 9. Save states (#52, Phase B)
 
