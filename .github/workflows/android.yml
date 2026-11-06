@@ -54,6 +54,9 @@ jobs:
       - name: Fetch SDL2 (pinned, checksummed)
         run: ./packaging/android/fetch-sdl.sh
 
+      - name: GameFiles unit test (plain JVM)
+        run: ./packaging/android/test/run.sh
+
       - name: Version
         id: ver
         run: |
