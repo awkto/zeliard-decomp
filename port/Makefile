@@ -924,7 +924,7 @@ verify: zeliard test_combat test_town test_shop test_status test_cutscene
 		--box 0 0 320 200 --label "tandy cutscene demon (gdtga, act 1 frame 3771): whole screen"
 	./zeliard --dir ../zeliard --video tandy --intro-act 1 --screenshot 5525 /tmp/zel_gd_tandy_title.png
 	python3 tools/compare_shot.py /tmp/zel_gd_tandy_title.png ../docs/screenshots/gd_tandy_title.png \
-		--box 48 30 224 130 --label "tandy cutscene title (gdtga, act 1 frame 5525): the logo and pendant, clear of the corners"
+		--box 0 0 320 200 --label "tandy cutscene title (gdtga, act 1 frame 5525): whole screen"
 	./zeliard --dir ../zeliard --video tandy --intro-act 3 --screenshot 1717 /tmp/zel_gd_tandy_storm.png
 	python3 tools/compare_shot.py /tmp/zel_gd_tandy_storm.png ../docs/screenshots/gd_tandy_storm.png \
 		--box 0 0 320 200 --label "tandy cutscene storm (gdtga, act 3 frame 1717): whole screen"

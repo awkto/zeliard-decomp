@@ -60,6 +60,7 @@ typedef struct Gd {
     /* gdega's ornament (371C) writes the same colours as gdmcga's (15 both, 14 plane 1,
      * 0 plane 0) but one EGA pixel at a time -- through the bit mask, so a pixel the
      * picture does not cover is left alone, with no half-transparent pair byte */
+    int      tandy_ornament;                /* gdtga's ornament row ORs converted pixels, not pairs (37C9) */
     int      ega_ornament;                  /* (also the ao writer's per-pixel transparency, 3121/314D) */
     const VideoGd *vg;
     GdWaitFn wait;                      /* NULL = never wait (tests) */
