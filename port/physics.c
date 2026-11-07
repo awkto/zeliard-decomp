@@ -528,7 +528,10 @@ static int gravity(Game *g)
 {
     if (g->on_updraft) return 1;
     if (g->vstate & 0x80) return 1;
-    if (fixture_ride(g)) return 1;                                      /* 818E */
+    /* 818E is a *call*: a gate that sank (81A8 jc -> 6B2E scroll_down) returns
+     * to 6967 like one that did not, so the conveyor and floor tests below still
+     * run -- the hero lands on the gate in the frame it carries him (#89). */
+    fixture_ride(g);                                                    /* 818E */
     conveyor_check(g);
     if (floor_under_hero(g)) return land(g);
 
