@@ -76,7 +76,7 @@ new file mode 100644
 index 0000000..052d3f5
 --- /dev/null
 +++ b/src/misc/zel_oracle.cpp
-@@ -0,0 +1,517 @@
+@@ -0,0 +1,525 @@
 +/*
 + * zel_oracle.cpp -- Zeliard differential-test oracle (decomp-zel docs/HARNESS.md).
 + *
@@ -497,6 +497,14 @@ index 0000000..052d3f5
 +    if (state == ST_TRACE && png_every && (ip == 0x7C95 || ip == 0x7CD4) && p[0] == 0xE8) {
 +        static unsigned walk_k = 0;
 +        char name[64]; snprintf(name, sizeof name, "/walk_%05lu_%03u.png", frame, walk_k++);
++        write_png(outdir + name);
++    }
++    /* the screen dissolve (gmmcga [2040] = 2130, #118) has no frame boundary either: after each of its 8 passes
++     * (2184: mov cx,1F40, the delay loop) the picture goes to dsv_<last boundary + 1>_<k>.png, k counting up over
++     * the run; the port writes the same names from its dissolve steps */
++    if (state == ST_TRACE && png_every && ip == 0x2184 && p[0] == 0xB9 && p[1] == 0x40 && p[2] == 0x1F && p[3] == 0xE2) {
++        static unsigned dsv_k = 0;
++        char name[64]; snprintf(name, sizeof name, "/dsv_%05lu_%03u.png", frame, dsv_k++);
 +        write_png(outdir + name);
 +    }
 +    if (ip == 0x0918) dbg_0918++;
