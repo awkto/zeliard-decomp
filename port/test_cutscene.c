@@ -56,6 +56,42 @@ static void test_format(void)
         uint8_t *ttl2 = sar_load(G_DIR, 0, 30, 1, &len);           /* ttl2.grp */
         n = ttl2 ? gd_unpack_rle(ttl2, len, buf, sizeof buf) : 0;
         CHECK(n == 0xC80, "ttl2.grp is a 40x40 two-plane tile bank (0xC80 bytes)");
+        /* the atlas (#34): opdemo's 850-byte map names 194 distinct tiles 0..193 in reading order
+         * (0 = the blank cell), four of them (38 22 15 47) used more than once; tile n is byte
+         * column n % 40 over the 8 rows of band n / 40 */
+        size_t olen = 0;
+        uint8_t *op = sar_load(G_DIR, 0, 0, 1, &olen);
+        if (ttl2 && n == 0xC80 && op && olen >= 0x912B - 0x6000 + 850) {
+            const uint8_t *map = op + (0x912B - 0x6000);
+            int seen[256] = { 0 }, distinct = 0, repeated = 0, mx = 0, first_in_order = 1, last = 0;
+            for (int i = 0; i < 850; i++) {
+                if (!seen[map[i]]++) distinct++;
+                if (seen[map[i]] == 2) repeated++;
+                if (map[i] > mx) mx = map[i];
+                if (map[i] && seen[map[i]] == 1) { if (map[i] != last + 1) first_in_order = 0; last = map[i]; }
+            }
+            CHECK(distinct == 194 && mx == 193, "ttl2's map names tiles 0..193 (194 distinct)");
+            CHECK(first_in_order, "each new tile first appears in reading order (the atlas is numbered in it)");
+            CHECK(repeated == 5, "tile 0 and four more (38 22 15 47) are used more than once");
+            CHECK(seen[38] == 4 && seen[22] == 3 && seen[15] == 2 && seen[47] == 2, "the reused tiles are 38 x4, 22 x3, 15 x2, 47 x2");
+            int blank = 1;
+            for (int r = 0; r < 8; r++) blank &= !buf[r * 40] && !buf[1600 + r * 40];
+            CHECK(blank, "tile 0 (column 0 of band 0) is blank in both planes");
+            Gd gt; memset(&gt, 0, sizeof gt);
+            static uint8_t sc[0x1A90 * 3];
+            gt.scratch = sc;
+            gd_tile_map(&gt, map, buf);
+            int ok = 1;
+            for (int mr = 0; mr < 25 && ok; mr++)
+                for (int mc = 0; mc < 34 && ok; mc++) {
+                    unsigned t = map[mr * 34 + mc];
+                    for (int pl = 0; pl < 2; pl++)
+                        for (int r = 0; r < 8; r++)
+                            ok &= sc[pl * 0x1A90 + (mr * 8 + r) * 34 + mc] == buf[pl * 1600 + (t / 40 * 8 + r) * 40 + t % 40];
+                }
+            CHECK(ok, "gd_tile_map lays tile n at (map col, 8 x map row) of planes 0 and 1");
+        } else CHECK(0, "opdemo and ttl2 load for the atlas checks");
+        free(op);
         free(ttl2);
     }
 

@@ -53,8 +53,8 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 13 test binaries
 make test            # physics (149) + combat/AI (228) + town (162) + boss (642) + shop (189)
-                     #   + status (87) + playthrough (176) + audio (390) + cutscene (46)
-                     #   + video (149) + config (46) + sync (144) = 2408 assertions.  Needs no game files:
+                     #   + status (87) + playthrough (176) + audio (390) + cutscene (52)
+                     #   + video (149) + config (46) + sync (144) = 2414 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 235 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -1750,8 +1750,10 @@ the whole screen compared at the driver's own size, best-aligned frame:
 | tandy | 8 shots: mean 72.7 % (36.6 % on the title) | 31 | 98.05 % | 99.91 % |
 
 The shots below 100 % are the scrolling text mid-step (MCGA has the same ones: the
-DOSBox scroll does not land on a port frame) and about a hundred pixels of the title
-screen's corner scrollwork on EGA/Tandy.  Twenty of the captures are in
+DOSBox scroll does not land on a port frame).  (The ~100 px of corner scrollwork on the Tandy
+title were gdtga's ornament row ORing *converted* pixels, not pairs (`37C9`); the title is now
+whole-screen 100 % in `make verify`.  MCGA no longer rests on those captures: `opdemo_intro`
+diffs the real game's whole opening against the port at all 7439 waits, docs/HARNESS.md §6.)  Twenty of the captures are in
 `docs/screenshots/gd_<mode>_<scene>.png` and in `make verify`.  What is *not*
 verified: the ending (a DOSBox run reaches it only after killing Jashiin; the
 video-mode logic it shares with the opening is, its own typewriter text and cursor

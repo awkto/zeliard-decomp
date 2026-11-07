@@ -19,7 +19,8 @@ Formats (see docs/ARCHITECTURE.md "Graphics"):
            colours per record).  Each MCGA byte is a *pair* of PC-88 pixels, so the
            picture is half as wide on screen.  See docs/CUTSCENES.md.
 
-usage: grp2png.py FILE OUT.png [--format F] [--skip N] [--cols N] [--scale N] [--pal N]
+usage: grp2png.py FILE OUT.png [--format F] [--skip N] [--cols N] [--scale N] [--pal N] [--raw]
+       (ttl2.grp renders as the assembled, mirrored title ornament; --raw gives the 40 x 40 tile bank)
        grp2png.py --all OUTDIR          # every resource with a known format
 Format is guessed from the resource name (docs/RESOURCES.md) when --format is omitted.
 """
@@ -158,7 +159,7 @@ GD_ART = {
     "dmaou.grp": ("mask", 3, [(0, 18, 32, "p12", 4, 0x480), (0x1380, 34, 48, "p21", 5, 0xCC0)]),
     # --- opdemo: title ----------------------------------------------------
     "ttl1.grp":  ("rle", 4, [(0, 49, 128, "p3", 1, 0)]),
-    "ttl2.grp":  ("rle", 4, [(0, 40, 40, "p12", 1, 0)]),  # tile bank for [0x301C]
+    "ttl2.grp":  ("rle", 4, [(0, 40, 40, "p12", 1, 0)]),  # tile atlas for [0x301C] (see render_ttl2; --raw = this)
     "ttl3.grp":  ("rle", 4, [(0, 65, 112, "ao", 1, 0)]),
     # --- opdemo: the storm demo ------------------------------------------
     "waku.grp":  ("mask", 5, [(0, 80, 136, "p3", 1, 0)]),
@@ -254,6 +255,67 @@ def render_gd(data, name, scale=2):
     return im.resize((im.width * scale, im.height * scale), Image.NEAREST)
 
 
+# ttl2.grp is not a picture but a *tile atlas* (issue #34): a 40 x 40 byte two-plane bank
+# read as 40 columns x 5 bands.  Tile n (1..193; 0 = blank) is the single byte column
+# n % 40 over the 8 rows of band n // 40 -- an 8 x 8 PC-88 pixel cell.  The corner
+# scrollwork (272 x 200 PC-88 px, a quarter of the title's border, left half only) was cut
+# into 8 x 8 cells, the non-empty ones de-duplicated (194 distinct tiles; 38, 22, 15 and 47
+# are used more than once) and numbered in reading order.  opdemo's 25 x 34 map at 912B
+# says which tile goes where; gd_tile_map (3732) copies the tiles' bytes into a 34 x 200
+# scratch (plane 0, plane 1), gd_draw_ornament_row (37B4) then draws each row at the left
+# of the screen and bit-reversed (mirrored) at the right.  Plane A+B = colour 15, B alone
+# = 14, A alone = 0 (opaque black), neither = transparent (the title's picture shows).
+OP_TTL2_MAP = 0x912B - 0x6000          # offset of the 850-byte map in opdemo's image
+
+
+def ttl2_assemble(bank, opdemo):
+    """The assembled ornament: (plane A, plane B), each 200 rows x 34 bytes."""
+    m = opdemo[OP_TTL2_MAP:OP_TTL2_MAP + 25 * 34]
+    planes = []
+    for pl in range(2):
+        out = bytearray(34 * 200)
+        for mr in range(25):
+            for mc in range(34):
+                n = m[mr * 34 + mc]
+                band, col = n // 40, n % 40
+                for r in range(8):
+                    out[(mr * 8 + r) * 34 + mc] = bank[pl * 1600 + (band * 8 + r) * 40 + col]
+        planes.append(out)
+    return planes
+
+
+def render_ttl2(data, scale=2, pal=4, raw=False):
+    """ttl2.grp as the title screen shows it: the whole 640 px ornament, mirrored, on BG
+    (transparent) -- or, with raw=True, the 40 x 40 bank itself."""
+    bank = gd_unpack_rle(data)
+    if raw:
+        return render_gd(data, "ttl2.grp", scale)
+    opdemo = None
+    for rel in (("dec", "000_code.dec"), ("000_code.bin",)):
+        f = os.path.join(ROOT, "extracted", "ZELRES1", *rel)
+        if os.path.exists(f):
+            opdemo = open(f, "rb").read()
+            break
+    if opdemo is None:
+        raise SystemExit("ttl2.grp needs opdemo (extracted/ZELRES1/000_code.bin) for the tile map")
+    a, b = ttl2_assemble(bank, opdemo)
+    dac = gd_rgb8(pal)
+    im = Image.new("RGB", (320, 200), BG)
+    for y in range(200):
+        row = []                                  # 272 PC-88 px: value, or None = transparent
+        for x in range(34):
+            for bit in range(8):
+                pa, pb = (a[y * 34 + x] >> (7 - bit)) & 1, (b[y * 34 + x] >> (7 - bit)) & 1
+                row.append(None if not (pa | pb) else (pa & pb) + (14 if pb else 0))
+        for src, base in ((row, 0), (row[::-1], 640 - 272)):
+            for k in range(0, 272, 2):
+                l, r = src[k], src[k + 1]
+                if l is None and r is None:
+                    continue
+                im.putpixel(((base + k) // 2, y), dac[(l or 0) * 16 + (r or 0)])
+    return im.resize((im.width * scale, im.height * scale), Image.NEAREST)
+
+
 def resource_names():
     """(archive, index) -> name from docs/RESOURCES.md (only single-name rows)."""
     out = {}
@@ -309,6 +371,8 @@ def sheet(cells, cols, scale):
 
 def render(data, fmt, skip=0, cols=16, scale=3, pal=0, name=None):
     if fmt == "gd":
+        if name == "ttl2.grp" and not RAW_BANK:
+            return render_ttl2(data, max(1, scale - 1), pal if pal else 4)
         return render_gd(data, name, max(1, scale - 1))
     d = data[skip:]
     if fmt == "cells48":
@@ -342,8 +406,15 @@ def render(data, fmt, skip=0, cols=16, scale=3, pal=0, name=None):
     raise SystemExit(f"unknown format {fmt}")
 
 
+RAW_BANK = False
+
+
 def main():
+    global RAW_BANK
     args = sys.argv[1:]
+    if "--raw" in args:                 # ttl2.grp: the 40 x 40 tile bank itself, not the assembled ornament
+        RAW_BANK = True
+        args.remove("--raw")
 
     def opt(name, default):
         return int(args[args.index(name) + 1], 0) if name in args else default
