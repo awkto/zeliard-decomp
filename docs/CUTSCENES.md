@@ -552,6 +552,61 @@ were ported into `port/` (`port/gd.c`, `port/cutscene.c`):
 Still not decoded: nothing in the gd renderer itself; the non-MCGA builds are
 §7.
 
+### 8.1 Settled against the oracle (issue #34)
+
+**`gd_fx_sand` (`38E6`) and `gd_draw_ornament_row` (`37B4`) are exact; there is no approximation left in
+them.**  The port reads every table out of the overlay image (`3C16`, `3A5F`, `3B1F`, `3BE3`: nothing is typed
+in), and the code around them was re-derived from the disassembly line by line:
+
+* *the sand*: `3C16 + 2*variant` gives the flag byte (`[4506]`: bit 0/1/2 = which of the three non-solid planes
+  the dithered pixels set) and the phase byte (`[4505]`); the border script `3B1F` is four zero-terminated
+  tile-id runs, walked down (`+0x500` a tile), right (`+4`), up (`-0x500`) and left (`-4`) with the corner
+  corrections `-0x4FC / -0x504 / +0x4FC / +0x504` (`3911 3922 3934 3945`), starting at screen byte `0x1410`
+  = (16,16); the spiral `3BE3` is rounds of four run lengths (`0` in any slot ends the effect at once, no
+  wait), each round resetting `[FF1A]` and waiting 12 ticks.  One tile (`39C4`, id `n`, record `3A5F + 8*(n-1)`)
+  is four screen rows of four bytes: row *r* ANDs the record's byte *r* with the phase byte (rotated right once
+  on odd rows), puts that on the plane the flag selects, and the record's byte *r+4* is the solid part
+  (planes 4 and 2); `4469` shifts the four plane words a pixel at a time into 4-bit nibbles, so only the
+  **high** byte of each plane word is ever read.  The low byte of `ax` that `3A28` ORs in is garbage (the
+  flag byte, shifted) and never reaches the screen.
+* *the ornament row*: `37B4` copies row *AL* of scratch plane 0 and plane 1 (34 bytes each, `0x22` a row;
+  `AX` is `AL * 0x22` because `mul dl` is a byte multiply), **bit-reverses all 68 bytes in place without
+  reversing their order**, draws the straight copy at screen bytes 0..135 and the reversed copy at 184..319
+  with the word order `+4 +6 +0 +2` and `di -= 8` — which, together with the bit reversal, is a pixel-exact
+  mirror of the 272-px row (the port draws `px[c]` at `c` and its nibble swap at `319 - c`).  The mask word
+  of `44AB` is `0xFF` for a byte when *either* of its two pixels is transparent, so a half-transparent byte
+  ORs onto what is there instead of replacing it.
+* The proof is not the reading but the picture: `opdemo_intro` (7439 boundaries, the sand in act 3 and the
+  ornament's 100 steps in act 1, variant 0) and `jashiin_ending` (3691 boundaries, variants 0, 1 and 2) are
+  pixel-identical against the oracle at **every wait** (HARNESS.md section 6).  The other three builds keep
+  their own copies of the tables: `gdega` and `gdtga` carry the *same* 24 patterns (at `39AC` / `3A44`), `gdcga` and
+  `gdhgc` carry their own, 2-bpp ones (79 of 192 bytes differ, `3945`); the port draws those two with the
+  MCGA patterns and converts (**not** pixel-verified: it is a transient between two pictures, and the
+  oracle only sees MCGA).
+
+**The lip-sync tails** of `himp.grp` / `seip.grp` are exact for every frame the game can show: the ending's
+script (`6AA8`) uses `0x80..0x85` (seip: frames 0..5 of the 7 — frame 6 is never shown), `0xB0..0xB8` (himp: all
+six mouths and three eyes) and the other three speakers, and `jashiin_ending` compares the whole screen at
+every one of its 3691 waits.  Nothing in the tails is estimated: they are bytes of the resource, laid at
+the offsets the overlay's `0x8n` / `0xBn` handlers use.
+
+**`ttl2.grp` is a tile atlas, not a picture.**  The 40 × 40-byte two-plane bank is read as 40 columns × 5
+bands: *tile n* (`n = 0..193`) is the **single byte column `n % 40` over the 8 rows of band `n / 40`** — one
+8 × 8 PC-88-pixel cell.  The corner scrollwork (272 × 200 PC-88 px, the left half of the title's border) was cut into 8 × 8 cells;
+the non-empty cells were de-duplicated (194 distinct, tile 0 = the blank cell; tiles 38, 22, 15 and 47 are used
+4, 3, 2 and 2 times) and numbered in **reading order**, which is why the first occurrence of every id in
+opdemo's 25 × 34 map (`912B`, 850 bytes, row-major, rows of the 34-byte-wide picture) is the previous id + 1.
+`gd_tile_map` (`3732`) then copies the 8 rows of each tile into the scratch (destination stride 34, source
+stride 40, planes `0x1A90` and `0x640` apart) — "scattered" only because a tile's 8 rows are 40 bytes apart in
+the bank; `gd_draw_ornament_row` draws and mirrors the result (above).  Colour: both planes = 15, plane 1 =
+14, plane 0 alone = 0 (opaque black), none = transparent.  `tools/grp2png.py` now renders this: `ttl2.grp`
+is the assembled, mirrored 640-px ornament (`--raw` keeps the bank), and `make test` pins the atlas facts
+(194 tiles, reading order, the four reused ids, the blank tile, `gd_tile_map` against the formula).
+
+**What the intro's oracle trace corrected** (HARNESS.md section 6, "The opening"): the demon-eye frame planes,
+the stencil over `hime.grp`, the narrator's initial ink, yuu3/yuu4's plane arithmetic, and the epilogue that
+never ran.
+
 ---
 
 ## 7. The four non-MCGA builds (`gdega` `gdcga` `gdhgc` `gdtga`, issue #34)

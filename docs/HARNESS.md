@@ -338,6 +338,31 @@ credits' final wait; after it enddemo spins in its hotkey poller (`66C8`) foreve
 must have exactly as many tokens as boundaries to end there ("script done"), else the oracle stalls
 (exit 6, `# ends: stall`).
 
+### The opening: `intro:wait` (#34)
+
+The ending's mechanism, applied to opdemo.bin: `ORACLE_INTRO=1` (the oracle) / `--intro --trace DIR` (the
+port).  The oracle does **not** tap Return to skip the demo (boot step 2 above); BASE is known as always, and
+tracing starts when the CPU reaches opdemo's entry `6002` (recognised by its code bytes `FA BC 00 20 FB 2E C6
+06 1D FF 00 ...`, not by address alone).  From there every wait completion of the ending's list is a boundary,
+site `intro:wait` (opdemo's own `63AB`/`6456`/`6A07` loops end in `cmp [cs:FF1A],al ; jc`, gdmcga's passes are
+the same seven); the demo's other loops (the title's spin on `[FF26]`, the narrator's keyboard polls) are not.
+The run ends when town.bin's frame loop is reached (`68ED`: "intro done: the town loaded"), so a script needs
+**at least** as many tokens as boundaries, and both sides stop at the hand-back (the port: the cutscene
+returns, `--intro --trace` implies "intro only").  No input is ever pressed (a Space/Return would abort an act).
+The count is 7439 boundaries, ~870 s of emulated time, ~2 min of real time on the droplet; the picture at every
+boundary is the evidence.  `run_scenarios.sh` takes `# intro: 1` (no save, no `--load`; `ORACLE_INTRO=1` and
+`--intro`) and `# png-every: K` (a long scenario's own PNG interval, as `jashiin_ending` would want one too).
+
+What it found (all fixed in `port/cutscene.c`):
+the storm demo's demon-eye frames (`6EB0`) store the derived plane as plane **1** and `p1 ^ p2` as plane 2
+(they were swapped: magenta eyes where the game has red/cyan); the stencil that lays them over `hime.grp`
+(`6ED8`) is built from the *destination* (`~p0 & ~p1 & p2`) at byte offset `0x6D3` of the picture, not from the
+face at its origin; the narrator's ink and shadow bytes (`6D5B`/`6D5C`) start at 0, so the script's first stray
+`P` is drawn black; `yuu3`'s third plane (`6FAC`) is `p0 | p1`, `p0 & p1`, `p1` (not the eye formula) and `yuu4`'s
+stencil (`6F41`) cuts colour 3 without plane 2 out of planes 0 and 1; and the last `NARR()` mistook the
+script's `0xFF` for an abort, so **the whole epilogue (273 waits: the doorway, "At last, the door of destiny was
+opened...") never ran** in the port.  With those, all 7439 boundaries are pixel-identical (`opdemo_intro`).
+
 ### What the port must emit at wait-loop boundaries
 
 **Implemented (#64).** `port/town.h` `WaitClock` (`wait_arm` / `wait_tick` /
@@ -449,8 +474,9 @@ sides restore), `# make: ARGS` (the `port/zeliard` arguments that create that sa
 ending in `--save NAME`), `# what:` (free text), optional `# allow: PATTERN [MODE]`
 lines (tracediff allow rules for that scenario only, on top of `tools/harness/allow.tsv`:
 for a known, filed divergence the scenario has to step over), optional
-`# allow-px: x0,y0,x1,y1 [frames A-B] -- reason` lines (pixel allow rules, below), then the
-script on one line.
+`# allow-px: x0,y0,x1,y1 [frames A-B] -- reason` lines (pixel allow rules, below), `# intro: 1`
+(the opening demo from boot instead of a save, section 6) and `# png-every: K` (this scenario's own PNG
+interval), then the script on one line.
 `tools/harness/run_scenarios.sh [-j N] [--out DIR] [--png-every K] [--png] [NAME ...]` runs
 oracle + port + `tracediff --first-only` for each, makes any missing start save from its
 `# make:` line, prints a table and exits non-zero on any divergence or failure.
@@ -664,6 +690,7 @@ put its script in a scenario file (`tests/scenarios/NAME.zs`, §7) and run it as
 | `jashiin_damage` | Pureza 4, LV 99, LIFE 4000, sword 6, shield 4, one Key (`JASHD`), `# cave: 0,29,6,0,0x1B` | `jashiin_fight`'s route, then the autopilot's `boss` step against MAO2 (`fight_lookahead`, #111): sword blows take HP /2 (`A362`), phase 2 below 200 (`AC32`), the 80-HP regeneration every 32 frames (`AB88`) back to 800 and phase 1 (frame 2101); 2151 frames. Port fixes it found: the hit flash (`A763`) goes on the body parts only, never the shots; the crouch patch (`A6F1`) writes row 8 of columns 0/1 (right) or 4/5 (left); contact reads a stale boss marker's old record (`7643`, no `nobj` guard). No kill: the autopilot's blows never outpace the regeneration |
 | `jashiin_kill` | same save as `jashiin_damage` (`JASHD`), `# cave: 0,29,6,0,0x1B` | The kill and the ending's hand-off (#111): `jashiin_fight`'s route, the autopilot's `boss` step with `kill_lookahead` (MAO2 within two blows of dead: two-leg stick plans over 40 frames, scored on the kill), Jashiin dead at f~660 (death `ABC4`, reward `71CC`, 72F1's exit door), the door (`U` at the hero's column; its target is MPA0 itself, system map 0x1E), the patch list of MPA0 firing on the second load (`6BFC`: flag [47] -> the door records and **[49] = 0xFF**, the ending flag), the Tear scene, `6266` `[49]` -> `98FC` death (63 frames, `hero_die` with `99B4`: town 0x80), Felishika's Castle entered *alive* (`6055` clears `[E8]`: no Sage, ordinary `61B1` entry), the advisor's auto-talk ("Brave knight, you have awakened ..."), X, 62 columns right to Princess Felicia's door (95), `U`: omoypro's `A03D` `[49] != 0` -> enddemo.bin.  Since #113 the ending has boundary sites (`end:wait`, section 6): the script's last 40 idle frames run into enddemo's first waits; clean on fields and pixels.  Found and fixed: the pose-parity of MAO2's phase-2 walk (`A536`/`A55D`: closing in, an odd pose steps two cells), `6BFC` writes a patch's word wherever it points (below 0x100 the player page: MPA0's `[49]`), the death return with `[49]` set is an ordinary entry (`6055`), `6266`, GT_FLUSH runs in dialogue frames (`68AC`) and skips the cells under the dialogue box |
 | `jashiin_ending` | same save and route as `jashiin_kill`, `# cave: 0,29,6,0,0x1B`, ends with 3650 idle tokens (one per boundary) | The whole ending (#113): `jashiin_kill`'s route, omoypro's `A03D` -> enddemo.bin, act 1 (the nine tableaux, the narration with its five lip-sync speakers, the wipe, the sand dissolves) and the credits roll to the end: 3691 `end:wait` boundaries (frames 872..4562), 4563 frames, clean on pixels at every boundary (`tracediff` compares only the site and the count there).  Found and fixed: the wipe's prologue `3FEF` bakes the two picture windows' frames into the picture (`gd_wipe`), and the fast/normal draw of an odd-sized picture leaves its last 4 staged pixels at what the previous picture left (`33D6`, `shr cx,1`: the 0xA0 mouth, 5 x 11) |
+| `opdemo_intro` | none (`# intro: 1`: the game boots, no save) | The opening demo from boot (#34): prologue, demon, title with ttl2's ornament and the sand dissolves, credits, the storm demo with its typed story, the throne-room dialogue and the doorway epilogue, to the hand-back that loads the town.  7439 `intro:wait` boundaries (section 6, "The opening"), no input, `# png-every: 5`; clean on pixels (and at every one of the 7439 when run with `--png-every 1`).  Found and fixed: see section 6 |
 | `cave_forced_death` | Satono 4 `--flag 49=FF` (`FLAG49`) | Entering a cavern from a town with `[49]` set (#113): cave_door's route (R13, U2), fight.bin `7D2D..7D61` -> `6042` -> `6266 test [49],FF / jnz 98FC`: the hero dies on the restart's first pass, **before the walk-in** (`[hero_entering]` stays 0), the dying frames, `99B4`, Felishika's Castle; 361 frames clean |
 | `jashiin_regen800` | same save as `jashiin_damage` (`JASHD`), `# cave: 0,29,6,0,0x1B` | Regeneration landing exactly on 800 (#114): the first 600 frames of `jashiin_damage`, then idle (1001 frames).  `AB88` leaves phase 2 only when HP+80 *overshoots* 800 (`AB95`..`AB9D`: `cmp 0x320,hp+0x50 / jnc`); landing exactly on 800 just stores it and stays in phase 2 (`AC32`, `AC22` untouched: part type 0x01), after which `AB88` returns at once.  The port used `>=` and resumed phase 1 with the 0x60 bits (type 0x61) at frame 853 |
 | `jashiin_death` | Pureza 4, LV 99, LIFE 700, sword 6, **no shield**, one Key (`JASHE`), `# cave: 0,29,6,0,0x1B` | The hero dies to Jashiin at LV99 (#114): the autopilot prefix of `jashiin_damage` (450 frames), idle, death at f458, the Sage's text; 541 frames.  `99BB`..`99C6`: the death EXP bonus is `al = 0x7F - 2*level` in 8 bits (`add al,al / neg al / add al,7F`, `ah = 0`), so from LV64 it wraps: LV99 gets 0xB9 = 185; the port clamped to 0 |

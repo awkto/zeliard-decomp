@@ -663,6 +663,26 @@ void gd_ornament_row(Gd *g, int row)
         }
         return;
     }
+    if (g->tandy_ornament) {
+        /* gdtga 37C9: the same AND/OR as 37B4, but on *converted* pixels: 4B3A builds a nibble mask per
+         * Tandy pixel (0xF when either of its two PC-88 pixels is transparent) and 4AE4 converts each
+         * pair through the palette table before the OR.  So a half-covered pixel is conv(old) | conv(new),
+         * not the conversion of the ORed pair. */
+        const uint8_t *t = g->vg->tbl[g->pal_rec];
+        for (int c = 0; c < 136; c++) {
+            uint8_t mirror = (uint8_t)((px[c] << 4) | (px[c] >> 4));
+            uint8_t *dst[2] = { &d[c], &d[GD_W - 1 - c] };
+            uint8_t src[2] = { px[c], mirror };
+            for (int s = 0; s < 2; s++) {
+                if (!vis[c]) { *dst[s] = src[s]; continue; }              /* both opaque: the mask clears */
+                uint8_t nc = t[src[s]], oc = t[*dst[s]];
+                if (!nc || (oc | nc) == oc) continue;
+                for (int p = 0; p < 256; p++)
+                    if (t[p] == (oc | nc)) { *dst[s] = (uint8_t)p; break; }
+            }
+        }
+        return;
+    }
     for (int c = 0; c < 136; c++) {
         uint8_t mirror = (uint8_t)((px[c] << 4) | (px[c] >> 4));
         d[c] = (uint8_t)((d[c] & vis[c]) | px[c]);

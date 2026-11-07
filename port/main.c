@@ -1241,7 +1241,7 @@ static void cutscene_boundary(Cutscene *c)
         size_t n = in[0] == '.' ? 0 : strlen(in);
         in[n] = '\''; in[n + 1] = a->trace_char == 0x08 ? '<' : (char)a->trace_char; in[n + 2] = 0;
     }
-    trace_write_site(a->trace_f, a->trace_n, "end:wait", 0, in);
+    trace_write_site(a->trace_f, a->trace_n, a->ending ? "end:wait" : "intro:wait", 0, in);
     if (a->png_every && a->trace_n % a->png_every == 0) {
         static uint8_t rgb[VIDEO_MAX_W * VIDEO_MAX_H * 3];
         int vw, vh;
@@ -1268,7 +1268,7 @@ static int run_cutscenes(App *a, const char *dir)
         fprintf(stderr, "cannot read the %s gd tables: the cutscenes stay MCGA\n", video_mode_name(a->video));
     a->cs.user = a; a->cs.present = cutscene_present;
     a->cs.max_frames = a->cs_frames;
-    if (a->trace_f && a->ending) a->cs.boundary = cutscene_boundary;
+    if (a->trace_f && (a->ending || !a->intro_act)) a->cs.boundary = cutscene_boundary;   /* the ending (#113), the opening (#34) */
     if (a->ending) cutscene_ending(&a->cs);
     else if (a->intro_act) {
         size_t len = 0;
@@ -1998,7 +1998,9 @@ int main(int argc, char **argv)
      * opdemo, which reloads GAME.BIN when it is done (opdemo 6A41). */
     if (a.intro && !save_now) {
         run_cutscenes(&a, sh->dir);
+        if (a.trace_f && !a.intro_only) a.intro_only = 1;       /* --intro --trace: the opening is the whole trace (#34) */
         if (a.intro_only) { audio_shutdown(); shell_free(sh);
+            if (a.trace_f) { fclose(a.trace_f); fprintf(stderr, "[trace] %u frames -> %s/frames.jsonl\n", a.trace_n, a.trace_dir); }
             /* --intro-act is a tool run: it never writes the player's config */
 #ifdef HAVE_SDL
             present_shutdown();

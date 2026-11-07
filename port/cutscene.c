@@ -163,6 +163,7 @@ int cutscene_set_video(Cutscene *c, int mode)
     if (video_gd_load(&c->vgd, mode, c->dir)) return -1;
     if (mode == VID_EGA && gd_set_wide_font(&c->gd, c->dir)) return -1;
     c->gd.ega_ornament = mode == VID_EGA;
+    c->gd.tandy_ornament = mode == VID_TANDY;
     c->gd.vg = &c->vgd;
     c->gd.ao2bpp = mode == VID_CGA || mode == VID_CGA2 || mode == VID_HGC;
     c->vmode = mode;
@@ -388,8 +389,9 @@ static void cutscene_build_demon_face(Cutscene *c)
 }
 
 /* 6E8F / 6EB0 — eye frame `f` (two planes at arena:AB40 + f*0xCC0) becomes a
- * three-plane 34 x 48 picture at scratch:0; plane 2 is derived as ~p0 & p1 and
- * p1 is then XORed with it. */
+ * three-plane 34 x 48 picture at scratch:0: d = ~p0 & p1 is stored as plane *1* and
+ * p1 ^ d as plane *2* (the stores at 6EC7/6ECC; the two used to be swapped here, which
+ * turned the eyes' reds magenta — found by the intro oracle trace, #34). */
 static void cutscene_demon_eyes_to_scratch(Cutscene *c, int f)
 {
     const size_t W = 34, H = 48, P = W * H;
@@ -398,43 +400,52 @@ static void cutscene_demon_eyes_to_scratch(Cutscene *c, int f)
     for (size_t i = 0; i < P; i++) {
         uint8_t p0 = s[i], p1 = s[P + i];
         uint8_t p2 = (uint8_t)(~p0 & p1);
-        d[i] = p0;
-        d[P + i] = (uint8_t)(p1 ^ p2);
-        d[2 * P + i] = p2;
+        d[i] = p0;                               /* 6EC4 */
+        d[P + i] = p2;                           /* 6EC7: [di+0x660] = bh, the derived plane */
+        d[2 * P + i] = (uint8_t)(p1 ^ p2);       /* 6ECC: [di+0xCC0] = ah ^ bh */
     }
 }
 
-/* 6ED8 — stencil the scratch picture (34 x 48, three planes) into the arena
- * picture at arena:4000 through a mask built from its own three planes. */
+/* 6ED8 — lay the scratch picture (34 x 48, three planes) over the arena picture at
+ * arena:4000 (hime.grp, 72 x 104) at byte offset 0x6D3 = (19, 24).  The stencil comes
+ * from the *destination*: a destination byte keeps its bits wherever plane 2 is clear or
+ * plane 0 or 1 is set, and takes the scratch's three planes where only plane 2 is set
+ * (ax = ~p0 & ~p1 & p2, 6EF6..6EFC) — the dark part of the picture the face is laid into.
+ * (Found by the intro's oracle trace, #34: this was a stencil built from the source,
+ * at the picture's origin.) */
 static void cutscene_mask_demon_over_picture(Cutscene *c)
 {
     const size_t SW = 34, SH = 48, SP = SW * SH;
     const size_t DW = 72, DH = 104, DP = DW * DH;
-    const size_t ORIGIN = 0;                     /* the face sits at the top left */
+    const size_t ORIGIN = 0x6D3;
     uint8_t *dst = c->arena + 0x4000;
     const uint8_t *src = c->scratch;
     for (size_t r = 0; r < SH; r++)
         for (size_t x = 0; x < SW; x++) {
             size_t si = r * SW + x, di = ORIGIN + r * DW + x;
             if (di + 2 * DP >= 0x10000 - 0x4000) continue;
-            uint8_t m = (uint8_t)(src[si] | src[SP + si] | src[2 * SP + si]);
-            dst[di] = (uint8_t)((dst[di] & ~m) | src[si]);
-            dst[DP + di] = (uint8_t)((dst[DP + di] & ~m) | src[SP + si]);
-            dst[2 * DP + di] = (uint8_t)((dst[2 * DP + di] & ~m) | src[2 * SP + si]);
+            uint8_t m = (uint8_t)(~dst[di] & ~dst[DP + di] & dst[2 * DP + di]);
+            dst[di] = (uint8_t)((dst[di] & ~m) | (src[si] & m));
+            dst[DP + di] = (uint8_t)((dst[DP + di] & ~m) | (src[SP + si] & m));
+            dst[2 * DP + di] = (uint8_t)((dst[2 * DP + di] & ~m) | (src[2 * SP + si] & m));
         }
 }
 
-/* 6FAC — yuu3.grp only *has* two planes (0x3000 bytes each); derive the third
- * the same way 6EB0 does. */
+/* 6FAC — yuu3.grp only *has* two planes (0x3000 bytes each); the third is derived
+ * byte by byte exactly as the loop at 6FB2 does (not as 6EB0's eye frames):
+ *   al = p1 & ~p0;  p0 |= al;  p2 = al;  p1 &= ~al;  p2 |= p1 & p0.
+ * (This used to copy the eye frames' formula; the intro's oracle trace showed the
+ * dark doorway's floor in magenta instead of white, #34.) */
 static void cutscene_synth_third_plane(Cutscene *c)
 {
     const size_t P = 0x3000;
     uint8_t *d = c->arena + 0x4000;
     for (size_t i = 0; i < P; i++) {
-        uint8_t p0 = d[i], p1 = d[P + i];
-        uint8_t p2 = (uint8_t)(~p0 & p1);
-        d[P + i] = (uint8_t)(p1 ^ p2);
-        d[2 * P + i] = p2;
+        uint8_t p0 = d[i], p1 = d[P + i], p2;
+        uint8_t al = (uint8_t)(p1 & ~p0);
+        p0 |= al; p2 = al; p1 &= (uint8_t)~al;
+        p2 |= (uint8_t)(p1 & p0);
+        d[i] = p0; d[P + i] = p1; d[2 * P + i] = p2;
     }
 }
 
@@ -449,10 +460,13 @@ static void cutscene_mask_yuu4_into_yuu3(Cutscene *c)
         for (size_t x = 0; x < SW; x++) {
             size_t si = r * SW + x, di = 0x819 + r * DW + x;
             if (di + 2 * DP >= 0x10000 - 0x4000) continue;
-            uint8_t m = (uint8_t)(src[si] | src[SP + si] | src[2 * SP + si]);
-            dst[di] = (uint8_t)((dst[di] & ~m) | src[si]);
-            dst[DP + di] = (uint8_t)((dst[DP + di] & ~m) | src[SP + si]);
-            dst[2 * DP + di] = (uint8_t)((dst[2 * DP + di] & ~m) | src[2 * SP + si]);
+            uint8_t s0 = src[si], s1 = src[SP + si], s2 = src[2 * SP + si];
+            uint8_t m = (uint8_t)(s0 | s1 | s2);                    /* 6F61..6F69: the stencil, before... */
+            uint8_t k = (uint8_t)~(s0 & s1 & ~s2);                  /* 6F4E..6F5F: ...colour 3 without plane 2 */
+            s0 &= k; s1 &= k;                                       /* 6F6E / 6F71 is cut out of planes 0 and 1 */
+            dst[di] = (uint8_t)((dst[di] & ~m) | s0);
+            dst[DP + di] = (uint8_t)((dst[DP + di] & ~m) | s1);
+            dst[2 * DP + di] = (uint8_t)((dst[2 * DP + di] & ~m) | s2);
         }
 }
 
@@ -566,7 +580,10 @@ int cutscene_act2(Cutscene *c)
  * the story typed underneath; the whole act is "set up the next picture,
  * then let the script talk".                                             */
 /* ===================================================================== */
-#define NARR() do { if (cutscene_narrate(c)) goto teardown; } while (0)
+/* cutscene_narrate returns 1 at the script's own 0xFF as well as on an abort; the 6A75 callers ignore
+ * the return (6B25 is a plain `ret`), so only an abort/quit leaves the act - the last beat (694F) is
+ * followed by the yuu3 picture and the epilogue, 273 more waits (the intro's oracle trace, #34) */
+#define NARR() do { if (cutscene_narrate(c) && (c->abort || c->quit)) goto teardown; } while (0)
 
 int cutscene_act3(Cutscene *c)
 {
@@ -575,8 +592,8 @@ int cutscene_act3(Cutscene *c)
     c->narr_p = OP_NARRATION;                                        /* 6551 */
     c->bearing_addr = OP_GLYPH_BEARING; c->advance_addr = OP_GLYPH_WIDTH;
     c->speakers = OP_SPEAKERS; c->nspeakers = 2;
-    c->narr_x = 0; c->narr_line = 0; c->narr_ink = 7; c->narr_shadow = 0;
-    c->narr_click = 0; c->beat = 0;
+    c->narr_x = 0; c->narr_line = 0; c->narr_ink = 0; c->narr_shadow = 0;   /* [6D5B]/[6D5C] start at 0: the script's first,
+    c->narr_click = 0; c->beat = 0;                                      stray 'P' is drawn black (the oracle trace, #34) */
     gd_set_palette(g, 5);
 
     cutscene_load_scratch(c, 0, R_WAKU, UNP_MASK, 0x0000);           /* 656A */
