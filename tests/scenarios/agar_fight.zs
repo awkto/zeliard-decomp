@@ -1,5 +1,4 @@
 # start: AGAR.usr
-# allow-px: 130,118,148,126 frames 179 -- fade-in: the blade cells (#119 open, 12 pixels)
 # allow-px: 36,2,187,109 frames 701 -- the Tear scene's raised sword, sparks and new slot icon differ (#121)
 # make: --town 5 --town-col 4 --level 20 --life 800 --sword 5 --shield 4 --save AGAR
 # pilot: town-edge 0; door 25,14; boss; door -1
