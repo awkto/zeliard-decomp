@@ -222,6 +222,7 @@ static void wait_frame(Tear *t)
     Game *g = t->g;
     t->frames++;
     if (g->present) g->present(g);
+    if (g->side) g->side(g, SIDE_WAIT, 0xA497, 0);                      /* the loop's exit: no boundary in the scene (#119) */
 }
 
 /* A4A3 / A50A — the byte-precision Bresenham walk of the crystal */
@@ -267,13 +268,22 @@ int tear_cutscene(struct Shell *s)
     if (!art.loaded && tear_art_load(&art, s->dir)) return -1;
     memset(&T, 0, sizeof T);
     T.g = g; T.art = &art;
-
     /* the screen fight.bin leaves behind: the destination map with the hero
      * still invisible ([FF37]) */
     uint8_t saved_hidden = g->hero_hidden;
+    if (g->old_screen) memcpy(T.fb, g->old_screen, sizeof T.fb);        /* the oracle's pictures (w A497): the scene plays over the screen the door was taken from */
+    else {
+        g->hero_hidden = 0xFF;
+        render_frame(T.fb, g, &s->hero);
+        render_hud(T.fb, g, &s->font, &s->tfont, map_place_record(g->map));
+    }
     g->hero_hidden = 0xFF;
-    render_frame(T.fb, g, &s->hero);
-    render_hud(T.fb, g, &s->font, &s->tfont, map_place_record(g->map));
+    /* fight.bin 7C0B..7C11 paints the cave-mouth backdrop (gfmcga [301E], the walk-in's, remapped by the door letter)
+     * over the playfield before it calls ROKADEMO; the HUD stays the old map's (oracle w A497 pictures, #119) */
+    if (g->old_screen && g->mouth && g->mouth->loaded)
+        for (int y = 0; y < MOUTH_H; y++)
+            for (int x = 0; x < MOUTH_W; x++)
+                T.fb[(PF_Y + y) * FB_W + PF_X + x] = gfx_mouth_remap(g->walk_variant, g->mouth->px[y * MOUTH_W + x]);
     /* A3A5 painted the row once at boot and nothing redraws it, so the scene
      * starts with the Tears the player already had; the new one is painted by
      * the scene itself at A2FD when the crystal lands. */

@@ -453,6 +453,33 @@ static void draw_message_box(uint8_t *fb, const Game *g)
     }
 }
 
+/* gfmcga 4192 (the fade-in redraw, [4FFF] counting 8 -> 1; boss maps, 625B / 7395): pass `c` redraws, in every
+ * background cell that is not a sprite or the hero's, the pixels of a 4 x 8 pattern: the left half's rows
+ * 3-(c&3) and +4, the right half's rows (c&3) and +4, the odd columns for c <= 4 and the even ones above
+ * (41F8..42C9, [4FFD]).  An empty cell (42A5) blacks the same pixels out, so the picture under it (the
+ * encounter card) goes away pass by pass.  Eight passes make every pixel exactly once. */
+void render_fadein_pass(uint8_t *fb, const Game *g, int c)
+{
+    int r1 = 3 - (c & 3), r2 = c & 3, par = (c - 1) < 4 ? 1 : 0;
+    for (int sr = 0; sr < 18; sr++)                     /* 41B3: 0x12 cell rows */
+        for (int sc = 0; sc < SCREEN_COLS; sc++) {
+            if (sc >= g->hero_scr_col && sc < g->hero_scr_col + 3 && sr >= g->hero_scr_row && sr < g->hero_scr_row + 3) continue;
+            uint8_t v = g->ring[game_ring_add(game_win(g), sr * RING_W + sc + 4)];   /* the ring as 4192 reads it (the frame's bg_ring is the last frame's) */
+            if (v & 0x80) continue;
+            const Cell8 *cell = (v && g->tiles->present[v]) ? &g->tiles->cell[v] : NULL;
+            for (int half = 0; half < 2; half++) {
+                int rr = half ? r2 : r1;
+                for (int k = 0; k < 2; k++) {
+                    int y = rr + 4 * k;
+                    for (int x = half * 4; x < half * 4 + 4; x++) {
+                        if ((x & 1) != par) continue;
+                        fb[(PF_Y + sr * 8 + y) * FB_W + PF_X + sc * 8 + x] = cell ? cell->px[y][x] : 0;
+                    }
+                }
+            }
+        }
+}
+
 void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
 {
     /* mole.bin's furniture is painted once at boot and never redrawn (gfx.h);
@@ -494,7 +521,7 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
         draw_hero_at(fb, g, h, g->walk_in_x + step, 110, 0);
         return;
     }
-    if (g->encounter_frames) {                          /* 60E6: the encounter card */
+    if (g->encounter_frames || g->fade_card) {          /* 60E6: the encounter card (fade_card: the card as the fade-in starts over it) */
         /* 60BC draws the card, then six {wait, clear, wait, draw} pairs, so
          * the twelve half-flashes start with the card up. */
         if (!(g->encounter_frames & 1)) {
@@ -503,6 +530,7 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
                     memcpy(fb + (40 + y) * FB_W + 48, g->encnt->px + y * ENCNT_W, ENCNT_W);
             else render_window(fb, 48, 40, 224, 40, 1);
         }
+        if (h) draw_hero(fb, g, h);                     /* the hero stands under the card (oracle side pictures w60EF / w6108, #119) */
         return;
     }
     for (int sr = 0; sr < SCREEN_ROWS; sr++) {
@@ -643,7 +671,7 @@ void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
 {
     /* the walk-in (7C6E) runs before the loop restart whose 6185 / 6C55 draws the new map's PLACE
      * (or a boss room's ENEMY gauge): the HUD still shows the map just left (#117) */
-    if (g->walk_in) place = g->walk_place;
+    if (g->walk_in || g->tear) place = g->walk_place;     /* the Tear scene too: the HUD is the map the door was taken in (#119) */
     for (int y = HUD_Y; y < FB_H; y++) memset(fb + y * FB_W, 0, FB_W);
     render_screen_frame(fb, g->screen, HUD_Y, FB_H);
     vid_gauge_bar(fb, 0x02, 0x04, 0x21);            /* LIFE */
@@ -677,7 +705,7 @@ void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
     /* docs/VIDEO_DRIVERS.md [2012]/[200A]/[200C]: in a boss room the ENEMY
      * line carries the boss HP — the same red/white pair at (84,175) on the
      * black 6C55 left, [A002]+3 full scale. */
-    if (boss && g->boss.hp0) {
+    if (boss && g->boss.hp0 && !g->encounter_frames) {          /* the gauge comes after the card (6150) */
         unsigned bmax = g->boss.hp0 / 8, bcur = g->boss.hp / 8;
         if (bmax > 100) bmax = 100;
         if (bcur > bmax) bcur = bmax;
@@ -696,10 +724,10 @@ void render_hud(uint8_t *fb, const Game *g, const DigitFont *font,
         if (!boss) hud_label(fb, tf, HUD_GOLD);
         hud_label(fb, tf, boss ? HUD_ENEMY : HUD_PLACE);
         /* [2010] vid_label_text: white on a blue shadow */
-        if (boss && g->boss.name[0])
+        if (boss && g->boss.name[0] && !g->encounter_frames)
             vid_label_narrow(fb, tf, g->boss.name, (int)strlen(g->boss.name),
                              g->boss.name_x4, g->boss.name_y, g->boss.name_xoff, 1, 5);
-        else if (place)
+        else if (place && !(boss && g->encounter_frames))   /* the name box is still blank under the card (side w60EF, #119) */
             vid_label_narrow(fb, tf, (const char *)place + 4, place[3],
                              place[0], place[1], place[2], 1, 5);
     }

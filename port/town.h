@@ -136,6 +136,7 @@ struct Town {
     char     message[512];          /* the dialogue text the box would show */
     int      action, action_arg;    /* TOWN_* */
     TownPresentFn present;
+    void (*side)(struct Town *t, int kind, unsigned arg, unsigned ticks);   /* #119: as Game.side (physics.h) */
     TownFrameEndFn frame_end;       /* --trace: the 68ED boundary hook */
     void    *user;
     /* the shop overlay currently swapped into A000 (town.bin 6E7E) — while it

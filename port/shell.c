@@ -97,7 +97,7 @@ int shell_enter_town(Game *g, int idx, int col, int died)
      * left the boss flags and name plate set (issue #102) */
     g->boss_map = g->boss_room = 0; g->boss.active = 0;
     hud_town_panels(g);                                                 /* 610F/6127 */
-    s->town.user = s; s->town.present = s->town_present; s->town.frame_end = s->town_frame_end;
+    s->town.user = s; s->town.present = s->town_present; s->town.side = s->town_side; s->town.frame_end = s->town_frame_end;
     s->town.font = &s->tfont; s->town.dir = s->dir; s->town.pics = &s->pics;
     s->town.back = &s->tback;
     /* facing: a door's way in runs fight.bin 7C6E (the cavern walk-in code,
@@ -257,6 +257,7 @@ int shell_enter_cavern(Shell *s, int sys_map, int col, int row, int face_left,
 static int on_door(Game *g, const Door *d)
 {
     Shell *s = g->user;
+    if ((d->dflags & 0x80) && g->side) g->side(g, SIDE_SNAP, 0, 0);     /* the Tear scene plays over the screen as it is now (#119) */
     if (d->dest_row == 0xFF)                                    /* 7B76: dest_map | 0x80 = a town */
     {
         if (!(d->dflags & 0x80)) {                              /* 7C11: not the Tear's exit door */
@@ -346,7 +347,7 @@ int shell_init(Shell *s, const char *dir_hint, int map_idx)
 
     Game *g = &s->g;
     game_init(g, &s->maps[0], &s->tiles[0]);
-    g->user = s; g->present = s->present; g->frame_end = s->frame_end; g->on_door = on_door; g->on_town = shell_enter_town;
+    g->user = s; g->present = s->present; g->side = s->side; g->frame_end = s->frame_end; g->on_door = on_door; g->on_town = shell_enter_town;
     g->font = &s->tfont; g->pics = &s->pics;                            /* select.bin needs both */
     g->screen = &s->frame; g->encnt = &s->encnt; g->mouth = &s->mouth;
     g->post_boss = post_boss_banks;
@@ -440,7 +441,7 @@ static void town_frame(Shell *s)
         t->back_steps = carried_steps;
         t->hero_anim = carried_anim;
         s->town_entry = 1;                                              /* 60B7 .. 61B1 */
-        t->user = s; t->present = s->town_present; t->frame_end = s->town_frame_end;
+        t->user = s; t->present = s->town_present; t->side = s->town_side; t->frame_end = s->town_frame_end;
         t->font = &s->tfont; t->dir = s->dir; t->pics = &s->pics;
         t->back = &s->tback;                                            /* still painted: #38 */
         /* 6CE4 / 6D22: reappear at the far end of the new map */

@@ -104,6 +104,8 @@ typedef struct {
     unsigned trace_n;                   /* the next trace frame number */
     unsigned walk_n;                    /* walk-in pictures written so far (#117) */
     unsigned dsv_n;                     /* dissolve pictures written so far (#118) */
+    unsigned side_n;                    /* side pictures written so far (#119) */
+    uint8_t  side_snap[FB_W * FB_H];    /* the screen SIDE_SNAP kept */
     unsigned png_every;                 /* --png-every K */
     unsigned rng_mark;                  /* g->rng_calls at the previous boundary */
     int      trace_done;                /* script exhausted: the run is stopping */
@@ -1287,6 +1289,67 @@ static int run_cutscenes(App *a, const char *dir)
     return 0;
 }
 
+/* ---------------------------------------------------- side pictures (#119) */
+/* A loop of the original that waits (timer or CPU delay) and draws without a trace boundary.  With --trace
+ * --png-every the screen goes to side_<next boundary>_<k>_<tag>.png, named as the oracle names it
+ * (zel_oracle.cpp side_check); in real time it is shown for `ms`.  a->fb holds the screen. */
+static void side_show(App *a, const char *tag, unsigned ms)
+{
+    if (a->trace_f) {
+        if (a->png_every && !a->trace_done) {      /* the oracle stops at its last boundary; so does the picture list */
+            char path[1100];
+            snprintf(path, sizeof path, "%s/side_%05u_%03u_%s.png", a->trace_dir, a->trace_n, a->side_n++, tag);
+            fb_write_png(a, path);
+        }
+        return;
+    }
+#ifdef HAVE_SDL
+    if (a->headless || !ms) return;
+    int vw, vh;
+    const uint8_t *rgb = video_out(a, &vw, &vh);
+    SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+    present_frame(a, vw, vh);
+    Uint32 until = SDL_GetTicks() + ms;
+    while (!a->quit && SDL_GetTicks() < until) {
+        pump_events(a, NULL);
+#ifdef __EMSCRIPTEN__
+        emscripten_sleep(1);
+#else
+        SDL_Delay(2);
+#endif
+    }
+#else
+    (void)tag; (void)ms;
+#endif
+}
+
+static void side_fight(Game *g, int kind, unsigned arg, unsigned ticks)
+{
+    App *a = app_of(g->user);
+    if (kind == SIDE_SNAP) { fb_fight(a, g); memcpy(a->side_snap, a->fb, sizeof a->fb); g->old_screen = a->side_snap; return; }
+    if (!a->trace_f && a->headless) return;
+    if (kind == SIDE_FADEIN) {                  /* 4192: 8 passes, 0x10 ticks each, over the card the flashes left up / the old screen */
+        if (arg == 0x739A) memcpy(a->fb, a->side_snap, sizeof a->fb);
+        else { g->fade_card = 1; fb_fight(a, g); g->fade_card = 0; }
+        for (int c = 8; c >= 1; c--) {
+            render_fadein_pass(a->fb, g, c);
+            side_show(a, "w41D9", 16 * 1000 / 237);
+        }
+        return;
+    }
+    fb_fight(a, g);
+    char tag[24];
+    if (kind == SIDE_WAIT) { snprintf(tag, sizeof tag, "w%04X", arg); side_show(a, tag, ticks * 1000 / 237); }
+}
+static void side_town(Town *t, int kind, unsigned arg, unsigned ticks)
+{
+    App *a = app_of(t->user);
+    if (!a->trace_f && a->headless) return;
+    fb_town(a, t);
+    char tag[24];
+    if (kind == SIDE_WAIT) { snprintf(tag, sizeof tag, "w%04X", arg); side_show(a, tag, ticks * 1000 / 237); }
+}
+
 static void present(Game *g)
 {
     App *a = app_of(g->user);
@@ -1790,7 +1853,7 @@ int main(int argc, char **argv)
         free(rgb); gd_free(&gd);
         return rc ? 1 : 0;
     }
-    sh->user = &a; sh->present = present; sh->town_present = town_present;
+    sh->user = &a; sh->present = present; sh->town_present = town_present; sh->side = side_fight; sh->town_side = side_town;
     if (a.trace_dir) {
         if (MKDIR(a.trace_dir) && errno != EEXIST) { fprintf(stderr, "cannot create %s\n", a.trace_dir); return 1; }
         char path[1100];

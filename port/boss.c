@@ -315,6 +315,12 @@ int post_boss_transition(Game *g)
     Map *m = (Map *)(void *)g->map;
     if (!m || !m->raw) return 0;
     int pai = m->post_ai, pen = m->post_enemies;
+    if (g->side) {                                                  /* the screen the fade-in at 7395 starts from (#119): the blade as drawn */
+        uint8_t sa = g->attacking, sv = (uint8_t)g->attack_var;
+        g->attacking = g->drawn_attacking; g->attack_var = g->drawn_attack_var;
+        g->side(g, SIDE_SNAP, 0, 0);
+        g->attacking = sa; g->attack_var = sv;
+    }
     g->post_boss_pending = 0;
     if (g->post_boss) g->post_boss(g, pai, pen);                    /* 7305/731F: reload both banks */
     g->boss_map = 0; g->boss_room = 0;                              /* 734C: [FF34] = 0 */
@@ -365,6 +371,7 @@ int post_boss_transition(Game *g)
     g->boss_knock_left = 0;                                         /* 6073: 9F01 */
     game_ring_refill(g);                                            /* 623D -> 6C98 */
     g->gf_frame = 0;            /* 7395 gfmcga [3012] 4192 (the fade-in redraw) counts [4FFF] 8 -> 0 */
+    if (g->side) { game_signs_draw(g); g->side(g, SIDE_FADEIN, 0x739A, 0); }               /* its 8 passes over the old picture (#119) */
     g->btn1_edge = g->btn2_edge = 0;                                /* 628A: FF1D / FF1E */
     g->loop_restart = 1;
     fprintf(stderr, "[boss] defeated: %d pokes applied, exit door at column %u, "

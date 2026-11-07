@@ -753,6 +753,9 @@ int status_run_town(struct Town *t)
     status_open(&st, t->g, (const TextFont *)t->font, t->pics, 1);           /* [A002] */
     t->status = &st;
     status_loop(&st);
+    if (st.menu_result == 8 && t->side) {                                    /* A598..A5A9: the Kioku Feather's fade, 0x78 ticks, then [2040] (#119) */
+        t->side(t, SIDE_WAIT, 0xA5A2, 0x78);
+    }
     t->status = NULL;
     t->g->sfx_request = 0x0B;
     return st.menu_result;
@@ -766,6 +769,9 @@ int status_run_fight(Game *g)
     status_open(&st, g, g->font, g->pics, 0);                                /* [A000] */
     g->status = &st;
     status_loop(&st);
+    if (st.menu_result == 8 && g->side) {                                    /* A598..A5A9: the Kioku Feather's fade, 0x78 ticks, then [2040] (#119) */
+        g->side(g, SIDE_WAIT, 0xA5A2, 0x78);
+    }
     g->status = NULL;
     g->sfx_request = 0x0B;
     return st.menu_result;

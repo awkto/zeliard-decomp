@@ -61,6 +61,61 @@ left/right step); the oracle writes the real IP as an extra `"ip"` key.
 `BASE` (the one 64 KB segment that STICK, the drivers and the overlays share) =
 the segment of the `INT 61h` vector (STICK's input service at `BASE:05FD`).
 
+## 1a. Loops with no boundary (#119)
+
+#117 (the black cave entry) passed every scenario because the walk-in has no frame boundary: the trace
+never saw what the loop drew.  The audit below lists every loop of the original that waits on the timer
+(or on a CPU delay) and presents frames outside the boundaries of section 1, found by grepping the
+disassembly for `[FF1A]` waits and `loop`-to-self delays (fight, town, select, gfmcga, GMMCGA, the shop
+and boss overlays, rokademo), and running the whole library under an oracle that reports every one of them.
+
+**The mechanism (generalising #117).** The oracle (`zel_oracle.cpp side_check`) writes a picture at
+
+* the **exit of any `cmp [FF1A],imm8 / jc` or `cmp [FF1A],al / jc` wait of 8 ticks or more** (tag `w<IP>`,
+  IP = the cmp), except the frame, walk-in and town frame waits (`7179`, `712D`, `7FA5`, `68E7`, which are
+  boundaries or have the walk pictures) and the ending (`end:wait`).  A new timer loop in any overlay
+  therefore shows up by itself the first time a scenario passes through it.  Waits of 7 ticks or less
+  (glyph 6, cursor and menu 4) are not pictured: their effect is visible at the next boundary.
+* the end of each pass of the **video driver's dissolve** (GMMCGA `2130`, no timer, a CPU delay; tag
+  `dis<R>`, R = the return address of the call, so the caller is in the name).  The shops' (`6EA0` in,
+  `6EAF` out, #118) are not written until #118 lands.
+
+The port writes the same names through `Game.side` / `Town.side` (`physics.h SIDE_*`, `main.c side_show`):
+under `--trace --png-every` the screen goes to `side_<next boundary>_<k>_<tag>.png`, in real time it is
+shown for the original's duration (a dissolve pass 0.1 s, a fade pass 16 ticks).  `pixdiff.py` compares the
+pictures pairwise, and a picture on one side only is a failure.
+
+| Loop | Address | Boundary? | Port | Diffable? |
+|---|---|---|---|---|
+| Cavern frame wait | fight `712D` / `7179` | `717F` | `frame_7094` | yes (frames) |
+| Town frame wait | town `68E7` | `68ED` | `town_present` | yes (frames) |
+| Walk-in, 26 passes (cave mouth, door, restart) | fight `7C6E`, wait `7FA5` | no | `walk_in_step` | yes, `walk_*.png` (#117) |
+| Encounter card, 6 x {card, clear}, 65 ticks each | fight `60E9`, waits `60EF` / `6108` | no | `encounter_step` | yes, `w60EF` / `w6108`.  Was wrong: the card/clear order was inverted, no hero under the card, the ENEMY name and gauge (or the place) drawn before the card ends, each half 20 ticks not 65 |
+| Fade-in redraw of a boss map, 8 passes x 16 ticks | gfmcga `4192`, wait `41D9`; callers `625B` (after the card), `7395` (after a boss) | no | `render_fadein_pass` | yes, `w41D9`.  Was missing (the map popped in over the card) |
+| Video dissolve of the playfield, 8 passes (CPU delay) | GMMCGA `2130`, delay `2187`; callers `7033` (town to cavern), `99A8` (death), `6191` (the death's town half, over the black), `A5A9` (Kioku Feather), `6E9B` / `6EAF` (shops, #118), `6FE5` (doorway to the past) | no | `dissolve_playfield` (not the shops, not the doorway) | yes, `dis<R>`.  Was missing (a hard cut) everywhere |
+| Tear scene, one wait per animation frame (158 in agar_fight) | rokademo `A497` | no | `tear.c wait_frame` | yes, `wA497`.  Fixed: backdrop (the cave mouth, remapped by the door letter, not the map), the old HUD.  Open: the raised sword's picture (below) |
+| Kioku Feather: 120-tick wait, then the dissolve | select `A5A2` / `A5A9` | no | `status_run_*` | yes, `wA5A2` + `disA5AE` (scenario `kioku_feather`).  Was missing |
+| Screen-wide spell (spell 7): flash, 3 x 9 rings, flash | gfmcga `42F7`..`4471`, wait `444A` | no | `spell_screen_wide` kills at once, draws nothing | oracle writes `w4471`; no scenario casts it; **open** |
+| Level-up flash, 8 x {XOR the playfield, 10 ticks} | kenjpro `A2BC`, wait `A2C7` | no | `sage_level_up` changes the numbers only | oracle writes `wA2C7`; no scenario levels up; **open** |
+| Shop animations and waits (church `A091`, bank `A085` `A307` `A4A6` `A611` `A825`, king `A0C4` `A0DC`, drug `A0DD` `A0F3` `A73B`, armour `A70E` `A878`, inn `A167` `A177`, sage `A1EC` `A218` `A418`) | overlays at `A000` | no | `shop_wait` | yes, `w<IP>` (the port's tag is `w0000`).  Matched in every scenario but `bank_menu` / `bank_withdraw` (below) |
+| Text glyph wait (6 ticks), menu cursor waits (4) | town `708C`, `73D6`, `7456`, `7A19`.. | no | `shop_wait` | no: under 8 ticks, seen at the next boundary |
+| Death: 63 dying frames, blink | fight `98FC`, `9948`, `9993` through `6F9B` | `717F` | `death_step` | yes (frames); then the dissolve above |
+| Boss intro / kill / reward, item pickup messages (32 frames) | fight frame loop | `717F` | frames | yes (frames) |
+| Status screen open / close | select `AA58` | wait-loop boundary | `status_loop` | yes |
+| Kernel dialogs F7 restore, F9 speed, Esc pause | kernel services `[11E]`, `[114]`, STICK `06B9`, called inside the frame (`716E`, `715F`) | no timer, modal | `restore_modal`, `speed_modal`, pause (#116) | no: the scenario language has no F keys; checked by the #116 screenshots |
+| Cave exit to a town, town to town | `7C6E` then town `601E` | no dissolve in the original | walk pictures, `shell_enter_town` | yes (`key_door`, `gate_walking`) |
+| Doorway to the past (wait on `[FF26]`, dissolve) | town `6FC1`, `6FE5` | no | not implemented (`TOWN_PAST_DOOR` prints a note) | no |
+| Intro, credits, ending | opdemo, enddemo | `end:wait` (ending only) | `cutscene.c` | the ending: yes |
+
+**What the audit found (all fixed unless marked open).** The port had no dissolve at all (town to cavern,
+death, Feather), no fade-in over the encounter card, an inverted and too fast card with the wrong HUD under
+it, no hero under the card, and a Tear scene played over the destination map with the destination's HUD
+instead of the cave-mouth backdrop and the old HUD.  Open: the Tear scene's raised-sword picture differs
+(about 100 pixels in the 16 x 24 blade area, none of the three `4A31` pictures matches the oracle: the
+scenarios have an `allow-px` for it), the spell 7 burst and the level-up flash are not drawn, the shop
+dissolves (#118) and the doorway to the past are not there, and `bank_menu` / `bank_withdraw` differ by 83
+pixels at (77,50)-(95,67) in the first bank picture.
+
 ## 2. Inputs
 
 The port's `--script` language is the input language for both sides: `U D L R`
@@ -147,6 +202,10 @@ scenario must not move that list or copy from it (Space) -- the names differ.
   no boundary) is the same: the oracle writes the screen after each pass (`2184`, the delay loop that follows
   it) under the number of the next boundary and a running index K; the port writes the same names from
   `town_dissolve` / `shop_dissolve`.  Compared by `pixdiff.py` like the walk pictures.
+- `DIR/side_NNNNN_KKK_TAG.png` (with `--png-every`, #119): the other loops that present without a boundary
+  (section 1a).  NNNNN = the number of the next boundary, KKK a running index, TAG labels the loop
+  (`w<IP>` a timer wait, `dis<R>` a dissolve pass).  `pixdiff.py` matches the two sides by (NNNNN, KKK),
+  so a loop that draws on one side only, or a different number of times, fails.
 
 - **The exit record (#81).** When the game leaves for DOS (the Sage's "No", kenjpro A934
   `jmp far [FF00]` -> INT 21h AH=4Ch, AL 0) the oracle's hook in `DOS_Terminate` writes one

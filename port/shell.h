@@ -54,6 +54,8 @@ typedef struct Shell {
     void         *user;
     PresentFn     present;              /* installed as g.present */
     TownPresentFn town_present;         /* installed as town.present */
+    SideFn        side;                 /* #119: installed as g.side (loops with no trace boundary) */
+    void        (*town_side)(Town *t, int kind, unsigned arg, unsigned ticks);   /* installed as town.side */
     FrameEndFn    frame_end;            /* installed as g.frame_end (--trace; NULL normally) */
     TownFrameEndFn town_frame_end;      /* installed as town.frame_end */
     /* called once per shell_frame right after the engine's step completes (the

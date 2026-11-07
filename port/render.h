@@ -13,6 +13,7 @@
 #define PF_W (SCREEN_COLS * 8)
 #define PF_H 144                    /* 18 rows visible; the 19th window row is under the HUD */
 
+void render_fadein_pass(uint8_t *fb, const Game *g, int c);          /* gfmcga 4192, one pass (c = 8 .. 1) over fb (#119) */
 void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h);     /* fb: FB_W*FB_H VGA indices */
 /* LIFE bar, GOLD/ALMAS digits, the four narrow-font labels and the place name.
  * `tf` supplies the [F504] narrow glyphs (NULL = bars and digits only) and

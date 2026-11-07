@@ -106,6 +106,8 @@ static void shop_tick(Shop *s) { shop_tick_hook(s, 1); }
 static void shop_wait(Shop *s, int ticks)
 {
     for (int n = 0; n < ticks && !s->leave; n++) shop_tick(s);
+    /* #119: the oracle writes the screen as each `cmp [FF1A],n / jc` wait of 8+ ticks ends (side_<f>_<k>_w<IP>.png) */
+    if (ticks >= 8 && !s->leave && s->t && s->t->side) s->t->side(s->t, SIDE_WAIT, 0, 0);
 }
 
 /* [2040] over the shop's own screen (#118): the passes are destructive, as on VRAM, so the

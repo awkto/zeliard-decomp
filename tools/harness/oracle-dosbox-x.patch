@@ -73,10 +73,10 @@ index e31e63f..b521035 100644
 +libmisc_a_SOURCES = clipboard.cpp cross.cpp ethernet.cpp ethernet_pcap.cpp ethernet_slirp.cpp ethernet_ethnet.cpp ethernet_nothing.cpp messages.cpp programs.cpp setup.cpp support.cpp regionalloctracking.cpp savestates.cpp shiftjis.cpp iconvpp.cpp mkdir_p.cpp zel_oracle.cpp
 diff --git a/src/misc/zel_oracle.cpp b/src/misc/zel_oracle.cpp
 new file mode 100644
-index 0000000..052d3f5
+index 0000000..5b122a2
 --- /dev/null
 +++ b/src/misc/zel_oracle.cpp
-@@ -0,0 +1,545 @@
+@@ -0,0 +1,573 @@
 +/*
 + * zel_oracle.cpp -- Zeliard differential-test oracle (decomp-zel docs/HARNESS.md).
 + *
@@ -481,6 +481,33 @@ index 0000000..052d3f5
 +    else if (ip == 0x678A && MATCH(0x678A, SIG_END_F9)) on_boundary(0, cut_site, ip);
 +}
 +
++/* Side pictures (#119): loops that wait on the timer (or on a CPU delay) and present frames without a
++ * boundary.  Each one writes side_<last boundary + 1>_<k>_<tag>.png (k counts up over the run, the screen
++ * as the wait ends); the port writes the same names (matched by frame and k, the tag only labels).
++ *   w<IP>   any `cmp [FF1A],imm8 / jc` or `cmp [FF1A],al / jc` wait of 8 ticks or more, at the moment it
++ *           exits, except the frame, walk-in and town frame waits (they are boundaries / the walk pictures)
++ * (the video dissolve's passes are the dsv_*.png of #118)
++ * The generic rule makes the next boundary-free timer loop show up by itself. */
++unsigned side_k = 0;
++void side_pic(const char *fmt, unsigned v) {
++    char tag[32], name[96];
++    snprintf(tag, sizeof tag, fmt, v);
++    snprintf(name, sizeof name, "/side_%05lu_%03u_%s.png", frame, side_k++, tag);
++    write_png(outdir + name);
++}
++void side_check(uint16_t ip, uint8_t *p) {
++    unsigned lim; unsigned ff1a;
++    if (p[0] == 0x80 && p[1] == 0x3E && p[2] == 0x1A && p[3] == 0xFF && p[5] == 0x72) lim = p[4];
++    else if (p[0] == 0x38 && p[1] == 0x06 && p[2] == 0x1A && p[3] == 0xFF && p[4] == 0x72) lim = reg_al;
++    else return;
++    if (in_end) return;
++    if (ip == 0x7179 || ip == 0x712D || ip == 0x7FA5 || ip == 0x68E7) return;                      /* fight / walk-in / town frame waits */
++    if (lim < 8) return;                                                                            /* glyph, cursor and menu waits */
++    ff1a = mem_readb(SegPhys(ds) + 0xFF1A);
++    if (ff1a < lim) return;                                                                         /* still spinning */
++    side_pic("w%04X", ip);
++}
++
 +} // namespace
 +
 +/* Called by the normal core before each instruction while CS == BASE. */
@@ -518,6 +545,7 @@ index 0000000..052d3f5
 +        char name[64]; snprintf(name, sizeof name, "/walk_%05lu_%03u.png", frame, walk_k++);
 +        write_png(outdir + name);
 +    }
++    if (state == ST_TRACE && png_every) side_check(ip, p);
 +    /* the screen dissolve (gmmcga [2040] = 2130, #118) has no frame boundary either: after each of its 8 passes
 +     * (2184: mov cx,1F40, the delay loop) the picture goes to dsv_<last boundary + 1>_<k>.png, k counting up over
 +     * the run; the port writes the same names from its dissolve steps */
