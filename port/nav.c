@@ -527,7 +527,7 @@ static void probe_reset(Nav *n, const Game *g)
 {
     Game *p = &n->probe;
     memcpy(p, g, sizeof *p);
-    p->present = NULL; p->frame_end = NULL; p->on_door = NULL; p->on_town = NULL; p->post_boss = NULL;
+    p->present = NULL; p->side = NULL; p->frame_end = NULL; p->on_door = NULL; p->on_town = NULL; p->post_boss = NULL;
     p->status = NULL; p->menu_key = 0; p->user = NULL; p->step_begin = NULL;
     p->map = &n->navmap;
     p->hp = p->max_hp = 9999;                   /* the probe must not die */
@@ -973,7 +973,7 @@ static int predict_run(Nav *n, const Game *g, const uint8_t *sd, const uint8_t *
     Game *p = &n->probe;
     memcpy(p, &n->snap, sizeof *p);
     p->map = &n->predmap;
-    p->step_begin = NULL; p->on_door = NULL; p->on_town = NULL; p->post_boss = NULL;
+    p->step_begin = NULL; p->side = NULL; p->on_door = NULL; p->on_town = NULL; p->post_boss = NULL;
     p->status = NULL; p->user = NULL;
     if (g->frame_end) { p->frame_end = pred_boundary; p->present = NULL; }
     else              { p->present = pred_boundary; p->frame_end = NULL; }

@@ -38,12 +38,24 @@ def load_rules(path):
 
 
 def walk_frames(d):
+    """The pictures that have no frame boundary (#117 walk-in, #119 side pictures), keyed
+    (last boundary + 1, running index k, kind).  walk_<f>_<k>.png: the cave walk-in.
+    side_<f>_<k>_<tag>.png: a timer wait or dissolve (the tag, e.g. w60F4 / dis7038, only labels
+    the picture: the two sides are matched by f and k)."""
     out = {}
     for name in os.listdir(d):
         m = re.fullmatch(r"(walk|dsv)_(\d+)_(\d+)\.png", name)
         if m:
             out[(int(m.group(2)), int(m.group(3)), m.group(1))] = os.path.join(d, name)
+            continue
+        m = re.fullmatch(r"side_(\d+)_(\d+)_(\w+)\.png", name)
+        if m:
+            out[(int(m.group(1)), int(m.group(2)), "side")] = os.path.join(d, name)
     return out
+
+
+def kdesc(k):
+    return "%s %d,%d" % ({"walk": "walk-in picture", "dsv": "dissolve picture"}.get(k[2], "side picture"), k[0], k[1])
 
 
 def main():
@@ -94,8 +106,9 @@ def main():
     if first is None and walk_missing:
         print("PIXDIFF compared=%d diff_frames=%d first=%d,%d bbox=0,0,0,0 npix=0 allowed=%d"
               % (len(common), len(walk_missing), walk_missing[0][0], walk_missing[0][1], allowed))
-        print("pixdiff: %d walk-in/dissolve picture(s) on only one side (oracle %d, port %d), first %s"
-              % (len(walk_missing), len(wo), len(wp), walk_missing[0]))
+        print("pixdiff: %d walk-in / side picture(s) on only one side (oracle %d, port %d), first %s on the %s side"
+              % (len(walk_missing), len(wo), len(wp), kdesc(walk_missing[0]),
+                 "oracle" if walk_missing[0] in wo else "port"))
         return 1
     if first is None:
         print("PIXDIFF compared=%d diff_frames=0 allowed=%d" % (len(common), allowed))
@@ -106,7 +119,7 @@ def main():
     print("PIXDIFF compared=%d diff_frames=%d first=%s bbox=%d,%d,%d,%d npix=%d allowed=%d"
           % (len(common), nfr, fdesc, bbox[0], bbox[1], bbox[2] - 1, bbox[3] - 1, npix, allowed))
     print("pixdiff: first diverging %s %s (bbox %s of that frame); images:"
-          % (("dissolve picture" if first[2] == "dsv" else "walk-in picture") if isinstance(first, tuple) else "frame", fdesc, fbb))
+          % (kdesc(first).rsplit(" ", 1)[0] if isinstance(first, tuple) else "frame", fdesc, fbb))
     out = a.out or os.path.join(a.port_dir, "pixdiff")
     if isinstance(first, tuple):
         os.makedirs(out, exist_ok=True)

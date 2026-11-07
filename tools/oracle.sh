@@ -31,7 +31,7 @@ DOSBOX=${ORACLE_DOSBOX:-$BUILD/src/dosbox-x}
 
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
-rm -rf "$OUT/stage" "$OUT"/frame_*.png "$OUT"/boot_*.png "$OUT/frames.jsonl" "$OUT/base.bin" "$OUT/final.png"
+rm -rf "$OUT/stage" "$OUT"/frame_*.png "$OUT"/walk_*.png "$OUT"/side_*.png "$OUT"/boot_*.png "$OUT/frames.jsonl" "$OUT/base.bin" "$OUT/final.png"
 G="$OUT/stage/dos/zeliard"
 mkdir -p "$G"
 for f in "$ROOT"/zeliard/*; do

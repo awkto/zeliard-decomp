@@ -535,6 +535,10 @@ int status_use_potion(Status *s)
         potion_epilogue(s);
         audio_music_fade(8);                                                 /* A598: FF24 = 8 */
         for (int f = 0; f < 6; f++) status_raw_present(s);                   /* A59D: 120 ticks, 6 frames of 20, no poll */
+        if (s->user) {                                                       /* the wait's exit: the oracle's wA5A2 picture (#119) */
+            if (s->in_town) { Town *t = s->user; if (t->side) t->side(t, SIDE_WAIT, 0xA5A2, 0); }
+            else { Game *gg = s->user; if (gg->side) gg->side(gg, SIDE_WAIT, 0xA5A2, 0); }
+        }
         status_dissolve(s);                                                  /* A5A9 [2040] over the status screen */
         audio_music_stop();                                                  /* A5AE: int 60h AX=1 */
         s->done = 1;                                                         /* returns out of the overlay */

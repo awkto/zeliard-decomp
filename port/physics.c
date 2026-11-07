@@ -638,6 +638,9 @@ static void signs_draw(Game *g)
     }
 }
 
+/* 738C `call 78DD`: the door arches into the ring before the fade-in at 7395 (#119) */
+void game_signs_draw(Game *g) { signs_draw(g); }
+
 /* ------------------------------------------------------------- fixtures */
 /* Fixture lists A/B/C (docs/FIGHT.md §5, src/fight.c 7FB1 / 8163 / 81AE).
  * The cells live only in the ring, so every frame the previous three cells are
@@ -974,6 +977,7 @@ static void frame_7094(Game *g)
      * 3159 did. */
     memcpy(g->bg_ring, g->ring, RING_SIZE);
     if (g->present) g->present(g);                                      /* draw + wait 4*speed ticks + poll input */
+    g->drawn_attacking = g->attacking; g->drawn_attack_var = (uint8_t)g->attack_var;
     g->hero_drawn_ok = 1;                                               /* 70D4 drew the hero: [4FED] */
     g->hero_drawn_row = g->hero_scr_row; g->hero_drawn_col = g->hero_scr_col;
     /* 70D9: the potion's +8 LIFE a frame, right after the 70D4 draw and before
@@ -1055,10 +1059,14 @@ static void ladder_step(Game *g)
  * halves (VID_TEXTBOX_FILL(BX=0x0C28, CX=0x3828) clears it on the even ones). */
 static void encounter_step(Game *g)
 {
-    g->encounter_frames--;
     g->frame_no++;
     if (!g->harness_rng) g->rng += 20;
     if (g->present) g->present(g);
+    /* each half lasts 0x41 = 65 ticks (60EF / 6108), 3.25 frames at speed 5: two more frames and the rest */
+    if (g->present) { g->present(g); g->present(g); g->present(g); }
+    if (g->side) g->side(g, SIDE_WAIT, (g->encounter_frames & 1) ? 0x6108 : 0x60EF, 5);   /* the exits of the two waits (#119) */
+    g->encounter_frames--;
+    if (!g->encounter_frames && g->side) g->side(g, SIDE_FADEIN, 0x6260, 0);   /* 625B [3012] 4192, right after the last flash (#119) */
 }
 
 /* 0x98FC  LIFE reached 0 at 718C (the frame's own 717F boundary has already

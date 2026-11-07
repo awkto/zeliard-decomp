@@ -100,6 +100,16 @@ typedef struct Game Game;
 /* one rendered frame: main loop presents the frame, waits 4*speed ticks and
  * refreshes g->dirs.  Called once per frame() (ladder climbs render 1-2 per step). */
 typedef void (*PresentFn)(Game *g);
+/* #119: a loop of the original that waits on the timer (or a CPU delay) and draws without passing a trace
+ * boundary -- the video dissolve, a timed wait.  `kind` SIDE_*, `arg` the original address the harness names
+ * it by, `ticks` how long the screen stays up in real time on top of what the caller presented (236.7 Hz ticks).  The front end draws the screen as it is and, under --trace --png-every, writes
+ * side_<next boundary>_<k>_<tag>.png (the oracle writes the same, docs/HARNESS.md); in real time it shows
+ * it for the original's duration.  NULL when nothing listens (tests). */
+enum { SIDE_WAIT = 1,       /* the screen at the end of a timer wait: tag w<arg> (the cmp [FF1A] of the loop) */
+       SIDE_SNAP,           /* remember the screen as it is: the base of a later SIDE_FADEIN with arg 739A */
+       SIDE_FADEIN          /* gfmcga 4192: the 8-pass fade-in redraw of a boss map over the encounter card, tag w41D9 */
+};
+typedef void (*SideFn)(Game *g, int kind, unsigned arg, unsigned ticks);
 /* the differential harness (docs/HARNESS.md §1): called at the port's
  * equivalent of fight.bin 717F, the frame boundary -- after the frame's logic,
  * drawing and second-half passes (7133..7147), before the 718C death test.
@@ -241,6 +251,9 @@ struct Game {
     uint8_t  loop_restart;          /* port: 72F1 jumped to 6042, the rest of the 629C pass is skipped */
     uint8_t  boss_intro;            /* 9F26 */
     unsigned encounter_frames;      /* 60E6: the 6 flashes of the encounter card */
+    const uint8_t *old_screen;      /* the screen SIDE_SNAP kept (the front end's buffer), or NULL: the Tear scene plays over it (#119) */
+    uint8_t  drawn_attacking, drawn_attack_var;   /* the blade as the last present drew it (7147 advances it after): the SIDE_SNAP picture (#119) */
+    uint8_t  fade_card;             /* render only: draw the card up (the base the fade-in passes work over, #119) */
     Boss     boss;
     PostBossFn post_boss;
     uint16_t rng;                   /* kernel [11A] KRN_RANDOM source (FF1B) */
@@ -306,6 +319,7 @@ struct Game {
     unsigned frame_no;              /* rendered frames */
     unsigned hazard_frames;         /* frames spent on hazard tiles (damage is stubbed) */
     PresentFn present;
+    SideFn side;                    /* #119: loops with no boundary (SIDE_*); NULL normally */
     FrameEndFn frame_end;           /* --trace: the 717F boundary hook (NULL normally) */
     /* the top of every main-loop pass (game_step), before anything moves: the
      * autopilot keeps a copy of the state here so it can replay the pass up to
@@ -343,6 +357,7 @@ int  game_hero_map_col(const Game *g);
 int  game_hero_map_row(const Game *g);
 int  game_win(const Game *g);                      /* ring index of screen (0,0) */
 uint8_t game_ring_cell(const Game *g, int scr_col, int scr_row);   /* screen cell (28x19) */
+void game_signs_draw(Game *g);                                       /* 78DD: the door arches into the ring (#119) */
 uint8_t game_bg_cell(const Game *g, int scr_col, int scr_row);     /* the same cell as 302C's 3159 draw saw it (bg_ring) */
 int  game_passable_wall(const Game *g, uint8_t v);
 int  game_passable_body(const Game *g, uint8_t v);
