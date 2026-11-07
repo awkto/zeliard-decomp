@@ -33,6 +33,10 @@
 #                              optional, repeatable: pixels (inclusive rect, game 320x200
 #                              coords, optional frame range) ignored by the pixel compare;
 #                              the reason is mandatory (tools/harness/pixdiff.py)
+#   # png-every: K             this scenario's PNG interval when PNGs are on (a long one: the intro's 7439 boundaries)
+#   # intro: 1                 the scenario is the opening demo (opdemo.bin) from boot, no save (#34): the oracle runs
+#                              with ORACLE_INTRO=1 and the port with --intro; boundary site `intro:wait`.  The script
+#                              needs at least as many tokens as boundaries; both sides stop at the town load
 #   # ends: stall              optional: the scenario ends in a cutscene the oracle has no
 #                              boundary site for (the ending had none until #113): the oracle's stall exit (6)
 #                              after ORACLE_STALL_MS (default 60 s here, long enough for the tear scene) is the expected end of its
@@ -69,6 +73,7 @@ hdr() { sed -n "s/^# $2: *//p" "$1" | head -1; }
 for f in $FILES; do
   [ -f "$f" ] || { echo "run_scenarios: no scenario $f" >&2; exit 2; }
   save=$(hdr "$f" start); name=${save%.*}
+  [ "$(hdr "$f" intro)" = 1 ] && continue
   if [ ! -f "$ROOT/zeliard/$save" ] && [ ! -f "$ROOT/zeliard/$name.USR" ]; then
     make=$(hdr "$f" make)
     [ -n "$make" ] || { echo "run_scenarios: $f: no $save and no '# make:' line" >&2; exit 2; }
@@ -83,11 +88,13 @@ run_one() {
   rm -rf "$d"; mkdir -p "$d"
   save=$(hdr "$f" start); load=${save%.*}
   script=$(grep -v '^#' "$f" | grep -v '^[[:space:]]*$' | head -1)
-  pe=$PE
+  pe=$PE; hp=$(hdr "$f" png-every); [ -n "$hp" ] && [ "$PE" != 0 ] && pe=$hp   # `# png-every: K` caps a long scenario's PNGs
   cave=$(hdr "$f" cave); cargs=; [ -n "$cave" ] && cargs="--cave $cave"
   ends=$(hdr "$f" ends); stall=
   [ "$ends" = stall ] && stall=${ORACLE_STALL_MS:-60000}
-  (cd "$ROOT" && env ORACLE_MAX_MS=${ORACLE_MAX_MS:-1200000} ORACLE_CAVE="$cave" ${stall:+ORACLE_STALL_MS=$stall} tools/oracle.sh "$script" --load "$load" --out "$d/o" --png-every $pe) >"$d/oracle.out" 2>&1
+  intro=$(hdr "$f" intro); oload="--load $load"; ploads="--load $load"; ienv=
+  [ "$intro" = 1 ] && { oload=; ploads=--intro; ienv=ORACLE_INTRO=1; save=; load=; }
+  (cd "$ROOT" && env ORACLE_MAX_MS=${ORACLE_MAX_MS:-1200000} ORACLE_CAVE="$cave" $ienv ${stall:+ORACLE_STALL_MS=$stall} tools/oracle.sh "$script" $oload --out "$d/o" --png-every $pe) >"$d/oracle.out" 2>&1
   orc=$?
   if [ $orc != 0 ] && ! { [ -n "$stall" ] && [ $orc = 6 ]; }; then
     printf 'ERROR\t-\toracle exit %s (%s/oracle.out, o/oracle.log)\n' "$orc" "$d" >"$d/result"; return
@@ -100,10 +107,10 @@ run_one() {
     case "$g" in *.usr|*.USR) ;; *) ln -s "$g" "$pd/" ;; esac
   done
   for g in "$ROOT/zeliard/$save" "$ROOT/zeliard/$load.usr" "$ROOT/zeliard/$load.USR"; do
-    [ -f "$g" ] && { cp "$g" "$pd/"; break; }
+    [ -n "$load" ] && [ -f "$g" ] && { cp "$g" "$pd/"; break; }
   done
-  pargs=; [ "$PE" != 0 ] && pargs="--png-every $PE"
-  if ! (cd "$ROOT" && "$PORT" --dir "$pd" --load "$load" --trace "$d/p" --script "$script" $cargs $pargs) >"$d/port.out" 2>&1; then
+  pargs=; [ "$pe" != 0 ] && pargs="--png-every $pe"
+  if ! (cd "$ROOT" && "$PORT" --dir "$pd" $ploads --trace "$d/p" --script "$script" $cargs $pargs) >"$d/port.out" 2>&1; then
     printf 'ERROR\t-\tport exit %s (%s/port.out)\n' "$?" "$d" >"$d/result"; return
   fi
   dargs=--first-only; [ "$PNG" = 1 ] && dargs=--png
@@ -117,7 +124,7 @@ run_one() {
   rc=$?
   frames=$(sed -n 's/^tracediff: \([0-9]*\) aligned.*/\1/p' "$d/diff.txt")
   px=; prc=0
-  if [ "$PE" != 0 ]; then
+  if [ "$pe" != 0 ]; then
     (cd "$ROOT" && python3 tools/harness/pixdiff.py "$d/o" "$d/p" --scenario "$f" --out "$d/pixdiff") >"$d/pixdiff.txt" 2>&1
     prc=$?
     px=$(sed -n 's/^PIXDIFF //p' "$d/pixdiff.txt" | head -1)
