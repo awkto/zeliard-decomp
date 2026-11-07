@@ -34,8 +34,27 @@ typedef struct { uint8_t dirs; uint16_t btns; int frames; } Step;   /* btns 1/2 
 static const Step *SCRIPT;
 static int SCRIPT_N, SCRIPT_I, SCRIPT_LEFT;
 
+/* #118: what the dissolve presents left behind -- passes seen over the town screen (t->dissolve
+ * 1..8, no shop yet) and over the shop's own (its playfield's black pixels after each pass) */
+static int DSV_TOWN, DSV_SHOP, DSV_BAD, DSV_LAST_TOWN;
+static unsigned DSV_ZERO[64];
+static int shop_playfield_zeros(const Shop *s)
+{
+    const uint8_t *fb = shop_framebuffer(s);
+    int z = 0;
+    for (int y = 14; y < 158; y++) for (int x = 48; x < 272; x++) z += fb[y * 320 + x] == 0;
+    return z;
+}
 static void present(Town *t)
 {
+    if (t->dsv_pic) {
+        if (!t->shop) {
+            DSV_TOWN++;
+            if (t->dissolve != ++DSV_LAST_TOWN) DSV_BAD++;      /* passes 1..8, in order */
+            if (DSV_LAST_TOWN == 8) DSV_LAST_TOWN = 0;
+        } else if (DSV_SHOP < 64) DSV_ZERO[DSV_SHOP++] = (unsigned)shop_playfield_zeros(t->shop);
+        return;                                                  /* a dissolve pass reads no keys, nor eats a script step */
+    }
     while (SCRIPT_LEFT == 0 && SCRIPT_I < SCRIPT_N) { SCRIPT_LEFT = SCRIPT[SCRIPT_I].frames; SCRIPT_I++; }
     if (SCRIPT_LEFT == 0) { t->dirs = 0; t->buttons = 0; return; }
     const Step *st = &SCRIPT[SCRIPT_I - 1];
@@ -300,6 +319,29 @@ static void t_church(void)
     run_shop(1, SHOP_CHURCH, script, 3);
     CHECK(memcmp(G.magic_count, G.magic_max, 7) == 0,
           "a second visit at full LIFE restores the magic charges instead");
+}
+
+/* ---------------------------------------------------------- the dissolve */
+/* town.bin 6E9B over the town (eight passes, t->dissolve 1..8) and the overlay's own exit
+ * [2040] (A055 ...) over the shop's screen: every pass blacks out more of the playfield and
+ * the last leaves all of it black.  The night at the inn dissolves in the middle (A12A). */
+static void t_dissolve(void)
+{
+    static const Step script[] = {{0, 0, 600}, {0, 1, 1}, {0, 0, 600}};
+    fresh_player();
+    DSV_TOWN = DSV_SHOP = DSV_BAD = DSV_LAST_TOWN = 0;
+    run_shop(1, SHOP_CHURCH, script, 3);
+    CHECK(DSV_TOWN == 8 && DSV_BAD == 0, "6E9B: eight passes over the town screen, in order (%d, %d out of order)", DSV_TOWN, DSV_BAD);
+    CHECK(DSV_SHOP == 8, "A066: the church's exit dissolve is eight passes (%d)", DSV_SHOP);
+    int mono = 1;
+    for (int i = 1; i < DSV_SHOP; i++) if (DSV_ZERO[i] < DSV_ZERO[i - 1]) mono = 0;
+    CHECK(mono && DSV_SHOP == 8 && DSV_ZERO[7] == 224u * 144u, "the playfield only goes darker and ends all black (%u px)", DSV_SHOP ? DSV_ZERO[DSV_SHOP - 1] : 0);
+    static const Step yes[] = {{0, 0, 220}, {0, 1, 1}, {0, 0, 600}, {0, 1, 1}, {0, 0, 600}};
+    fresh_player();
+    G.gold = 100; G.hp = 10;
+    DSV_TOWN = DSV_SHOP = DSV_BAD = DSV_LAST_TOWN = 0;
+    run_shop(2, SHOP_INN, yes, 5);
+    CHECK(DSV_TOWN == 8 && DSV_SHOP == 16, "the inn: entry 8, the night 8 and the exit 8 passes (%d town, %d shop)", DSV_TOWN, DSV_SHOP);
 }
 
 /* --------------------------------------------------------------- the inn */
@@ -637,7 +679,7 @@ int main(int argc, char **argv)
         {"price tables", t_prices}, {"buy sword", t_buy_sword}, {"buy shield", t_buy_shield},
         {"drug shop", t_drug}, {"church", t_church}, {"inn", t_inn}, {"bank", t_bank},
         {"sage tables", t_sage_tables}, {"sage visit", t_sage_visit}, {"sage record", t_sage_record},
-        {"[A002] hooks", t_hooks},
+        {"[A002] hooks", t_hooks}, {"dissolve", t_dissolve},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = fails;

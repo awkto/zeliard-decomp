@@ -131,6 +131,8 @@ struct Town {
     uint8_t  dirs, buttons, btn1_edge, btn2_edge;
     uint8_t  sfx_request;           /* FF75 */
     unsigned frame_no;
+    int      dissolve;              /* [2040] in progress (#118): passes 0..dissolve-1 are applied over the redrawn frame */
+    int      dsv_pic;               /* set while a dissolve pass is presented: no input, a dsv_*.png under --trace */
     char     message[512];          /* the dialogue text the box would show */
     int      action, action_arg;    /* TOWN_* */
     TownPresentFn present;
@@ -229,5 +231,13 @@ void town_npc_markers_reset(Town *t);               /* 6C2B */
 void town_dialogue_run(Town *t, int script, int face_left);
 /* render one 320x200 MCGA frame (playfield rows at y 78..141) */
 void town_render(uint8_t *fb, const Town *t);
+/* 6E9B: run the eight passes of [2040] over the town screen, one presented frame each (the
+ * original's pass time is its CPU's; one frame, 84 ms at the default speed, makes the ~0.7 s
+ * a period machine took).  Leaves t->dissolve = 8, so the town stays black until the caller
+ * clears it (the shop's own screen takes over at once). */
+void town_dissolve(Town *t);
+/* the same eight frames with the playfield black from the first (first = 8): 6191, where the
+ * death return dissolves a town screen nothing has drawn yet -- the cavern's own 99A8 left it black */
+void town_dissolve_from(Town *t, int first);
 
 #endif

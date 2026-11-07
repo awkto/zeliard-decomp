@@ -523,6 +523,49 @@ static void t_edge_backdrop(const char *dir)
     }
 }
 
+/* gmmcga [2040] = 2130 (#118): eight passes, mask 01,03,07,..,FF rotating along each row and
+ * phase-shifted three bits per row, set bits blacken the pixel.  A single bit per byte is one
+ * pixel in eight, so pass n blackens (n+1)/8 of the 224 x 144 playfield, each pass a superset
+ * of the last, and nothing outside the playfield is touched. */
+static void t_dissolve_passes(const char *dir)
+{
+    uint8_t fb[FB_W * FB_H];
+    memset(fb, 0xAB, sizeof fb);
+    int ok_out = 1;
+    unsigned prev = 0;
+    for (int n = 0; n < 8; n++) {
+        render_dissolve_pass(fb, n);
+        unsigned z = 0;
+        for (int y = 0; y < FB_H; y++) for (int x = 0; x < FB_W; x++) {
+            int in = y >= 14 && y < 158 && x >= 48 && x < 272;
+            if (fb[y * FB_W + x] == 0) { if (in) z++; else ok_out = 0; }
+        }
+        CHECK(z >= prev, "pass %d only blackens more (%u after %u)", n, z, prev);
+        prev = z;
+        if (n == 0) CHECK(z == 224u * 144u / 8, "mask 01 blackens one pixel in eight (%u)", z);
+    }
+    CHECK(prev == 224u * 144u, "after the eighth pass the playfield is black (%u of %u)", prev, 224u * 144u);
+    CHECK(ok_out, "the HUD and the frame stay as they were");
+    uint8_t a[FB_W * FB_H], b[FB_W * FB_H];
+    memset(a, 1, sizeof a); memset(b, 1, sizeof b);
+    for (int n = 0; n < 5; n++) render_dissolve_pass(a, n);
+    render_dissolve(b, 5);
+    CHECK(!memcmp(a, b, sizeof a), "render_dissolve(n) is the first n passes");
+    /* the mask table and the loop are the driver's own: 218D reads 01 03 07 0F 1F 3F 7F FF */
+    char path[1200];
+    snprintf(path, sizeof path, "%s/GMMCGA.BIN", dir);
+    FILE *f = fopen(path, "rb");
+    if (f) {
+        uint8_t code[0x200];
+        size_t n = fread(code, 1, sizeof code, f);
+        fclose(f);
+        static const uint8_t masks[8] = { 0x01, 0x03, 0x07, 0x0F, 0x1F, 0x3F, 0x7F, 0xFF };
+        CHECK(n >= 0x196 && !memcmp(code + 0x18D, masks, 8), "GMMCGA.BIN 218D holds the eight masks");
+        static const uint8_t loop_head[] = { 0xB8, 0x00, 0xA0, 0x8E, 0xC0, 0xBE, 0x8D, 0x21, 0xB9, 0x08, 0x00 };
+        CHECK(n >= 0x130 + sizeof loop_head && !memcmp(code + 0x130, loop_head, sizeof loop_head), "and 2130 is the loop that reads them");
+    }
+}
+
 /* The static screen art nothing in fight.bin or town.bin owns: mole.bin's
  * frame + HUD panel (GAME.BIN A185) and the two backdrop painters. */
 static void t_art(const char *dir)
@@ -631,7 +674,7 @@ int main(int argc, char **argv)
         {"dialogue menu", t_dialogue_menu},
         {"save file", t_save}, {"capture routes", t_capture_routes},
         {"edge backdrop", t_edge_backdrop},
-        {"screen art", t_art},
+        {"screen art", t_art}, {"dissolve passes", t_dissolve_passes},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = fails;

@@ -52,9 +52,9 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 13 test binaries
-make test            # physics (149) + combat/AI (228) + town (162) + boss (642) + shop (189)
-                     #   + status (87) + playthrough (176) + audio (390) + cutscene (46)
-                     #   + video (149) + config (46) + sync (144) = 2408 assertions.  Needs no game files:
+make test            # physics (149) + combat/AI (228) + town (176) + boss (642) + shop (195)
+                     #   + status (87) + playthrough (176) + audio (394) + cutscene (46)
+                     #   + video (149) + config (46) + sync (144) = 2432 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 235 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -397,6 +397,26 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   drew the hero on black, started the encounter card's twelve flashes before the walk instead of after it, had
   no walk for a door into a town or an [E6] room, and killed a [49] hero before it.  `walk_*.png` in the
   traces make it diffable (docs/HARNESS.md section 4).
+* **The dissolve and the fade into a building (#118).**  town.bin `6E7E` run_shop pokes `FF24 = 4`, loads the
+  overlay, then `6E9B` calls video `[2040]` (gmmcga `2130`): eight passes with the masks `01 03 07 .. FF` (`218D`),
+  each rotated along the row (`rol`, `ror` on the odd rows, three bits back per row) and each set bit zeroing a
+  playfield pixel, a `1F40`-iteration delay after each (`2184`), and only then `6EA0` `int 60h AX=1`.  The music
+  driver meanwhile ticks 118 times a second, so with `FF24 = 4` the attenuation `FF25` rises by 4 every 4 ticks
+  (msd.c `msd_driver_tick`, every back end: STD, ADLIB, JR) under the dissolve before the stop cuts it.
+  `render_dissolve_pass` is the driver's loop on the pair buffer; `town_dissolve` plays the eight passes over
+  the town screen (`Town.dissolve` = passes applied, redrawn from state each frame), one presented frame
+  (84 ms at the default speed) per pass.  The shop's screen is a buffer of its own, so its dissolves are
+  destructive like VRAM (`shop_dissolve`): every overlay's exit (`A055` king/omoya/sage, `A068`, `A0A8`, ...),
+  the inn's night (`A12A`, followed by the redraw `A15C` the port lacked) and the armourer's repair (`A716`).
+  The sage's death entry `6191`/`6196` dissolves (over a black playfield: the cavern's own `99A8`, the
+  dissolve after the death blink and `int 60h AX=1`, has just blanked it and the town is not drawn yet) and
+  stops the music too; the port used to leave the score playing there.  The same `[2040]` runs at `7033`
+  (a town's cave mouth, over the town), `99A8` (death, over the cavern, hero as the last blink frame drew
+  him) and select `A5A9` (the Kioku Feather: `FF24 = 8`, 120 ticks, then the dissolve over the status
+  screen).  Not ported: `6FE5` (the doorway to the past, which is not implemented at all).
+  `dsv_*.png` in the traces make every pass diffable (docs/HARNESS.md section 4).  The other drivers'
+  dissolves (CGA `2124`, EGA `214E`, HGC `2143`, TGA `2124`) use their own byte masks; the port runs the MCGA
+  one on its pair buffer for every `--video`.
 * `enemy.c` — the C010 object table: a live copy per map load, the per-frame enemy
   pass (8D19) with ring markers, the pending-hit → stun conversion (8DB9), the death
   animation (90E6), removal (914C), the off-screen respawn attempt (94FF) **including
@@ -877,7 +897,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   `or byte [si+5],0x20` — never sets it while still taking the hit; and MAO2's
   phase-1 draws on the real MPA0 — exactly two `KRN_RANDOM` per teleport, the side
   from AL bit 0 (`A483`) and the throw/cast variant from AL bit 7 (`A3EC`) (#61).
-* `test_shop.c` — 189 assertions: the font metrics and `format_number`; the
+* `test_shop.c` — 195 assertions: the font metrics and `format_number`; the
   STDPLY record and the page <-> Game mapping; the NAME.USR round trip (exactly
   256 bytes); **all nine rows of both the armour and the drug price tables**
   read out of the overlays and compared with docs/TOWN.md §7; the shield
@@ -895,7 +915,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   (level 0 + 120 EXP -> level 1, 120/120 LIFE, 70 EXP left) and the one-level
   clamp; and the first-visit spell + `[E5]` bit (Yasmin teaches spell 1, Marid
   teaches none).
-* `test_town.c` — 162 assertions: the mrmp header, doors, cave record, exits, NPCs,
+* `test_town.c` — 176 assertions: the mrmp header, doors, cave record, exits, NPCs,
   walker range and dialogue; the mpat block list; the walk/scroll model and the block
   list; the door ±1 window; the edge exit; NPC markers, the type-1 walker's 2-frame
   cadence and the type-3 facing rule; Space dialogue in and out of range; the
@@ -986,7 +1006,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     `tools/harness/state_roundtrip.sh`, which now also drives the in-game
     request path (`--state-inject save:N load:N`, the same queue the keys use)
     and requires the whole trace to stay byte-identical.
-* `test_audio.c` — 390 assertions over the sound back end:
+* `test_audio.c` — 394 assertions over the sound back end:
   * **the score parser against `tools/msd2mid.py`**: all 17 scores in all three
     blob-B arrangements (AdLib, Tandy, PC speaker) are run through `msd.c`, and the
     decoded event stream — note on/off with velocity and the legato flag, drum hits,

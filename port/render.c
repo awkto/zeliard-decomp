@@ -566,6 +566,7 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
     draw_magic(fb, g);                          /* 7141 */
     if (h) draw_sword(fb, g, h);                /* 7147 */
     draw_message_box(fb, g);
+    if (g->dissolve) render_dissolve(fb, g->dissolve);   /* 99A8: the death dissolve (#118) */
 }
 
 /* ------------------------------------------------------------------- HUD */
@@ -710,4 +711,34 @@ void render_to_rgb(const uint8_t *fb, uint8_t *rgb)
         const uint8_t *p = PAL_RGB[fb[i] & 63];
         rgb[i * 3] = p[0]; rgb[i * 3 + 1] = p[1]; rgb[i * 3 + 2] = p[2];
     }
+}
+
+/* ---- gmmcga 2130 vid_dissolve_playfield, one pass ---- */
+void render_dissolve_pass(uint8_t *fb, int pass)
+{
+    static const uint8_t masks[8] = { 0x01, 0x03, 0x07, 0x0F, 0x1F, 0x3F, 0x7F, 0xFF };   /* 218D */
+    unsigned al = masks[pass & 7];
+    uint8_t *p = fb + 0x11B0;                           /* 213C: row 14, x 48 */
+    for (int r = 0; r < 72; r++) {                      /* 2144: rows 14, 16, .. 156 */
+        for (int x = 0; x < 224; x++, p++) {
+            al = ((al << 1) | (al >> 7)) & 0xFF;        /* 2148 rol al,1 */
+            if (al & 1) *p = 0;                         /* the carry: bit 7 before the rotate = bit 0 after */
+        }
+        al = ((al >> 3) | (al << 5)) & 0xFF;            /* 2153 ror al,1 x3 */
+        p += 0x1A0;                                     /* 215A */
+    }
+    p = fb + 0x11B0 + 0x140;                            /* 2161: row 15 */
+    for (int r = 0; r < 72; r++) {                      /* 2168: rows 15, 17, .. 157 */
+        for (int x = 0; x < 224; x++, p++) {
+            al = ((al >> 1) | (al << 7)) & 0xFF;        /* 216C ror al,1 */
+            if (al & 0x80) *p = 0;                      /* the carry: bit 0 before the rotate = bit 7 after */
+        }
+        al = ((al << 3) | (al >> 5)) & 0xFF;            /* 2177 rol al,1 x3 */
+        p += 0x1A0;                                     /* 217E */
+    }
+}
+
+void render_dissolve(uint8_t *fb, int passes)
+{
+    for (int i = 0; i < passes && i < 8; i++) render_dissolve_pass(fb, i);
 }

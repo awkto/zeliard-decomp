@@ -1201,6 +1201,19 @@ static void blit_sprite(uint8_t *fb, const Cell2 *c, int x, int y)
     }
 }
 
+void town_dissolve(Town *t) { town_dissolve_from(t, 1); }
+
+void town_dissolve_from(Town *t, int first)
+{
+    t->dsv_pic = 1;
+    for (int n = 1; n <= 8 && !t->quit; n++) {
+        t->dissolve = n < first ? first : n;
+        if (t->present) t->present(t);
+    }
+    t->dissolve = 8;
+    t->dsv_pic = 0;
+}
+
 void town_render(uint8_t *fb, const Town *t)
 {
     /* mole.bin's furniture is painted once and never redrawn (gfx.h); keep it
@@ -1280,4 +1293,5 @@ void town_render(uint8_t *fb, const Town *t)
         }
     }
     dlg_render(fb, t);                                              /* 63C5 */
+    if (t->dissolve) render_dissolve(fb, t->dissolve);              /* 6E9B: the screen being dissolved (#118) */
 }

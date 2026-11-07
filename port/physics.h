@@ -250,6 +250,7 @@ struct Game {
     uint8_t  death_anim;            /* 9F28 */
     uint8_t  death_anim_b;          /* 9F29 the blink counter of the 9972 loop */
     uint8_t  death_phase;           /* 98FC's loops: 1 = 9929 (body falls), 2 = 9948, 3 = 9993 */
+    int      dissolve, dsv_pic;     /* [2040] over the cavern screen (99A8, #118): passes applied / a pass is being presented */
     uint8_t  death_blink;           /* 9990 CX: the 30 frames of the last blink */
     int      entry_col, entry_row;  /* where hero_die() puts him back */
     uint8_t  entry_face;
