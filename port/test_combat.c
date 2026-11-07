@@ -25,7 +25,12 @@ static Tileset ttiles;
 static AiOverlay ovl;
 static Game G;
 static unsigned presents;
-static void present(Game *g) { (void)g; presents++; }
+static unsigned dsv_presents, dsv_last;
+static void present(Game *g)
+{
+    if (g->dsv_pic) { dsv_presents++; dsv_last = (unsigned)g->dissolve; return; }   /* 99A8 [2040]: passes 1..8 */
+    presents++;
+}
 
 /* same synthetic tileset/map as test_physics.c */
 static void test_tiles(void)
@@ -191,10 +196,11 @@ static void t_death_frames(void)
     G.hp = 0;
     step(0, 0);
     CHECK(G.hero_dead == 0xFF, "LIFE 0 starts the death at 718C");
-    presents = 0;
+    presents = dsv_presents = 0;
     int n = 0, pose2 = 0;
     while (G.hero_dead && n < 200) { step(0x08, 1); n++; if (G.hero_anim == 2) pose2 = 1; }
     CHECK(n == 63 && presents == 63, "the death runs 63 frames on flat ground (got %d steps, %u frames)", n, presents);
+    CHECK(dsv_presents == 8 && dsv_last == 8 && !G.dissolve && !G.dsv_pic, "99A8: the dissolve is eight presented passes (%u, last %u)", dsv_presents, dsv_last);
     CHECK(pose2, "the dying pose [E7] reaches 2");
     CHECK(G.hp == G.max_hp && hcol() == 30, "then 99A3: LIFE restored, back at the entry (no town hooked up)");
 }

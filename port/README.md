@@ -52,9 +52,9 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 13 test binaries
-make test            # physics (149) + combat/AI (228) + town (176) + boss (642) + shop (195)
+make test            # physics (149) + combat/AI (229) + town (176) + boss (642) + shop (195)
                      #   + status (87) + playthrough (176) + audio (394) + cutscene (46)
-                     #   + video (149) + config (46) + sync (144) = 2432 assertions.  Needs no game files:
+                     #   + video (149) + config (46) + sync (144) = 2433 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 235 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -868,7 +868,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   the last one walks MP10's entrance shelf 40 columns east and back and checks that
   ring column *i* is still map column `scroll_col + i` on every step, which is the
   regression guard for the `scroll_right` bug below).
-* `test_combat.c` — 228 assertions: the eai1 tables, the damage formulas, contact (751F's
+* `test_combat.c` — 229 assertions: the eai1 tables, the damage formulas, contact (751F's
   4-column scan, the feet row under the middle two), the 63-frame death (98FC) and
   knockback, sword kills, EXP, drops, the bat wake window, the frog hop, **the eight
   projectile directions, the 31-shot cap, life/wall death, shot damage and the
