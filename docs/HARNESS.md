@@ -143,6 +143,10 @@ scenario must not move that list or copy from it (Space) -- the names differ.
   screen as each pass waits (`7C95` / `7CD4`: the hero was just drawn, `7F82` is next) under the
   number of the next boundary and a running index K; the port writes the same names from its
   walk-in presents.  `pixdiff.py` compares them like frames (a walk on one side only fails).
+- `DIR/dsv_NNNNN_KKK.png` (with `--png-every`, #118): the screen dissolve (video `[2040]`, gmmcga `2130`: 8 passes,
+  no boundary) is the same: the oracle writes the screen after each pass (`2184`, the delay loop that follows
+  it) under the number of the next boundary and a running index K; the port writes the same names from
+  `town_dissolve` / `shop_dissolve`.  Compared by `pixdiff.py` like the walk pictures.
 
 - **The exit record (#81).** When the game leaves for DOS (the Sage's "No", kenjpro A934
   `jmp far [FF00]` -> INT 21h AH=4Ch, AL 0) the oracle's hook in `DOS_Terminate` writes one
@@ -464,7 +468,12 @@ deleted (`--png` keeps them); failing ones keep them.
 roka.grp, remapped by the door letter & 7, the hero stepping 8 px a pass with a black trail, the HUD still
 the map just left) is diffed the same way from the `walk_*.png` files above; `cave_door` (town mouth and a
 cavern door), `key_door` / `gate_walking` (door to a town), `cave_forced_death` and `jashiin_kill` (the
-door into the [E6] room) cover it.  An oracle built before #117 writes none: rebuild it
+door into the [E6] room) cover it.
+**Dissolve pictures (#118).** The eight passes of the building-entry dissolve (town.bin `6E9B`), the overlay's exit
+dissolve and the sage's death entry (`6191`) are diffed from the `dsv_*.png` files above, the music fade aside (the
+music state is not a trace field); `drug_buy`, `bank_*`, `omoya_wait`, `sage_*`, `death_sage` cover them, every
+scenario that leaves a town by a cave mouth covers `7033`, the deaths cover `99A8`, and `feather_dissolve` covers the
+Kioku Feather's `A5A9`.  An oracle built before #117 writes none: rebuild it
 (`tools/harness/build-oracle.sh`).
 **Scenarios that end in a cutscene (`# ends: stall`).**  The oracle writes a boundary only at the
 sites of section 1 (and the ending's `end:wait`, §6), so a script that ends in a cutscene without

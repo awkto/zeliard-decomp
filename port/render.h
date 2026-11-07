@@ -28,6 +28,15 @@ void render_window(uint8_t *fb, int x, int y, int w, int h, int framed);   /* [2
  * [2002] playfield clear or a HUD-band clear without disturbing either. */
 struct ScreenFrame;
 void render_screen_frame(uint8_t *fb, const struct ScreenFrame *f, int y0, int y1);
+/* gmmcga [2040] = 2130, the screen dissolve (#118): eight passes with the masks 01,03,07,..,FF
+ * (218D), each pixel of the playfield (x 48..271, rows 14..157) zeroed where the rotating mask
+ * bit is set.  render_dissolve_pass(fb, n) is pass n (0..7) done in place (the shop's own
+ * screen buffer takes the passes one by one, like VRAM); the town and the cavern are redrawn
+ * from state every frame, so they use render_dissolve(fb, n) = passes 0..n-1 over a fresh
+ * frame.  The other drivers' dissolves (CGA 2124, EGA 214E, HGC 2143, TGA 2124) have their
+ * own byte masks; the port runs this one on the pair buffer for every --video. */
+void render_dissolve_pass(uint8_t *fb, int pass);
+void render_dissolve(uint8_t *fb, int passes);
 void render_to_rgb(const uint8_t *fb, uint8_t *rgb);                  /* FB_W*FB_H*3 */
 
 #endif

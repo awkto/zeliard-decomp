@@ -7,6 +7,7 @@
  * has to run under both town.bin and fight.bin. */
 #include "status.h"
 #include "render.h"
+#include "audio.h"
 #include "town.h"
 #include "sar.h"
 #include "player.h"
@@ -481,6 +482,9 @@ static void potion_epilogue(Status *s)
 /* A40D use_potion + the eight effects (A452 jump table)                     */
 /* ======================================================================== */
 
+static void status_raw_present(Status *s);
+static void status_dissolve(Status *s);
+
 int status_use_potion(Status *s)
 {
     Game *g = s->g;
@@ -529,6 +533,10 @@ int status_use_potion(Status *s)
     case 7:                                                                  /* A58B Kioku Feather */
         show_used_box(s);
         potion_epilogue(s);
+        audio_music_fade(8);                                                 /* A598: FF24 = 8 */
+        for (int f = 0; f < 6; f++) status_raw_present(s);                   /* A59D: 120 ticks, 6 frames of 20, no poll */
+        status_dissolve(s);                                                  /* A5A9 [2040] over the status screen */
+        audio_music_stop();                                                  /* A5AE: int 60h AX=1 */
         s->done = 1;                                                         /* returns out of the overlay */
         player_page_push(g);
         return s->menu_result;
@@ -557,6 +565,27 @@ static void status_frame(Status *s)
      * screen (open 0x0B, move 0x0C, row 0x0D) is gone by the next poll */
     sound_request(s->g);
     if (s->present) s->present(s);
+}
+
+/* a frame on screen that is not a poll of select:AA58: no boundary, no input read */
+static void status_raw_present(Status *s)
+{
+    if (!s->user) return;
+    if (s->in_town) { Town *t = s->user; if (t->present) t->present(t); }
+    else { Game *g = s->user; if (g->present) g->present(g); }
+}
+
+/* A5A9 [2040]: eight destructive passes over the status screen's own buffer, one presented
+ * frame each, flagged so the oracle's dsv_*.png and the port's line up (#118) */
+static void status_dissolve(Status *s)
+{
+    int *flag = !s->user ? NULL : s->in_town ? &((Town *)s->user)->dsv_pic : &((Game *)s->user)->dsv_pic;
+    if (flag) *flag = 1;
+    for (int n = 0; n < 8; n++) {
+        render_dissolve_pass(s->fb, n);
+        status_raw_present(s);
+    }
+    if (flag) *flag = 0;
 }
 
 void status_open(Status *s, Game *g, const TextFont *f, const ItemPics *p, int in_town)

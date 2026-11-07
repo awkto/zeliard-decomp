@@ -11,6 +11,7 @@
 #include "shop.h"
 #include "enemy.h"
 #include "render.h"
+#include "audio.h"
 #include "sar.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -105,6 +106,20 @@ static void shop_tick(Shop *s) { shop_tick_hook(s, 1); }
 static void shop_wait(Shop *s, int ticks)
 {
     for (int n = 0; n < ticks && !s->leave; n++) shop_tick(s);
+}
+
+/* [2040] over the shop's own screen (#118): the passes are destructive, as on VRAM, so the
+ * playfield stays black until the overlay draws on it again.  One presented frame per pass
+ * (town_dissolve); no tick, no input, no boundary -- the oracle writes dsv_*.png for them. */
+static void shop_dissolve(Shop *s)
+{
+    Town *t = s->t;
+    if (t) t->dsv_pic = 1;
+    for (int n = 0; n < 8 && !(t && t->quit); n++) {
+        render_dissolve_pass(s->fb, n);
+        if (t && t->present) t->present(t);
+    }
+    if (t) t->dsv_pic = 0;
 }
 
 /* The original leaves for DOS (kenjpro A936 `jmp far [FF00]`) or hands over to
@@ -908,6 +923,7 @@ static void armr_action(Shop *s, uint8_t op)
     case 5:                                                     /* A716: the repair (done in C
                                                                  * by armr_repair; this is the
                                                                  * wait and the animation reset) */
+        shop_dissolve(s);                                       /* A716 [2040] */
         shop_wait(s, 400);
         s->hk.armr_t0 = s->hk.armr_phase = s->hk.armr_state = s->hk.armr_t1 = 0;   /* A734 */
         armr_draw_frame(s, 0);
@@ -1083,8 +1099,12 @@ static void inn_action(Shop *s, uint8_t op)
         return;
     case 3:                                                     /* A12A: the night */
         shop_wait(s, 150);
+        shop_dissolve(s);                                       /* A12D [2040] */
+        shop_wait(s, 150); shop_wait(s, 150);                   /* A132, A135 */
         s->g->hp = s->g->max_hp;
         memcpy(s->g->magic_count, s->g->magic_max, 7);
+        draw_portrait(s); box_clear(s);                         /* A15C jmp A05F: the portrait and the text box again */
+        s->hk.inn_on = 0xFF;
         return;
     case 4: shop_wait(s, 150); return;
     default: return;
@@ -1815,14 +1835,27 @@ void shop_loop(Shop *s)
     }
 }
 
+/* the overlay ran to its end by itself (not a headless guard, a quit or the ending/DOS exit):
+ * the exit [2040] of A055 / A068 / A0A8 / ... runs, then the return to town.bin 6EAF */
+static void shop_leave_dissolve(Shop *s)
+{
+    if (shop_exit_request || (s->t && s->t->quit)) return;
+    if (s->headless_guard && (int)s->frames >= s->headless_guard) return;
+    shop_dissolve(s);
+}
+
 int shop_run_death(Town *t)
 {
     static Shop shop;
     Shop *s = &shop;
     if (shop_open_entry(s, t, SHOP_SAGE, 1)) return -1;
+    town_dissolve_from(t, 8);                                   /* 6191 [2040]: the cavern's 99A8 left the playfield black and the town is not drawn yet */
+    t->dissolve = 0;
+    audio_music_stop();                                         /* 6196 int 60h AX=1 (no FF24 fade on this path) */
     t->shop = s;
     player_page_push(t->g);
     shop_loop(s);
+    shop_leave_dissolve(s);                                     /* A055 */
     player_page_push(t->g);
     t->shop = NULL;
     shop_close(s);
@@ -1832,10 +1865,15 @@ int shop_run_death(Town *t)
 int shop_run(Town *t, int dest)
 {
     static Shop shop;
-    if (shop_open(&shop, t, dest)) return -1;
+    audio_music_fade(4);                                        /* 6E7E: FF24 = 4, the score fades while the overlay loads */
+    if (shop_open(&shop, t, dest)) return -1;                   /* 6E83..6E96 */
+    town_dissolve(t);                                           /* 6E9B [2040] over the town screen, the music still fading */
+    t->dissolve = 0;
+    audio_music_stop();                                         /* 6EA0 int 60h AX=1 */
     t->shop = &shop;
     player_page_push(t->g);
     shop_loop(&shop);
+    shop_leave_dissolve(&shop);                                 /* the overlay's own exit [2040] */
     player_page_push(t->g);
     t->shop = NULL;
     shop_close(&shop);

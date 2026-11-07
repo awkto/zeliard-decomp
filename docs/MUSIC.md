@@ -52,6 +52,9 @@ contains the OPL and SN76496 mute sequences of 5/6).
 | `FF28` | `music_off` | R (STICK F1 handler) | set by AX=2 CL=0 |
 | `FF76` | `volume` | — | AX=7 |
 
+town.bin `6E7E` (`FF24 = 4`) fades under the shop-entry dissolve, which runs for well under the 2.2 s the fade needs
+(64 steps of 4 ticks at 118.35 Hz), so `6EA0` (`AX=1`) cuts the score at about a third of the way down (#118).
+
 Fade-out is therefore not an INT 60h function: the game pokes `FF24` and waits on `FF26`
 (or a fixed time: `select.bin A598: mov [FF24],8; wait FF1A ≥ 78h; ax=1`).
 

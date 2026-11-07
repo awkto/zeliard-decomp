@@ -1126,13 +1126,20 @@ static void death_step(Game *g)
             if (a != 3) g->hero_anim = a;                               /* 9969: 3 is never stored */
         }
         return;
-    case 3:                                                             /* 9993 */
+    case 3: {                                                           /* 9993 */
         frame(g);
+        uint8_t drawn = g->hero_hidden;                                 /* what the frame just put on screen */
         g->hero_hidden = (uint8_t)((g->death_blink & 1) - 1);           /* 9998: odd CX shows, even hides */
         if (--g->death_blink) return;                                   /* 99A1: loop */
         g->death_phase = 0;
-        hero_die(g);                                                    /* 99A3 */
-        return;
+        audio_music_stop();                                             /* 99A3: int 60h AX=1 */
+        g->hero_hidden = drawn;
+        g->dsv_pic = 1;                                                 /* 99A8 [2040] over that screen (#118) */
+        for (int n = 1; n <= 8 && g->present; n++) { g->dissolve = n; g->present(g); }
+        g->dsv_pic = g->dissolve = 0;
+        g->hero_hidden = 0;
+        hero_die(g);                                                    /* 99AD */
+        return; }
     }
 }
 

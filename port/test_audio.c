@@ -616,6 +616,22 @@ static void t_intro_silence(void)
     CHECK(!audio_music_stopped(), "leaving the shop restarts it (6EF8)");
     audio_music_restart(0);
     CHECK(!audio_music_stopped(), "and a restart while it still plays is fine");
+    /* 6E7E FF24 = 4: the score fades (FF25 += 4 every 4 driver ticks, 118.35 Hz) while the
+     * dissolve runs, 8 frames = 0.68 s: still sounding when 6EA0 stops it (#118); left alone
+     * it would run to silence in 64 steps = 2.16 s */
+    CHECK(audio_dump_open("/tmp/zel_fade_dsv.wav") == 0, "WAV dump opens");
+    audio_music_restart(0);
+    audio_music_fade(4);
+    audio_advance_ms(8 * 84.0);
+    CHECK(!audio_music_stopped(), "the fade is still going after the dissolve's 0.68 s");
+    audio_music_stop();
+    CHECK(audio_music_stopped(), "and 6EA0 then stops it");
+    audio_music_restart(0);
+    audio_music_fade(4);
+    audio_advance_ms(2400);
+    CHECK(audio_music_stopped(), "FF24 = 4 left alone fades the score out by itself in 2.2 s");
+    audio_dump_close();
+    remove("/tmp/zel_fade_dsv.wav");
     audio_shutdown();
 }
 

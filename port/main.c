@@ -103,6 +103,7 @@ typedef struct {
     FILE    *trace_f;
     unsigned trace_n;                   /* the next trace frame number */
     unsigned walk_n;                    /* walk-in pictures written so far (#117) */
+    unsigned dsv_n;                     /* dissolve pictures written so far (#118) */
     unsigned png_every;                 /* --png-every K */
     unsigned rng_mark;                  /* g->rng_calls at the previous boundary */
     int      trace_done;                /* script exhausted: the run is stopping */
@@ -1303,6 +1304,12 @@ static void present(Game *g)
                 g->dirs, g->hp, g->attacking, g->attack_var, g->on_hazard ? " HAZARD" : "",
                 g->hero_hit ? " HIT" : "");
     if (a->trace_f) {                                /* inputs move only at the boundaries */
+        if (g->dsv_pic && a->png_every && !a->trace_done) {   /* #118: the death dissolve (99A8), dsv_<next boundary>_<k>.png */
+            char path[1100];
+            snprintf(path, sizeof path, "%s/dsv_%05u_%03u.png", a->trace_dir, a->trace_n, a->dsv_n++);
+            fb_fight(a, g);
+            fb_write_png(a, path);
+        }
         if (g->walk_in && a->png_every) {            /* #117: the walk-in (7C6E) has no boundary; its pictures go to */
             char path[1100];                         /* walk_<next boundary>_<k>.png, diffed by pixdiff.py */
             snprintf(path, sizeof path, "%s/walk_%05u_%03u.png", a->trace_dir, a->trace_n, a->walk_n++);
@@ -1319,6 +1326,7 @@ static void present(Game *g)
     if (a->max_frames && g->frame_no >= a->max_frames) a->quit = 1;
     if (a->quit && g->status) g->status->done = 1;   /* let the status screen out */
     if (a->headless) {
+        if (g->dsv_pic) return;                         /* a dissolve pass: the script waits */
         if (a->shot_path && g->frame_no == a->shot_frame) dump_png(a, g);
         if (!script_next(a)) {
             if (!a->shot_path || g->frame_no >= a->shot_frame) a->quit = 1;
@@ -1351,6 +1359,7 @@ static void present(Game *g)
     /* wait out the frame (4*speed ticks), pumping events */
     static Uint64 next = 0;
     frame_wait(a, g, &next);
+    if (g->dsv_pic) return;                             /* a dissolve pass reads no keys */
     const Uint8 *k = SDL_GetKeyboardState(NULL);
     audio_hotkeys(a, k);
     /* Paused: hand the engine a frame of nothing rather than the keys the
@@ -1384,6 +1393,12 @@ static void town_present(Town *t)
                 t->frame_no, town_hero_col(t), t->hero_scr_col, t->scroll_col, t->hero_anim, t->hero_flags,
                 t->message[0] ? "  msg: " : "", t->message);
     if (a->trace_f) {
+        if (t->dsv_pic && a->png_every && !a->trace_done) {   /* #118: [2040]'s passes have no boundary either; the oracle writes */
+            char path[1100];                         /* dsv_<next boundary>_<k>.png after each, pixdiff.py diffs them */
+            snprintf(path, sizeof path, "%s/dsv_%05u_%03u.png", a->trace_dir, a->trace_n, a->dsv_n++);
+            fb_town(a, t);
+            fb_write_png(a, path);
+        }
         if (++a->trace_idle > TRACE_IDLE_MAX && !a->quit) {
             fprintf(stderr, "[trace] %u frames without a boundary (a shop or menu waiting on input?): stopping\n", a->trace_idle);
             a->quit = 1; a->trace_done = 1;
@@ -1395,6 +1410,7 @@ static void town_present(Town *t)
     if (a->quit && t->status) t->status->done = 1;
     if (a->quit) t->quit = 1;
     if (a->headless) {
+        if (t->dsv_pic) return;                         /* a dissolve pass: the script waits */
         if (a->shot_path && t->frame_no == a->shot_frame) {
             fb_town(a, t);
             if (fb_write_png(a, a->shot_path) == 0) fprintf(stderr, "wrote %s (town frame %u, hero col %d)\n", a->shot_path, t->frame_no, town_hero_col(t));
@@ -1431,6 +1447,7 @@ static void town_present(Town *t)
     title_paused(a, title);
     static Uint64 next = 0;
     frame_wait(a, NULL, &next);
+    if (t->dsv_pic) return;                             /* a dissolve pass reads no keys */
     const Uint8 *k = SDL_GetKeyboardState(NULL);
     audio_hotkeys(a, k);
     if (a->paused) { t->dirs = 0; t->buttons = 0; t->menu_key = 0; return; }
