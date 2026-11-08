@@ -812,6 +812,31 @@ front door (222,19) → MP8D, are not reachable by the autopilot from (29,53): t
 under the hero) are not nav edges, and a plain walk onto the first one does not move the hero.
 Past that: the 4-row jump (Feruza shoes) onto MP8D's boss pocket, the Key door (flag [44] & 20).
 
+**MP83 survey (#88, round 3; no scenario yet).**  From `alguien_route`'s end (29,53) with the pilot:
+* The B gates *can* be crossed by hand, but they are not what blocks the route.  The staircase (50,46)/(53,44)/(56,42)
+  is a step *up* (gate row 46 is one above the platform floor, row 47), so a plain `R` is stopped by the gate cell; a jump
+  does it: from the platform end `keys UR4 R3 UR4 R3 UR4 R3` goes gate to gate and ends on the big platform (cols 59-73,
+  floor row 42), 3 gates in ~20 frames.  The pilot reaches that platform anyway (rope col 75 from below), so the gates add
+  nothing to what is reachable.
+* The map wraps vertically.  Rows 62..1 over cols 42..77 are a hazard lattice (20 LIFE a frame in cavern 8: use `--life
+  30000`, the 3000 of ALGM dies in ~150 frames) with solid rock under it from row 2.  The pilot walks it and the top platform
+  (floor row 2, cols 86..100): `cell 95,63` works.
+* Rows 6..9 are a wind corridor across the whole map.  Cell 18 (`I`) pushes left (cols 2..38), 17 (`H`) pushes right
+  (cols 93..125), 19 (`J`) is the updraft shafts at cols 126..1 and the invisible floor under the corridor (hero hovers on
+  it).  Cols 39..92 are calm air.  Door (86,6) is in that calm stretch, standing on P4 (floor row 10, cols 77..100), reached
+  by the B-gate staircase (65,7)..(74,10) from the rope at col 63 (rows 2..16, from P3, floor row 15, cols 65..77).  Door (6,13) is
+  on P8 (floor row 17, cols 0..21), reached from the rope at col 23 (rows 12..22) from P9 (floor row 17, cols 25..49) or P11
+  (floor row 24, cols 20..32, with the A elevator (17,24)).
+* From (29,53) the pilot's graph reaches the top-left C platform (24,4) (patrol cols 11..38, `cell 36,1`) and P7 (floor
+  row 10, cols 19..30) by falling off its right end at col 37 into the left-current, which carries the hero left at 2 cols a
+  frame to the col 0/1 updraft and round the wrap.  It never reaches P3/P4/P8/P9/P11 or the ropes at cols 23, 44 and 63: those
+  clusters have nodes but no incoming edge.  The calm gap cols 39..43 under the top platform is closed above (rock rows 2..4
+  from col 38), so the only way into it is against the current.  The missing link is probably one of the moving-platform
+  chains ((62,32), (54,30), (80,38), (101,28) C platforms around P2 (cols 66..77, floor row 30) and the right side) that the
+  survey does not turn into edges; not tried by hand.
+* Doors: (6,13) -> MP81 (228,49), (86,6) -> MP81 (179,35), the entry (29,52) -> MP80 (185,1); MP81's front door (222,19)
+  needs [44]&20, back door MP84 (16,51).
+
 ## 9. Save states (#52, Phase B)
 
 The wasm / DOSBox-X builds snapshot the whole machine.  The port cannot, so it lists
