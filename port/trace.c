@@ -14,6 +14,7 @@
 #include <stddef.h>
 #include <string.h>
 #include "trace.h"
+#include "audio.h"
 #include "player.h"
 
 enum { M_FIGHT = 1, M_TOWN = 2, M_ANY = 3 };
@@ -49,6 +50,12 @@ static uint32_t f_keys_town(const Game *g, const Town *t)
 static uint32_t f_hero_hidden(const Game *g, const Town *t)
 { (void)g; (void)t; return 0xFF; }
 
+/* the game's view of the music driver (audio.c M): [C8], FF24..FF26, [9F02] */
+static uint32_t f_mus_c8(const Game *g, const Town *t)      { (void)g; (void)t; return audio_model_c8(); }
+static uint32_t f_mus_fade(const Game *g, const Town *t)    { (void)g; (void)t; return audio_model_fade(); }
+static uint32_t f_mus_stopped(const Game *g, const Town *t) { (void)g; (void)t; return audio_model_stopped(); }
+static uint32_t f_mus_restart(const Game *g, const Town *t) { (void)g; (void)t; return audio_model_restart(); }
+
 #define G(n, a, s, m)  {n, a, s, M_FIGHT, S_GAME, offsetof(Game, m), sizeof(((Game *)0)->m), NULL}
 #define T(n, a, s, m)  {n, a, s, M_TOWN,  S_TOWN, offsetof(Town, m), sizeof(((Town *)0)->m), NULL}
 #define P(n, a, s, md) {n, a, s, md, S_PAGE, 0, 0, NULL}
@@ -66,6 +73,11 @@ static const TField FIELDS[] = {
     T("btn1_edge",   0xFF1D, 1, btn1_edge),
     G("btn2_edge",   0xFF1E, 1, btn2_edge),
     T("btn2_edge",   0xFF1E, 1, btn2_edge),
+    /* ---- the music driver as the game sees it */
+    F("music_idx",     0x00C8, 1, M_ANY,   f_mus_c8),
+    F("music_fade",    0xFF24, 1, M_ANY,   f_mus_fade),
+    F("music_stopped", 0xFF26, 1, M_ANY,   f_mus_stopped),
+    F("music_restart", 0x9F02, 1, M_FIGHT, f_mus_restart),
     /* ---- FF00 page: fight.bin state */
     G("boss_cutscene",  0xFF2E, 1, boss_cutscene),
     G("boss_dying",     0xFF2F, 1, boss_dying),
@@ -167,7 +179,6 @@ static const TField FIELDS[] = {
     P("cur_map",          0xC4, 1, M_ANY),
     P("town_map",         0xC5, 1, M_ANY),
     P("hp_regen_pending", 0xC6, 2, M_ANY),
-    P("music_idx",        0xC8, 1, M_ANY),
     P("drug_stock",       0xC9, 9, M_ANY),
     P("sword_stock",      0xD2, 9, M_ANY),
     P("shield_stock",     0xDB, 9, M_ANY),

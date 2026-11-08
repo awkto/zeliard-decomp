@@ -1032,6 +1032,44 @@ static void t_tandy_backend(void)
     }
 }
 
+/* ======== 10. cavern entry: fade under the walk-in, silence, start (fight.bin 7E93 / 7F5D / 6270) ====
+ * The oracle's INT 60h log (docs/MUSIC.md "Cavern entry"): the town score is not cut at the cave mouth.
+ * 7E93 sets FF24 = 10 and the old score fades through the load and the 26-frame walk-in, 7F61 stops it
+ * (INT 60h AX=1), and the new score starts at 6270, after the first frame.  A level in the same score
+ * as the one playing changes nothing.  Runs on audio.c's device-independent model of the driver.   */
+static void t_cave_entry(void)
+{
+    audio_music_hold(0);
+    audio_music(1);                            /* the town: ugm1 */
+    CHECK(audio_model_c8() == 1 && audio_model_stopped() == 0 && audio_model_fade() == 0, "the town score plays");
+    audio_music_level(4);                      /* 7E93: mus1 */
+    CHECK(audio_model_c8() == 4, "[C8] is stored at once (7EB0)");
+    CHECK(audio_model_fade() == 10 && audio_model_level() == 4 && audio_model_stopped() == 0,
+          "the town score fades (FF24 = 10), it does not stop (fade %u level %u stopped %u)",
+          audio_model_fade(), audio_model_level(), audio_model_stopped());
+    CHECK(audio_model_restart() == 0, "the new score is not queued yet");
+    for (int f = 0; f < 26; f++) audio_music_model_ticks(10);          /* the walk-in */
+    CHECK(audio_model_stopped() == 0 && audio_model_level() == 108, "still fading under the walk-in (level %u)", audio_model_level());
+    audio_music_commit();                      /* 7CFF -> 7F5D */
+    CHECK(audio_model_stopped() == 0xFF && audio_model_restart() == 0xFF && audio_model_fade() == 10,
+          "7F61 stops it and 7F63 queues the new one; FF24 stays until the start");
+    audio_music_frame_end();                   /* 6270 */
+    CHECK(audio_model_stopped() == 0 && audio_model_restart() == 0 && audio_model_fade() == 0 && audio_model_level() == 0,
+          "6270 starts the score and clears the fade");
+    audio_music_level(4);                      /* a door to another cavern of the same score */
+    audio_music_commit(); audio_music_frame_end();
+    CHECK(audio_model_fade() == 0 && audio_model_stopped() == 0, "the same index: the score plays on, no fade");
+    audio_music_level(12);                     /* a boss map: stop and start together (6085 .. 60E3) */
+    audio_music_settle(1);
+    CHECK(audio_model_c8() == 12 && audio_model_stopped() == 0 && audio_model_fade() == 0 && audio_model_restart() == 0,
+          "a boss map starts its score before the encounter card");
+    /* a fade that runs to the end stops the driver by itself: 64 steps of FF24 ticks */
+    audio_music_fade(8);
+    audio_music_model_ticks(8 * 64);
+    CHECK(audio_model_stopped() == 0xFF && audio_model_fade() == 0, "the fade runs out into silence");
+    audio_music(0);
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -1044,7 +1082,7 @@ int main(int argc, char **argv)
     }
     free(probe);
     struct { const char *name; void (*fn)(void); } tests[] = {
-        {"music table", t_music_table}, {"tick/tempo", t_tempo},
+        {"cave entry", t_cave_entry}, {"music table", t_music_table},  /* first: audio_music_force() in a later test locks the score */ {"tick/tempo", t_tempo},
         {"score parser", t_parser}, {"volume clamp", t_volume_clamp},
         {"FF75 effects", t_sfx}, {"OPL2 core", t_opl}, {"note pitch", t_pitch},
         {"silence/dump", t_silence}, {"intro silence", t_intro_silence},

@@ -91,7 +91,9 @@ int shell_enter_town(Game *g, int idx, int col, int died)
     if (town_load_map(&s->tmap, s->dir, idx)) { fprintf(stderr, "[town] cannot load town map %d\n", idx); return 0; }
     int np = town_apply_patches(&s->tmap, g->page);                     /* 6AED */
     if (town_load_banks(s)) return 0;
-    audio_music(s->tmap.music);                                         /* town level record +0 bits 1-4 */
+    if (died && !(g->jashiin_defeated)) audio_music_town_idx(s->tmap.music);   /* the Sage's return: [C8] only, the score waits for 6EF8 (kenjpro) */
+    else if (died) audio_music_town_queue(s->tmap.music);               /* the ending's alive return: 61F9 starts it after the first town frame (oracle MUSLOG) */
+    else audio_music(s->tmap.music);                                    /* town level record +0 bits 1-4 */
     town_init(&s->town, &s->tmap, &s->ttiles, &s->tspr, &s->thero, g);   /* 7B7F/99EF/6AAF load via [10C] and 60C3/60C6: the memset clears both edges */
     /* the town HUD is the non-boss one (GOLD, PLACE): a death in a boss room
      * left the boss flags and name plate set (issue #102) */
@@ -160,7 +162,7 @@ void shell_load_enemy_banks(Shell *s, const Map *m)
      * all — "cannot load enemy bank 255" — and Jashiin invisible. */
     int enp = (m->enemies != 0xFF) ? m->enemies : m->boss_bank;
     load_banks_by_index(s, g, m->ai, enp);
-    audio_music((m->lvl_flags >> 1) & 0x0F);                            /* fight.bin 7E93 -> the 9E53 table */
+    audio_music_level((m->lvl_flags >> 1) & 0x0F);                      /* fight.bin 7E93: fade now, the 9E53 score after the walk-in */
     g->boss_map  = (uint8_t)((m->lvl_flags & 0x80) ? 0xFF : 0);         /* -> FF34 */
     g->boss_room = (uint8_t)((m->lvl_flags & 0x40) ? 0xFF : 0);         /* -> [E6] */
     if (g->boss_map) g->gf_frame = 0;   /* 6254/625B: [FF34] -> gfmcga [3012] 4192, the fade-in redraw, counts [4FFF] 8 -> 0 */
@@ -242,6 +244,7 @@ int shell_enter_cavern(Shell *s, int sys_map, int col, int row, int face_left,
         else game_start_walk_in(g, face_left);                          /* 7C6E */
         if (g->jashiin_defeated) game_force_death_check(g);             /* 6266 -> 98FC */
     }
+    if (!g->walk_in) audio_music_settle(g->boss_map);                   /* no walk-in: 7CF4 .. 7EBB at once */
     g->walk_place = left_place;
     g->walk_variant = 0;                                                /* 7A6F: xor al,al; [301E] */
     g->cur_map = (uint8_t)sys_map;
@@ -298,10 +301,12 @@ static int on_door(Game *g, const Door *d)
     if (d->dflags & 0x80) {                                     /* 7C18 */
         LOG(s, "[tear] a Tear of Esmesanti (%u of 9)\n", (unsigned)(g->page[0xA0] + 1));
         tear_cutscene(s);
+        audio_music_tear_exit(d->dest_map == 0x1E);                /* 7C39 .. 7F63: [9EFA] = [C8], stop, [9F02] = FF */
     } else {
         game_start_walk_in(g, (d->letter & 0x40) != 0);         /* 7C6E */
         if (g->boss_room) g->walk_then_intro = 1;               /* the restart's 6179 -> 61A8 comes after it */
     }
+    if (!g->walk_in && !(d->dflags & 0x80)) audio_music_settle(g->boss_map);    /* no walk-in (the Tear exit did its own above) */
     /* every branch reaches 7CF4 and ends in 7D61 `jmp 6042`, the loop
      * restart: 6049..6053 zero 9F20..9F22 (the counter rise() bumps on the
      * very Up that took the door) and 628A both press edges (#75:
@@ -473,6 +478,7 @@ static void town_frame(Shell *s)
         town_tail_frame(t);                                             /* 6EE1/6EE6: FF1A=28, 68AF */
         t->btn1_edge = t->btn2_edge = 0;                                /* 6EE9/6EEE */
         t->hero_anim = 1;                                               /* 6EF3 */
+        audio_music_restart(s->tmap.music);                             /* 6EF8: INT 60h AX=0 on arena:3000 -- the town score starts again */
         LOG(s, "[shop] left: GOLD %u, sword %u, shield %u/%u, LIFE %u/%u, EXP %u, level %u\n",
             (unsigned)g->gold, g->sword, g->shield, g->shield_hp, g->hp, g->max_hp, g->exp, g->level);
         break; }
@@ -490,7 +496,8 @@ void shell_frame(Shell *s)
      * resumes with the next frame's own step.  (A frame that opened a shop or
      * the status screen has run their wait boundaries by now, so the trace
      * counter no longer matches and the save is refused as non-resumable.) */
-    if (s->in_town) { town_frame(s); if (s->frame_done) s->frame_done(s); return; }
+    audio_music_model_ticks(10);                /* one frame = 20 INT 8 = 10 driver ticks (audio_clock_frame) */
+    if (s->in_town) { town_frame(s); audio_music_frame_end(); if (s->frame_done) s->frame_done(s); return; }
     int was_intro = s->g.boss_room != 0;
     int clock = s->g.score_clock;
     game_step(&s->g);
@@ -500,6 +507,7 @@ void shell_frame(Shell *s)
      * hero at (0x18,0x0D) for the last fight. */
     if (was_intro && !s->g.boss_room && !s->g.hero_dead) {
         LOG(s, "[boss] the [E6] walk-in is over: loading MPA0 at (0x18,0x0D)\n");
+        audio_music_frame_end();                /* 61C8: the loaded score starts when [E6] clears (INT 60h AX=0) */
         /* 61DD loads MPA0 through [10C]: STICK 0CDC drops a Space latched at
          * the last intro boundary (FF1E stays; 628A after 624A's frame is not modelled) */
         s->g.btn1_edge = 0;

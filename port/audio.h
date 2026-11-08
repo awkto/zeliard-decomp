@@ -37,6 +37,24 @@ void audio_set_mute(int on);         /* host fast-forward: the device plays sile
 /* fight.bin 7E93: the level record's music index (bits 1-4 of byte +0), also
  * used for the town maps.  Restarts the score only when the index changes. */
 void audio_music(int music_idx);
+/* The cavern entry in fight.bin's three steps (7E93 / 7F5D / 6270), docs/MUSIC.md "Cavern entry":
+ * level() parks a changed index and starts fading the old score, commit() (after the walk-in)
+ * stops it and loads the new one, frame_end() (the end of the first frame) starts it.
+ * settle() is commit() plus, for a boss map, the immediate start of 6085..60E3. */
+void audio_music_level(int music_idx);
+void audio_music_town_queue(int music_idx); /* as _town_idx, but audio_music_frame_end() starts it */
+void audio_music_tear_exit(int to_mpa0);    /* 7C39: the Tear exit door parks [C8], stops, queues the score; into MPA0 nothing starts it (oracle) */
+void audio_music_town_idx(int music_idx);   /* the death return: [C8] only, the Sage restarts the score */
+void audio_music_commit(void);
+void audio_music_frame_end(void);
+void audio_music_settle(int boss_map);
+/* the game's view of the driver, device-independent, for the harness trace and the fade clock */
+void audio_music_model_ticks(int n);
+uint8_t audio_model_c8(void);       /* [C8] */
+uint8_t audio_model_fade(void);     /* [FF24] */
+uint8_t audio_model_level(void);    /* [FF25] */
+uint8_t audio_model_stopped(void);  /* [FF26] */
+uint8_t audio_model_restart(void);  /* [9F02] */
 /* force one score and ignore later level changes (--music N, for listening
  * tests and --dump-audio verification) */
 void audio_music_force(int music_idx);
