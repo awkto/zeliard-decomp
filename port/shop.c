@@ -1791,6 +1791,13 @@ void shop_close(Shop *s) { free(s->img); s->img = NULL; }
  * goodbye turns it back on. */
 static void bank_entry(Shop *s)
 {
+    /* The first idle_poll pass of A063's print (7089, FF1A just reset at 7084) calls the
+     * hook at elapsed 0, before any tick has passed, and [FF50] was seeded >= 0x1E: the
+     * first step is at t=0.  shop_tick_hook counts the tick before it runs the hook, so
+     * without this pass every step, the first and each 30 ticks after, came one tick
+     * late, and the one at the end of the 2nd dot's wait (t=150, before the A085 compare
+     * exits) fell just after it: the A085 picture 3,1 was one phase behind (#124). */
+    bank_hook(s);
     s->tp = 0xA989;
     (void)print_text(s);                                        /* A063..A069 */
     for (int i = 0; i < 5 && !s->leave; i++) {

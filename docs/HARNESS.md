@@ -97,7 +97,7 @@ pictures pairwise, and a picture on one side only is a failure.
 | Kioku Feather: 120-tick wait, then the dissolve | select `A5A2` / `A5A9` | no | `status_run_*` | yes, `wA5A2` + the dissolve's `dsv` (scenario `kioku_feather`) |
 | Screen-wide spell (spell 7): flash, 3 x 9 rings, flash | gfmcga `42F7`..`4471`, wait `444A` | no | `render_burst` (render.c) over the `SIDE_SNAP` screen (#122) | yes, 54 x `w4471` per cast (scenario `spell7_burst`).  The wait is 3 ticks at speed 5, under the 8-tick rule, so the oracle patch lists IP `4471` as an exception |
 | Level-up flash, 8 x {XOR the playfield, 10 ticks} | kenjpro `A2BC`, wait `A2C7` | no | `sage_level_up` changes the numbers only | oracle writes `wA2C7`; no scenario levels up; **open** |
-| Shop animations and waits (church `A091`, bank `A085` `A307` `A4A6` `A611` `A825`, king `A0C4` `A0DC`, drug `A0DD` `A0F3` `A73B`, armour `A70E` `A878`, inn `A167` `A177`, sage `A1EC` `A218` `A418`) | overlays at `A000` | no | `shop_wait` | yes, `w<IP>` (the port's tag is `w0000`).  Matched in every scenario but `bank_menu` / `bank_withdraw` (below) |
+| Shop animations and waits (church `A091`, bank `A085` `A307` `A4A6` `A611` `A825`, king `A0C4` `A0DC`, drug `A0DD` `A0F3` `A73B`, armour `A70E` `A878`, inn `A167` `A177`, sage `A1EC` `A218` `A418`) | overlays at `A000` | no | `shop_wait` | yes, `w<IP>` (the port's tag is `w0000`).  Matched in every scenario |
 | Text glyph wait (6 ticks), menu cursor waits (4) | town `708C`, `73D6`, `7456`, `7A19`.. | no | `shop_wait` | no: under 8 ticks, seen at the next boundary |
 | Death: 63 dying frames, blink | fight `98FC`, `9948`, `9993` through `6F9B` | `717F` | `death_step` | yes (frames); then the dissolve above |
 | Boss intro / kill / reward, item pickup messages (32 frames) | fight frame loop | `717F` | frames | yes (frames) |
@@ -111,8 +111,9 @@ pictures pairwise, and a picture on one side only is a failure.
 it, no hero under the card, and a Tear scene played over the destination map with the destination's HUD
 instead of the cave-mouth backdrop and the old HUD.  Open: the Tear scene's raised-sword picture differs
 (about 100 pixels in the 16 x 24 blade area, none of the three `4A31` pictures matches the oracle: the
-scenarios have an `allow-px` for it), the spell 7 burst and the level-up flash are not drawn, the doorway to the past is not there, and `bank_menu` / `bank_withdraw` differ by 83
-pixels at (77,50)-(95,67) in the first bank picture.
+scenarios have an `allow-px` for it), the spell 7 burst and the level-up flash are not drawn and the doorway to the past is not there.  (Fixed, #124: `bank_menu` / `bank_withdraw`
+differed by 83 pixels at (77,50)-(95,67) in the A085 picture 3,1: the first [A002] pass of the bank entry
+runs at elapsed 0, `bank_entry` now makes it, so the teller's 30-tick steps land on the original's ticks.  The oracle's first step is a few ticks later or not, by the save's file name alone: BANK.usr, BANKW.usr = at elapsed 0, byte-identical BANKD.usr = 1..9 ticks late, because [FF50] is free-running from boot and sits at the 0x1E threshold at the bank door.  `bank_deposit` / `bank_hold` therefore start from BANK.usr.)
 
 ## 2. Inputs
 
