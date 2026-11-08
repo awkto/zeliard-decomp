@@ -238,6 +238,12 @@ static void spell_spawn_spread(Game *g)
 /* 0x8918  spell 7: hit every sprite in the window at once, then stop. */
 static void spell_screen_wide(Game *g)
 {
+    if (g->side) {                                                      /* the screen the burst draws over is the last frame's: the blade as drawn (#122) */
+        uint8_t sa = g->attacking, sv = (uint8_t)g->attack_var, sc = g->cast_timer;
+        g->attacking = g->drawn_attacking; g->attack_var = g->drawn_attack_var; g->cast_timer = g->drawn_cast_timer;
+        g->side(g, SIDE_SNAP, 0, 0);
+        g->attacking = sa; g->attack_var = sv; g->cast_timer = sc;
+    }
     g->msg_timer = 0xFF;                                                /* 8918 ([9EEE] = 0xFF too: the second box's timer, untraced) */
     if (!(g->boss_map && g->boss_cutscene)) {
         int p = game_ring_add(game_win(g), -RING_W);
@@ -248,6 +254,7 @@ static void spell_screen_wide(Game *g)
     }
     g->magic_active = 0;                                                /* 8954 */
     g->sfx_request = 0x19;
+    if (g->side) g->side(g, SIDE_BURST, 0, 0);                          /* 895E gfmcga [3018] 42F7 (#122) */
     g->gf_frame = 0;            /* 895E gfmcga [3018] 42F7: [4FFF] = 0x36, then 0 (4314 / 431C) */
     g->magic_extra_frame = 1;   /* 8963..896B: [FF1E] = 0, 73B3, jmp 6F9B */
 }

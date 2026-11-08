@@ -1323,6 +1323,12 @@ static void side_show(App *a, const char *tag, unsigned ms)
 #endif
 }
 
+static void burst_wait(void *u)
+{
+    App *a = u;
+    side_show(a, "w4471", (unsigned)(a->speed / 2 + 1) * 1000 / 237);
+}
+
 static void side_fight(Game *g, int kind, unsigned arg, unsigned ticks)
 {
     App *a = app_of(g->user);
@@ -1335,6 +1341,11 @@ static void side_fight(Game *g, int kind, unsigned arg, unsigned ticks)
             render_fadein_pass(a->fb, g, c);
             side_show(a, "w41D9", 16 * 1000 / 237);
         }
+        return;
+    }
+    if (kind == SIDE_BURST) {                   /* 42F7: over the screen SIDE_SNAP kept; each rectangle shown for its [FF33]/2+1 ticks */
+        memcpy(a->fb, a->side_snap, sizeof a->fb);
+        render_burst(a->fb, g, burst_wait, a);
         return;
     }
     fb_fight(a, g);

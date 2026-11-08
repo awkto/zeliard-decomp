@@ -107,6 +107,7 @@ typedef void (*PresentFn)(Game *g);
  * it for the original's duration.  NULL when nothing listens (tests). */
 enum { SIDE_WAIT = 1,       /* the screen at the end of a timer wait: tag w<arg> (the cmp [FF1A] of the loop) */
        SIDE_SNAP,           /* remember the screen as it is: the base of a later SIDE_FADEIN with arg 739A */
+       SIDE_BURST,          /* spell 7 (gfmcga 42F7): the flash and the 54 rectangles over the SIDE_SNAP screen, tag w4471 after each */
        SIDE_FADEIN          /* gfmcga 4192: the 8-pass fade-in redraw of a boss map over the encounter card, tag w41D9 */
 };
 typedef void (*SideFn)(Game *g, int kind, unsigned arg, unsigned ticks);
@@ -252,7 +253,7 @@ struct Game {
     uint8_t  boss_intro;            /* 9F26 */
     unsigned encounter_frames;      /* 60E6: the 6 flashes of the encounter card */
     const uint8_t *old_screen;      /* the screen SIDE_SNAP kept (the front end's buffer), or NULL: the Tear scene plays over it (#119) */
-    uint8_t  drawn_attacking, drawn_attack_var;   /* the blade as the last present drew it (7147 advances it after): the SIDE_SNAP picture (#119) */
+    uint8_t  drawn_attacking, drawn_attack_var, drawn_cast_timer;   /* the blade as the last present drew it (7147 advances it after): the SIDE_SNAP picture (#119) */
     uint8_t  fade_card;             /* render only: draw the card up (the base the fade-in passes work over, #119) */
     Boss     boss;
     PostBossFn post_boss;
