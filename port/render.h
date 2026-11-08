@@ -14,6 +14,10 @@
 #define PF_H 144                    /* 18 rows visible; the 19th window row is under the HUD */
 
 void render_fadein_pass(uint8_t *fb, const Game *g, int c);          /* gfmcga 4192, one pass (c = 8 .. 1) over fb (#119) */
+/* gfmcga 42F7 (spell 7): the XOR flash, three sets of nine expanding rectangles drawn in 0x36 then again in 0, the flash
+ * undone.  `wait` is called after each of the 54 rectangles (the 444A timer wait), with the screen as it is then. */
+typedef void (*BurstWaitFn)(void *user);
+void render_burst(uint8_t *fb, const Game *g, BurstWaitFn wait, void *user);
 void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h);     /* fb: FB_W*FB_H VGA indices */
 /* LIFE bar, GOLD/ALMAS digits, the four narrow-font labels and the place name.
  * `tf` supplies the [F504] narrow glyphs (NULL = bars and digits only) and

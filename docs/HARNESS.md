@@ -74,7 +74,7 @@ and boss overlays, rokademo), and running the whole library under an oracle that
 * the **exit of any `cmp [FF1A],imm8 / jc` or `cmp [FF1A],al / jc` wait of 8 ticks or more** (tag `w<IP>`,
   IP = the cmp), except the frame, walk-in and town frame waits (`7179`, `712D`, `7FA5`, `68E7`, which are
   boundaries or have the walk pictures) and the ending (`end:wait`).  A new timer loop in any overlay
-  therefore shows up by itself the first time a scenario passes through it.  Waits of 7 ticks or less
+  therefore shows up by itself the first time a scenario passes through it (the one exception, added by hand: spell 7's `4471`, 3 ticks).  Waits of 7 ticks or less
   (glyph 6, cursor and menu 4) are not pictured: their effect is visible at the next boundary.
 
 The video dissolve (GMMCGA `2130`, a CPU delay, no timer) has its own pictures, `dsv_*.png` (#118), at every
@@ -95,7 +95,7 @@ pictures pairwise, and a picture on one side only is a failure.
 | Video dissolve of the playfield, 8 passes (CPU delay) | GMMCGA `2130`, delay `2184`; callers `7033`, `99A8`, `6191`, `A5A9`, `6E9B` / `6EAF`, `6FE5` | no | `town_dissolve` / `shop_dissolve` / `status_dissolve` (#118) | yes, `dsv_*.png` (#118; not the doorway to the past).  Was a hard cut everywhere |
 | Tear scene, one wait per animation frame (158 in agar_fight) | rokademo `A497` | no | `tear.c wait_frame` | yes, `wA497`.  Fixed: backdrop (the cave mouth, remapped by the door letter, not the map), the old HUD.  Open: the raised sword's picture (below) |
 | Kioku Feather: 120-tick wait, then the dissolve | select `A5A2` / `A5A9` | no | `status_run_*` | yes, `wA5A2` + the dissolve's `dsv` (scenario `kioku_feather`) |
-| Screen-wide spell (spell 7): flash, 3 x 9 rings, flash | gfmcga `42F7`..`4471`, wait `444A` | no | `spell_screen_wide` kills at once, draws nothing | oracle writes `w4471`; no scenario casts it; **open** |
+| Screen-wide spell (spell 7): flash, 3 x 9 rings, flash | gfmcga `42F7`..`4471`, wait `444A` | no | `render_burst` (render.c) over the `SIDE_SNAP` screen (#122) | yes, 54 x `w4471` per cast (scenario `spell7_burst`).  The wait is 3 ticks at speed 5, under the 8-tick rule, so the oracle patch lists IP `4471` as an exception |
 | Level-up flash, 8 x {XOR the playfield, 10 ticks} | kenjpro `A2BC`, wait `A2C7` | no | `sage_level_up` changes the numbers only | oracle writes `wA2C7`; no scenario levels up; **open** |
 | Shop animations and waits (church `A091`, bank `A085` `A307` `A4A6` `A611` `A825`, king `A0C4` `A0DC`, drug `A0DD` `A0F3` `A73B`, armour `A70E` `A878`, inn `A167` `A177`, sage `A1EC` `A218` `A418`) | overlays at `A000` | no | `shop_wait` | yes, `w<IP>` (the port's tag is `w0000`).  Matched in every scenario but `bank_menu` / `bank_withdraw` (below) |
 | Text glyph wait (6 ticks), menu cursor waits (4) | town `708C`, `73D6`, `7456`, `7A19`.. | no | `shop_wait` | no: under 8 ticks, seen at the next boundary |

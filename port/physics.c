@@ -978,6 +978,7 @@ static void frame_7094(Game *g)
     memcpy(g->bg_ring, g->ring, RING_SIZE);
     if (g->present) g->present(g);                                      /* draw + wait 4*speed ticks + poll input */
     g->drawn_attacking = g->attacking; g->drawn_attack_var = (uint8_t)g->attack_var;
+    g->drawn_cast_timer = g->cast_timer;
     g->hero_drawn_ok = 1;                                               /* 70D4 drew the hero: [4FED] */
     g->hero_drawn_row = g->hero_scr_row; g->hero_drawn_col = g->hero_scr_col;
     /* 70D9: the potion's +8 LIFE a frame, right after the 70D4 draw and before

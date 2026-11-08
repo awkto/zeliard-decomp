@@ -502,7 +502,7 @@ index 0000000..5b122a2
 +    else return;
 +    if (in_end) return;
 +    if (ip == 0x7179 || ip == 0x712D || ip == 0x7FA5 || ip == 0x68E7) return;                      /* fight / walk-in / town frame waits */
-+    if (lim < 8) return;                                                                            /* glyph, cursor and menu waits */
++    if (lim < 8 && ip != 0x4471) return;                                                                            /* glyph, cursor and menu waits; spell 7's 4471 (3 ticks) is pictured anyway (#122) */
 +    ff1a = mem_readb(SegPhys(ds) + 0xFF1A);
 +    if (ff1a < lim) return;                                                                         /* still spinning */
 +    side_pic("w%04X", ip);

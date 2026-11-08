@@ -480,6 +480,72 @@ void render_fadein_pass(uint8_t *fb, const Game *g, int c)
         }
 }
 
+/* ---- spell 7 (gfmcga 42F7..4471): all writes go straight to A000, offset 0x11B0 + y*320 + x, so the playfield origin is (48,14) */
+static void burst_put(uint8_t *fb, unsigned di, uint8_t v) { di &= 0xFFFF; if (di < (unsigned)(FB_W * FB_H)) fb[di] = v; }
+
+static void burst_flash(uint8_t *fb)                    /* 447D: 8 x 18 x 0x70 words XOR 0x1212 = the 224 x 144 playfield */
+{
+    for (int y = 0; y < 18 * 8; y++)
+        for (int x = 0; x < 224; x++) fb[(PF_Y + y) * FB_W + PF_X + x] ^= 0x12;
+}
+
+static void burst_hline(uint8_t *fb, uint8_t bl, uint8_t dl, uint8_t bh, uint8_t col)   /* 4404 */
+{
+    if (dl < bl) { uint8_t t = bl; bl = dl; dl = t; }
+    if (bh == 0 || bh >= 0x8F) return;
+    if (bl == 0) bl = 1;
+    if (dl >= 0xDF) dl = 0xDE;
+    unsigned di = 0x11B0u + (unsigned)bh * 320u + bl;
+    for (unsigned n = (uint8_t)(dl - bl); n; n--, di++) burst_put(fb, di, col);
+}
+
+static void burst_vline(uint8_t *fb, uint8_t x, uint8_t bh, uint8_t dh, uint8_t col)   /* 43C3 */
+{
+    if (dh < bh) { uint8_t t = bh; bh = dh; dh = t; }
+    if (x == 0 || x >= 0xDF) return;
+    if (bh == 0) bh = 1;
+    if (dh >= 0x8F) dh = 0x8E;
+    unsigned di = 0x11B0u + (unsigned)bh * 320u + x;
+    for (unsigned n = (uint8_t)(dh - bh + 1); n; n--, di += 320) burst_put(fb, di, col);
+}
+
+static void burst_rect(uint8_t *fb, uint8_t bl, uint8_t bh, uint8_t dl, uint8_t dh, uint8_t col)   /* 43A1 */
+{
+    burst_hline(fb, bl, dl, bh, col);
+    burst_hline(fb, bl, dl, dh, col);
+    burst_vline(fb, bl, bh, dh, col);
+    burst_vline(fb, dl, bh, dh, col);
+}
+
+static void burst_set(uint8_t *fb, uint8_t hx, uint8_t hy, int back, uint8_t col, BurstWaitFn wait, void *user)   /* 4327 sets / 436F */
+{
+    /* the three sets: x-1 .. +0x19, x-5 .. +0x21, x-9 .. +0x29 (byte arithmetic, no clamp until the passes) */
+    int span = back == 1 ? 0x19 : back == 5 ? 0x21 : 0x29;
+    uint8_t bl = (uint8_t)(hx - back), bh = (uint8_t)(hy - back);
+    uint8_t dl = (uint8_t)(bl + span), dh = (uint8_t)(bh + span);
+    for (int pass = 0; pass < 9; pass++) {
+        burst_rect(fb, bl, bh, dl, dh, col);
+        bl = bl >= 12 ? (uint8_t)(bl - 12) : 0;
+        bh = bh >= 12 ? (uint8_t)(bh - 12) : 0;
+        dl = dl + 12 > 255 ? 255 : (uint8_t)(dl + 12);
+        dh = dh + 12 > 255 ? 255 : (uint8_t)(dh + 12);
+        if (wait) wait(user);                           /* 444A: [FF33]/2+1 ticks, exit 4471 */
+    }
+}
+
+void render_burst(uint8_t *fb, const Game *g, BurstWaitFn wait, void *user)
+{
+    uint8_t hx = (uint8_t)(g->hero_scr_col * 8), hy = (uint8_t)(g->hero_scr_row * 8);   /* 42F7: [83] * 8, [84] * 8 */
+    burst_flash(fb);                                    /* 4311 */
+    for (int c = 0; c < 2; c++) {                       /* 4314: colour 0x36, then 0 (431C) */
+        uint8_t col = c ? 0 : 0x36;
+        burst_set(fb, hx, hy, 1, col, wait, user);
+        burst_set(fb, hx, hy, 5, col, wait, user);
+        burst_set(fb, hx, hy, 9, col, wait, user);
+    }
+    burst_flash(fb);                                    /* 4324: jmp 447D */
+}
+
 void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
 {
     /* mole.bin's furniture is painted once at boot and never redrawn (gfx.h);
