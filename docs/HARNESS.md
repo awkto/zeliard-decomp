@@ -838,6 +838,14 @@ Past that: the 4-row jump (Feruza shoes) onto MP8D's boss pocket, the Key door (
 * Doors: (6,13) -> MP81 (228,49), (86,6) -> MP81 (179,35), the entry (29,52) -> MP80 (185,1); MP81's front door (222,19)
   needs [44]&20, back door MP84 (16,51).
 
+**MP83 by hand (#88, round 4; no route).**  Tried the suspected moving-platform chain from (29,53) with `keys` only (state saved at the end of `alguien_route`; debug prints of the ring and of the fixture columns, not committed).  What the C platforms do (frames of `fixture_anim`; "half" = one column per 2 frames, a 2-frame pause at each turn):
+* fix[16] (50,57) half, 43..57, and fix[19] (67,57) half, 60..74, start in phase and stay 17 columns apart for ever (both are at their right limit together), so the gap between them never drops under 14 columns: they do not chain.  fix[16] is boarded from the walkway end (hc 43/44) when it is at 43..45; it then only goes back and forth under the lattice.
+* fix[13] (32,33) full speed, 19..48, period ~60, stand row 30.  Its east end (cells 48..50) touches the rope at col 51 (rows 29..40): leave the rope with `L2` at hero row 29/30 when it arrives, ride west ~8 frames, `U4` lands on the gallery floor (cols 31..45, stand row 31).  That gallery only leads to the lower-left cave and the zone under P11; fix[14]/fix[15] (stand rows 22/24) are 7+ rows above it.
+* fix[17] (54,30) full speed, 52..59, period 16, stand row 27.  Rope 51's top is hero row 29, two rows below, and a ledge of rock (50..52,27) (50..51,28) hangs right above it: a rise needs the cell (hc+1, row-1) free and a body at row 27/28 cannot be at hc 47..51, so neither a jump from fix[13] nor from the rope top gets on it (best: apex row 27 at hc 48, stuck against the rock).  There is no air control except `UR` jumps and no jump from a rope (`rise` returns on `on_ladder`).
+* fix[18] (62,32) half, 59..65, stand row 29 (the same level as the rope-51 top, but 8 columns away): only reachable from fix[17].
+* fix[20] (80,38) half, 76..85, stand row 35, is under P2's overhang (74..77,35 is rock): from the big platform (stand 39) the highest a jump gets is row 36, and the rope-75 top is row 36 too.  fix[21] was not reached.
+Also: a rope is mounted by standing at ring column rope-2 (printed hc) and pressing `U`; the left/right steps off a rope need `L2`/`R2` (first frame turns); `U` held on a rope for more rows than it has simply stays on top.  The route that does work: gates -> big platform (stand 39, `.6 R12` east end hc 73), the ledges east of it (stand 41 at hc 74..75, stand 45 from hc 76 to 84, then free fall).  P2's cavity is open air towards the big cave, but nothing found lifts the hero into it.
+
 ## 9. Save states (#52, Phase B)
 
 The wasm / DOSBox-X builds snapshot the whole machine.  The port cannot, so it lists
