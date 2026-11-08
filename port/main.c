@@ -308,6 +308,47 @@ static void mv_text(App *a, int x, int y, int s, const char *msg, int r, int gr,
     }
 }
 
+/* What the viewer annotates (mapview.h, "Annotations"): computed once when it
+ * opens, from the game's own records.  The world (every map's doors) loads on
+ * first use and stays. */
+static struct {
+    MapViewWorld world; int world_ok;
+    int cur;                                        /* the shown map's index in the world, or -1 */
+    MapViewDoorLabel lab[MAPVIEW_MAX_DOORS];
+    MapViewRun runs[512]; int nruns;
+    MapViewSpan spans[256]; int nspans;
+    MapViewItem items[MAPVIEW_MAX_ITEMS]; int nitems, ntaken;
+    int has_belt, has_rock, has_drop;
+} mv_ann;
+
+static void mv_annotate(App *a, Game *g)
+{
+    const Map *m = g->map;
+    if (!mv_ann.world_ok) { mv_ann.world_ok = mapview_world_load(&mv_ann.world, a->sh.dir) > 0 ? 1 : -1; }
+    memset(&mv_ann.lab, 0, sizeof mv_ann.lab);
+    mv_ann.cur = -1; mv_ann.nitems = mv_ann.ntaken = 0;
+    if (mv_ann.world_ok > 0) {
+        mv_ann.cur = mapview_world_find(&mv_ann.world, m->name);
+        if (mv_ann.cur >= 0) {
+            mapview_world_use_doors(&mv_ann.world, mv_ann.cur, m);
+            mapview_door_labels(&mv_ann.world, mv_ann.cur, mv_ann.lab);
+            mv_ann.nitems = mapview_items(&mv_ann.world.m[mv_ann.cur], g->obj, g->nobj, g->page,
+                                          mv_ann.items, MAPVIEW_MAX_ITEMS);
+        }
+    }
+    for (int i = 0; i < mv_ann.nitems; i++) mv_ann.ntaken += mv_ann.items[i].taken;
+    mv_ann.nruns = mapview_runs(m, g->tiles, mv_ann.runs, 512);
+    mv_ann.has_belt = mv_ann.has_rock = mv_ann.has_drop = 0;
+    for (int i = 0; i < mv_ann.nruns; i++) if (mv_ann.runs[i].kind >= MVC_BELT_L) mv_ann.has_belt = 1;
+    for (int i = 0; i < mv_ann.nitems; i++) {
+        mv_ann.has_rock |= mv_ann.items[i].kind == MVI_ROCK;
+        mv_ann.has_drop |= mv_ann.items[i].kind == MVI_DROP;
+    }
+    mv_ann.nspans = 0;
+    for (int i = 0; i < m->nfix && mv_ann.nspans < 256; i++)
+        if (mapview_fixture_span(m, &m->fix[i], &mv_ann.spans[mv_ann.nspans])) mv_ann.nspans++;
+}
+
 static void mv_close(App *a)
 {
     a->mv_open = 0; a->mv_g = NULL;
@@ -325,6 +366,7 @@ static void mv_open_cavern(App *a, Game *g)
         if (a->mv_tex) {
             SDL_UpdateTexture(a->mv_tex, NULL, px, m->width * 8 * 4);
             a->mv_open = 1; a->mv_g = g; a->mv_center = 1;
+            mv_annotate(a, g);
         } else fprintf(stderr, "[map] texture: %s\n", SDL_GetError());
     }
     free(px);
@@ -354,6 +396,201 @@ static void mv_marker(App *a, const MapViewLayout *L, int col, int row, int half
     SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_NONE);
 }
 
+/* ---- annotation drawing.  Every helper takes map cells and goes through
+ * mapview_cell_to_px, so the wrap seam and the pan are handled in one place;
+ * a cell that is not in view draws nothing. */
+typedef struct { int r, g, b; } MvCol;
+static const MvCol MV_DOOR = {255, 205, 40}, MV_TOWN = {80, 220, 255}, MV_LOCK = {255, 100, 60},
+                   MV_WIND = {110, 255, 120}, MV_BELT = {255, 150, 50}, MV_LIFT = {235, 235, 255},
+                   MV_PLAT = {150, 190, 255}, MV_GATE = {255, 190, 120}, MV_YOU = {255, 50, 50};
+
+static void mv_col(App *a, MvCol c, int alpha) { SDL_SetRenderDrawColor(a->ren, (Uint8)c.r, (Uint8)c.g, (Uint8)c.b, (Uint8)alpha); }
+
+/* the centre of a cell in window pixels */
+static int mv_centre(App *a, const MapViewLayout *L, int col, int row, int *x, int *y)
+{
+    int px, py;
+    if (!mapview_cell_to_px(L, a->mv_ox, a->mv_oy, mapview_wrap(col, L->mw), mapview_wrap(row, L->mh), &px, &py)) return 0;
+    *x = px + L->cs / 2; *y = py + L->cs / 2;
+    return 1;
+}
+
+/* a straight run of thickness t along one axis between two window points */
+static void mv_bar(App *a, int x1, int y1, int x2, int y2, int t)
+{
+    SDL_Rect q = { x1 < x2 ? x1 : x2, y1 < y2 ? y1 : y2, abs(x2 - x1) + 1, abs(y2 - y1) + 1 };
+    if (q.h == 1) { q.y -= t / 2; q.h = t; } else { q.x -= t / 2; q.w = t; }
+    SDL_RenderFillRect(a->ren, &q);
+}
+
+/* a filled arrowhead whose tip is at (x,y), pointing along the axis vector (dx,dy) */
+static void mv_head(App *a, int x, int y, int dx, int dy, int len, int t)
+{
+    (void)t;
+    for (int k = 0; k < len; k++) {
+        SDL_Rect q = dx ? (SDL_Rect){ x - dx * k, y - k, 1, 2 * k + 1 } : (SDL_Rect){ x - k, y - dy * k, 2 * k + 1, 1 };
+        SDL_RenderFillRect(a->ren, &q);
+    }
+}
+
+/* the air: a tint over the cells and arrows along them, a head at the leading end
+ * and one every few cells so a long run reads as a flow */
+static void mv_run(App *a, const MapViewLayout *L, const MapViewRun *u)
+{
+    int belt = u->kind >= MVC_BELT_L;
+    MvCol c = belt ? MV_BELT : MV_WIND;
+    int vert = u->kind == MVC_UP;
+    int cs = L->cs, t = cs >= 10 ? 3 : cs >= 5 ? 2 : 1, hl = cs >= 8 ? cs / 2 + 1 : 4;
+    SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(a->ren, (Uint8)c.r, (Uint8)c.g, (Uint8)c.b, 45);
+    for (int r = u->r0; r <= u->r1; r++)
+        for (int cc = u->c0; cc <= u->c1; cc++) {
+            int px, py;
+            if (mapview_cell_to_px(L, a->mv_ox, a->mv_oy, cc, r, &px, &py)) {
+                SDL_Rect q = { px, py, cs, cs };
+                SDL_RenderFillRect(a->ren, &q);
+            }
+        }
+    mv_col(a, c, 235);
+    if (!vert) {
+        int dir = (u->kind == MVC_RIGHT || u->kind == MVC_BELT_R) ? 1 : -1;
+        int h = u->r1 - u->r0 + 1;
+        for (int r = h <= 2 ? u->r0 : u->r0 + 1; r <= u->r1; r += 3) {
+            int xa, ya, xb, yb;
+            int ca = dir > 0 ? u->c0 : u->c1, cb = dir > 0 ? u->c1 : u->c0;      /* tail, tip */
+            for (int cc = u->c0; cc <= u->c1; cc++)
+                if (mv_centre(a, L, cc, r, &xa, &ya)) mv_bar(a, xa - cs / 2, ya, xa + cs / 2, ya, t);
+            for (int cc = cb; dir > 0 ? cc >= ca + 1 : cc <= ca - 1; cc -= dir * 6)
+                if (mv_centre(a, L, cc, r, &xb, &yb)) mv_head(a, xb + dir * cs / 2, yb, dir, 0, hl, t);
+        }
+    } else {
+        int w = u->c1 - u->c0 + 1;
+        for (int cc = w <= 2 ? u->c0 : u->c0 + 1; cc <= u->c1; cc += 3) {
+            int x, y;
+            for (int r = u->r0; r <= u->r1; r++)
+                if (mv_centre(a, L, cc, r, &x, &y)) mv_bar(a, x, y - cs / 2, x, y + cs / 2, t);
+            for (int r = u->r0; r <= u->r1 - 1; r += 6)
+                if (mv_centre(a, L, cc, r, &x, &y)) mv_head(a, x, y - cs / 2, 0, -1, hl, t);
+        }
+    }
+    SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_NONE);
+}
+
+/* a lift's, gate's or platform's travel: a line through the swept cells with a
+ * bar across each end and heads at the ends it can reach */
+static void mv_span(App *a, const MapViewLayout *L, const MapViewSpan *s)
+{
+    int cs = L->cs, t = cs >= 10 ? 3 : cs >= 5 ? 2 : 1, hl = cs >= 8 ? cs / 2 + 1 : 4;
+    MvCol c = s->kind == MVF_PLATFORM ? MV_PLAT : s->kind == MVF_GATE ? MV_GATE : MV_LIFT;
+    SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_BLEND);
+    mv_col(a, c, 240);
+    int x, y, x2, y2;
+    if (s->vertical) {
+        int cc = s->col + 1;
+        for (int k = 0; k < s->h; k++)
+            if (mv_centre(a, L, cc, s->row + k, &x, &y)) mv_bar(a, x, y - cs / 2, x, y + cs / 2, t);
+        if (mv_centre(a, L, s->col, s->row, &x, &y) && mv_centre(a, L, s->col + 2, s->row, &x2, &y2))
+            mv_bar(a, x - cs / 2, y - cs / 2, x2 + cs / 2, y - cs / 2, t);
+        if (mv_centre(a, L, s->col, s->row + s->h - 1, &x, &y) && mv_centre(a, L, s->col + 2, s->row + s->h - 1, &x2, &y2))
+            mv_bar(a, x - cs / 2, y + cs / 2, x2 + cs / 2, y + cs / 2, t);
+        if (mv_centre(a, L, cc, s->row + s->h - 1, &x, &y)) mv_head(a, x, y + cs / 2, 0, 1, hl, t);
+        if (!s->oneway && mv_centre(a, L, cc, s->row, &x, &y)) mv_head(a, x, y - cs / 2, 0, -1, hl, t);
+    } else {
+        for (int k = 0; k < s->w; k++)
+            if (mv_centre(a, L, s->col + k, s->row, &x, &y)) mv_bar(a, x - cs / 2, y, x + cs / 2, y, t);
+        if (mv_centre(a, L, s->col, s->row, &x, &y)) { mv_bar(a, x - cs / 2, y - cs, x - cs / 2, y + cs, t); mv_head(a, x - cs / 2, y, -1, 0, hl, t); }
+        if (mv_centre(a, L, s->col + s->w - 1, s->row, &x, &y)) { mv_bar(a, x + cs / 2, y - cs, x + cs / 2, y + cs, t); mv_head(a, x + cs / 2, y, 1, 0, hl, t); }
+    }
+    SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_NONE);
+}
+
+/* labels avoid each other: a new one slides up until it clears the placed ones */
+typedef struct { SDL_Rect r[160]; int n; } MvPlaced;
+
+static void mv_label(App *a, MvPlaced *pl, const SDL_Rect *clip, int cx, int top, int s, const char *txt, MvCol c, int alpha)
+{
+    if (!txt || !*txt) return;
+    int w = statekeys_text_width(txt, s), h = 7 * s;
+    SDL_Rect q = { cx - w / 2, top - h - 2, w, h };
+    for (int tries = 0; tries < 8; tries++) {
+        int hit = 0;
+        for (int i = 0; i < pl->n && !hit; i++) if (SDL_HasIntersection(&q, &pl->r[i])) hit = 1;
+        if (!hit) break;
+        q.y -= h + 2;
+    }
+    if (q.x < clip->x) q.x = clip->x;
+    if (q.x + w > clip->x + clip->w) q.x = clip->x + clip->w - w;
+    if (q.y < clip->y || q.y + h > clip->y + clip->h) return;
+    if (pl->n < 160) pl->r[pl->n++] = (SDL_Rect){ q.x - 1, q.y - 1, q.w + 2, q.h + 2 };
+    SDL_Rect plate = { q.x - 2, q.y - 1, w + 4, h + 2 };
+    SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(a->ren, 0, 0, 0, 175);
+    SDL_RenderFillRect(a->ren, &plate);
+    SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_NONE);
+    mv_text(a, q.x, q.y, s, txt, c.r * alpha / 255, c.g * alpha / 255, c.b * alpha / 255);
+}
+
+static MvCol mv_item_col(int kind)
+{
+    switch (kind) {
+    case MVI_CHEST: return (MvCol){255, 185, 40};
+    case MVI_KEY: case MVI_LION: return (MvCol){255, 255, 110};
+    case MVI_POTION: case MVI_FULL: return (MvCol){255, 140, 220};
+    case MVI_SHOES: case MVI_CREST: return (MvCol){190, 150, 255};
+    case MVI_ALMAS: return (MvCol){120, 230, 255};
+    case MVI_MSG: return (MvCol){255, 185, 40};
+    case MVI_ROCK: return (MvCol){175, 175, 175};
+    default: return (MvCol){255, 150, 60};
+    }
+}
+static char mv_item_letter(int kind)
+{
+    static const char L[] = "CKLPFSHAMR";
+    return kind >= 0 && kind <= MVI_ROCK ? L[kind] : 'V';
+}
+
+static void mv_item(App *a, const MapViewLayout *L, MvPlaced *pl, const SDL_Rect *clip, int as, const MapViewItem *it)
+{
+    int x, y, cs = L->cs;
+    if (!mv_centre(a, L, it->col, it->row, &x, &y)) return;
+    MvCol c = mv_item_col(it->kind);
+    int dim = it->taken, big = it->kind != MVI_ROCK && it->kind != MVI_DROP;
+    int half = big ? (cs < 5 ? 3 : cs / 2 + 1) : (cs < 5 ? 2 : cs / 3 + 1);
+    SDL_Rect q = { x - half, y - half, half * 2, half * 2 };
+    SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(a->ren, 0, 0, 0, 200);
+    SDL_Rect o = { q.x - 1, q.y - 1, q.w + 2, q.h + 2 };
+    SDL_RenderFillRect(a->ren, &o);
+    mv_col(a, c, dim ? 70 : 255);
+    SDL_RenderFillRect(a->ren, &q);
+    if (it->kind == MVI_DROP) {                                    /* a floor that gives way: a hole */
+        SDL_SetRenderDrawColor(a->ren, 0, 0, 0, 220);
+        SDL_Rect hole = { x - half / 2, y - half / 2, half, half };
+        SDL_RenderFillRect(a->ren, &hole);
+    }
+    SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_NONE);
+    if (big && cs >= 8 && !dim) {
+        char ch[2] = { mv_item_letter(it->kind), 0 };
+        mv_text(a, x - 2, y - 3, 1, ch, 10, 10, 10);
+    }
+    if (it->label[0]) mv_label(a, pl, clip, x, q.y - 1, as, it->label, c, dim ? 110 : 255);
+}
+
+static void mv_door_labels(App *a, const MapViewLayout *L, MvPlaced *pl, const SDL_Rect *clip, int as)
+{
+    const Map *m = a->mv_g->map;
+    for (int i = 0; i < m->ndoors && mv_ann.cur >= 0; i++) {
+        int x, y;
+        if (!mv_centre(a, L, m->doors[i].col % m->width, m->doors[i].row & 0x3F, &x, &y)) continue;
+        const MapViewDoorLabel *dl = &mv_ann.lab[i];
+        MvCol c = dl->kind == MVD_TOWN ? MV_TOWN : !(m->doors[i].letter & 0x80) ? MV_LOCK : MV_DOOR;
+        int dh = L->cs < 6 ? 3 : L->cs / 2 + 1;
+        mv_label(a, pl, clip, x, y - dh - 1, as, dl->text, c, 255);
+    }
+}
+
+typedef struct { const char *text; MvCol c; int swatch; int w; } MvLegend;      /* swatch: 0 none, 1 square, 2 arrow, 3 line */
+
 static void mv_draw(App *a)
 {
     int ow = 0, oh = 0;
@@ -374,8 +611,44 @@ static void mv_draw(App *a)
     Game *g = a->mv_g;
     const Map *m = g->map;
     int s = ow / 400; if (s < 2) s = 2; if (s > 4) s = 4;
-    int top = 12 * s, bot = 12 * s;
+    int top = 12 * s;
+
+    /* the legend: what this map has, in priority order; as many as fit on up to two lines */
     MapViewLayout L;
+    mapview_layout(&L, 0, top, ow, oh - top - 12 * s, m->width, MAP_ROWS);
+    int pan = L.pan_x || L.pan_y;
+    MvLegend lg[16]; int nl = 0;
+    lg[nl++] = (MvLegend){ "M / ESC  BACK", {200, 200, 200}, 0, 0 };
+    if (pan) lg[nl++] = (MvLegend){ "ARROWS  PAN", {200, 200, 200}, 0, 0 };
+    lg[nl++] = (MvLegend){ "YOU", MV_YOU, 1, 0 };
+    lg[nl++] = (MvLegend){ "DOOR", MV_DOOR, 1, 0 };
+    lg[nl++] = (MvLegend){ "TOWN", MV_TOWN, 1, 0 };
+    lg[nl++] = (MvLegend){ "LOCKED", MV_LOCK, 1, 0 };
+    lg[nl++] = (MvLegend){ "1 A  DOOR PAIRS", {200, 200, 200}, 0, 0 };
+    int has_wind = 0, has_up = 0;
+    for (int i = 0; i < mv_ann.nruns; i++) { if (mv_ann.runs[i].kind < MVC_BELT_L) has_wind = 1; if (mv_ann.runs[i].kind == MVC_UP) has_up = 1; }
+    (void)has_up;
+    if (has_wind) lg[nl++] = (MvLegend){ "CURRENT", MV_WIND, 2, 0 };
+    int has_lift = 0, has_plat = 0, has_gate = 0;
+    for (int i = 0; i < mv_ann.nspans; i++) {
+        has_lift |= mv_ann.spans[i].kind == MVF_ELEVATOR; has_plat |= mv_ann.spans[i].kind == MVF_PLATFORM;
+        has_gate |= mv_ann.spans[i].kind == MVF_GATE;
+    }
+    if (has_lift) lg[nl++] = (MvLegend){ "LIFT", MV_LIFT, 3, 0 };
+    if (has_plat) lg[nl++] = (MvLegend){ "PLATFORM", MV_PLAT, 3, 0 };
+    if (mv_ann.nitems) lg[nl++] = (MvLegend){ "ITEM", mv_item_col(MVI_CHEST), 1, 0 };
+    if (mv_ann.ntaken) lg[nl++] = (MvLegend){ "TAKEN", {110, 90, 30}, 1, 0 };
+    if (has_gate) lg[nl++] = (MvLegend){ "GATE DROPS", MV_GATE, 3, 0 };
+    if (mv_ann.has_belt) lg[nl++] = (MvLegend){ "BELT", MV_BELT, 2, 0 };
+    if (mv_ann.has_rock) lg[nl++] = (MvLegend){ "ROCK", mv_item_col(MVI_ROCK), 1, 0 };
+    if (mv_ann.has_drop) lg[nl++] = (MvLegend){ "FLOOR GIVES", mv_item_col(MVI_DROP), 1, 0 };
+    int widths[16], line[16];
+    for (int i = 0; i < nl; i++) widths[i] = statekeys_text_width(lg[i].text, s) + (lg[i].swatch ? 4 * s : 0);
+    int fit = mapview_legend_fit(widths, nl, ow - 8 * s, 4 * s, 2, line);
+    if (fit < 1) { fit = 1; line[0] = 0; }                     /* the way out is always shown */
+    int lines = line[fit - 1] + 1;
+    int bot = (lines * 9 + 3) * s;
+
     mapview_layout(&L, 0, top, ow, oh - top - bot, m->width, MAP_ROWS);
     int hc = game_hero_map_col(g), hr = game_hero_map_row(g);
     if (a->mv_center) { mapview_center(&L, hc + 1, hr + 1, &a->mv_ox, &a->mv_oy); a->mv_center = 0; }
@@ -392,24 +665,47 @@ static void mv_draw(App *a)
             SDL_Rect dst = { L.x0 + xs[i].dst * L.cs, L.y0 + ys[j].dst * L.cs, xs[i].len * L.cs, ys[j].len * L.cs };
             SDL_RenderCopy(a->ren, a->mv_tex, &src, &dst);
         }
+    int as = s >= 3 && L.cs >= 5 ? 2 : 1;                      /* annotation text: smaller than the chrome's, and 1x on the densest maps */
+    SDL_Rect clip = { L.x0, L.y0, L.vw * L.cs, L.vh * L.cs };
+    SDL_RenderSetClipRect(a->ren, &clip);                      /* annotations never spill into the header or footer */
+    for (int i = 0; i < mv_ann.nruns; i++) mv_run(a, &L, &mv_ann.runs[i]);
+    for (int i = 0; i < mv_ann.nspans; i++) mv_span(a, &L, &mv_ann.spans[i]);
     int dh = L.cs < 6 ? 3 : L.cs / 2 + 1;
     for (int i = 0; i < m->ndoors; i++) {
         const Door *d = &m->doors[i];
         int town = (d->dest_map & 0x80) != 0;
-        mv_marker(a, &L, d->col % m->width, d->row & 0x3F, dh, 1, town ? 80 : 255, town ? 220 : 200, town ? 255 : 40);
+        int locked = !town && !(d->letter & 0x80);
+        mv_marker(a, &L, d->col % m->width, d->row & 0x3F, dh, 1,
+                  town ? MV_TOWN.r : locked ? MV_LOCK.r : MV_DOOR.r,
+                  town ? MV_TOWN.g : locked ? MV_LOCK.g : MV_DOOR.g,
+                  town ? MV_TOWN.b : locked ? MV_LOCK.b : MV_DOOR.b);
     }
+    MvPlaced pl; pl.n = 0;
+    for (int i = 0; i < mv_ann.nitems; i++) mv_item(a, &L, &pl, &clip, as, &mv_ann.items[i]);
+    mv_door_labels(a, &L, &pl, &clip, as);
     int blink = (now / 350) & 1;
     int half = L.cs * 3 / 2; if (half < 6) half = 6;
     mv_marker(a, &L, (hc + 1) % m->width, (hr + 1) & 0x3F, half, blink, 255, 50, 50);
+    { SDL_Rect full = { 0, 0, ow, oh }; SDL_RenderSetClipRect(a->ren, &full); SDL_RenderSetClipRect(a->ren, NULL); }
 
     char buf[160];
-    snprintf(buf, sizeof buf, "%s   HERO %d,%d   %dx%d", m->name, hc, hr, m->width, MAP_ROWS);
+    const char *place = mv_ann.cur >= 0 ? mv_ann.world.m[mv_ann.cur].place : "";
+    snprintf(buf, sizeof buf, "%s %s   HERO %d,%d   %dx%d", m->name, place, hc, hr, m->width, MAP_ROWS);
     mv_text(a, 4 * s, 3 * s, s, buf, 255, 235, 120);
-    snprintf(buf, sizeof buf, "%sM / ESC  BACK TO THE GAME    RED YOU   YELLOW DOOR   CYAN TOWN DOOR",
-             (L.pan_x || L.pan_y) ? "ARROWS  PAN    " : "");
-    if (statekeys_text_width(buf, s) > ow - 8 * s)       /* a narrow window drops the legend */
-        snprintf(buf, sizeof buf, "%sM / ESC  BACK", (L.pan_x || L.pan_y) ? "ARROWS  PAN    " : "");
-    mv_text(a, 4 * s, oh - bot + 3 * s, s, buf, 200, 200, 200);
+    int x[2] = { 4 * s, 4 * s };
+    for (int i = 0; i < fit; i++) {
+        int ln = line[i], y = oh - bot + (3 + 9 * ln) * s, xx = x[ln];
+        if (lg[i].swatch) {
+            SDL_SetRenderDrawColor(a->ren, (Uint8)lg[i].c.r, (Uint8)lg[i].c.g, (Uint8)lg[i].c.b, 255);
+            SDL_Rect q = { xx, y + s, 3 * s, 5 * s };
+            if (lg[i].swatch == 1) SDL_RenderFillRect(a->ren, &q);
+            else if (lg[i].swatch == 3) { SDL_Rect l = { xx, y + 3 * s, 3 * s, s }; SDL_RenderFillRect(a->ren, &l); }
+            else { SDL_Rect l = { xx, y + 3 * s, 3 * s, s }; SDL_RenderFillRect(a->ren, &l); mv_head(a, xx + 3 * s, y + 3 * s + s / 2, 1, 0, 2 * s, s); }
+            xx += 4 * s;
+        }
+        mv_text(a, xx, y, s, lg[i].text, lg[i].swatch ? 200 : lg[i].c.r, lg[i].swatch ? 200 : lg[i].c.g, lg[i].swatch ? 200 : lg[i].c.b);
+        x[ln] += widths[i] + 4 * s;
+    }
 }
 
 /* keys while the viewer is up; returns 1 when consumed */
