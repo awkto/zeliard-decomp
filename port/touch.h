@@ -26,6 +26,7 @@ enum {                                   /* control ids; TC_NONE = nothing there
     TC_NONE = -1,
     TC_STICK = 0, TC_SWORD, TC_MAGIC, TC_COMBO,
     TC_ITEMS, TC_ESC, TC_QSAVE, TC_QLOAD,
+    TC_TURBO,                            /* held: fast-forward (host feature) */
     TC_KEY0,                             /* TC_KEY0 + i: i = 0..8 -> '1'..'9', 9 -> 'Y', 10 -> 'N' */
     TC_NKEYS = 11,
     TC_COUNT = TC_KEY0 + TC_NKEYS
@@ -132,6 +133,7 @@ void touch_note_other_input(Touch *t);
 uint8_t touch_dirs(const Touch *t);
 uint8_t touch_buttons(const Touch *t, unsigned ms);
 int     touch_menu_held(const Touch *t);
+int     touch_turbo_held(const Touch *t);            /* the TURBO button is down */
 int     touch_ctl_down(const Touch *t, int ctl);     /* is a finger on it? */
 /* The joystick knob position (window pixels), clamped to the ring; the base
  * centre when no finger holds the stick. */

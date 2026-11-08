@@ -151,6 +151,7 @@ typedef struct {
     int      esc_edge;                  /* Esc was pressed; what that means is the caller's */
     char     title_base[900];           /* the engine's own title, re-applied when pause flips */
 #endif
+    int turbo, turbo_n, force_draw;     /* host fast-forward (hold ACT_TURBO): shorter frame wait, most presents skipped, audio muted */
     int yield_test;                     /* web only: --yield-test yields to the browser at every present, even headless (ASYNCIFY coverage under node) */
 } App;
 
@@ -178,6 +179,32 @@ static void title_apply(App *a);
  * so a feature added here reaches both.  Nothing below touches the engine --
  * `make test` and `make verify` never enter this file. */
 
+/* Fast-forward.  A host feature: the engine runs exactly the same frames, they
+ * just come round TURBO_MULT times as fast and only one in TURBO_SHOW is drawn
+ * (the engine never sees either).  Never active headless, so traces and
+ * scenarios cannot differ.  Audio is muted for the hold: the synth is driven in
+ * real time by the device callback, not by game frames, so at 6x the music and
+ * effects would only trail behind the action. */
+#define TURBO_MULT 6
+#define TURBO_SHOW 3
+static void turbo_poll(App *a)
+{
+    int on = 0;
+    if (!a->headless && !a->paused) {
+        const Uint8 *k = SDL_GetKeyboardState(NULL);
+        on = input_key_down(&a->in, ACT_TURBO, 0, k, 0) || input_pad_down(&a->in, ACT_TURBO, a->pad)
+          || touch_turbo_held(&a->touch);
+    }
+    if (on != a->turbo) { a->turbo = on; a->turbo_n = 0; audio_set_mute(on); }
+}
+/* true when this frame's picture is not to be drawn */
+static int turbo_skip(App *a)
+{
+    if (a->force_draw) { a->force_draw = 0; return 0; }   /* the caller already decided to draw this one */
+    return a->turbo && (++a->turbo_n % TURBO_SHOW) != 0;
+}
+static double frame_period_ms(const App *a, double ms) { return a->turbo ? ms / TURBO_MULT : ms; }
+
 static void toggle_fullscreen(App *a)
 {
     a->fullscreen = !a->fullscreen;
@@ -190,15 +217,34 @@ static void toggle_fullscreen(App *a)
 /* #52 step 2: the save/load confirmation, drawn over the picture in the
  * presentation layer only.  The engine framebuffer is never touched, so
  * `make verify` and the traces cannot see it. */
+static void turbo_draw(App *a, int ow, int s)
+{
+    /* two chevrons, top right: the fast-forward mark */
+    SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_BLEND);
+    int cw = 4 * s, gap = 2 * s, x0 = ow - 4 * s - 2 * (cw + gap), y0 = 3 * s;
+    SDL_Rect bar = { x0 - 2 * s, y0 - 2 * s, 2 * (cw + gap) + 2 * s, 7 * s + 4 * s };
+    SDL_SetRenderDrawColor(a->ren, 0, 0, 0, 190);
+    SDL_RenderFillRect(a->ren, &bar);
+    SDL_SetRenderDrawColor(a->ren, 255, 235, 120, 255);
+    for (int c = 0; c < 2; c++)
+        for (int r = 0; r < 7; r++) {
+            int d = r < 4 ? r : 6 - r;                 /* 0 1 2 3 2 1 0 */
+            SDL_Rect px = { x0 + c * (cw + gap) + d * s, y0 + r * s, s * 2, s };
+            SDL_RenderFillRect(a->ren, &px);
+        }
+    SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_NONE);
+}
+
 static void osd_draw(App *a)
 {
     const char *msg = statekeys_osd_text(&a->sk);
-    if (!msg || !*msg) return;
     int ow = 0, oh = 0;
     if (SDL_GetRendererOutputSize(a->ren, &ow, &oh) != 0 || ow <= 0) return;
     int s = ow / 320;
     if (s < 2) s = 2;
     if (s > 6) s = 6;
+    if (a->turbo) turbo_draw(a, ow, s);
+    if (!msg || !*msg) return;
     int w = statekeys_text_width(msg, s);
     int x0 = (ow - w) / 2, y0 = oh / 10;
     SDL_Rect bar = { x0 - 4 * s, y0 - 3 * s, w + 8 * s, 7 * s + 6 * s };
@@ -226,6 +272,7 @@ static void osd_draw(App *a)
 static void present_frame(App *a, int sw, int sh)
 {
     int dw = sw, dh = sh;
+    if (turbo_skip(a)) return;               /* fast-forward: most pictures are never drawn */
     if (!a->square) video_display_size(a->video, &dw, &dh);
     /* #54: where the picture goes decides where the controls can; in a portrait
      * window the picture rides at the top once the overlay is up (the layout is
@@ -401,6 +448,7 @@ static void pump_events(App *a, Game *g)
     }
     a->touch_prev_dirs = tdirs;
     a->touch_prev_btn = touch_buttons(&a->touch, 0);
+    turbo_poll(a);
 }
 
 /* The window title's pause hint, so the state is discoverable without a font:
@@ -425,7 +473,7 @@ static void frame_wait(App *a, Game *g, Uint64 *next)
 {
     Uint64 freq = SDL_GetPerformanceFrequency(), now = SDL_GetPerformanceCounter();
     if (*next == 0 || now > *next + freq) *next = now;
-    *next += (Uint64)(a->frame_ms / 1000.0 * (double)freq);
+    *next += (Uint64)(frame_period_ms(a, a->frame_ms) / 1000.0 * (double)freq);
 #ifdef __EMSCRIPTEN__
     int slept = 0;
 #endif
@@ -1200,7 +1248,7 @@ static void cutscene_present(Cutscene *c)
     static Uint64 next = 0;
     Uint64 now = SDL_GetPerformanceCounter(), freq = SDL_GetPerformanceFrequency();
     if (next == 0 || now > next + freq) next = now;
-    next += (Uint64)(CS_FRAME_MS / 1000.0 * (double)freq);
+    next += (Uint64)(frame_period_ms(a, CS_FRAME_MS) / 1000.0 * (double)freq);
 #ifdef __EMSCRIPTEN__
     int slept = 0;
 #endif
@@ -1415,20 +1463,23 @@ static void present(Game *g)
         return;
     }
 #ifdef HAVE_SDL
-    if (g->status) memcpy(a->fb, status_framebuffer(g->status), FB_W * FB_H);
-    else if (g->tear) memcpy(a->fb, tear_framebuffer(g->tear), FB_W * FB_H);
-    else render_frame(a->fb, g, &a->sh.hero);
-    render_hud(a->fb, g, &a->sh.font, &a->sh.tfont, map_place_record(g->map));
-    itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, g);
-    if (!g->tear) tear_draw_slots(a->fb, g, &a->sh.tear_art);   /* GAME.BIN A18E -> A3A5 */
-    int vw, vh;
-    const uint8_t *rgb = video_out(a, &vw, &vh);
-    SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
-    present_frame(a, vw, vh);
-    char title[256];
-    snprintf(title, sizeof title, "Zeliard - %s  (%d,%d)  LIFE %u/%u  EXP %u  GOLD %u  %s", g->map->name,
-             game_hero_map_col(g), game_hero_map_row(g), g->hp, g->max_hp, g->exp, (unsigned)g->gold, g->message);
-    title_paused(a, title);
+    if (!turbo_skip(a)) {
+        if (g->status) memcpy(a->fb, status_framebuffer(g->status), FB_W * FB_H);
+        else if (g->tear) memcpy(a->fb, tear_framebuffer(g->tear), FB_W * FB_H);
+        else render_frame(a->fb, g, &a->sh.hero);
+        render_hud(a->fb, g, &a->sh.font, &a->sh.tfont, map_place_record(g->map));
+        itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, g);
+        if (!g->tear) tear_draw_slots(a->fb, g, &a->sh.tear_art);   /* GAME.BIN A18E -> A3A5 */
+        int vw, vh;
+        const uint8_t *rgb = video_out(a, &vw, &vh);
+        SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+        a->force_draw = 1;
+        present_frame(a, vw, vh);
+        char title[256];
+        snprintf(title, sizeof title, "Zeliard - %s  (%d,%d)  LIFE %u/%u  EXP %u  GOLD %u  %s", g->map->name,
+                 game_hero_map_col(g), game_hero_map_row(g), g->hp, g->max_hp, g->exp, (unsigned)g->gold, g->message);
+        title_paused(a, title);
+    }
 
     /* wait out the frame (4*speed ticks), pumping events */
     static Uint64 next = 0;
@@ -1505,22 +1556,25 @@ static void town_present(Town *t)
         return;
     }
 #ifdef HAVE_SDL
-    if (t->status) memcpy(a->fb, status_framebuffer(t->status), FB_W * FB_H);
-    else if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
-    else town_render(a->fb, t);
-    render_hud(a->fb, t->g, &a->sh.font, &a->sh.tfont, town_place_record(t->map));
-    itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, t->g);
-    tear_draw_slots(a->fb, t->g, &a->sh.tear_art);
-    int vw, vh;
-    const uint8_t *rgb = video_out(a, &vw, &vh);
-    SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
-    present_frame(a, vw, vh);
-    char title[768];
-    snprintf(title, sizeof title, "Zeliard - %s  col %d  LIFE %u/%u  GOLD %u  %.400s", t->map->label,
-             town_hero_col(t), t->g->hp, t->g->max_hp, (unsigned)t->g->gold, t->message);
-    title_paused(a, title);
+    if (!turbo_skip(a)) {
+        if (t->status) memcpy(a->fb, status_framebuffer(t->status), FB_W * FB_H);
+        else if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
+        else town_render(a->fb, t);
+        render_hud(a->fb, t->g, &a->sh.font, &a->sh.tfont, town_place_record(t->map));
+        itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, t->g);
+        tear_draw_slots(a->fb, t->g, &a->sh.tear_art);
+        int vw, vh;
+        const uint8_t *rgb = video_out(a, &vw, &vh);
+        SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+        a->force_draw = 1;
+        present_frame(a, vw, vh);
+        char title[768];
+        snprintf(title, sizeof title, "Zeliard - %s  col %d  LIFE %u/%u  GOLD %u  %.400s", t->map->label,
+                 town_hero_col(t), t->g->hp, t->g->max_hp, (unsigned)t->g->gold, t->message);
+        title_paused(a, title);
+    }
     static Uint64 next = 0;
-    frame_wait(a, NULL, &next);
+    frame_wait(a, t->g, &next);              /* the Game, so the save/load keys work in a town too */
     if (t->dsv_pic) return;                             /* a dissolve pass reads no keys */
     const Uint8 *k = SDL_GetKeyboardState(NULL);
     audio_hotkeys(a, k);

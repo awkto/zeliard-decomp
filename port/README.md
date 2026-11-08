@@ -83,6 +83,21 @@ be verified on a server.  If SDL2 lives somewhere unusual, put `SDL_CFLAGS`/`SDL
 in `port/local.mk` (auto-included, gitignored).  `compat/SDL_config.h` is a generic
 config shim for compiling against bare SDL2 headers (`-Icompat -I<sdl2 headers>`).
 
+## Fast-forward (turbo)
+
+Hold **Shift** (either one; `key.turbo`, `pad.turbo`, or the **TURBO** touch button, which is
+held like a key) and the game runs about **6x** faster; let go and it returns to normal.
+It is a host feature: the engine runs exactly the same frames in the same order, they just
+come round sooner and only one in three is drawn, so nothing in the game state, the traces
+or the scenarios can differ.  It is never active headless (`--trace`, `--script`).  A small
+yellow "double chevron" in the top right corner of the window shows it is on; like the
+save-state confirmations it is drawn by the presentation layer, never into the engine
+framebuffer.  **Audio is muted** while it is held: the music and effects are synthesised in
+real time by the audio device, not stepped by game frames, so at 6x they would only trail
+behind the action (the score carries on silently and is back in step on release).  It works
+in caverns, towns and cutscenes; it is off while the game is paused.  The constants are
+`TURBO_MULT` and `TURBO_SHOW` at the top of `main.c`.
+
 ## Web build (Emscripten, issue #59 step 1)
 
 `packaging/web/build.sh` builds the port with Emscripten (`emmake make zeliard.js`)
@@ -105,6 +120,34 @@ artifact.  It is code only; no game data is built in.
   `zeliard.ini` and the save states persist.  `.usr` saves go next to the game
   files, so the page mirrors changed `.usr` files into `/libsdl/usr` and puts them
   back into `/game` on the next visit; `FS.syncfs` runs every 3 s.
+* **Browser keys.** `packaging/web/keys.js` (a self-contained script `index.html` includes)
+  claims the game's keys while it runs: it calls `preventDefault()` on F1..F12 (not F5),
+  Alt, Ctrl/Alt+1..9, Ctrl+. , Ctrl+\\, Backspace, Tab, Space and the arrows, so the page
+  and SDL keep them (SDL still sees every event).  It cannot claim a few reserved
+  combinations in a normal tab, and it asks for the Keyboard Lock API once the game is
+  fullscreen (F11, Chromium only), which releases those too.  What a browser does with
+  each key outside fullscreen:
+
+  | key | game use | browser | outcome |
+  |---|---|---|---|
+  | Ctrl+1..9 | save slot | Chrome/Edge/Firefox: switch to tab N | Chrome and Edge reserve it on some platforms and do not let a page cancel it; Firefox lets `preventDefault` through.  **Use Ctrl+Keypad 1..9**, or fullscreen (keyboard lock), or the F7 menu |
+  | Alt+1..9 | load slot | Linux Chrome/Firefox: tab N; Windows Firefox: tab N | cancelled by `keys.js` where the browser allows it; **use Alt+Keypad 1..9** otherwise |
+  | Ctrl+. and Ctrl+\\ | quick save / load (slot 1) | nothing | work everywhere |
+  | F1 | music toggle | help (Chrome/Firefox) | cancelled by `keys.js` |
+  | F3 | video filter | find next | cancelled by `keys.js` |
+  | F7 | Restore Game menu | caret browsing prompt (Firefox/Chrome) | cancelled by `keys.js` |
+  | F9, F2 | speed menu, sfx toggle | nothing | work everywhere |
+  | F11 | fullscreen | browser fullscreen | cancelled, SDL's fullscreen runs instead (and unlocks the keyboard-lock keys above) |
+  | F12 | screenshot | developer tools | cancelled in the page; the shortcut Ctrl+Shift+I still opens them |
+  | Shift | turbo | nothing | works everywhere |
+  | Alt (magic) | magic | menu bar on Windows/Firefox on release | cancelled by `keys.js` |
+  | Ctrl+W, Ctrl+T, Ctrl+N | none | close tab / new tab / new window | the browser never lets a page cancel these outside fullscreen (the game does not use them; Ctrl is also the cavern sword key, so a stray Ctrl+W can close the tab: go fullscreen with F11 first) |
+
+  Headless Chrome has no browser shortcuts, so the repo's browser test can show that the
+  page cancels the keys (`defaultPrevented`) and that the game acts on them, not that a
+  real browser's reserved keys are released; the table is from the browsers' documented
+  behaviour, so check Ctrl+1..9 in the browser you play in.  The touch overlay's SAVE
+  and LOAD buttons (quick slot) are the always-available alternative on a phone.
 * **Network.** No libcurl: `net_stub.c`, so `--sync` reports "no network support".
   An `emscripten_fetch` backend is a later step.
 * **Touch.** The #54 overlay uses SDL finger events, which SDL2's Emscripten backend
@@ -289,6 +332,7 @@ changes.
 | Ctrl+\\ | **quick-load** `quick.zst` |
 | Ctrl+1 … Ctrl+9 | **save to slot N** (`slot1.zst` … `slot9.zst`) |
 | Alt+1 … Alt+9 | **load slot N** |
+| Ctrl+Keypad 1 … 9 / Alt+Keypad 1 … 9 | the same slots from the keypad (a browser keeps Ctrl/Alt+digit for tab switching, but not these) |
 
 These match the wasm / DOSBox-X builds' quick keys.  The files live in
 `SDL_GetPrefPath("awkto","zeliard")/states/` (`~/.local/share/awkto/zeliard/states/`
@@ -1095,6 +1139,7 @@ Actions (default keys; controller defaults in brackets):
   town C, Left/Right Alt, Backspace (Y)
 * `menu` Return, Keypad Enter: the status screen (Start) · `pause` Escape (Back)
 * `music` F1 · `sfx` F2 · `filter` F3 · `restore` F7 · `speed` F9 · `fullscreen` F11 · `screenshot` F12
+* `turbo` Left/Right Shift, held (controller: right shoulder): fast-forward, see [Fast-forward](#fast-forward-turbo)
 * `quicksave` Ctrl+. · `quickload` Ctrl+\ · `save1`..`save9` Ctrl+1..9 · `load1`..`load9` Alt+1..9
   (a `key.*` binding replaces both the cavern and the town default set)
 

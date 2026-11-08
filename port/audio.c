@@ -459,6 +459,9 @@ static void render(float *out, int n)
 }
 
 #ifdef HAVE_SDL
+static volatile int g_mute;
+void audio_set_mute(int on) { g_mute = on; }
+
 static void sdl_cb(void *u, Uint8 *stream, int bytes)
 {
     (void)u;
@@ -468,7 +471,7 @@ static void sdl_cb(void *u, Uint8 *stream, int bytes)
     while (n > 0) {
         int k = n > 4096 ? 4096 : n;
         render(buf, k);
-        for (int i = 0; i < k; i++) o[i] = (int16_t)(buf[i] * 30000.0f);
+        for (int i = 0; i < k; i++) o[i] = g_mute ? 0 : (int16_t)(buf[i] * 30000.0f);
         o += k; n -= k;
     }
 }
