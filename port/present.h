@@ -19,17 +19,29 @@
  *            every pair of source scanlines plus a faint RGB aperture-grille
  *            tint, both computed by the pure functions below.
  *
+ *   scanlines       sharp-bilinear plus the scanline bands only (no grille);
+ *   soft-scanlines  smooth (plain linear) plus the same bands;
+ *   crt-curved      the crt picture (sharp, bands, grille) rendered flat into an
+ *            offscreen target, then warped through a subdivided mesh with
+ *            SDL_RenderGeometry (SDL 2.0.18+: barrel distortion, black beyond
+ *            the bowed edges) and darkened toward the corners by a vignette
+ *            texture.  Without SDL_RenderGeometry it falls back to flat crt.
+ *
  * The display size (dw x dh) is the aspect-corrected shape from
  * video_display_size(), or the framebuffer itself under `--aspect 1:1`.       */
 #ifndef ZEL_PRESENT_H
 #define ZEL_PRESENT_H
 #include <stdint.h>
 
-enum { FILTER_INTEGER = 0, FILTER_SHARP, FILTER_SMOOTH, FILTER_CRT, FILTER_COUNT };
+/* The cycle order (F3 / V): pixel-perfect, sharp-bilinear, smooth, then the
+ * scanline family from plainest to most CRT-like. */
+enum { FILTER_INTEGER = 0, FILTER_SHARP, FILTER_SMOOTH, FILTER_SCANLINES,
+       FILTER_SOFT_SCANLINES, FILTER_CRT, FILTER_CRT_CURVED, FILTER_COUNT };
 
-/* --filter spellings: integer | sharp | sharp-bilinear | smooth | crt.  -1 unknown. */
+/* --filter spellings: integer | sharp | sharp-bilinear | smooth (soft, linear) |
+ * scanlines | soft-scanlines | crt | crt-curved (curved).  -1 unknown. */
 int         present_filter_by_name(const char *name);
-const char *present_filter_name(int filter);   /* "integer" / "sharp-bilinear" / "smooth" / "crt" */
+const char *present_filter_name(int filter);   /* canonical spelling, e.g. "soft-scanlines" */
 
 /* The rectangle the picture occupies inside a win_w x win_h window, in window
  * pixels, centred.  `sw`/`sh` is the source framebuffer, `dw`/`dh` the display
@@ -67,6 +79,17 @@ int      present_crt_row_gain(int y, int ch, int sh);
 int      present_crt_col_gain(int x, int c, int cw, int sw);
 /* The combined multiply-mask pixel (0xAARRGGBB, alpha 255). */
 uint32_t present_crt_mask(int x, int y, int cw, int ch, int sw, int sh);
+
+/* Scanline-only multiply mask pixel (the bands without the grille). */
+uint32_t present_scan_mask(int x, int y, int cw, int ch, int sw, int sh);
+
+/* crt-curved geometry.  Barrel map from the flat picture (u,v in 0..1) to its
+ * bowed position (x,y in 0..1): centre and edge midpoints stay put, corners
+ * are pulled in, so the outline bulges outward at the middle of each side. */
+#define PRESENT_CURVE_K 0.14f
+void present_curve_map(float u, float v, float *x, float *y);
+/* Vignette darkness (0 clear .. 255 black) at position u,v in 0..1. */
+int  present_vignette_alpha(float u, float v);
 
 #ifdef HAVE_SDL
 struct SDL_Renderer;

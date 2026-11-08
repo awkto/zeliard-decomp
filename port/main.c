@@ -85,7 +85,7 @@ typedef struct {
     int      speed_req;
     int      scale;
     int      square;                /* --aspect 1:1: present the framebuffer unscaled in shape */
-    int      filter;                /* --filter: FILTER_INTEGER / SHARP / SMOOTH / CRT (#53) */
+    int      filter;                /* --filter: a FILTER_* value (#53) */
     int      quit;
     int      verbose;
     int      dump_audio;
@@ -521,10 +521,16 @@ static void pump_events(App *a, Game *g)
             if (input_event_match(&a->in, ACT_PAUSE, &e.key)) a->esc_edge = 1;
             else if (e.key.keysym.sym == SDLK_q) { if (a->paused) a->quit = 1; }
             else if (input_event_match(&a->in, ACT_FULLSCREEN, &e.key)) toggle_fullscreen(a);
-            /* the filter key cycles the display filter: integer -> sharp-bilinear -> smooth -> crt */
+            /* the filter key cycles the display filter: integer -> sharp-bilinear -> smooth -> scanlines -> soft-scanlines -> crt -> crt-curved */
             else if (input_event_match(&a->in, ACT_FILTER, &e.key)) {
                 a->filter = (a->filter + 1) % FILTER_COUNT;
                 fprintf(stderr, "[video] filter: %s\n", present_filter_name(a->filter));
+                {   /* the on-screen confirmation names it (the OSD font is upper case) */
+                    char nm[24];
+                    snprintf(nm, sizeof nm, "%s", present_filter_name(a->filter));
+                    for (char *q = nm; *q; q++) if (*q >= 'a' && *q <= 'z') *q -= 32;
+                    statekeys_osd(&a->sk, "FILTER: %s", nm);
+                }
             }
             else if (input_event_match(&a->in, ACT_MENU, &e.key)) {
                 if (e.key.keysym.mod & KMOD_ALT) toggle_fullscreen(a);   /* Alt+Enter */
@@ -779,9 +785,10 @@ static void usage(void)
         "  --speed N   FF33 speed (frame = 4*N ticks; default 5 = 84.5 ms)\n"
         "  --scale N   window scale (default 3)\n"
         "  --aspect A  4:3 (default: the shape the driver's monitor had) or 1:1\n"
-        "  --filter F  display scaling: integer, sharp (sharp-bilinear, default), smooth or crt\n"
+        "  --filter F  display filter: integer, sharp (sharp-bilinear, default), smooth, scanlines,\n"
+        "              soft-scanlines, crt or crt-curved\n"
         "              (scanlines + aperture grille);\n"
-        "              F3 cycles them (presentation only, the framebuffer is untouched)\n"
+        "              F3 or V cycles them (presentation only, the framebuffer is untouched)\n"
         "  --touch M   on-screen touch controls: auto (default: shown on the first touch,\n"
         "              hidden again by keyboard or controller use), on or off; size and opacity\n"
         "              are touch.size / touch.opacity in zeliard.ini\n"
@@ -1897,7 +1904,7 @@ int main(int argc, char **argv)
         /* the scaling filter (F3 cycles it); default sharp-bilinear */
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) {
             a.filter = present_filter_by_name(argv[++i]);
-            if (a.filter < 0) { fprintf(stderr, "--filter: expected integer, sharp, smooth or crt\n"); return 2; }
+            if (a.filter < 0) { fprintf(stderr, "--filter: expected integer, sharp, smooth, scanlines, soft-scanlines, crt or crt-curved\n"); return 2; }
             have_filter = 1;
         }
         else if (!strcmp(argv[i], "--touch") && i + 1 < argc) {
