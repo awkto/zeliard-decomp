@@ -64,7 +64,23 @@ async function setupPersistence() {
   for (const d of ['/libsdl', '/game']) { FS.mkdir(d); FS.mount(Module.IDBFS, {}, d); }
   try { await syncfs(true); } catch (e) { fail('Could not open browser storage (private window?): ' + e); }
   ready = true;
+  if (!hasGame()) await serverGame();
   showPick();
+}
+
+// A host may serve the game files itself as data/game.zip (the self-hosted
+// container does; GitHub Pages does not).  Install them once, like a picked zip;
+// the player still clicks Play, which is the gesture browser audio needs.
+let fromServer = false;
+async function serverGame() {
+  try {
+    const r = await fetch('data/game.zip', { cache: 'no-cache' });
+    if (!r.ok) return;
+    status('Fetching the game files from this server...');
+    installGame(await unzip(await r.arrayBuffer()));
+    fromServer = true;
+    await syncfs(false).catch(() => {});
+  } catch (e) { console.log('no server game files: ' + e); }
 }
 $('dir').disabled = $('zip').disabled = true;
 
@@ -72,7 +88,8 @@ function showPick() {
   $('dir').disabled = $('zip').disabled = false;
   const have = hasGame();
   $('saved').style.display = have ? '' : 'none';
-  status(have ? 'Your game files are stored in this browser.' : 'Choose your game folder or zip.');
+  status(have ? (fromServer ? 'Game files provided by this server. Press Play.' : 'Your game files are stored in this browser.')
+              : 'Choose your game folder or zip.');
   if (have) $('play').focus();
 }
 $('play').onclick = () => begin(null);

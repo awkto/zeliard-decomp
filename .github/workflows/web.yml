@@ -1,11 +1,24 @@
-# Web build of the C port (Emscripten + ASYNCIFY).  Code only: the artifact has
-# no game data; the player picks their own copy in the page.
+# Web build of the C port (Emscripten + ASYNCIFY).  Code only: neither the
+# artifact, the Pages site nor the Docker image contains game data; the player
+# picks their own copy in the page, or a self-hosted container mounts it at
+# /usr/share/nginx/html/data/game.zip (packaging/web/Dockerfile).
+#
+#   push to main (port/ or packaging/web/ changed) -> build, deploy GitHub Pages
+#   tag web-vX.Y.Z                                 -> build, push the Docker image
+#   ci/web* branches, manual                       -> build only (artifact)
 name: Web build
 
 on:
   push:
     branches:
+      - main
       - 'ci/web*'
+    paths:
+      - 'port/**'
+      - 'packaging/web/**'
+      - '.github/workflows/web.yml'
+    tags:
+      - 'web-v*'
   workflow_dispatch:
 
 permissions:
@@ -23,3 +36,46 @@ jobs:
         with:
           name: zeliard-web
           path: build/web/
+      - if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web/
+
+  pages:
+    if: github.ref == 'refs/heads/main'
+    needs: web
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  docker:
+    if: startsWith(github.ref, 'refs/tags/web-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/zeliard-decomp-web
+          tags: |
+            type=match,pattern=web-v(.*),group=1
+            type=raw,value=latest
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packaging/web/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
