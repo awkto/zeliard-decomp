@@ -187,7 +187,7 @@ test: test_physics test_combat test_town test_boss test_shop test_status test_pl
 	./test_video ../zeliard 2>&1 | tee -a $(COUNTS)
 	./test_config 2>&1 | tee -a $(COUNTS)
 	./test_sync 2>&1 | tee -a $(COUNTS)
-	./test_mapview 2>&1 | tee -a $(COUNTS)
+	./test_mapview ../zeliard 2>&1 | tee -a $(COUNTS)
 	./test_smooth 2>&1 | tee -a $(COUNTS)
 	tools/check_counts.sh $(COUNTS)
 
