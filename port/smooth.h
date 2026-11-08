@@ -53,6 +53,25 @@ double smooth_progress(double elapsed_ms, double period_ms);
 /* is a per-object move of (dx, dy) pixels a slide (else a jump)? */
 int  smooth_is_slide(int dx, int dy);
 
+/* Towns: the same slide for the town frame (town.c).  The tiles slide by the scroll_col delta,
+ * the three backdrop strips by the back_steps delta times their own 4 / 8 / 16 px, the hero by
+ * his screen-column delta and each NPC by its screen-cell delta, matched by record index.
+ * Only whole-cell steps of one count slide; a door, a shop entry or a new map has no history. */
+struct Town;
+typedef struct SmoothTown {
+    int       have;
+    const void *map;                    /* the TownMap and its index: a new town forgets */
+    int       index, scroll_col, back_steps, hero_c;
+    int8_t    npc_ok[SMOOTH_NPCS], npc_type[SMOOTH_NPCS];
+    int16_t   npc_x[SMOOTH_NPCS];       /* screen cell */
+    SmoothOfs start;
+} SmoothTown;
+void smooth_town_step(SmoothTown *s, const struct Town *t);
+void smooth_town_reset(SmoothTown *s);
+
+/* the offsets `start` leaves at progress t (what smooth_at does for a cavern Smooth) */
+void smooth_ofs_at(const SmoothOfs *start, double t, SmoothOfs *out);
+
 void smooth_reset(Smooth *s);               /* forget history: a map change, a menu, fast-forward */
 /* Call once per game step, after the step: derives s->start from the previous step's
  * snapshot, then keeps this step as the next one's history. */

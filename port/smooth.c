@@ -1,6 +1,7 @@
 /* smooth.c -- see smooth.h (#127). */
 #include "smooth.h"
 #include "enemy.h"
+#include "town.h"
 #include <string.h>
 
 int smooth_wrap_delta(int a, int b, int n)
@@ -102,15 +103,18 @@ void smooth_step(Smooth *s, const Game *g)
     *s = cur;
 }
 
-void smooth_at(const Smooth *s, double t, SmoothOfs *out)
+void smooth_at(const Smooth *s, double t, SmoothOfs *out) { smooth_ofs_at(&s->start, t, out); }
+
+void smooth_ofs_at(const SmoothOfs *a, double t, SmoothOfs *out)
 {
-    const SmoothOfs *a = &s->start;
     out->active = 0;
     out->wx = smooth_remaining(a->wx, t); out->wy = smooth_remaining(a->wy, t);
     out->hx = smooth_remaining(a->hx, t); out->hy = smooth_remaining(a->hy, t);
     for (int i = 0; i < MAX_OBJS; i++) { out->ox[i] = smooth_remaining(a->ox[i], t); out->oy[i] = smooth_remaining(a->oy[i], t); }
     for (int i = 0; i <= MAX_SHOTS; i++) { out->sx[i] = smooth_remaining(a->sx[i], t); out->sy[i] = smooth_remaining(a->sy[i], t); }
     for (int i = 0; i < 4; i++) { out->mx[i] = smooth_remaining(a->mx[i], t); out->my[i] = smooth_remaining(a->my[i], t); }
+    for (int i = 0; i < 3; i++) out->fx[i] = smooth_remaining(a->fx[i], t);
+    for (int i = 0; i < SMOOTH_NPCS; i++) out->nx[i] = smooth_remaining(a->nx[i], t);
     out->active = a->active && (t < 1);
     if (out->active) {          /* all quantised to zero is the same picture as none */
         SmoothOfs z; memset(&z, 0, sizeof z);
@@ -124,4 +128,39 @@ int smooth_same(const SmoothOfs *a, const SmoothOfs *b)
     SmoothOfs x = *a, y = *b;
     x.active = y.active = 0;
     return memcmp(&x, &y, sizeof x) == 0;
+}
+
+/* ------------------------------------------------------------------ towns */
+void smooth_town_reset(SmoothTown *s) { memset(s, 0, sizeof *s); }
+
+void smooth_town_step(SmoothTown *s, const Town *t)
+{
+    SmoothTown cur;
+    memset(&cur, 0, sizeof cur);
+    cur.have = 1; cur.map = t->map; cur.index = t->map->index;
+    cur.scroll_col = t->scroll_col; cur.back_steps = t->back_steps; cur.hero_c = t->hero_scr_col;
+    for (int i = 0; i < t->map->nnpcs && i < SMOOTH_NPCS; i++) {
+        int sc;
+        if (!town_npc_screen_col(t, i, &sc)) continue;
+        cur.npc_ok[i] = 1; cur.npc_type[i] = (int8_t)(t->map->npcs[i].sprite & 0x7F); cur.npc_x[i] = (int16_t)sc;
+    }
+    SmoothOfs *o = &cur.start;
+    memset(o, 0, sizeof *o);
+    if (s->have && s->map == cur.map && s->index == cur.index) {
+        int dc = cur.scroll_col - s->scroll_col, db = cur.back_steps - s->back_steps;
+        if (dc >= -1 && dc <= 1) o->wx = dc * 8;
+        if (db >= -1 && db <= 1) { o->fx[0] = db * 4; o->fx[1] = db * 8; o->fx[2] = db * 16; }
+        int hx = (s->hero_c - cur.hero_c) * 8;
+        if (smooth_is_slide(hx, 0)) o->hx = hx;
+        for (int i = 0; i < SMOOTH_NPCS; i++) {
+            o->nx[i] = o->wx;                       /* no history: rides the map */
+            if (!cur.npc_ok[i]) { o->nx[i] = 0; continue; }
+            if (!s->npc_ok[i] || s->npc_type[i] != cur.npc_type[i]) continue;
+            int dx = (s->npc_x[i] - cur.npc_x[i]) * 8;
+            o->nx[i] = smooth_is_slide(dx, 0) ? dx : 0;      /* a jump is left alone */
+        }
+        o->active = o->wx || o->hx || o->fx[1];
+        for (int i = 0; i < SMOOTH_NPCS && !o->active; i++) o->active = o->nx[i] != 0;
+    }
+    *s = cur;
 }

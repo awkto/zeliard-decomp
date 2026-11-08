@@ -25,6 +25,7 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h);     /* fb: FB_W
  * slide.  All in framebuffer pixels, applied on top of the cell grid; never set
  * on the engine's own path (render_set_smooth(NULL) is the default), so
  * `make verify`, the traces and the scenarios render exactly as before. */
+#define SMOOTH_NPCS 32         /* TownMap.npcs */
 typedef struct SmoothOfs {
     int active;                     /* any offset non-zero */
     int wx, wy;                     /* the background tiles (the world scroll) */
@@ -32,6 +33,10 @@ typedef struct SmoothOfs {
     int ox[MAX_OBJS], oy[MAX_OBJS]; /* enemy / object record i */
     int sx[MAX_SHOTS + 1], sy[MAX_SHOTS + 1];   /* projectile slot i */
     int mx[4], my[4];               /* spell sprite slot i */
+    /* towns (town.c): wx is the map tiles, hx the hero, and these are the three parallax strips
+     * (the far one 4 px a scroll step, the next 8, the near one 16) and each NPC, x only */
+    int fx[3];
+    int nx[SMOOTH_NPCS];
 } SmoothOfs;
 void render_set_smooth(const SmoothOfs *ofs);        /* NULL = off (the default) */
 /* LIFE bar, GOLD/ALMAS digits, the four narrow-font labels and the place name.

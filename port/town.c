@@ -1142,6 +1142,10 @@ void town_step(Town *t)
 #define TOWN_Y   78
 #define SKY_IDX  0x2C
 
+/* smooth scrolling (#127): NULL on the engine's own path, so verify, traces and scenarios render as before */
+static const SmoothOfs *s_sm;
+void town_set_smooth(const SmoothOfs *ofs) { s_sm = ofs && ofs->active ? ofs : NULL; }
+
 static void blit_cell8(uint8_t *fb, const Cell8 *c, const uint8_t sky[8][8],
                        const TownBackdrop *bd, int x, int y)
 {
@@ -1214,6 +1218,15 @@ void town_dissolve_from(Town *t, int first)
     t->dsv_pic = 0;
 }
 
+int town_npc_screen_col(const Town *t, int i, int *sc)
+{
+    const TownNpc *n = &t->map->npcs[i];
+    int c = (int)n->col - (t->scroll_col + 4);
+    if (c < -1 || c >= TOWN_SCR_COLS || grid_cell(t, n->col, TOWN_NPC_ROW) != TOWN_MARK) return 0;
+    *sc = c;
+    return 1;
+}
+
 void town_render(uint8_t *fb, const Town *t)
 {
     /* mole.bin's furniture is painted once and never redrawn (gfx.h); keep it
@@ -1229,21 +1242,26 @@ void town_render(uint8_t *fb, const Town *t)
     if (bd) {
         for (int y = bd->back_y0; y < bd->back_y1 && y < TOWN_Y; y++)
             memcpy(fb + y * FB_W + 48, bd->back + y * FB_W + 48, 224);
-        if (bd->has_far) blit_strip(fb, bd->far14, 16, 14, -t->back_steps * 4);
+        int f0 = s_sm ? s_sm->fx[0] : 0, f1 = s_sm ? s_sm->fx[1] : 0, f2 = s_sm ? s_sm->fx[2] : 0;
+        if (bd->has_far) blit_strip(fb, bd->far14, 16, 14, -t->back_steps * 4 + f0);
         else for (int y = 14; y < bd->back_y0; y++) memset(fb + y * FB_W + 48, 0, 224);
-        blit_strip(fb, bd->near142, 8, 142, -t->back_steps * 8);
-        blit_strip(fb, bd->near150, 8, 150, -t->back_steps * 16);
+        blit_strip(fb, bd->near142, 8, 142, -t->back_steps * 8 + f1);
+        blit_strip(fb, bd->near150, 8, 150, -t->back_steps * 16 + f2);
     } else {
         for (int y = 14; y < TOWN_Y; y++) memset(fb + y * FB_W + 48, SKY_IDX, 224);
     }
-    for (int c = 0; c < TOWN_SCR_COLS; c++) {
+    /* a slide draws the tiles at a pixel offset and so also needs the map column just beyond
+     * the window on the side being revealed (clipped to the window by blit_cell8) */
+    int wx = s_sm ? s_sm->wx : 0;
+    int c0 = wx > 0 ? -1 : 0, c1 = TOWN_SCR_COLS + (wx < 0 ? 1 : 0);
+    for (int c = c0; c < c1; c++) {
         int mc = t->scroll_col + 4 + c;                                 /* gtmcga 3074 skips 4 columns */
         if (mc < 0 || mc >= t->map->width) continue;
         for (int r = 0; r < TOWN_ROWS; r++) {
             uint8_t v = t->map->grid[mc][r];
             /* rows 0-2: what the last flush drew, which an animated cell's
              * map byte is already one step past (town_flush_rows) */
-            if (r < 3 && t->scr_copy[c][r] < 0xFE) v = t->scr_copy[c][r];
+            if (r < 3 && c >= 0 && c < TOWN_SCR_COLS && t->scr_copy[c][r] < 0xFE) v = t->scr_copy[c][r];
             if (v == TOWN_MARK) {                                       /* an NPC marker: draw the tile below it */
                 for (int i = 0; i < t->map->nnpcs; i++)
                     if (t->map->npcs[i].col == (uint16_t)mc) { v = t->map->npcs[i].saved; break; }
@@ -1252,7 +1270,7 @@ void town_render(uint8_t *fb, const Town *t)
             /* GT_FLUSH draws *every* cell, cell 0 included: in rows 0-2 its
              * mask is all sky, which is how the backdrop shows through. */
             if (!t->tiles->present[v]) continue;
-            blit_cell8(fb, &t->tiles->cell[v], r < 3 ? t->tiles->sky[v] : NULL, bd, 48 + c * 8, TOWN_Y + r * 8);
+            blit_cell8(fb, &t->tiles->cell[v], r < 3 ? t->tiles->sky[v] : NULL, bd, 48 + c * 8 + wx, TOWN_Y + r * 8);
         }
     }
     /* NPCs: 2 columns x 3 rows on rows 5-7 (34EC: frame = (anim & 3) + 4*right).
@@ -1265,8 +1283,9 @@ void town_render(uint8_t *fb, const Town *t)
     for (int i = 0; i < t->map->nnpcs; i++) {
         const TownNpc *n = &t->map->npcs[i];
         int sc = (int)n->col - (t->scroll_col + 4);
-        if (sc < -1 || sc >= TOWN_SCR_COLS) continue;
+        if (sc < -1 || sc >= TOWN_SCR_COLS + (s_sm ? 1 : 0)) continue;
         if (grid_cell(t, n->col, TOWN_NPC_ROW) != TOWN_MARK) continue;
+        int nofs = s_sm && i < SMOOTH_NPCS ? s_sm->nx[i] : 0;
         int sp = n->sprite & 0x7F;
         if (sp > 4) sp = 4;
         int f = (n->anim & 3) + ((n->sprite & 0x80) ? 0 : 4);
@@ -1275,8 +1294,8 @@ void town_render(uint8_t *fb, const Town *t)
             int cell = cells[k];
             if (!cell || cell > t->spr->ncells) continue;
             int cx = sc + k / 3, cy = TOWN_NPC_ROW + k % 3;
-            if (cx < 0 || cx >= TOWN_SCR_COLS) continue;
-            blit_sprite(fb, &t->spr->cell[cell - 1], 48 + cx * 8, TOWN_Y + cy * 8);
+            if (s_sm ? (cx < -1 || cx > TOWN_SCR_COLS) : (cx < 0 || cx >= TOWN_SCR_COLS)) continue;
+            blit_sprite(fb, &t->spr->cell[cell - 1], 48 + cx * 8 + nofs, TOWN_Y + cy * 8);
         }
     }
     /* the hero: the same 2x3 layout, tman cells (0-based) */
@@ -1288,8 +1307,8 @@ void town_render(uint8_t *fb, const Town *t)
             int cell = cells[k];
             if (cell >= t->hero->ncells) continue;
             int cx = t->hero_scr_col + k / 3, cy = TOWN_NPC_ROW + k % 3;
-            if (cx < 0 || cx >= TOWN_SCR_COLS) continue;
-            blit_sprite(fb, &t->hero->cell[cell], 48 + cx * 8, TOWN_Y + cy * 8);
+            if (s_sm ? (cx < -1 || cx > TOWN_SCR_COLS) : (cx < 0 || cx >= TOWN_SCR_COLS)) continue;
+            blit_sprite(fb, &t->hero->cell[cell], 48 + cx * 8 + (s_sm ? s_sm->hx : 0), TOWN_Y + cy * 8);
         }
     }
     dlg_render(fb, t);                                              /* 63C5 */

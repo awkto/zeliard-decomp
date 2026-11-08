@@ -100,6 +100,7 @@ typedef void (*TownPresentFn)(Town *t);
 /* --trace: town.bin 68ED, the frame boundary (docs/HARNESS.md §1); NULL normally */
 typedef void (*TownFrameEndFn)(Town *t);
 struct Shop;
+struct SmoothOfs;
 struct TextFont;
 
 /* what a frame asked the shell to do (the original jumps out of the loop) */
@@ -232,6 +233,10 @@ void town_npc_markers_reset(Town *t);               /* 6C2B */
 void town_dialogue_run(Town *t, int script, int face_left);
 /* render one 320x200 MCGA frame (playfield rows at y 78..141) */
 void town_render(uint8_t *fb, const Town *t);
+/* Smooth scrolling (#127): offsets town_render draws the map, strips, NPCs and hero at; NULL = off */
+void town_set_smooth(const struct SmoothOfs *ofs);
+/* is NPC i drawn (its marker is down) and where: its screen column, possibly just off either edge */
+int  town_npc_screen_col(const Town *t, int i, int *sc);
 /* 6E9B: run the eight passes of [2040] over the town screen, one presented frame each (the
  * original's pass time is its CPU's; one frame, 84 ms at the default speed, makes the ~0.7 s
  * a period machine took).  Leaves t->dissolve = 8, so the town stays black until the caller
