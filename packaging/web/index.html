@@ -38,6 +38,8 @@
   .row:has(> input[type=checkbox]) > label { order: 1; }
   .row:has(> input[type=checkbox]) > input { order: 2; margin-left: auto; }
   .row:has(> input[type=checkbox]) .hint { order: 3; }
+  #settingsBox > summary { cursor: pointer; }
+  #settingsBox > summary h2 { display: inline; }
   #settingsBtns { display: flex; gap: .6em; flex-wrap: wrap; align-items: center; }
   details.keys { border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: .2em 1em; margin: .8em 0; }
   details.keys > summary { cursor: pointer; padding: .5em 0; color: var(--acc); font-weight: 600; }
@@ -64,8 +66,22 @@
   <p id="intro">This runs the C port in your browser. It needs your own copy of the game files
      (the folder with <code>ZELRES1.SAR</code>). They are read locally and never uploaded.</p>
 
+  <h2>Game files</h2>
+  <div id="fileinputs">
+    <label for="dir">Game folder</label>
+    <input id="dir" type="file" webkitdirectory multiple>
+    <label for="zip">or a zip of it</label>
+    <input id="zip" type="file" accept=".zip,application/zip">
+  </div>
+  <div id="saved" style="display:none">
+    <button id="play">Play</button> <button id="forget">Forget game files</button>
+    <small>(keeps your saves)</small>
+  </div>
+  <div id="status" role="status">Loading engine...</div>
+  <div id="err" role="alert"></div>
+
+  <details id="settingsBox"><summary><h2>Settings</h2></summary>
   <form id="settings" onsubmit="return false" aria-label="Settings">
-    <h2>Settings</h2>
     <fieldset>
       <legend>Display</legend>
       <div class="row"><label for="s-filter">Video filter</label>
@@ -103,7 +119,7 @@
       <legend>Gameplay</legend>
       <div class="row"><label for="s-speed">Game speed</label>
         <select id="s-speed"></select>
-        <span class="hint">1 is fastest, 10 slowest, 5 is the original. In game: <kbd>F9</kbd> or <kbd>Backspace</kbd>, then a digit (9 is fastest). Hold <kbd>Shift</kbd> to fast-forward.</span></div>
+        <span class="hint">The same digits as the in-game speed menu: 9 is fastest, 0 slowest, 5 is the original. In game: <kbd>F9</kbd> or <kbd>Backspace</kbd>, then a digit. Hold <kbd>Shift</kbd> to fast-forward.</span></div>
     </fieldset>
     <fieldset>
       <legend>Audio</legend>
@@ -124,22 +140,10 @@
     <div id="settingsBtns"><button type="button" id="s-reset">Reset settings to defaults</button>
       <small id="s-note">Settings are remembered in this browser, and keys pressed in game update them.</small></div>
   </form>
+  </details>
 
   <details class="keys" id="keys"><summary>Controls: every keyboard shortcut</summary><div id="keysBody"></div></details>
 
-  <h2>Game files</h2>
-  <div id="fileinputs">
-    <label for="dir">Game folder</label>
-    <input id="dir" type="file" webkitdirectory multiple>
-    <label for="zip">or a zip of it</label>
-    <input id="zip" type="file" accept=".zip,application/zip">
-  </div>
-  <div id="saved" style="display:none">
-    <button id="play">Play</button> <button id="forget">Forget game files</button>
-    <small>(keeps your saves)</small>
-  </div>
-  <div id="status" role="status">Loading engine...</div>
-  <div id="err" role="alert"></div>
   <p><small>Saves (.usr), save states and settings are kept in this browser (IndexedDB), along with the game files you picked, so you only choose them once.</small></p>
 </main>
 <template id="keytpl">
@@ -346,11 +350,11 @@ const DEFAULTS = { filter: 'sharp-bilinear', video: 'mcga', aspect: '4:3', zoom:
 const BOOLS = ['zoom', 'smooth', 'fullscreen', 'music', 'sfx'], SELECTS = ['filter', 'video', 'aspect'];
 const ALIAS = { filter: { sharp: 'sharp-bilinear', linear: 'smooth', soft: 'smooth', curved: 'crt-curved' },
                 video: { tga: 'tandy', herc: 'hgc', hercules: 'hgc' }, aspect: { square: '1:1', crt: '4:3' } };
-const WEB_DEFAULTS = { speed: 5, touch: 'auto' };
+const WEB_DEFAULTS = { speed: 5, touch: 'auto' };   // speed = the F9 digit (0..9, 9 fastest); --speed takes 10 - digit
 let web = { ...WEB_DEFAULTS };
-for (let i = 1; i <= 10; i++) {
+for (let i = 9; i >= 0; i--) {
   const o = document.createElement('option');
-  o.value = i; o.textContent = i + (i === 1 ? ' (fastest)' : i === 5 ? ' (original)' : i === 10 ? ' (slowest)' : '');
+  o.value = i; o.textContent = i + (i === 9 ? ' (fastest)' : i === 5 ? ' (original)' : i === 0 ? ' (slowest)' : '');
   $('s-speed').appendChild(o);
 }
 
@@ -385,7 +389,7 @@ function showValues(v) {
 function loadSettings() {
   showValues(readIni());
   try { Object.assign(web, JSON.parse(localStorage.getItem('zeliard.web') || '{}')); } catch (e) {}
-  if (!(web.speed >= 1 && web.speed <= 10)) web.speed = WEB_DEFAULTS.speed;
+  if (!(web.speed >= 0 && web.speed <= 9)) web.speed = WEB_DEFAULTS.speed;
   if (!['auto', 'on', 'off'].includes(web.touch)) web.touch = WEB_DEFAULTS.touch;
   $('s-speed').value = web.speed; $('s-touch').value = web.touch;
 }
@@ -452,7 +456,7 @@ function start() {
   $('helpBtn').style.display = 'block';
   // callMain runs inside a click/change handler or just after one, so SDL may start audio
   applySettings();     // zeliard.ini (display, audio) is already written; speed and touch are page-only, so they go as flags
-  Module.callMain(['--dir', '/game', '--scale', '3', '--touch', web.touch, '--speed', String(web.speed)]);
+  Module.callMain(['--dir', '/game', '--scale', '3', '--touch', web.touch, '--speed', String(10 - web.speed)]);
   $('canvas').focus();
 }
 
