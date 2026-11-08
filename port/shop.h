@@ -83,6 +83,8 @@ typedef struct Shop {
     const char *dir;
     unsigned frames;                /* port counter */
     int      tick_acc;              /* ticks since the last presented frame (shop_tick) */
+    unsigned ff1a;                  /* ISR ticks since [FF1A] was last reset (shop_wait_x) */
+    unsigned cyc;                   /* CPU cycles run since the last whole tick (shop_burn) */
     int      kj_x8;                 /* kenjpro BB12 high byte: the portrait's x8, 7 or 0x0E (death entry) */
     int      headless_guard;        /* abort after this many frames (tests) */
     uint8_t  resid[32];             /* DS:7CC2..7CE1: opdemo.bin[1CC2..] left past town.bin's end (#73) */

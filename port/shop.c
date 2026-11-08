@@ -77,7 +77,7 @@ uint32_t shop_price(const Shop *s, int item)
 /* ------------------------------------------------------------- the frame */
 const uint8_t *shop_framebuffer(const Shop *s) { return s->fb; }
 
-static void shop_hook_tick(Shop *s);            /* the [A002] hook, one tick */
+static void shop_hook_pass(Shop *s);            /* the [A002] hook, one pass */
 
 /* One rendered frame is 4*speed = 20 ticks of the 236.7 Hz clock.  The shop
  * code runs tick by tick (shop_tick): every tick steps the [A002] hook, as
@@ -92,25 +92,86 @@ static void shop_frame(Shop *s)
     if (s->t && s->t->present) { s->t->frame_no++; s->t->present(s->t); }
 }
 
-static void shop_tick_hook(Shop *s, int run_hook)
+/* ----------------------------------------------------------------- CPU time (#120, #125)
+ * The original's clock is the 236.7 Hz ISR (STICK 027F: `inc [FF50]`, `inc [FF1B]`); every loop that
+ * waits on it is `call 7042` (idle_poll, whose last act is the [A002] hook at 7064) plus a compare.
+ * The CPU keeps running between the ticks, and the code that draws text spends real time with no
+ * pass at all, so the hook sees [FF50] jump by more than one and "loses" the surplus (a step
+ * resets it to 0).  The port counts in edges (ISR ticks) and keeps `cyc`, the cycles run since the
+ * last edge, so unpolled work (shop_burn) crosses edges at the right place:
+ *   shop_edge   one ISR tick: [FF50]++, then (a polled loop) the pass that sees it, the presented-frame clock
+ *   shop_pass   one pass of idle_poll: the hook (idempotent until the next edge)
+ *   shop_burn   unpolled CPU time; every edge it crosses is an edge without a pass
+ * A polled wait ends at an edge plus the time idle_poll needs to see it (PASS_LATENCY), which
+ * restarts the phase.  Costs are in cycles of the oracle (cycles=3000 per ms; 1 per instruction,
+ * 1 per iteration of a rep).  Measured with the oracle's ORACLE_IPLOG (HARNESS.md s1a): the
+ * timestamps of the ISR entry (027F), of 7042/7064/AB47, and of the routines' own addresses. */
+#define TICK_CYCLES   12675     /* 027F to 027F: 12675.2 on average over the sage run */
+#define PASS_LATENCY  40        /* an edge to the 7064 pass that sees it: 24..56 */
+
+static void shop_pass(Shop *s) { if (!s->leave) shop_hook_pass(s); }
+
+/* one ISR tick: [FF50]++, [FF1A]++, the real-time pace, then (a polled loop) the pass that sees it,
+ * and last the presented frame every 20th: its picture has this tick's hook step in it */
+static void shop_edge(Shop *s, int run_hook)
 {
     /* tests: stop after `headless_guard` frames, i.e. exactly 20x that many ticks */
     if (s->headless_guard && (int)s->frames >= s->headless_guard) { s->leave = 1; return; }
-    if (run_hook) shop_hook_tick(s);
-    else s->hk.ff50++;                  /* the ISR counts on, only the hook call is skipped */
+    s->hk.ff50++;
+    s->ff1a++;
     wait_tick();
+    if (run_hook) shop_pass(s);
     if (++s->tick_acc >= SHOP_TICKS_PER_FRAME) { s->tick_acc = 0; shop_frame(s); }
+}
+
+static void shop_tick_hook(Shop *s, int run_hook)
+{
+    s->cyc = PASS_LATENCY;
+    shop_edge(s, run_hook);
 }
 static void shop_tick(Shop *s) { shop_tick_hook(s, 1); }
 
-/* the shops' timed waits, in 236.7 Hz ticks: no boundary, no input */
-static void shop_wait_x(Shop *s, int ticks, int run_hook)
+static void shop_burn(Shop *s, unsigned cycles)
 {
-    for (int n = 0; n < ticks && !s->leave; n++) shop_tick_hook(s, run_hook);
+    s->cyc += cycles;
+    while (s->cyc >= TICK_CYCLES && !s->leave) { s->cyc -= TICK_CYCLES; shop_edge(s, 0); }
+}
+
+/* the shops' timed waits, in 236.7 Hz ticks: no boundary, no input.  `[FF1A] = 0` is followed at
+ * once by a pass (7089), then one per edge; the last pass is the one that sees the count and
+ * exits, so the screen the oracle writes there (#119 side_*) has it. */
+static void shop_wait_rest(Shop *s, int ticks, int run_hook)
+{
+    if (run_hook) shop_pass(s);
+    while ((int)s->ff1a < ticks && !s->leave) shop_tick_hook(s, run_hook);
     /* #119: the oracle writes the screen as each `cmp [FF1A],n / jc` wait of 8+ ticks ends (side_<f>_<k>_w<IP>.png) */
     if (ticks >= 8 && !s->leave && s->t && s->t->side) s->t->side(s->t, SIDE_WAIT, 0, 0);
 }
+/* `[FF1A] = 0`, then the wait; the edges run so far (shop_ff1a_reset .. here) count: A1E2 resets it
+ * before the draw that is part of the interval */
+static void shop_wait_x(Shop *s, int ticks, int run_hook) { s->ff1a = 0; shop_wait_rest(s, ticks, run_hook); }
 static void shop_wait(Shop *s, int ticks) { shop_wait_x(s, ticks, 1); }
+
+/* ---- the cost of the drawing routines of GMMCGA (cycles, 3000 per ms; measured as in HARNESS.md s1a:
+ * the oracle logs the time from each `call [cs:20xx]` to the instruction after it, with its registers).
+ * A `rep movsw/stosw` iteration costs 1.26 cycles here, not 1 (DOSBox-X); everything else is one per
+ * instruction.  Fits: 2024 scroll 7065 for 50 x 104 words (718E steps), 2000 with al=0 (a window clear,
+ * 20E8: 10 instructions + 2*w4 words a row) 5420 for 29x65 (A983), and the bordered box (al!=0: the
+ * clear of the inside, four edge lines of 4*w4-4 bytes, two columns) 4132 for 28x45 (menu box, A0D6)
+ * and 8812 for 54x55 (the text box, 7221). */
+#define REP_X1000       1262
+static unsigned win_fill_cycles(int w4, int h) { return 12u + (unsigned)h * (10u + (unsigned)(2 * w4 * REP_X1000 / 1000)); }
+static unsigned win_box_cycles(int w4, int h)
+{
+    unsigned inner = (unsigned)(h - 4) * (10u + (unsigned)(2 * w4 * 1230 / 1000)) + 12u;
+    return inner + 4u * (25u + (unsigned)((4 * w4 - 4) * 1230 / 1000)) + 6u * (unsigned)(h - 4) + 52u;
+}
+/* [2000]: a window clear (fill 0) or the bordered box (0xFF), and its time */
+static void win_fill(Shop *s, uint8_t fill, int x4, int y, int w4, int h)
+{
+    vid_window(s->fb, fill, x4, y, w4, h);
+    shop_burn(s, fill ? win_box_cycles(w4, h) : win_fill_cycles(w4, h));
+}
 
 /* [2040] over the shop's own screen (#118): the passes are destructive, as on VRAM, so the
  * playfield stays black until the overlay draws on it again.  One presented frame per pass
@@ -138,13 +199,17 @@ static void shop_request_exit(Shop *s, int why)
 }
 
 /* a poll site of a wait loop: the boundary rule, and out if the run ended */
-static int shop_poll(Shop *s, const char *site)
+static int shop_poll_x(Shop *s, const char *site, int idle)
 {
     if (!s->t) return 0;
+    /* the poll site follows idle_poll, whose last act is the [A002] hook (7064): the picture the
+     * boundary writes has this instant's pass in it (#125) */
+    if (idle && !s->leave) shop_pass(s);
     wait_poll(s->g, s->t, site);
     if (s->t->quit) s->leave = 1;
     return s->leave;
 }
+static int shop_poll(Shop *s, const char *site) { return shop_poll_x(s, site, 1); }
 
 static int shop_btn(Shop *s, int *cancel)
 {
@@ -170,15 +235,23 @@ static void shop_wait_key(Shop *s)
 }
 
 /* ------------------------------------------------------- the text box 706C */
-static void box_clear(Shop *s) { vid_window(s->fb, 0xFF, BOX_X4, BOX_Y, BOX_W4, BOX_H); }
+static void box_clear(Shop *s) { win_fill(s, 0xFF, BOX_X4, BOX_Y, BOX_W4, BOX_H); }
 
 /* 2024 vid_scroll_up_1 (bx 0x0762, cx 0x1A32): 50 rows from y 98, 208 px from
- * x 56, each takes the row below; 718E runs it ten times = one 10-px line */
+ * x 56, each takes the row below; 718E runs it ten times = one 10-px line.
+ * Each of the ten steps is `call 7042` (idle_poll: the [A002] hook, 719E) and then the scroll
+ * (71A7).  Measured: 718E (7196) to the `ret` at 71AF is 71046 cycles for the ten, i.e. 7105 a
+ * step, 5.6 ticks a line, of which the pass is ~40; the hook gets one pass per step (0.56 tick
+ * apart), so its [FF50] test at AB47 is only seen late and the surplus is lost (#125). */
+#define SCROLL_STEP_CYCLES 7065
 static void box_scroll(Shop *s)
 {
-    for (int n = 0; n < 10; n++)
+    for (int n = 0; n < 10; n++) {
+        shop_pass(s);                                           /* 719E */
         for (int y = 98; y < 98 + 50; y++)
             memmove(s->fb + y * TEXT_W + 56, s->fb + (y + 1) * TEXT_W + 56, 208);
+        shop_burn(s, SCROLL_STEP_CYCLES);                       /* 71A7 */
+    }
 }
 
 /* 7224: the width of the next word (stops at a space, '/', 0, 0x0C, 0x0D, 0xFF) */
@@ -197,14 +270,29 @@ static int word_width(const Shop *s, unsigned p)
     return w;
 }
 
+/* What 7224 costs the CPU: 2 + 22 instructions a byte of the word (lodsb, the six terminator
+ * tests, the width add, 7228..7253) + the terminator and the lone-./, test (~20). */
+static unsigned word_scan_cycles(const Shop *s, unsigned p)
+{
+    unsigned k = 0;
+    for (int n = 0; n < 64; n++, k++) {
+        uint8_t c = img8(s, p + (unsigned)n);
+        if (c == ' ' || c == '/' || c == 0 || c == 0x0C || c == 0x0D || c == 0xFF) break;
+    }
+    return 2 + 22 * k + 20;
+}
+
 static void box_newline(Shop *s);
 
 /* 71BC: the red page marker, then a keypress, then a fresh box */
+/* 71BC to 71DF: the marker glyph (7C, double size) through [2022] and the 71CC window call set-up; 390 in the oracle */
+#define PAGE_MARKER_CYCLES 390
 static void box_wait_and_clear(Shop *s)
 {
     vid_putchar(s->fb, s->font, 0x7C, 2, 156, 139);
+    shop_burn(s, PAGE_MARKER_CYCLES);                           /* 71BC..71DF */
     shop_wait_key(s);
-    vid_window(s->fb, 0, 0x27, 0x8B, 2, 10);
+    win_fill(s, 0, 0x27, 0x8B, 2, 10);                          /* 71D4 */
     s->lines = 0;
 }
 
@@ -223,22 +311,26 @@ static void box_wait_and_clear(Shop *s)
  * count there is 2, not 1) but a scan of every shop text (all 0x0C-led runs,
  * both widths) found no place where that flips the `pending >= 2` test of
  * 7169, so no page break differs on the shipped data.  Kept faithful anyway. */
-static int lines_pending(const Shop *s, int *scan_len)
+static int lines_pending(const Shop *s, int *scan_len, unsigned *cycles)
 {
+    unsigned cyc = 0;
     int n = 0, x = 0;
     unsigned p = s->tp;
     int scan = 0;
     for (int guard = 0; guard < 2048; guard++) {
         uint8_t c = img8(s, p++);
         scan++;
+        cyc += 18;                                              /* 7271..72A6: ~18 instructions a byte */
         if (c == 0 || c == 0x0C) break;                         /* 7272 / 7281 */
         if (c == 0xFF) { if (img8(s, p++) == 0xFF) break; continue; }   /* 7276..727F */
         if (c == '/' || c == 0x0D) { n++; x = 0; continue; }    /* 7285 / 728E */
         if (c >= 0x20 && c < 0x80) x += FONT_ADVANCE[c - 0x20]; /* 7297 */
         else if (c < 0x20) x += s->resid[c];                    /* 7299: wraps to 7CC2+c, see above */
+        if (c == ' ') cyc += 16 + word_scan_cycles(s, p);       /* 72A8..72BB: the 4 pushes, call 7224, the 4 pops, cmp */
         if (c == ' ' && x + word_width(s, p) >= TEXT_WRAP) { x = 0; n++; }   /* 72A4..72BD */
     }
     if (scan_len) *scan_len = scan;
+    if (cycles) *cycles = cyc;
     return x ? n + 1 : n;                                       /* 72C0 */
 }
 
@@ -259,22 +351,44 @@ static void box_newline(Shop *s)
     s->tx = 0; s->lines++; s->tline++;
     if (s->lines < 4) { box_scroll_if_full(s); return; }
     int scan = 0;
-    int pending = lines_pending(s, &scan);
-    /* 7269 walks the rest of the text byte by byte (lodsb, the two width
-     * tables, the wrap test); that walk takes real CPU time, and the
-     * animation clock [FF50] (STICK 027F) advances with it exactly as the
-     * printer's 6-tick glyph waits do (706C/7084, #101).  The port charged
-     * nothing for it, which left the Sage's portrait blink two animation
-     * steps behind (#106).  ~53 cycles a byte at cycles=3000 (12675 a tick). */
-    shop_wait(s, scan / 240);
+    unsigned scan_cyc = 0;
+    int pending = lines_pending(s, &scan, &scan_cyc);
+    /* 7269 walks the rest of the text byte by byte (lodsb, the two width tables, the wrap test
+     * and, at each space, the next word again through 7224); that walk is CPU time with no
+     * idle_poll in it, and [FF50] / [FF1A] (STICK 027F) count on through it.  #106 found the
+     * Sage's portrait blink two steps behind without it and charged scan/240 polled ticks
+     * (53 cycles a byte); it is the instruction count of the loop, burned unpolled (#125). */
+    shop_burn(s, scan_cyc);
     box_scroll_if_full(s);
     if (pending >= 2) box_wait_and_clear(s);
+}
+
+/* The CPU time of one printed glyph, from the 7093 lodsb to the jump back to 7084 (the wait
+ * itself is polled and counted by shop_wait): 45 instructions to the `call [2022]`, vid_putchar
+ * (GMMCGA 27E9: 31 for the set-up, 8 rows of 38 instructions + 2 for each set bit, 2 for the
+ * return), 15 to the jump; after a space or a muted glyph 7148..715B scans the next word too.
+ * Measured: the oracle's `call [2022]` at 7118 takes 346.7 + 1.99 x (set bits of the glyph) cycles
+ * (a least-squares fit over the 923 glyphs of sage_levelup, none off by more than 12), and 7093 to
+ * 7084 is 442 for a typical glyph. */
+static unsigned glyph_set_bits(const Shop *s, uint8_t c)
+{
+    unsigned set = 0;
+    if (c >= 0x20 && c < 0x80 && s->font && s->font->loaded)
+        for (int r = 0; r < 8; r++) set += (unsigned)__builtin_popcount(s->font->glyph[c - 0x20][r]);
+    return set;
+}
+static unsigned glyph_cycles(const Shop *s, uint8_t c, int plain)
+{
+    unsigned cyc = 45 + (31 + 8 * 38 + 2 * glyph_set_bits(s, c) + 2) + 15;
+    if (!plain) cyc += 2 + word_scan_cycles(s, s->tp) + 6;
+    return cyc;
 }
 
 /* 0x706C  Print until an opcode: returns 0 on a 0x00 byte, or the byte after
  * 0xFF (0xFF 0xFF = leave the shop). */
 static uint8_t print_text(Shop *s)
 {
+    shop_burn(s, 12 + word_scan_cycles(s, s->tp));              /* 706C..707F: the first word's 7224 */
     if (s->tx + word_width(s, s->tp) >= TEXT_WRAP) box_newline(s);
     for (int guard = 0; guard < 8192 && !s->leave; guard++) {
         shop_wait(s, 6);                                        /* 7084..7091: 6 ticks a byte */
@@ -289,6 +403,7 @@ static uint8_t print_text(Shop *s)
         if (c == 0x00) return 0;
         if (c < 0x20 || c >= 0x80) continue;
         if (s->tx >= TEXT_WRAP) box_newline(s);
+        shop_burn(s, glyph_cycles(s, c, !s->mute && c != ' '));
         vid_putchar(s->fb, s->font, c, 1, TEXT_ORIGIN_X + s->tx - FONT_XOFF[c - 0x20],
                     TEXT_ORIGIN_Y + s->tline * 10);
         s->tx += FONT_ADVANCE[c - 0x20];
@@ -309,11 +424,13 @@ static uint8_t print_text(Shop *s)
  * for all of them. */
 static void print_str(Shop *s, const char *str)
 {
+    shop_burn(s, 12 + 2 + 22 * (unsigned)strlen(str) + 20);     /* 706C..707F: the string is one word to 7224 */
     for (const char *p = str; *p; p++) {
         shop_wait(s, 6);                                        /* 7084 */
         uint8_t c = (uint8_t)*p;
         if (c < 0x20 || c >= 0x80) continue;
         if (s->tx + FONT_ADVANCE[c - 0x20] >= TEXT_WRAP) box_newline(s);
+        shop_burn(s, glyph_cycles(s, c, 1) + (c == ' ' ? 2 + 22 * (unsigned)strlen(p + 1) + 26 : 0));
         vid_putchar(s->fb, s->font, c, 1, TEXT_ORIGIN_X + s->tx - FONT_XOFF[c - 0x20],
                     TEXT_ORIGIN_Y + s->tline * 10);
         s->tx += FONT_ADVANCE[c - 0x20];
@@ -350,12 +467,18 @@ static void menu_cursor(Shop *s, int row, int on)               /* 7469 */
     gt_cursor(s->fb, s->mx4 + 1, s->my + row * 10, on);
 }
 
+/* [2038] vid_label_asciiz: time of one label of n characters.  Measured at the call 752D with the four
+ * main-menu items of the sage (3186, 2816, 5023, 5393 cycles for 10, 9, 16, 17 characters): a linear
+ * fit, 391.7 a character, -50, within +-10; the glyph's set bits do not matter here (2 each in [2022]). */
+#define LABEL_CHAR_CYCLES 392
+static unsigned label_cycles(unsigned n) { return n ? n * LABEL_CHAR_CYCLES - 50 : 0; }
 static void menu_draw_items(Shop *s, unsigned addr, int count)  /* 751A */
 {
     const uint8_t *p = imgp(s, addr);
     if (!p) return;
     for (int i = 0; i < count; i++) {
         vid_label_asciiz(s->fb, s->font, (const char *)p, s->mx4 + 3, s->my + 1 + i * 10, 0);
+        { unsigned n_ = 0; for (const uint8_t *q = p; *q; q++) n_++; shop_burn(s, label_cycles(n_) + 13); }   /* 751C..7536 */
         while (*p) p++;
         p++;
     }
@@ -490,7 +613,7 @@ static int yes_no(Shop *s)
 
 static void menu_box(Shop *s, int x4, int y, int w4, int h, int px4, int py)
 {
-    vid_window(s->fb, 0xFF, x4, y, w4, h);
+    win_fill(s, 0xFF, x4, y, w4, h);
     s->mx4 = px4; s->my = py;
 }
 
@@ -704,15 +827,24 @@ static void inn_draw_night(Shop *s, int frame)
 
 /* --- kenjpro AB47 ------------------------------------------------------- */
 /* AA16: the ritual aura, 4 rows x 8 cells at [BB12]+0x210 = (x8 9, y 0x27) */
+/* AA16..: 32 cells through [3016] (401..406 each, measured per call site AA37) + the loop: the hook
+ * step that draws the aura lasts 13240..13343 cycles, one tick and a bit (STEP..STEPEND in the oracle) */
+#define KENJ_AURA_CYCLES  13250
+#define KENJ_BLINK_CYCLES 422       /* ABDF: one cell, STEP..STEPEND 422..428 */
+/* A2BD: [3000] GT_INIT_PLAYFIELD, 144 rows x 224 bytes: 66112..66531 in the oracle, 66120 usually (ISR time inside) */
+#define PLAYFIELD_XOR_CYCLES 66000
+#define HOOK_STEP_CYCLES  11        /* a step with nothing to draw: AB47..ret 11..12 */
 static void kenj_draw_ritual(Shop *s, int frame)
 {
     draw_portrait_map(s, 0xAA47 + 0x20u * (unsigned)frame, 4, 8, s->kj_x8 + 2, 0x27);
+    shop_burn(s, KENJ_AURA_CYCLES);
 }
 static void kenj_hook(Shop *s)
 {
     ShopHook *h = &s->hk;
     if (h->ff50 < 2) return;                                    /* AB47 */
     h->ff50 = 0;
+    shop_burn(s, HOOK_STEP_CYCLES);
     if (h->kj_ritual_on) {                                      /* AB55 [BB18] */
         if (h->kj_fade) {                                       /* AB5C [BB1A] */
             h->kj_ctr = (uint8_t)((h->kj_ctr + 1) & 15);        /* AB63 */
@@ -735,12 +867,12 @@ static void kenj_hook(Shop *s)
     /* ABDF: one cell at [BB12]+0x718 = (x8 0x0E, y 0x2F); ABFB open, ABFD shut */
     gt_draw_cell(s->fb, s->cell, s->present,
                  img8(s, (h->kj_eyes_closed ? 0xABFD : 0xABFB) + bl), s->kj_x8 + 7, 0x2F);
+    shop_burn(s, KENJ_BLINK_CYCLES);
 }
 
-/* one 236.7 Hz tick of whichever hook is loaded */
-static void shop_hook_tick(Shop *s)
+/* one pass of idle_poll through whichever hook is loaded */
+static void shop_hook_pass(Shop *s)
 {
-    s->hk.ff50++;
     switch (s->dest) {
     case SHOP_KING:   king_hook(s); break;
     case SHOP_ARMOUR: armr_hook(s); break;
@@ -1184,7 +1316,7 @@ static int bank_enter_amount(Shop *s, int withdraw, uint32_t *out)
     for (long guard = 0; guard < 8000L * SHOP_TICKS_PER_FRAME && !s->leave; guard++) {
         bank_number_line(s, have - amt, 0x31, 0x2E);            /* A2B7..A2C4 / A44C..A463 */
         bank_number_line(s, amt, 0x31, 0x48);                   /* A2C9..A2D3 / A468..A472 */
-        if (shop_poll(s, site)) return 0;
+        if (shop_poll_x(s, site, 0)) return 0;
         uint8_t d = s->t ? s->t->dirs : 0, b = s->t ? s->t->buttons : 0;   /* int 61h */
         amt = bank_adjust(amt, max, d);                         /* A2DA call A62C */
         if (b & 1) { *out = amt; return 1; }                    /* A2DD test ah,1 */
@@ -1439,7 +1571,7 @@ static void kenj_set_name(Shop *s, const char *src)
 static int kenj_release_wait(Shop *s, uint8_t bit)
 {
     for (long guard = 0; guard < 8000L * SHOP_TICKS_PER_FRAME && !s->leave; guard++) {
-        if (shop_poll(s, "kenj:A597")) return 1;
+        if (shop_poll_x(s, "kenj:A597", 0)) return 1;
         if (!(s->t && (s->t->dirs & bit))) break;
         /* A66A/A67F spin on int 61h with no idle_poll, so the [A002] hook does
          * not run here (it would advance the portrait blink); the clock still
@@ -1544,19 +1676,19 @@ static void sage_disk_error(Shop *s)
     enum { RX = 64, RY = 0x49, RW = 200, RH = 0x26 };
     static uint8_t keep[RW * RH];
     for (int r = 0; r < RH; r++) memcpy(keep + r * RW, s->fb + (RY + r) * TEXT_W + RX, RW);
-    vid_window(s->fb, 0xFF, 0x10, 0x49, 0x32, 0x26);            /* A8BF */
+    win_fill(s, 0xFF, 0x10, 0x49, 0x32, 0x26);            /* A8BF */
     const uint8_t *msg = imgp(s, 0xB5AC);
     if (msg) vid_puts(s->fb, s->font, msg, 0x4C, 0x50);         /* A8CC..A8D4 */
     if (s->t) s->t->btn1_edge = 0;                              /* A8D9 */
     wait_arm();
     for (long guard = 0; guard < 4000L * SHOP_TICKS_PER_FRAME && !s->leave; guard++) {
-        if (shop_poll(s, "kenj:A8DE")) break;
+        if (shop_poll_x(s, "kenj:A8DE", 0)) break;
         if (!s->t || s->t->btn1_edge) break;                    /* A8DE test [FF1D] */
         shop_tick(s);
     }
     if (s->t) s->t->btn1_edge = 0;                              /* A8E5 */
     for (int r = 0; r < RH; r++) memcpy(s->fb + (RY + r) * TEXT_W + RX, keep + r * RW, RW);   /* A8F2 */
-    vid_window(s->fb, 0xFF, 0x0D, 0x60, 0x36, 0x37);            /* A8FF: the text box again */
+    win_fill(s, 0xFF, 0x0D, 0x60, 0x36, 0x37);            /* A8FF: the text box again */
 }
 
 static void sage_action(Shop *s, uint8_t op)
@@ -1571,14 +1703,14 @@ static void sage_action(Shop *s, uint8_t op)
     }
     switch (op) {
     case 0: {                                                   /* A0CB main menu */
-        vid_window(s->fb, 0, 0x27, 0x17, 0x1D, 0x41);
+        win_fill(s, 0, 0x27, 0x17, 0x1D, 0x41);
         menu_box(s, 0x27, 0x22, 0x1C, 0x2D, 0x27, 0x25);
         s->mvis = s->mtot = 4; s->mscroll = 0;
         menu_draw_items(s, 0xAD65, 4);
         int row = s->cursor_main;
         if (menu_select(s, &row)) row = 0;
         s->cursor_main = row;
-        vid_window(s->fb, 0, 0x27, 0x17, 0x1D, 0x41);
+        win_fill(s, 0, 0x27, 0x17, 0x1D, 0x41);
         switch (row) {
         case 0: say(s, 0xADEB); return;
         case 1: say(s, !s->bought ? 0xAE08 : s->kj_spirits_gone ? 0xAE42 : s->cursor_row ? 0xAF03 : 0xAEA7); return;   /* A126 */
@@ -1599,7 +1731,7 @@ static void sage_action(Shop *s, uint8_t op)
         if (player_save_usr(g, s->dir, g->player_name) == 0) { s->saved = 1; return; }
         fprintf(stderr, "[sage] cannot write %s.usr\n", g->player_name);
         sage_disk_error(s);
-        vid_window(s->fb, 0, 0x27, 0x17, 0x1D, 0x41);           /* A178 call A983 */
+        win_fill(s, 0, 0x27, 0x17, 0x1D, 0x41);           /* A178 call A983 */
         say(s, kenj_pick_name(s) ? 0xAF7C : 0xADBF);            /* A17B..A18D */
         return;
     case 1: {                                                   /* A18E See Power */
@@ -1608,8 +1740,9 @@ static void sage_action(Shop *s, uint8_t op)
          * and the blink held off while they play */
         s->hk.kj_blink_off = s->hk.kj_eyes_closed = 0xFF;
         for (int i = 0; i < 3 && !s->leave; i++) {
+            s->ff1a = 0;                                        /* A1E2 / A20C: reset, then draw, then the compare */
             kenj_draw_ritual(s, img8(s, 0xA1FD + (unsigned)i));
-            shop_wait_x(s, 0x19, 0);        /* A1EC / A218: a bare [FF1A] loop, no hook */
+            shop_wait_rest(s, 0x19, 0);     /* A1EC / A218: a bare [FF1A] loop, no hook */
         }
         s->hk.kj_blink_off = 0;
         shop_wait(s, 140);                                      /* A410 */
@@ -1621,17 +1754,19 @@ static void sage_action(Shop *s, uint8_t op)
         /* A200: and lowers them again, frames A1FE then A1FD */
         s->hk.kj_blink_off = 0xFF;
         for (int i = 1; i >= 0 && !s->leave; i--) {
+            s->ff1a = 0;                                        /* A1E2 / A20C: reset, then draw, then the compare */
             kenj_draw_ritual(s, img8(s, 0xA1FD + (unsigned)i));
-            shop_wait_x(s, 0x19, 0);        /* A1EC / A218: a bare [FF1A] loop, no hook */
+            shop_wait_rest(s, 0x19, 0);     /* A1EC / A218: a bare [FF1A] loop, no hook */
         }
         s->hk.kj_blink_off = s->hk.kj_eyes_closed = 0;
+        (void)print_text(s);                                    /* A1BD: call [6004] on what is left (the 00 that ends the ritual text): 6 ticks */
         say(s, img16(s, 0xB029 + 2u * (unsigned)sage_assess(s)));
         return; }
     case 2:                                                     /* A914 "continue your quest?" */
         menu_box(s, 0x2F, 0x2B, 0x0C, 0x19, 0x30, 0x2E);        /* A913: bx = 2F2B */
         {   /* A927 call [6008]: CF set = No / Alt -> A934 `jmp far [FF00]`, back to DOS */
             int yes = yes_no(s);
-            vid_window(s->fb, 0, 0x27, 0x17, 0x1D, 0x41);       /* A92D call A983 */
+            win_fill(s, 0, 0x27, 0x17, 0x1D, 0x41);       /* A92D call A983 */
             if (!yes) shop_request_exit(s, SHOP_EXIT_GAME);
         }
         return;
@@ -1645,6 +1780,7 @@ static void sage_action(Shop *s, uint8_t op)
         for (int i = 0; i < 8 && !s->leave; i++) {
             for (int y = 14; y < 158; y++)
                 for (int x = 48; x < 272; x++) s->fb[y * TEXT_W + x] ^= 0x36;
+            shop_burn(s, PLAYFIELD_XOR_CYCLES);                 /* A2BD call [3000], before the reset at A2C2 */
             shop_wait_x(s, 10, 0);          /* A2C7: a bare loop too */
         }
         sage_level_up(s);
@@ -1776,6 +1912,7 @@ static int shop_open_entry(Shop *s, Town *t, int dest, int death)
     case SHOP_ARMOUR:                                           /* A06B, cleared at A09E */
         s->hk.armr_on = (s->tp == 0xB2A2) ? 0 : 0xFF; break;
     case SHOP_INN:    s->hk.inn_on = 0xFF; break;               /* A06F */
+    case SHOP_SAGE:   s->hk.ff50 = 236; break;
     case SHOP_BANK:   s->hk.bank_on = 0xFF; s->hk.bank_map = 0xA773;  /* A058 */
                       /* [FF50] is a free-running tick (STICK 027F, one per 236.7 Hz
                        * tick), not a per-visit counter: it is never cleared on shop

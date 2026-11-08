@@ -76,7 +76,7 @@ new file mode 100644
 index 0000000..5b122a2
 --- /dev/null
 +++ b/src/misc/zel_oracle.cpp
-@@ -0,0 +1,573 @@
+@@ -0,0 +1,640 @@
 +/*
 + * zel_oracle.cpp -- Zeliard differential-test oracle (decomp-zel docs/HARNESS.md).
 + *
@@ -119,6 +119,7 @@ index 0000000..5b122a2
 +#include "cpu.h"
 +#include "keyboard.h"
 +#include "vga.h"
++#include "pic.h"
 +
 +extern HostPt MemBase;
 +
@@ -510,10 +511,76 @@ index 0000000..5b122a2
 +
 +} // namespace
 +
++/* ORACLE_IPLOG (#125): a timing log for measuring how long the original's routines take, in cycles
++ * (3000 per emulated ms; BASE:0000 is not needed, the numbers are absolute).  Written to
++ * ORACLE_OUT/iplog.txt while tracing, as text, one event a line:
++ *   EDGE t ff50= ff1a=       every entry of the 236.7 Hz ISR (STICK 027F): the clock's edges
++ *   STEP t ff50= ip=         an AB47 (kenjpro [A002] hook) pass that steps; STEPEND t its return (7069)
++ *   IP aaaa t ff50= ff1a= f= each execution of an address in the comma-separated hex list ORACLE_IPLOG
++ *                            (7064 / 71E9 / 7042 only when [FF50]:[FF1A] changed since the last one)
++ *   CALL ret tgt= d= bx= cx= ax= si=   with ORACLE_CALLLOG=1: each `call [cs:xxxx]` of BASE, its target
++ *                            slot, the cycles until the instruction after it, and the registers at the call
++ *   TR aaaa t                with ORACLE_IPFROM / ORACLE_IPTO (cycles): every instruction in that window
++ * With none of these set it costs one test per instruction. */
++static std::string iplog_set;
++static FILE *iplog_fp = nullptr;
++static bool iplog_init = false;
++static void iplog(uint16_t ip) {
++    if (!iplog_init) {
++        iplog_init = true;
++        const char *e = getenv("ORACLE_IPLOG");
++        if (e && getenv("ORACLE_OUT")) {
++            iplog_set = std::string(",") + e + ",";
++            iplog_fp = fopen((std::string(getenv("ORACLE_OUT")) + "/iplog.txt").c_str(), "w");
++        }
++    }
++    if (!iplog_fp) return;
++    const double now = (double)ms * 3000.0 + (double)(CPU_CycleMax - CPU_CycleLeft - CPU_Cycles);
++    const unsigned f50 = mem_readb(SegPhys(ds) + 0xFF50), f1a = mem_readb(SegPhys(ds) + 0xFF1A);
++    static bool in_step = false;
++    if (ip == 0x027F) fprintf(iplog_fp, "EDGE %.0f ff50=%u ff1a=%u\n", now, f50, f1a);
++    if (ip == 0xAB47 && f50 >= 2) { fprintf(iplog_fp, "STEP %.0f ff50=%u ip=AB47\n", now, f50); in_step = true; }
++    if (ip == 0x7069 && in_step) { fprintf(iplog_fp, "STEPEND %.0f\n", now); in_step = false; }
++    static double t0 = -1, t1 = -1;
++    static bool win_init = false;
++    if (!win_init) {
++        win_init = true;
++        const char *a = getenv("ORACLE_IPFROM"), *b = getenv("ORACLE_IPTO");
++        if (a && b) { t0 = atof(a); t1 = atof(b); }
++    }
++    if (t0 >= 0 && now >= t0 && now <= t1) fprintf(iplog_fp, "TR %04X %.0f\n", ip, now);
++    struct Pend { double t; unsigned tgt, bx, cx, ax, si; };
++    static std::map<uint16_t, Pend> pend;
++    static const bool calllog = getenv("ORACLE_CALLLOG") != nullptr;
++    if (calllog) {
++        auto it = pend.find(ip);
++        if (it != pend.end()) {
++            fprintf(iplog_fp, "CALL %04X tgt=%04X d=%.0f bx=%04X cx=%04X ax=%04X si=%04X\n", ip, it->second.tgt,
++                    now - it->second.t, it->second.bx, it->second.cx, it->second.ax, it->second.si);
++            pend.erase(it);
++        }
++        const uint8_t *q = base_ptr(ip);
++        if (q[0] == 0x2E && q[1] == 0xFF && q[2] == 0x16)
++            pend[(uint16_t)(ip + 5)] = Pend{now, (unsigned)(q[3] | q[4] << 8), reg_bx, reg_cx, reg_ax, reg_si};
++    }
++    char k[16];
++    snprintf(k, sizeof k, ",%X,", ip);
++    if (iplog_set.find(k) == std::string::npos) return;
++    if (ip == 0x7064 || ip == 0x71E9 || ip == 0x7042) {
++        static std::map<uint16_t, unsigned> last;
++        const unsigned key = (f50 << 8) | f1a;
++        auto it = last.find(ip);
++        if (it != last.end() && it->second == key) return;
++        last[ip] = key;
++    }
++    fprintf(iplog_fp, "IP %04X %.0f ff50=%u ff1a=%u f=%lu\n", ip, now, f50, f1a, (unsigned long)frame);
++}
++
 +/* Called by the normal core before each instruction while CS == BASE. */
 +void ORACLE_Exec(void) {
 +    if (cpu.pmode) return;
 +    uint16_t ip = (uint16_t)reg_eip;
++    if (state == ST_TRACE) iplog(ip);
 +    uint8_t *p = base_ptr(ip);
 +    if (state == ST_INTRO && intro_mode && !in_end && ip == 0x6002 && MATCH(0x6002, SIG_OP_ENTRY)) {
 +        in_end = true; cut_site = "intro:wait"; state = ST_TRACE;
