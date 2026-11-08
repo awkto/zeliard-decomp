@@ -192,6 +192,18 @@ typedef struct {
  * build this is. */
 static int music_on = 1, sfx_on = 1;
 
+/* Web build: a browser tab is never "exited", so the exit-time zeliard.ini write
+ * (config_capture below) never happens.  The page's settings menu reads that file
+ * on the next visit, so write it as soon as a setting changes.  Native keeps
+ * writing on exit only. */
+#ifdef __EMSCRIPTEN__
+static Config *g_prefs_cfg; static int g_prefs_backend;
+static void prefs_save(const App *a);
+#define PREFS_CHANGED(a) prefs_save(a)
+#else
+#define PREFS_CHANGED(a) ((void)(a))
+#endif
+
 #ifdef HAVE_SDL
 static int f1_was, f2_was;
 
@@ -236,6 +248,7 @@ static void toggle_fullscreen(App *a)
         fprintf(stderr, "[video] fullscreen: %s\n", SDL_GetError());
     else if (a->verbose)
         fprintf(stderr, "[video] %s\n", a->fullscreen ? "fullscreen" : "windowed");
+    PREFS_CHANGED(a);
 }
 
 /* #52 step 2: the save/load confirmation, drawn over the picture in the
@@ -876,12 +889,14 @@ static void pump_events(App *a, Game *g)
                     for (char *q = nm; *q; q++) if (*q >= 'a' && *q <= 'z') *q -= 32;
                     statekeys_osd(&a->sk, "FILTER: %s", nm);
                 }
+                PREFS_CHANGED(a);
             }
             else if (input_event_match(&a->in, ACT_ZOOM, &e.key)) {
                 if (!e.key.repeat) {
                     a->zoom = !a->zoom;
                     fprintf(stderr, "[video] zoom: %s\n", a->zoom ? "on" : "off");
                     statekeys_osd(&a->sk, "ZOOM %s", a->zoom ? "ON" : "OFF");
+                    PREFS_CHANGED(a);
                 }
             }
             else if (input_event_match(&a->in, ACT_SMOOTH, &e.key)) {
@@ -890,6 +905,7 @@ static void pump_events(App *a, Game *g)
                     a->sm_live = 0; smooth_reset(&a->sm); smooth_town_reset(&a->tsm);
                     fprintf(stderr, "[video] smooth scrolling: %s\n", a->smooth ? "on" : "off");
                     statekeys_osd(&a->sk, "SMOOTH %s", a->smooth ? "ON" : "OFF");
+                    PREFS_CHANGED(a);
                 }
             }
             else if (input_event_match(&a->in, ACT_MENU, &e.key)) {
@@ -1149,8 +1165,8 @@ static int key_menu(const App *a, const Uint8 *k, int town)
 static void audio_hotkeys(const App *a, const Uint8 *k)
 {
     int f1 = input_key_down(&a->in, ACT_MUSIC, 0, k, 0), f2 = input_key_down(&a->in, ACT_SFX, 0, k, 0);
-    if (f1 && !f1_was) { music_on = !music_on; audio_music_enable(music_on); }
-    if (f2 && !f2_was) { sfx_on = !sfx_on; audio_sfx_enable(sfx_on); }
+    if (f1 && !f1_was) { music_on = !music_on; audio_music_enable(music_on); PREFS_CHANGED(a); }
+    if (f2 && !f2_was) { sfx_on = !sfx_on; audio_sfx_enable(sfx_on); PREFS_CHANGED(a); }
     f1_was = f1; f2_was = f2;
 }
 #endif
@@ -2300,6 +2316,15 @@ static void config_capture(Config *c, const App *a, const char *dir, int backend
     snprintf(c->audio, sizeof c->audio, "%s", audio_backend_key(backend));
 }
 
+#ifdef __EMSCRIPTEN__
+static void prefs_save(const App *a)
+{
+    if (!g_prefs_cfg || a->headless) return;
+    config_capture(g_prefs_cfg, a, NULL, g_prefs_backend, 0);
+    config_save(g_prefs_cfg);
+}
+#endif
+
 /* #42 first run: the game files are copyrighted and stay user-supplied, so say
  * so and say where.  SDL builds get a real dialog; headless stays on stderr. */
 static void no_game_files(const char *cfgpath, const char *datadir, int headless)
@@ -2525,6 +2550,9 @@ int main(int argc, char **argv)
      * before anything tries to open it.  Order: --dir, the config's remembered
      * folder, then zeliard/ ../zeliard/ ./. */
     shell_set_config_dir(cfg.dir);
+#ifdef __EMSCRIPTEN__
+    g_prefs_cfg = &cfg; g_prefs_backend = audio_backend;
+#endif
     char datadir[CONFIG_PATH_MAX]; datadir[0] = 0;
 #ifdef HAVE_SDL
     /* #56: an installed copy (.deb/AppImage) has no useful working directory,
