@@ -54,7 +54,7 @@ cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 15 test binaries
 make test            # physics (149) + combat/AI (229) + town (176) + boss (642) + shop (195)
                      #   + status (87) + playthrough (176) + audio (394) + cutscene (52)
-                     #   + video (198) + config (46) + sync (144) + mapview (37) = 2525 assertions.  Needs no game files:
+                     #   + video (198) + config (58) + sync (144) + mapview (37) = 2537 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 235 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -1110,7 +1110,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     music, preemption, a score change mid-effect, AX=3 pause, F1, the `FF24` fade) and
     all 65 `SNDJR` effects on their own match those hashes.  When python3 with Unicorn
     is installed (`ZEL_PYTHON=...`) the oracle is also run live from the test.
-* `test_config.c` — 46 assertions over the settings file (#42): the sentinels
+* `test_config.c` — 58 assertions over the settings file (#42) and the attack-shortcut pulse machine: the sentinels
   `config_init` leaves, a full `key=value` parse, the lines it ignores (junk, a
   bare `=`, an unknown key, a bad boolean) and the whitespace/CRLF trimming, the
   `on`/`off`/`true`/`no` spellings, a lossless render+parse round trip, the atomic
