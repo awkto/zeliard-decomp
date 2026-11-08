@@ -4,8 +4,19 @@
  * as an EDGE: set_buttons() latches btn1_edge on a 0->1 transition of INT 61h
  * bit 0, and fight.bin consumes it (6E81).  A held sword is therefore ONE swing,
  * so auto-fire has to release it between presses: sword high on one game frame,
- * low on the next, period AUTOATK_PERIOD frames (about 5.9 swings/s at the
- * default speed 5, 84 ms a frame -- the fastest a fresh press can be made).
+ * low on the next, period AUTOATK_PERIOD frames.
+ *
+ * Why 1 on / 1 off (measured on the original, tests/scenarios/pulse_{sword,up,combo}.zs,
+ * 1 on / 1, 2 and 3 off, all clean against the port): a swing is 3 boundary frames for
+ * a slash and 2 for an upward slash (the combo's, Up held, 6ED6), because 3F1A ends it
+ * inside the frame after the last visible one, and sword_input (6E81, before the
+ * steps) still sees `attacking` set there.  A press during a swing only latches the
+ * edge (FF1D, kept until 6EF7 consumes it) and never shortens the swing; the next swing
+ * starts on the very next frame.  So the game's own cadence is 4 frames a slash and
+ * 3 an upward slash, i.e. at the default speed (84 ms a frame) about 2.9 and 3.9
+ * swings a second, and a press every other frame is already always pending when a swing
+ * ends: a slower pulse (1 on / 2 or 3 off) gives the identical pattern, a faster one
+ * does not exist.  Pressing "when `attacking` ends" would start the same frame.
  *
  *   combo   (A held, or the touch Combo button): UP+DOWN held, sword pulsing.
  *           Left/Right still steer.  Always pulses, even with Down held (the

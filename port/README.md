@@ -52,9 +52,9 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 15 test binaries
-make test            # physics (149) + combat/AI (229) + town (176) + boss (642) + shop (195)
+make test            # physics (149) + combat/AI (232) + town (176) + boss (642) + shop (195)
                      #   + status (87) + playthrough (176) + audio (394) + cutscene (52)
-                     #   + video (198) + config (59) + sync (144) + mapview (37) = 2538 assertions.  Needs no game files:
+                     #   + video (198) + config (59) + sync (144) + mapview (37) = 2541 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 235 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -255,8 +255,14 @@ build's.
 **A / S attack shortcuts** (`autoatk.c`, interactive play only).  The game reads the sword as an
 *edge* (`set_buttons` latches a 0 to 1 transition, fight.bin consumes it at 6E81), so a held sword
 is one swing; the shortcuts therefore pulse it: high one game frame, low the next
-(`AUTOATK_PERIOD` = 2 frames, about 5.9 swings/s at the default speed 5, the fastest a fresh press
-can be made; the emulated build's 10 presses/s is 10 Hz of wall time).  The touch overlay's Combo
+(`AUTOATK_PERIOD` = 2 frames).  That is already the fastest the game swings: measured against the
+original (`tests/scenarios/pulse_sword|up|combo.zs`: 1 on / 1, 2, 3 off), a slash is 3 frames and an
+upward slash (the combo's, Up held) 2, the swing ends inside the frame after, a press during a swing is
+latched (`FF1D` stays until `6EF7`) and never cuts it short, and the next swing starts on the next
+frame.  So S gives a slash every 4 frames and A an upward slash every 3, about 2.9 and 3.9 swings a
+second at the default speed 5 (84 ms a frame), complete swings back to back; a slower pulse gives the
+same pattern.  The emulated build's 10 presses/s is wall time and gets the same swings from the same code.
+The touch overlay's Combo
 button runs the same state machine.  Headless, `--trace` and `--script` runs never use it (their
 inputs are the script tokens), so traces and `make verify` are unaffected.
 
@@ -946,7 +952,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   the last one walks MP10's entrance shelf 40 columns east and back and checks that
   ring column *i* is still map column `scroll_col + i` on every step, which is the
   regression guard for the `scroll_right` bug below).
-* `test_combat.c` — 229 assertions: the eai1 tables, the damage formulas, contact (751F's
+* `test_combat.c` — 232 assertions: the eai1 tables, the damage formulas, contact (751F's
   4-column scan, the feet row under the middle two), the 63-frame death (98FC) and
   knockback, sword kills, EXP, drops, the bat wake window, the frog hop, **the eight
   projectile directions, the 31-shot cap, life/wall death, shot damage and the
