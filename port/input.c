@@ -76,7 +76,7 @@ static void default_key(KeyBind *b, int act, int town)
         return;
     case ACT_MENU:       kb_set(b, 0, SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER, -1); return;
     case ACT_PAUSE:      kb_set(b, 0, SDL_SCANCODE_ESCAPE, -1); return;
-    case ACT_FILTER:     kb_set(b, 0, SDL_SCANCODE_F3, -1); return;
+    case ACT_FILTER:     kb_set(b, 0, SDL_SCANCODE_F3, SDL_SCANCODE_V, -1); return;
     case ACT_FULLSCREEN: kb_set(b, 0, SDL_SCANCODE_F11, -1); return;
     case ACT_SCREENSHOT: kb_set(b, 0, SDL_SCANCODE_F12, -1); return;
     case ACT_MUSIC:      kb_set(b, 0, SDL_SCANCODE_F1, -1); return;

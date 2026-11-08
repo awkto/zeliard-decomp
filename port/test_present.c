@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "present.h"
+static float fabsf_(float v) { return v < 0 ? -v : v; }
 
 static int checks, failures;
 static void ck(int ok, const char *fmt, ...)
@@ -82,6 +83,56 @@ static void t_names(void)
     ck(!strcmp(present_filter_name(FILTER_INTEGER), "integer"), "integer name");
     ck(!strcmp(present_filter_name(FILTER_SHARP), "sharp-bilinear"), "sharp name");
     ck(!strcmp(present_filter_name(FILTER_SMOOTH), "smooth"), "smooth name");
+    /* the six-plus set, in cycle order (F3 / V walk it) */
+    static const char *const order[] = { "integer", "sharp-bilinear", "smooth", "scanlines",
+                                         "soft-scanlines", "crt", "crt-curved" };
+    ck(FILTER_COUNT == 7, "seven filters (got %d)", FILTER_COUNT);
+    for (int k = 0; k < 7; k++) {
+        ck(!strcmp(present_filter_name(k), order[k]), "cycle slot %d is %s", k, order[k]);
+        ck(present_filter_by_name(order[k]) == k, "%s parses to slot %d", order[k], k);
+    }
+    ck(present_filter_by_name("scanlines") == FILTER_SCANLINES, "scanlines");
+    ck(present_filter_by_name("soft-scanlines") == FILTER_SOFT_SCANLINES, "soft-scanlines");
+    ck(present_filter_by_name("crt-curved") == FILTER_CRT_CURVED, "crt-curved");
+    ck(present_filter_by_name("curved") == FILTER_CRT_CURVED, "curved alias");
+    ck(present_filter_by_name("soft") == FILTER_SMOOTH, "soft alias");
+    ck(present_filter_by_name("CRT-Curved") == FILTER_CRT_CURVED, "names are case-insensitive");
+    ck(present_filter_by_name("crt") == FILTER_CRT, "crt is still plain crt");
+    {   int k = FILTER_INTEGER, seen = 0;
+        for (int s = 0; s < FILTER_COUNT; s++) { seen |= 1 << k; k = (k + 1) % FILTER_COUNT; }
+        ck(seen == (1 << FILTER_COUNT) - 1 && k == FILTER_INTEGER, "the (k+1)%%COUNT cycle visits every filter and wraps");
+    }
+}
+
+/* ------------------------------------------------- the curve and the vignette */
+static void t_curve(void)
+{
+    printf("filter curve    ");
+    float x, y;
+    present_curve_map(0.5f, 0.5f, &x, &y);
+    ck(fabsf_(x - 0.5f) < 1e-5f && fabsf_(y - 0.5f) < 1e-5f, "the centre stays put");
+    present_curve_map(1.0f, 0.5f, &x, &y);
+    ck(fabsf_(x - 1.0f) < 1e-5f && fabsf_(y - 0.5f) < 1e-5f, "the right edge midpoint stays on the border");
+    present_curve_map(0.5f, 0.0f, &x, &y);
+    ck(fabsf_(y) < 1e-5f, "the top edge midpoint stays on the border");
+    present_curve_map(0.0f, 0.0f, &x, &y);
+    ck(x > 0.02f && y > 0.02f && x < 0.2f, "the corner is pulled in (%.3f,%.3f)", x, y);
+    present_curve_map(1.0f, 1.0f, &x, &y);
+    ck(x < 0.98f && y < 0.98f, "the far corner is pulled in too");
+    int mono = 1;
+    float last = -1;
+    for (int i = 0; i <= 40; i++) {      /* along a row the mapped x never goes backwards */
+        present_curve_map(i / 40.0f, 0.1f, &x, &y);
+        if (x < last) mono = 0;
+        last = x;
+    }
+    ck(mono, "the map is monotonic along a row (no fold-over)");
+    ck(present_vignette_alpha(0.5f, 0.5f) == 0, "no vignette at the centre");
+    ck(present_vignette_alpha(0.0f, 0.0f) > 100, "the corner is darkened (%d)", present_vignette_alpha(0.0f, 0.0f));
+    ck(present_vignette_alpha(0.5f, 0.0f) < present_vignette_alpha(0.0f, 0.0f), "an edge midpoint is lighter than a corner");
+    uint32_t a = present_scan_mask(5, 2, 960, 800, 320, 200), b = present_scan_mask(5, 0, 960, 800, 320, 200);
+    ck(a == 0xFFFFFFFFu && (b & 255) == 255 - PRESENT_CRT_SCAN_DARK && ((b >> 8) & 255) == (b & 255) && ((b >> 16) & 255) == (b & 255),
+       "the scan-only mask is grey: centre white, seam dark, no grille (got %08X)", (unsigned)b);
 }
 
 /* ---------------------------------------------------------- the geometry */
@@ -247,6 +298,37 @@ static void t_render(void)
         ck(seam, "crt rows differ in brightness (scanlines): max %ld vs min %ld", best, worst);
     }
 
+    /* the scanline family: scanlines = sharp + bands (never brighter, rows vary),
+     * soft-scanlines = smooth + bands, curved differs from flat crt and keeps a
+     * black bowed corner */
+    {
+        int x, y, w, h, bright = 0, bright2 = 0;
+        present_content_rect(FILTER_SCANLINES, ow, oh, SRC_W, SRC_H, DISP_W, DISP_H, &x, &y, &w, &h);
+        for (int j = y; j < y + h; j++)
+            for (int i = x; i < x + w; i++) {
+                unsigned s0 = f[FILTER_SHARP][(size_t)j * ow + i], s1 = f[FILTER_SCANLINES][(size_t)j * ow + i];
+                unsigned m0 = f[FILTER_SMOOTH][(size_t)j * ow + i], m1 = f[FILTER_SOFT_SCANLINES][(size_t)j * ow + i];
+                for (int s = 0; s < 24; s += 8) {
+                    if (((s1 >> s) & 255) > ((s0 >> s) & 255)) bright++;
+                    if (((m1 >> s) & 255) > ((m0 >> s) & 255)) bright2++;
+                }
+            }
+        ck(bright == 0, "scanlines never brighten sharp-bilinear (%d did)", bright);
+        ck(bright2 == 0, "soft-scanlines never brighten smooth (%d did)", bright2);
+        ck(memcmp(f[FILTER_SCANLINES], f[FILTER_SHARP], (size_t)ow * oh * 4) != 0, "scanlines differ from sharp");
+        ck(memcmp(f[FILTER_SOFT_SCANLINES], f[FILTER_SMOOTH], (size_t)ow * oh * 4) != 0, "soft-scanlines differ from smooth");
+        ck(memcmp(f[FILTER_CRT_CURVED], f[FILTER_CRT], (size_t)ow * oh * 4) != 0, "crt-curved differs from crt");
+        /* the curved picture's top-left corner is outside the bowed edge: black,
+         * where flat crt shows the checkerboard (the picture's corner pixel row) */
+        unsigned corner = 0;
+        for (int j = y; j < y + 6; j++)
+            for (int i = x; i < x + 6; i++) corner |= f[FILTER_CRT_CURVED][(size_t)j * ow + i] & 0xFFFFFF;
+        ck(corner == 0, "crt-curved: the corner of the content rect is black (%06X)", corner);
+        unsigned mid = 0;
+        for (int i = x + w / 2 - 20; i < x + w / 2 + 20; i++) mid |= f[FILTER_CRT_CURVED][(size_t)(y + h / 2) * ow + i] & 0xFFFFFF;
+        ck(mid != 0, "crt-curved: the middle is lit");
+    }
+
     /* the screenshots: one per filter of a fixed synthetic frame */
     {
         const char *dir = getenv("PRESENT_SHOTS");
@@ -290,6 +372,7 @@ int main(void)
 {
     t_crt();        printf("ok\n");
     t_names();      printf("ok\n");
+    t_curve();      printf("ok\n");
     t_geometry();   printf("ok\n");
 #ifdef HAVE_SDL
     t_render();     printf("ok\n");

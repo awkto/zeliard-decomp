@@ -240,7 +240,7 @@ build's.
 | Alt (or C) | **cast the selected spell** (`magic_sel`, picked on the status screen) |
 | Enter | **the status / inventory screen** (select.bin): pick a spell, wear a key item, drink a potion |
 | F1 / F2 | toggle the music / the sound effects (STICK's own hotkeys) |
-| F3 | **cycle the display filter**: integer → sharp-bilinear → smooth → crt (presentation only; remembered in the config) |
+| F3, V | **cycle the display filter** (`key.filter`): integer → sharp-bilinear → smooth → scanlines → soft-scanlines → crt → crt-curved; the name flashes on screen (presentation only; remembered in the config) |
 | F7 | **Restore Game** (the original's own hotkey, #42): *Sure?(Y/N)*, then the *Input name:* box with the `*.usr` list; see below |
 | F9 | **Speed change** (the original's own hotkey, #116): *Select 0-9:*; see below |
 | touch | on-screen controls (`--touch auto\|on\|off`, see `touch.c`): joystick, Sword, Magic, Combo, 1-9/Y/N, Esc, Items, quick save/load |
@@ -290,7 +290,7 @@ spins on `FF18`/`FF29` with no poll site, so no oracle scenario can reach it.
 | Space (or X) | talk to an NPC 1-3 columns ahead: the **dialogue box** opens; Space turns the page, Alt cancels |
 | Enter | **the status / inventory screen** (select.bin); the potion row is disabled in town, as in the original |
 | F1 / F2 | toggle the music / the sound effects |
-| F3 | cycle the display filter (integer → sharp-bilinear → smooth → crt) |
+| F3, V | cycle the display filter (integer → sharp-bilinear → smooth → scanlines → soft-scanlines → crt → crt-curved) |
 | F7 | **Restore Game**, as in the cavern |
 | F9 | **Speed change**, as in the cavern |
 | F11 / Alt+Enter | toggle fullscreen |
@@ -359,8 +359,8 @@ Command line: `--dir GAMEDIR`, `--map N` (system map index, 0 = MP10 … 0x1E = 
 `--pos COL ROW` (hero top-left map cell), `--town N` (start in town N: 0 cmap, 1 mrmp
 Muralla, … 9 esmp), `--speed N` (FF33 speed, default 5 = 84.5 ms/frame), `--scale N`,
 `--aspect 4:3|1:1` (the driver's 4:3 display shape, or square pixels for
-pixel-peeping), `--filter integer|sharp|smooth|crt` (display scaling, default
-`sharp`; F3 cycles it — presentation only, the framebuffer is untouched),
+pixel-peeping), `--filter integer|sharp|smooth|scanlines|soft-scanlines|crt|crt-curved` (default
+`sharp`; F3 or V cycles it — presentation only, the framebuffer is untouched),
 `--headless`, `--sword N`/`--shield N`/`--level N`/`--life N`/`--gold N` (write the
 player record directly; the shops do it properly), `--name NAME` (the NAME.USR the
 sage's "Record Experience" writes), `--save NAME` (write NAME.usr for the state the
@@ -806,7 +806,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   where to put them, instead of only a stderr line.  `test_config.c` unit-tests
   the parser, the round trip and the atomic save.
 * `present.c` / `present.h` — **the display filters** (#53): `--filter integer|sharp|
-  smooth|crt` (default `sharp`), F3 cycling them.  *integer* is the largest integer
+  smooth|scanlines|soft-scanlines|crt|crt-curved` (default `sharp`), F3 or V cycling them.  *integer* is the largest integer
   multiple of the source framebuffer that fits, nearest and centred; *sharp-bilinear*
   is an integer pre-scale of the source into an intermediate render target, then a
   linear pass to the 4:3 (or `--aspect 1:1`) display rectangle; *smooth* is plain
@@ -816,7 +816,16 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   scanlines (the `present_crt_row_gain` profile) and a faint R,G,B aperture-grille
   tint per output column (`present_crt_col_gain`), each switched off when a source
   pixel gets fewer than 3 output pixels.  The mask is rebuilt only when the content
-  rectangle changes.  The choice is saved as `filter=` in the config.  Pure presentation — the framebuffer is untouched, so `make verify` (which
+  rectangle changes.  *scanlines* is sharp-bilinear plus only the band mask (grey, no
+  grille); *soft-scanlines* is *smooth* plus the same bands; *crt-curved* renders the
+  full *crt* picture flat into an offscreen target, then draws it through a 40x30
+  `SDL_RenderGeometry` mesh whose vertices sit at barrel-mapped positions
+  (`present_curve_map`, k = 0.14: edge midpoints stay on the border, corners are
+  pulled in, the black beyond the bowed edge is the bezel) and a vignette texture on
+  top (`present_vignette_alpha`).  `SDL_RenderGeometry` needs SDL 2.0.18+ (the web
+  build's Emscripten SDL2 port is 2.28, the native droplet has 2.30); older headers
+  compile crt-curved down to flat *crt*.  Aliases: `soft` = smooth, `curved` =
+  crt-curved.  The choice is saved as `filter=` in the config.  Pure presentation — the framebuffer is untouched, so `make verify` (which
   renders through `video_to_rgb`) cannot see any of it.  The SDL-only half is
   exercised by `test_present` (SDL offscreen/dummy driver + software renderer), which
   is built and run separately from `make test`.
