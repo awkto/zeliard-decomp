@@ -67,6 +67,17 @@ hooked) every frame it is on screen.  The cells it rewrites are ring (BASE) stat
 hazard and current tests and the AIs see them.  Port: `enemy.c cell_anim`, traced
 as `gf_frame`.
 
+**Ghost cells (#112): none found for boss parts.**  A plain cell is repainted when its ring byte
+differs from its `E900` copy (pass 2, `30CB..`); every sprite cell, hero cell and animated cell leaves
+a 0xFE/0xFF sentinel in the copy (`3468/34E3/33E3/3363`, `747C`), so a cell a sprite has left always
+mismatches next frame and is repainted.  Erasures made after the scan (blade block `7136`, shots
+`83F3`) are conditional on `E900 < 0xFC` and only skip cells a sprite has just recomposed.  The port's
+full redraw is therefore equivalent for boss parts.  The "stale Jashiin foot cell" seen while making
+`jashiin_damage` was the crouch patch (`A6F1`) written to the wrong columns: with the old patch the
+oracle has the foot cell in row 8 of columns 0/1 and the port a stray one at columns 2/3 (frame 506,
+94 px, fields `obj[1..]` differ); fixed in 3cb7ca0.  A ring scan of 20+ fuzzed tails found no marker
+that the port leaves undrawn.
+
 Scrolling is cell-granular: **8 px per step, no sub-cell positions anywhere**.
 
 ## 3. Cell classification (tileset bank cell 0, arena:8000)
