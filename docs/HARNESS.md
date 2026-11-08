@@ -109,9 +109,8 @@ pictures pairwise, and a picture on one side only is a failure.
 
 **What the audit found (all fixed unless marked open).** The port had no fade-in over the encounter card, an inverted and too fast card with the wrong HUD under
 it, no hero under the card, and a Tear scene played over the destination map with the destination's HUD
-instead of the cave-mouth backdrop and the old HUD.  Open: the Tear scene's raised-sword picture differs
-(about 100 pixels in the 16 x 24 blade area, none of the three `4A31` pictures matches the oracle: the
-scenarios have an `allow-px` for it), the spell 7 burst and the level-up flash are not drawn and the doorway to the past is not there.  (Fixed, #124: `bank_menu` / `bank_withdraw`
+instead of the cave-mouth backdrop and the old HUD.  Fixed (#121): the Tear scene's sword and sparkle pictures were read as two bit planes instead of the packed
+2-bpp words 4092 shifts out.  The spell 7 burst (#122) and the level-up flash (#123) are drawn.  Open: the doorway to the past is not there.  (Fixed, #124: `bank_menu` / `bank_withdraw`
 differed by 83 pixels at (77,50)-(95,67) in the A085 picture 3,1: the first [A002] pass of the bank entry
 runs at elapsed 0, `bank_entry` now makes it, so the teller's 30-tick steps land on the original's ticks.  The oracle's first step is a few ticks later or not, by the save's file name alone: BANK.usr, BANKW.usr = at elapsed 0, byte-identical BANKD.usr = 1..9 ticks late, because [FF50] is free-running from boot and sits at the 0x1E threshold at the bank door.  `bank_deposit` / `bank_hold` therefore start from BANK.usr.)
 
