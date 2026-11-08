@@ -105,8 +105,21 @@ artifact.  It is code only; no game data is built in.
   `zeliard.ini` and the save states persist.  `.usr` saves go next to the game
   files, so the page mirrors changed `.usr` files into `/libsdl/usr` and puts them
   back into `/game` on the next visit; `FS.syncfs` runs every 3 s.
-* **Network.** No libcurl: `net_stub.c`, so `--sync` reports "no network support".
-  An `emscripten_fetch` backend is a later step.
+* **Network and save sync (#55).** `net_fetch.c` is the `net.h` backend: an `EM_ASYNC_JS`
+  `fetch()` (headers, `X-Save-Modified`, binary bodies, an AbortController timeout of at most
+  8 s per request).  `emscripten_fetch` was not used: its synchronous mode needs pthreads,
+  which this single-threaded ASYNCIFY build does not have.  Everything between `net_*` and
+  the caller is therefore kept out of `asyncify_remove.txt` (`sync_pull/push/health/status`,
+  `fetch_auto`, `do_push`, `push_worker`, `sync_remote_auto`, `sync_cli`) and the allowlist
+  has `net_get/put/delete`.  A push queued by the save hook runs in `frame_wait`, after a
+  frame is presented, not on a thread and not inside the engine's stack.  `packaging/web/sync.js`
+  adds a "Cloud sync" block to the start screen: when the page's own origin answers
+  `GET /api/health` with `{"ok": true}` it offers an on/off box, a key field with Link and
+  New key buttons (keys are normalised like the emulated build's, so paste its "Server sync"
+  key), and writes `sync`, `sync_base` (= `location.origin`) and `sync_key` into
+  `zeliard.ini` just before `callMain`.  Without such a server (GitHub Pages) the block says
+  so and nothing is written.  The ask-before-link dialog works with the keyboard in the browser;
+  touch cannot answer it yet.
 * **Touch.** The #54 overlay uses SDL finger events, which SDL2's Emscripten backend
   generates from the canvas's touch events.
 

@@ -346,3 +346,10 @@ wait_boundary_now
 wait_poll
 write_atomic
 yes_no
+net_get
+net_put
+net_delete
+perform
+web_push_run
+web_push_join
+zel_fetch
