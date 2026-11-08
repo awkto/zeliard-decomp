@@ -561,7 +561,7 @@ static void usage(void)
         "              `videoDrv` set, at each driver's own screen size\n"
         "  --frames N  quit after N rendered frames (SDL and headless)\n"
         "  --sound     log every FF75 sound request the engine produces\n"
-        "  --sword N --shield N --level N --life N --gold N --bank N --keys N\n"
+        "  --sword N --shield N --level N --exp N --life N --gold N --bank N --keys N\n"
         "              set the player record directly (the shops do it properly)\n"
         "  --worn N    wear key item N ([9E], also put in the [A1..A5] bag): 1 Feruza shoes\n"
         "              (jump 4), 2 Pirika, 3 Silkarn, 4 Ruzeria shoes, 5 Asbestos cape\n"
@@ -1621,7 +1621,7 @@ int main(int argc, char **argv)
     int map_idx = 0, pos_col = -1, pos_row = -1, start_in_town = -1, town_col = -1, town_scr = -1, town_anim = -1, town_face = 0, npc_i = -1, npc_f = 0;
     int touch_mode = 0;                         /* #54: --touch auto|on|off (auto = first touch shows it) */
     int dbg_sword = -1, dbg_shield = -1, dbg_level = -1, dbg_life = -1;
-    long dbg_gold = -1, dbg_keys = -1, dbg_bank = -1, dbg_worn = -1;
+    long dbg_exp = -1, dbg_gold = -1, dbg_keys = -1, dbg_bank = -1, dbg_worn = -1;
     const char *dbg_potions = NULL, *dbg_spells = NULL, *cave_poke = NULL;
     int dbg_magic_sel = 0, dbg_magic_n = 0;
     const char *save_name = "ZELIARD", *load_name = NULL, *save_now = NULL;
@@ -1698,6 +1698,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--shield") && i + 1 < argc) dbg_shield = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--level") && i + 1 < argc) dbg_level = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--life") && i + 1 < argc) dbg_life = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--exp") && i + 1 < argc) dbg_exp = atol(argv[++i]);
         else if (!strcmp(argv[i], "--gold") && i + 1 < argc) dbg_gold = atol(argv[++i]);
         else if (!strcmp(argv[i], "--bank") && i + 1 < argc) dbg_bank = atol(argv[++i]);
         else if (!strcmp(argv[i], "--keys") && i + 1 < argc) dbg_keys = atol(argv[++i]);
@@ -1944,6 +1945,7 @@ int main(int argc, char **argv)
         g->page[P_SHIELD_MAX + 1] = (uint8_t)(g->shield_hp >> 8);
     } else if (dbg_shield == 0) g->shield = 0;
     if (dbg_level >= 0)  g->level = (uint8_t)dbg_level;                  /* [8D] */
+    if (dbg_exp >= 0)    g->exp = (uint16_t)dbg_exp;                     /* [8E] */
     if (dbg_life >= 0)   { g->max_hp = (uint16_t)dbg_life; g->hp = g->max_hp; }   /* [B2]/[90] */
     if (dbg_gold >= 0)   g->gold = (uint32_t)dbg_gold;                   /* [85..87] */
     if (dbg_bank >= 0)   page_set_gold24(g->page, P_BANK_HI, (uint32_t)dbg_bank & 0xFFFFFF);   /* [88..8A] */
