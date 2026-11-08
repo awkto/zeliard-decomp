@@ -52,6 +52,27 @@ contains the OPL and SN76496 mute sequences of 5/6).
 | `FF28` | `music_off` | R (STICK F1 handler) | set by AX=2 CL=0 |
 | `FF76` | `volume` | — | AX=7 |
 
+### Cavern entry (fight.bin `7E93` / `7EBB` / `6270`)
+
+What a cavern entry does to the score, from the oracle's `ORACLE_MUSLOG` (every `INT 60h` the game issues plus every
+change of `[C8]`, `FF24`, `FF25`, `FF26`, `[9F02]`, with cycle stamps; cave_door, contact_snail, alguien_fight,
+jashiin_arena, sprite_overlap):
+
+| step | where | what |
+|---|---|---|
+| 1 | `7E93` (from `7A43` the cave mouth, `7BFF` a door, `61F3` MPA0) | the level record's `(byte0 >> 1) & 0xF` against `[C8]`.  **Different**: `[FF24] = 10` (`7EAB`), `[C8] =` the new index (`7EB0`), the index is parked in `[9EFA]`.  **Same**: `[9EFA] = FF`, nothing else, the score that is playing plays on |
+| 2 | the walk-in `7C6E` (26 passes of `7F82`) and the loads of `7EBB` | the **old (town) score fades out under the walk-in**: `FF25 += 4` every 10 driver ticks (84.5 ms).  Cave mouth: 11.3 M cycles (3.8 s) from `FF24 = 10` to the stop, `FF25` reaches `B4`; door: 7.5 M (2.5 s), `FF25 = 78` |
+| 3 | `7F5D` (tail of `7EBB`, called by `7CFF` after the walk-in) | if `[9EFA] != FF`: `INT 60h AX=1` (`7F61`, `FF26 = FF`), `[9F02] = FF` (`7F63`), the new score is loaded to `arena:3000`.  **Silence** from here |
+| 4a | `6270` in the main loop, normal cavern | `[9F02] != 0` -> `[9F02] = 0`, `INT 60h AX=0` (`6287`): the new score starts, 0.1 s after the stop, at the end of the first frame; the start clears `FF24 = FF25 = FF26 = 0` |
+| 4b | a boss map (`[FF34]`, level flag bit 7), `6078 -> 6082` | `6085` `INT 60h AX=1` again, `[C8]`'s score loaded, `60D8` `AX=0`: started before the encounter card (`60E6`) |
+| 4c | an `[E6]` room (MP90) | the score waits for `61C8` (`AX=0`) when the boss overlay clears `[E6]` |
+
+There is no "no music" index: every map in the game names a score (mus1-mus8 for the caverns, mbos for the boss maps, mmao for
+MP90/MPA0; the table has 14 entries, indexes 14 and 15 occur nowhere).  The town score is therefore never cut at the cave mouth:
+it fades while the hero walks in, there is a short silence, and the cavern's score starts after the first frame -- the "fade" and
+"silent" halves of the playtester's memory.  Walking from one cavern map to another with the same index (MP20 -> MP21) leaves the
+score alone.  The port used to start the new score at `7E93` time, under the walk-in.
+
 town.bin `6E7E` (`FF24 = 4`) fades under the shop-entry dissolve, which runs for well under the 2.2 s the fade needs
 (64 steps of 4 ticks at 118.35 Hz), so `6EA0` (`AX=1`) cuts the score at about a third of the way down (#118).
 

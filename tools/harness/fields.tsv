@@ -136,7 +136,7 @@ door_side	00C3	1	any	page byte only in the port
 cur_map	00C4	1	any	
 town_map	00C5	1	any	
 hp_regen_pending	00C6	2	any	potion: +8 HP per frame. NB the original applies it before 717F (70D9), the port after
-music_idx	00C8	1	any	page byte only in the port
+music_idx	00C8	1	any	the score index fight.bin 7E93 / the town stored; the port reads audio.c's model of the driver
 drug_stock	00C9	9	any	per-town shop stock masks
 sword_stock	00D2	9	any	
 shield_stock	00DB	9	any	
@@ -157,7 +157,9 @@ btn2_edge	FF1E	1	any	magic press edge
 tick	FF1A	1	any	not modelled by the port (about to be zeroed at the boundary)
 frame_counter	FF1B	2	any	not modelled (free-running tick count)
 speed	FF33	1	any	not modelled (the port keeps a frame period)
-music_fade	FF24	1	any	not modelled as state
+music_fade	FF24	1	any	fade rate: 10 from 7E93 on a score change until the new score starts (INT 60h AX=0 clears it) or the fade runs out; audio.c steps it 10 driver ticks per frame
+music_level	FF25	1	any	not modelled: fade attenuation, +4 every FF24 driver ticks (0328); frames are not all the same length (a boss kill's), so the port's 10 ticks per frame is only right for the death fade
+music_stopped	FF26	1	any	0 playing, FF stopped (INT 60h AX=1 / the fade ran out)
 snd_proximity	FF08	1	fight	not modelled
 boss_cutscene	FF2E	1	fight	
 boss_dying	FF2F	1	fight	
@@ -197,7 +199,7 @@ menu_debounce	9EF5	1	fight
 level_copy	9EF6	6	fight	not modelled
 hero_home_row	9F00	1	fight	
 boss_knock_left	9F01	1	fight	
-music_restart	9F02	1	fight	not modelled
+music_restart	9F02	1	fight	FF from 7F63 (new score loaded) until 6270 starts it
 fixture_anim	9F07	1	fight	
 gf_frame	4FFF	1	fight	gfmcga frame counter (inc at 3038); parity paces the cavern 5/7/8 cell animation (315C)
 fall_rows	9F08	1	fight	

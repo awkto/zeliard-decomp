@@ -372,6 +372,7 @@ int post_boss_transition(Game *g)
     game_ring_refill(g);                                            /* 623D -> 6C98 */
     g->gf_frame = 0;            /* 7395 gfmcga [3012] 4192 (the fade-in redraw) counts [4FFF] 8 -> 0 */
     if (g->side) { game_signs_draw(g); g->side(g, SIDE_FADEIN, 0x739A, 0); }               /* its 8 passes over the old picture (#119) */
+    audio_music_stop();                                             /* 73A9: int 60h AX=1 -- the boss score, fading since 7120, is cut */
     g->btn1_edge = g->btn2_edge = 0;                                /* 628A: FF1D / FF1E */
     g->loop_restart = 1;
     fprintf(stderr, "[boss] defeated: %d pokes applied, exit door at column %u, "

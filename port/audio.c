@@ -611,10 +611,44 @@ void audio_advance_ms(double ms)
 }
 
 /* ------------------------------------------------------------- control */
-void audio_music(int idx)
+/* ------------------------------------------------------------ the game's view of the driver
+ * What fight.bin sees of the music driver -- [C8] the score the level record named, the FF-page
+ * fade rate/level/stopped bytes, and [9F02] "a score is loaded, start it at 6270" -- kept apart
+ * from the audio device so a headless --trace run (no device) carries the same state, and the
+ * harness can diff it (music_idx, music_fade, music_level, music_stopped, music_restart).
+ * Driver ticks (118.35 Hz) arrive from audio_music_model_ticks(), ten per game frame. */
+static struct {
+    uint8_t c8, fade, level, stopped, restart, wait;
+    int     pending;                 /* 9EFA: the index 7E93 found changed, -1 = none */
+    int     restart_idx;             /* what 7F5D loaded to arena:3000 */
+} M = { 0xFF, 0, 0, 0, 0, 1, -1, -1 };
+
+static void model_start(int idx)     /* INT 60h AX=0: reset the fade, un-stop */
 {
-    if (!A.on || A.music_locked || A.music_hold || idx < 0 || idx >= 14) return;
-    if (idx == A.music_idx && !A.music.stopped) return;
+    M.c8 = (uint8_t)idx; M.fade = M.level = M.stopped = M.restart = 0; M.wait = 1;
+    M.pending = M.restart_idx = -1;
+}
+uint8_t audio_model_c8(void)      { return M.c8; }
+uint8_t audio_model_fade(void)    { return M.fade; }
+uint8_t audio_model_level(void)   { return M.level; }
+uint8_t audio_model_stopped(void) { return M.stopped; }
+uint8_t audio_model_restart(void) { return M.restart; }
+/* STD 0328 fade_step: every FF24 driver ticks FF25 += 4; the add that wraps stops the driver */
+void audio_music_model_ticks(int n)
+{
+    for (; n > 0; n--) {
+        if (M.stopped || !M.fade) continue;
+        if (--M.wait) continue;
+        M.wait = M.fade;
+        if (M.level + 4 > 0xFF) { M.fade = 0; M.stopped = 0xFF; M.level = 0xFF; }
+        else M.level = (uint8_t)(M.level + 4);
+    }
+}
+
+/* INT 60h AX=0 on the resource named by the 9E53 table */
+static void device_start(int idx)
+{
+    if (!A.on) return;
     size_t len;
     uint8_t *res = sar_load(A.dir, MUSIC[idx].archive, MUSIC[idx].index, 1, &len);
     if (!res) { fprintf(stderr, "note: cannot load %s.MSD\n", MUSIC[idx].name); return; }
@@ -629,6 +663,84 @@ void audio_music(int idx)
         A.music.stopped = 0xFF;
     A.music_idx = idx;
     audio_unlock();
+}
+
+/* ------------------------------------------------------------- control */
+void audio_music(int idx)
+{
+    if (A.music_locked || A.music_hold || idx < 0 || idx >= 14) return;
+    if (idx == M.c8 && !M.stopped && !(A.on && A.music.stopped)) return;
+    model_start(idx);
+    device_start(idx);
+}
+
+/* town.bin 6196 .. 6EF8, the death return: [C8] names the town's score but nothing plays (the hero's death
+ * stopped it at 99A3, FF24 stays 8) until the Sage's text is over and 6EF8 starts it. */
+void audio_music_town_idx(int idx)
+{
+    if (A.music_locked || A.music_hold || idx < 0 || idx >= 14) return;
+    audio_music_stop();
+    M.c8 = (uint8_t)idx; M.pending = -1; M.restart = 0;
+}
+
+void audio_music_tear_exit(int to_mpa0)
+{
+    if (A.music_locked || A.music_hold) return;
+    if (M.pending < 0) M.pending = M.c8;                    /* 7C36: [9EFA] = [C8] even when 7E93 found no change */
+    audio_music_commit();
+    /* jashiin_kill: after the Tear scene into MPA0 the oracle's 9F02 stays FF through the whole fight (no 6270 start
+     * until the hero dies), the score stays stopped */
+    if (to_mpa0) M.restart_idx = -1;
+}
+
+void audio_music_town_queue(int idx)
+{
+    if (A.music_locked || A.music_hold || idx < 0 || idx >= 14) return;
+    audio_music_town_idx(idx);
+    M.restart = 0xFF; M.restart_idx = idx;
+}
+
+/* fight.bin 7E93, run by every cavern entry (61F3, 7A43, 7BFF): when the level record's index
+ * differs from [C8], [FF24] = 10 starts fading the score that is playing, [C8] is stored and
+ * the index is parked in [9EFA]; when it is the same nothing happens and the old score plays
+ * on.  The fade runs on under the load and the walk-in; the score is not touched here. */
+void audio_music_level(int idx)
+{
+    if (A.music_locked || A.music_hold || idx < 0 || idx >= 14) return;
+    if (idx == M.c8) { M.pending = -1; return; }
+    audio_music_fade(10);                                   /* 7EAB */
+    M.c8 = (uint8_t)idx;                                    /* 7EB0 */
+    M.pending = idx;                                        /* 7EB4 .. 7EB6 stosb -> 9EFA */
+}
+
+/* fight.bin 7F5D (the tail of 7EBB, reached from 7CFF after the walk-in): a parked index stops
+ * the fading score (INT 60h AX=1, 7F61), sets [9F02] and loads the new score to arena:3000.
+ * Nothing sounds until 6270 (audio_music_frame_end) or, for a boss map, 60D8. */
+void audio_music_commit(void)
+{
+    if (M.pending < 0) return;
+    M.restart_idx = M.pending; M.pending = -1;
+    audio_music_stop();                                     /* 7F61 */
+    M.restart = 0xFF;                                       /* 7F63 */
+}
+
+/* fight.bin 6270: with [9F02] set the main loop starts the loaded score (INT 60h AX=0, 6287),
+ * which also clears the fade (FF24/FF25/FF26) -- after the first frame of the new map. */
+void audio_music_frame_end(void)
+{
+    if (!M.restart || M.restart_idx < 0) return;
+    int idx = M.restart_idx;
+    model_start(idx);
+    device_start(idx);
+}
+
+/* the end of a cavern entry (7CF4 .. 7D61 -> 6042): 7EBB's commit, then for a boss map (6078
+ * `test [FF34]`) 6085..60E3 stop and start [C8]'s score at once, before the encounter card */
+void audio_music_settle(int boss_map)
+{
+    int had = M.pending >= 0;
+    audio_music_commit();
+    if (had && boss_map) audio_music_frame_end();
 }
 
 /* GAME.BIN A080: with no command-line argument the boot path jumps straight
@@ -657,6 +769,7 @@ void audio_music_force(int idx)
  * name; audio_music() only knows that table, so this is the raw form. */
 void audio_music_play_res(int archive, int index)
 {
+    M.fade = M.level = M.stopped = M.restart = 0; M.wait = 1;      /* INT 60h AX=0 (C8 stays) */
     if (!A.on) return;
     size_t len;
     uint8_t *res = sar_load(A.dir, archive, index, 1, &len);
@@ -724,6 +837,7 @@ void audio_music_sync0_clear(void)
 
 void audio_music_stop(void)
 {
+    M.stopped = 0xFF;                                   /* AX=1: FF26 = FF, FF24/FF25 stay */
     if (!A.on) return;
     audio_lock(); msd_stop(&A.music); A.music_idx = -1; audio_unlock();
 }
@@ -741,6 +855,12 @@ void audio_music_pause(int on)
 }
 void audio_music_fade(int rate)
 {
+    M.fade = (uint8_t)rate; M.wait = 1;
+    audio_music_model_ticks(9);         /* the poke lands early in a frame: the driver's next tick (wait = 1) steps
+                                         * at once and 8 more run before the 717F boundary.  The hero's death fade
+                                         * (998B, rate 8) fixes the 9: the oracle's FF25 steps at 8 ticks (2, 3, 4, 5, 7
+                                         * ...) match 9 + 10 per frame.  Other pokes land elsewhere in their frame, and
+                                         * frames are not all the same length (a boss kill's), so FF25 is not compared */
     if (!A.on) return;
     audio_lock(); A.music.sync[3] = (uint8_t)rate; A.music.fade_wait = 1; audio_unlock();
 }

@@ -53,8 +53,8 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 15 test binaries
 make test            # physics (149) + combat/AI (229) + town (176) + boss (642) + shop (195)
-                     #   + status (87) + playthrough (176) + audio (394) + cutscene (52)
-                     #   + video (198) + config (58) + sync (144) + mapview (37) = 2537 assertions.  Needs no game files:
+                     #   + status (87) + playthrough (176) + audio (404) + cutscene (52)
+                     #   + video (198) + config (58) + sync (144) + mapview (37) = 2547 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 235 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -1073,7 +1073,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     `tools/harness/state_roundtrip.sh`, which now also drives the in-game
     request path (`--state-inject save:N load:N`, the same queue the keys use)
     and requires the whole trace to stay byte-identical.
-* `test_audio.c` — 394 assertions over the sound back end:
+* `test_audio.c` — 404 assertions over the sound back end:
   * **the score parser against `tools/msd2mid.py`**: all 17 scores in all three
     blob-B arrangements (AdLib, Tandy, PC speaker) are run through `msd.c`, and the
     decoded event stream — note on/off with velocity and the legato flag, drum hits,
@@ -1535,8 +1535,13 @@ tracks, their OPL patches and their duration tables live inside those files.
 **What plays.**  A cavern's score is the one its level record names: byte +0 bits 1-4
 index fight.bin's `9E53` request table (`mgt1 ugm1 mgt2 ugm2 mus1..mus8 mbos mmao`),
 and the ten town maps use the same field, so Muralla plays `mgt1`, the caverns play
-`mus1..mus8`, the boss rooms `mbos`.  The score is (re)started only when the index
-changes, as `7E93` does.  On top of it the `FF75` effects play on OPL channels 4 and
+`mus1..mus8`, the boss rooms `mbos`.  A cavern entry takes three steps, as in the original
+(docs/MUSIC.md "Cavern entry"): `7E93` compares the index with `[C8]` and, if it changed, starts
+`FF24 = 10` -- the old score *fades out under the load and the walk-in*, it is not cut; `7F5D`
+(after the walk-in) stops it and loads the new one; `6270` starts that at the end of the first
+frame (a boss map starts it at once, `6085..60E3`).  An unchanged index leaves the score alone.
+`audio.c` keeps this as a device-independent model (`audio_model_*`: `[C8]`, `FF24..FF26`,
+`[9F02]`), which the harness compares (`music_*` fields).  On top of it the `FF75` effects play on OPL channels 4 and
 5, which the effect driver claims from the music through `INT 60h AX=6` when it loads
 a patch and gives back when both of its tracks end — so the music's two top voices
 drop out for the length of a sword swing exactly as on a real AdLib card.  Killing a

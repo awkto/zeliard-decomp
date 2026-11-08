@@ -1163,6 +1163,7 @@ void game_step(Game *g)
      * twelve frames over the start of the walk) */
     if (g->walk_in) { walk_in_step(g); return; }                        /* 7C6E */
     if (g->encounter_frames) { encounter_step(g); return; }             /* 60E6 */
+    if (!g->boss_room && !g->hero_dead) audio_music_frame_end();       /* 6270: [9F02] -> INT 60h AX=0 (an [E6] room waits for 61C8; 6266 jumps to the death at 98FC first) */
     if (g->hero_dead) { death_step(g); return; }                        /* 98FC's own loops */
     if (g->boss_intro) {            /* 61BE: the [E6] walk-in loop is `call 6f9b` and nothing else -- no input,
                                      * no 62B5 crouch_release count (jashiin_fight f28).  The frame that follows
@@ -1367,6 +1368,7 @@ static void walk_in_step(Game *g)
         g->hero_anim = 0x80;                                            /* 7D36 */
         g->hero_scr_col = 0x0C;                                         /* 7D28 */
         g->hero_scr_row = g->map->row_bias; g->hero_home_row = g->map->row_bias;
+        audio_music_settle(g->boss_map);                                /* 7CFF call 7EBB: stop the fading score, load the new one */
         if (g->walk_then_intro) { g->walk_then_intro = 0; game_boss_room_intro(g); }
         if (g->walk_then_die) { g->walk_then_die = 0; death_begin(g); }
     }

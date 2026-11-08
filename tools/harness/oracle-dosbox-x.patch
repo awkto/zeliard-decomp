@@ -76,7 +76,7 @@ new file mode 100644
 index 0000000..5b122a2
 --- /dev/null
 +++ b/src/misc/zel_oracle.cpp
-@@ -0,0 +1,640 @@
+@@ -0,0 +1,676 @@
 +/*
 + * zel_oracle.cpp -- Zeliard differential-test oracle (decomp-zel docs/HARNESS.md).
 + *
@@ -576,11 +576,47 @@ index 0000000..5b122a2
 +    fprintf(iplog_fp, "IP %04X %.0f ff50=%u ff1a=%u f=%lu\n", ip, now, f50, f1a, (unsigned long)frame);
 +}
 +
++
++/* ORACLE_MUSLOG=1: musiclog.txt in ORACLE_OUT, one line per music-relevant event while tracing:
++ *   INT60 t f ip ax= cl= ds:si= score=<first 8 bytes> c8= c4= ff24= ff26=   each `int 60h` executed from BASE
++ *   CHG name t f old new     whenever [C8] (music_idx), [FF24] (fade), [FF25], [FF26] (driver stopped), [9F02] (restart), [C4] (map), [FF28] changes
++ * t is cycles since the start (3000/ms), f the trace frame. */
++static void muslog(uint16_t ip) {
++    static FILE *fp = nullptr; static bool init = false;
++    if (!init) {
++        init = true;
++        if (getenv("ORACLE_MUSLOG") && getenv("ORACLE_OUT"))
++            fp = fopen((std::string(getenv("ORACLE_OUT")) + "/musiclog.txt").c_str(), "w");
++    }
++    if (!fp) return;
++    const double now = (double)ms * 3000.0 + (double)(CPU_CycleMax - CPU_CycleLeft - CPU_Cycles);
++    const uint8_t *b = base_ptr(0);
++    static const struct { const char *n; uint16_t a; } W[] = {{"c8",0xC8},{"c4",0xC4},{"ff24",0xFF24},{"ff25",0xFF25},{"ff26",0xFF26},{"9f02",0x9F02},{"ff28",0xFF28}};
++    static int last[8]; static bool have = false;
++    for (int i = 0; i < 7; i++) {
++        int v = b[W[i].a];
++        if (have && v != last[i]) fprintf(fp, "CHG %s %.0f f=%lu %02X -> %02X\n", W[i].n, now, frame, last[i], v);
++        last[i] = v;
++    }
++    have = true;
++    const uint8_t *q = base_ptr(ip);
++    if (q[0] == 0xCD && q[1] == 0x60) {
++        char sc[40] = "";
++        if ((reg_eax & 0xFFFF) == 0) {
++            for (int i = 0; i < 8; i++) snprintf(sc + i * 2, 4, "%02X", mem_readb(SegPhys(ds) + (reg_si & 0xFFFF) + i));
++        }
++        fprintf(fp, "INT60 %.0f f=%lu ip=%04X ax=%04X cl=%02X ds:si=%04X:%04X score=%s c8=%02X c4=%02X ff24=%02X ff26=%02X\n", now, frame, ip,
++                (unsigned)(reg_eax & 0xFFFF), (unsigned)(reg_ecx & 0xFF), (unsigned)SegValue(ds), (unsigned)(reg_esi & 0xFFFF), sc,
++                b[0xC8], b[0xC4], b[0xFF24], b[0xFF26]);
++    }
++    fflush(fp);
++}
++
 +/* Called by the normal core before each instruction while CS == BASE. */
 +void ORACLE_Exec(void) {
 +    if (cpu.pmode) return;
 +    uint16_t ip = (uint16_t)reg_eip;
-+    if (state == ST_TRACE) iplog(ip);
++    if (state == ST_TRACE) { iplog(ip); muslog(ip); }
 +    uint8_t *p = base_ptr(ip);
 +    if (state == ST_INTRO && intro_mode && !in_end && ip == 0x6002 && MATCH(0x6002, SIG_OP_ENTRY)) {
 +        in_end = true; cut_site = "intro:wait"; state = ST_TRACE;

@@ -334,6 +334,21 @@ wall (22 s emulated); then ≈160 game frames per wall second (2040 frames in 12
 it is kept because every DOSBox capture in docs/ was taken at 3000 and the 84.5 ms frame
 (20 ticks at speed 5) is never overrun there. `frameskip` makes no difference.
 
+### Music: the `music_*` fields and `ORACLE_MUSLOG`
+
+The trace compares the game's view of the music driver at every boundary: `music_idx` (`[C8]`, the score index `7E93` or the
+town stored), `music_fade` / `music_level` / `music_stopped` (`FF24` / `FF25` / `FF26`) and `music_restart` (`[9F02]`).  The
+port has no device in a trace run, so `port/audio.c` keeps a model of exactly these bytes (`audio_model_*`): `audio_music()` is
+`INT 60h AX=0`, `audio_music_stop()` AX=1, `audio_music_fade()` a poke of `FF24`, `audio_music_level/commit/frame_end/settle`
+the cavern entry's `7E93` / `7F5D` / `6270` (docs/MUSIC.md "Cavern entry"), and `shell_frame` steps the fade ten driver ticks per
+frame (the fade ends in silence 64 steps later).  The port used to put its own copy of `[C8]` in the page and model nothing
+else, so a score that started at the wrong moment was invisible.  What the boundary samples cannot show is the order inside
+a frame (the fade under the walk-in, the stop, the start): for that `ORACLE_MUSLOG=1` writes `ORACLE_OUT/musiclog.txt`, one
+`INT60 t f ip ax= ds:si= score=<first 8 bytes> c8= c4= ff24= ff26=` line per `int 60h` the overlays execute and a
+`CHG name t f old -> new` line whenever `[C8]`, `[C4]`, `FF24`, `FF25`, `FF26`, `[9F02]` or `FF28` changes (cycles at 3000/ms).
+Two constants in `shell.c` (185 driver ticks from a cave mouth, 36 from a door) stand for the load time between `7E93` and the
+walk-in, measured from that log; they only show when a boundary falls between the fade and the start (the `[E6]` room, MP90).
+
 ### Start option: `ORACLE_CAVE` / `--cave` (#111)
 
 Some rooms have no route a script can walk (MP90 and MPA0, Jashiin's: MP8D is Alguien's room,
