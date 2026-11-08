@@ -56,12 +56,12 @@ static void key_rows(TouchLayout *L, int xlo, int xhi, int u, int y0)
         set_ctl(L, TC_KEY0 + i, TSH_RECT, x0 + i * (cell + gap), y0, cell, cell, lb);
     }
     int bw = u * 3 / 2, bh = u * 4 / 5, bg = u / 5;
-    int mw = 4 * bw + 3 * bg;
-    if (mw > aw - 2 * m) { bw = (aw - 2 * m - 3 * bg) / 4; mw = 4 * bw + 3 * bg; }
+    int mw = 5 * bw + 4 * bg;
+    if (mw > aw - 2 * m) { bw = (aw - 2 * m - 4 * bg) / 5; mw = 5 * bw + 4 * bg; }
     int mx = xlo + (aw - mw) / 2, my = y0 + cell + gap + bg;
-    static const char *const lab[4] = { "ESC", "ITEMS", "SAVE", "LOAD" };
-    static const int ids[4] = { TC_ESC, TC_ITEMS, TC_QSAVE, TC_QLOAD };
-    for (int i = 0; i < 4; i++)
+    static const char *const lab[5] = { "ESC", "ITEMS", "SAVE", "LOAD", "TURBO" };
+    static const int ids[5] = { TC_ESC, TC_ITEMS, TC_QSAVE, TC_QLOAD, TC_TURBO };
+    for (int i = 0; i < 5; i++)
         set_ctl(L, ids[i], TSH_RECT, mx + i * (bw + bg), my, bw, bh, lab[i]);
 }
 
@@ -81,9 +81,9 @@ static void key_columns(TouchLayout *L, int w, int u)
     int bw = u * 3 / 2, bh = u * 4 / 5, bg = u / 5;
     if (2 * bw + bg > pr - 2 * m) bw = (pr - 2 * m - bg) / 2;
     int mx = L->cx + L->cw + (pr - (2 * bw + bg)) / 2;
-    static const char *const lab[4] = { "ESC", "ITEMS", "SAVE", "LOAD" };
-    static const int ids[4] = { TC_ESC, TC_ITEMS, TC_QSAVE, TC_QLOAD };
-    for (int i = 0; i < 4; i++)
+    static const char *const lab[5] = { "ESC", "ITEMS", "SAVE", "LOAD", "TURBO" };
+    static const int ids[5] = { TC_ESC, TC_ITEMS, TC_QSAVE, TC_QLOAD, TC_TURBO };
+    for (int i = 0; i < 5; i++)
         set_ctl(L, ids[i], TSH_RECT, mx + (i % 2) * (bw + bg), m + (i / 2) * (bh + bg), bw, bh, lab[i]);
 }
 
@@ -343,6 +343,7 @@ uint8_t touch_buttons(const Touch *t, unsigned ms)
     return b;
 }
 
+int touch_turbo_held(const Touch *t) { return touch_visible(t) && touch_ctl_down(t, TC_TURBO); }
 int touch_menu_held(const Touch *t) { return touch_visible(t) && touch_ctl_down(t, TC_ITEMS); }
 
 void touch_knob(const Touch *t, int *x, int *y)

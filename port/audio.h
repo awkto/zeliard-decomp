@@ -32,6 +32,7 @@ int  audio_dump_open(const char *path);
 void audio_dump_close(void);
 /* Advance the drivers by `ms` of audio; only does anything while dumping. */
 void audio_advance_ms(double ms);
+void audio_set_mute(int on);         /* host fast-forward: the device plays silence (the synth keeps running) */
 
 /* fight.bin 7E93: the level record's music index (bits 1-4 of byte +0), also
  * used for the town maps.  Restarts the score only when the index changes. */

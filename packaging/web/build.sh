@@ -18,5 +18,5 @@ CFLAGS="-std=c11 -O2 -Wall -Wno-unused-parameter" emmake make zeliard.js CC=emcc
   SDL_CFLAGS="-sUSE_SDL=2" SDL_LIBS="-sUSE_SDL=2" CURL_CFLAGS= CURL_LIBS=
 rm -rf "$OUT"; mkdir -p "$OUT"
 cp zeliard.js zeliard.wasm "$OUT/"
-cp "$HERE/index.html" "$OUT/"
+cp "$HERE/index.html" "$HERE/keys.js" "$OUT/"
 ls -l "$OUT"

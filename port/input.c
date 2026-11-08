@@ -11,7 +11,7 @@ static const char *const ACT_NAMES[ACT_COUNT] = {
     [ACT_SWORD] = "sword", [ACT_MAGIC] = "magic", [ACT_MENU] = "menu", [ACT_PAUSE] = "pause",
     [ACT_FILTER] = "filter", [ACT_FULLSCREEN] = "fullscreen", [ACT_SCREENSHOT] = "screenshot",
     [ACT_MUSIC] = "music", [ACT_SFX] = "sfx",
-    [ACT_QUICKSAVE] = "quicksave", [ACT_QUICKLOAD] = "quickload", [ACT_RESTORE] = "restore", [ACT_SPEED] = "speed",
+    [ACT_QUICKSAVE] = "quicksave", [ACT_QUICKLOAD] = "quickload", [ACT_RESTORE] = "restore", [ACT_SPEED] = "speed", [ACT_TURBO] = "turbo",
     [ACT_SAVE1] = "save1", [ACT_SAVE1 + 1] = "save2", [ACT_SAVE1 + 2] = "save3",
     [ACT_SAVE1 + 3] = "save4", [ACT_SAVE1 + 4] = "save5", [ACT_SAVE1 + 5] = "save6",
     [ACT_SAVE1 + 6] = "save7", [ACT_SAVE1 + 7] = "save8", [ACT_SAVE1 + 8] = "save9",
@@ -83,13 +83,21 @@ static void default_key(KeyBind *b, int act, int town)
     case ACT_SFX:        kb_set(b, 0, SDL_SCANCODE_F2, -1); return;
     case ACT_RESTORE:    kb_set(b, 0, SDL_SCANCODE_F7, -1); return;
     case ACT_SPEED:      kb_set(b, 0, SDL_SCANCODE_F9, -1); return;
+    case ACT_TURBO:      kb_set(b, 0, SDL_SCANCODE_LSHIFT, SDL_SCANCODE_RSHIFT, -1); return;
     case ACT_QUICKSAVE:  kb_set(b, KMOD_CTRL, SDL_SCANCODE_PERIOD, -1); return;
     case ACT_QUICKLOAD:  kb_set(b, KMOD_CTRL, SDL_SCANCODE_BACKSLASH, -1); return;
     default:
-        if (act >= ACT_SAVE1 && act <= ACT_SAVE1 + 8)
+        /* Ctrl+1..9 / Alt+1..9, and the same on the keypad: a browser keeps
+         * Ctrl/Alt+digit for tab switching, but not the keypad digits, so the
+         * web build always has a way to reach every slot (port/README.md). */
+        if (act >= ACT_SAVE1 && act <= ACT_SAVE1 + 8) {
             kb_set(b, KMOD_CTRL, SDL_SCANCODE_1 + (act - ACT_SAVE1), -1);
-        else if (act >= ACT_LOAD1 && act <= ACT_LOAD1 + 8)
+            b->sc[b->n] = SDL_SCANCODE_KP_1 + (act - ACT_SAVE1); b->mod[b->n++] = KMOD_CTRL;
+        }
+        else if (act >= ACT_LOAD1 && act <= ACT_LOAD1 + 8) {
             kb_set(b, KMOD_ALT, SDL_SCANCODE_1 + (act - ACT_LOAD1), -1);
+            b->sc[b->n] = SDL_SCANCODE_KP_1 + (act - ACT_LOAD1); b->mod[b->n++] = KMOD_ALT;
+        }
         else b->n = 0;
         return;
     }
@@ -106,6 +114,7 @@ static void default_pad(PadBind *b, int act)
     case ACT_MAGIC: pb_set(b, SDL_CONTROLLER_BUTTON_Y, -1); return;
     case ACT_MENU:  pb_set(b, SDL_CONTROLLER_BUTTON_START, -1); return;
     case ACT_PAUSE: pb_set(b, SDL_CONTROLLER_BUTTON_BACK, -1); return;
+    case ACT_TURBO: pb_set(b, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, -1); return;
     default: b->n = 0; return;
     }
 }
