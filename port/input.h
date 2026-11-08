@@ -28,6 +28,7 @@ enum {
     ACT_RESTORE,                                 /* F7: the original's Restore Game (#42) */
     ACT_SPEED,                                   /* F9: the original's Speed change (#116) */
     ACT_TURBO,                                   /* Shift (held): fast-forward, presentation only */
+    ACT_MAP,                                     /* M: the cavern map viewer (mapview.h) */
     ACT_SAVE1,                                   /* Ctrl+1 .. Ctrl+9 */
     ACT_LOAD1 = ACT_SAVE1 + 9,                   /* Alt+1 .. Alt+9 */
     ACT_COUNT = ACT_LOAD1 + 9

@@ -27,6 +27,7 @@
 #include "statekeys.h"
 #include "playthrough.h"
 #include "present.h"
+#include "mapview.h"
 #include "restore.h"
 #include "speed.h"
 #include "config.h"
@@ -150,6 +151,13 @@ typedef struct {
     int      bg_flush;                  /* Android: finish the frame so the queued background save runs, before SDL blocks us */
     int      esc_edge;                  /* Esc was pressed; what that means is the caller's */
     char     title_base[900];           /* the engine's own title, re-applied when pause flips */
+    int      scene;                     /* what frame_wait is waiting inside: 0 other, 1 cavern (M opens the map), 2 town (M says no map) */
+    int      mv_open;                   /* the M-key map viewer is up: frame_wait holds the game (mapview.h) */
+    Game    *mv_g;                      /* the cavern it shows, valid while mv_open */
+    SDL_Texture *mv_tex;                /* the map raster, built when it opens */
+    int      mv_ox, mv_oy, mv_center;   /* view origin in cells; mv_center: re-centre on the hero at the next draw */
+    Uint32   mv_note_until;             /* "No map in town" shows until this SDL tick */
+    int      pf_w, pf_h;                /* the last picture size present_frame drew, so the viewer can redraw under itself */
 #endif
     int turbo, turbo_n, force_draw;     /* host fast-forward (hold ACT_TURBO): shorter frame wait, most presents skipped, audio muted */
     int yield_test;                     /* web only: --yield-test yields to the browser at every present, even headless (ASYNCIFY coverage under node) */
@@ -265,12 +273,157 @@ static void osd_draw(App *a)
     SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_NONE);
 }
 
+
+/* ------------------------------------------------ the M-key map viewer */
+/* The current cavern map, painted from the game's own tiles (mapview.c) into a
+ * texture when the viewer opens and drawn here, in the presentation layer only:
+ * the engine framebuffer is never touched, so traces and `make verify` cannot
+ * see it.  While it is up frame_wait does not return, so no game frame runs. */
+static void mv_text(App *a, int x, int y, int s, const char *msg, int r, int gr, int b)
+{
+    SDL_SetRenderDrawColor(a->ren, (Uint8)r, (Uint8)gr, (Uint8)b, 255);
+    for (const char *p = msg; *p; p++, x += 6 * s) {
+        const uint8_t *gl = statekeys_glyph(*p);
+        for (int col = 0; col < 5; col++)
+            for (int row = 0; row < 7; row++)
+                if (gl[col] & (1 << row)) {
+                    SDL_Rect px = { x + col * s, y + row * s, s, s };
+                    SDL_RenderFillRect(a->ren, &px);
+                }
+    }
+}
+
+static void mv_close(App *a)
+{
+    a->mv_open = 0; a->mv_g = NULL;
+    if (a->mv_tex) { SDL_DestroyTexture(a->mv_tex); a->mv_tex = NULL; }
+}
+
+static void mv_open_cavern(App *a, Game *g)
+{
+    const Map *m = g->map;
+    if (!m || m->width < 1) return;
+    uint32_t *px = malloc((size_t)m->width * 8 * MAP_ROWS * 8 * 4);
+    if (!px) return;
+    if (mapview_raster(px, m, g->tiles) == 0) {
+        a->mv_tex = SDL_CreateTexture(a->ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, m->width * 8, MAP_ROWS * 8);
+        if (a->mv_tex) {
+            SDL_UpdateTexture(a->mv_tex, NULL, px, m->width * 8 * 4);
+            a->mv_open = 1; a->mv_g = g; a->mv_center = 1;
+        } else fprintf(stderr, "[map] texture: %s\n", SDL_GetError());
+    }
+    free(px);
+}
+
+/* M pressed (or the touch button): open in a cavern, say so in a town, close if up */
+static void mv_toggle(App *a, Game *g)
+{
+    if (a->mv_open) { mv_close(a); return; }
+    if (a->paused) return;
+    if (a->scene == 1 && g) mv_open_cavern(a, g);
+    else if (a->scene == 2) a->mv_note_until = SDL_GetTicks() + 1800;
+}
+
+/* one marker: a square of `r` pixels around the centre of map cell (col,row) */
+static void mv_marker(App *a, const MapViewLayout *L, int col, int row, int half, int fill, int r, int gr, int b)
+{
+    int px, py;
+    if (!mapview_cell_to_px(L, a->mv_ox, a->mv_oy, col, row, &px, &py)) return;
+    SDL_Rect q = { px + L->cs / 2 - half, py + L->cs / 2 - half, half * 2, half * 2 };
+    SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_BLEND);
+    if (fill) { SDL_SetRenderDrawColor(a->ren, (Uint8)r, (Uint8)gr, (Uint8)b, 150); SDL_RenderFillRect(a->ren, &q); }
+    SDL_SetRenderDrawColor(a->ren, (Uint8)r, (Uint8)gr, (Uint8)b, 255);
+    SDL_RenderDrawRect(a->ren, &q);
+    SDL_Rect q2 = { q.x - 1, q.y - 1, q.w + 2, q.h + 2 };
+    SDL_RenderDrawRect(a->ren, &q2);
+    SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_NONE);
+}
+
+static void mv_draw(App *a)
+{
+    int ow = 0, oh = 0;
+    if (SDL_GetRendererOutputSize(a->ren, &ow, &oh) != 0 || ow <= 0) return;
+    Uint32 now = SDL_GetTicks();
+    if (a->mv_note_until && (int)(a->mv_note_until - now) > 0) {
+        int s = ow / 320; if (s < 2) s = 2; if (s > 6) s = 6;
+        const char *msg = "No map in town";
+        int w = statekeys_text_width(msg, s), x0 = (ow - w) / 2, y0 = oh / 10;
+        SDL_Rect bar = { x0 - 4 * s, y0 - 3 * s, w + 8 * s, 13 * s };
+        SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(a->ren, 0, 0, 0, 190);
+        SDL_RenderFillRect(a->ren, &bar);
+        SDL_SetRenderDrawBlendMode(a->ren, SDL_BLENDMODE_NONE);
+        mv_text(a, x0, y0, s, msg, 255, 235, 120);
+    }
+    if (!a->mv_open || !a->mv_g || !a->mv_tex) return;
+    Game *g = a->mv_g;
+    const Map *m = g->map;
+    int s = ow / 400; if (s < 2) s = 2; if (s > 4) s = 4;
+    int top = 12 * s, bot = 12 * s;
+    MapViewLayout L;
+    mapview_layout(&L, 0, top, ow, oh - top - bot, m->width, MAP_ROWS);
+    int hc = game_hero_map_col(g), hr = game_hero_map_row(g);
+    if (a->mv_center) { mapview_center(&L, hc + 1, hr + 1, &a->mv_ox, &a->mv_oy); a->mv_center = 0; }
+    mapview_pan(&L, &a->mv_ox, &a->mv_oy, 0, 0);          /* a resize may have changed what can pan */
+
+    SDL_SetRenderDrawColor(a->ren, 5, 6, 10, 255);
+    SDL_RenderClear(a->ren);
+    SDL_SetTextureScaleMode(a->mv_tex, L.cs < MAPVIEW_CELL_PX ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+    MapViewSeg xs[2], ys[2];
+    int nx = mapview_segments(a->mv_ox, L.vw, L.mw, xs), ny = mapview_segments(a->mv_oy, L.vh, L.mh, ys);
+    for (int j = 0; j < ny; j++)
+        for (int i = 0; i < nx; i++) {
+            SDL_Rect src = { xs[i].src * 8, ys[j].src * 8, xs[i].len * 8, ys[j].len * 8 };
+            SDL_Rect dst = { L.x0 + xs[i].dst * L.cs, L.y0 + ys[j].dst * L.cs, xs[i].len * L.cs, ys[j].len * L.cs };
+            SDL_RenderCopy(a->ren, a->mv_tex, &src, &dst);
+        }
+    int dh = L.cs < 6 ? 3 : L.cs / 2 + 1;
+    for (int i = 0; i < m->ndoors; i++) {
+        const Door *d = &m->doors[i];
+        int town = (d->dest_map & 0x80) != 0;
+        mv_marker(a, &L, d->col % m->width, d->row & 0x3F, dh, 1, town ? 80 : 255, town ? 220 : 200, town ? 255 : 40);
+    }
+    int blink = (now / 350) & 1;
+    int half = L.cs * 3 / 2; if (half < 6) half = 6;
+    mv_marker(a, &L, (hc + 1) % m->width, (hr + 1) & 0x3F, half, blink, 255, 50, 50);
+
+    char buf[160];
+    snprintf(buf, sizeof buf, "%s   HERO %d,%d   %dx%d", m->name, hc, hr, m->width, MAP_ROWS);
+    mv_text(a, 4 * s, 3 * s, s, buf, 255, 235, 120);
+    snprintf(buf, sizeof buf, "%sM / ESC  BACK TO THE GAME    RED YOU   YELLOW DOOR   CYAN TOWN DOOR",
+             (L.pan_x || L.pan_y) ? "ARROWS  PAN    " : "");
+    if (statekeys_text_width(buf, s) > ow - 8 * s)       /* a narrow window drops the legend */
+        snprintf(buf, sizeof buf, "%sM / ESC  BACK", (L.pan_x || L.pan_y) ? "ARROWS  PAN    " : "");
+    mv_text(a, 4 * s, oh - bot + 3 * s, s, buf, 200, 200, 200);
+}
+
+/* keys while the viewer is up; returns 1 when consumed */
+static int mv_key(App *a, const SDL_KeyboardEvent *k)
+{
+    if (input_event_match(&a->in, ACT_MAP, k) || input_event_match(&a->in, ACT_PAUSE, k)) {
+        if (!k->repeat) mv_close(a);
+        return 1;
+    }
+    int ow = 0, oh = 0;
+    SDL_GetRendererOutputSize(a->ren, &ow, &oh);
+    int step = 6;
+    MapViewLayout L;
+    mapview_layout(&L, 0, 0, ow, oh, a->mv_g->map->width, MAP_ROWS);
+    if (input_event_match(&a->in, ACT_LEFT, k))  { mapview_pan(&L, &a->mv_ox, &a->mv_oy, -step, 0); return 1; }
+    if (input_event_match(&a->in, ACT_RIGHT, k)) { mapview_pan(&L, &a->mv_ox, &a->mv_oy, step, 0); return 1; }
+    if (input_event_match(&a->in, ACT_UP, k))    { mapview_pan(&L, &a->mv_ox, &a->mv_oy, 0, -step); return 1; }
+    if (input_event_match(&a->in, ACT_DOWN, k))  { mapview_pan(&L, &a->mv_ox, &a->mv_oy, 0, step); return 1; }
+    if (k->keysym.sym == SDLK_HOME || k->keysym.sym == SDLK_0) { a->mv_center = 1; return 1; }
+    return 0;
+}
+
 /* Blit the mode's RGB image (already uploaded to a->tex) through the selected
  * display filter and present it.  The content shape is the aspect-corrected
  * display size, or the framebuffer itself under --aspect 1:1; present.c owns
  * the sampling.  Presentation only: `make verify` never reaches this path. */
 static void present_frame(App *a, int sw, int sh)
 {
+    a->pf_w = sw; a->pf_h = sh;
     int dw = sw, dh = sh;
     if (turbo_skip(a)) return;               /* fast-forward: most pictures are never drawn */
     if (!a->square) video_display_size(a->video, &dw, &dh);
@@ -289,6 +442,7 @@ static void present_frame(App *a, int sw, int sh)
     if (present_render(a->ren, a->tex, sw, sh, dw, dh, a->filter) != 0)
         fprintf(stderr, "[video] present: %s\n", SDL_GetError());
     osd_draw(a);
+    mv_draw(a);                              /* the M-key map viewer / the town note */
     touch_draw(&a->touch, a->ren);           /* #54: over the frame, after the filter */
     SDL_RenderPresent(a->ren);
 }
@@ -340,7 +494,8 @@ static void pump_events(App *a, Game *g)
         }
         case SDL_CONTROLLERBUTTONDOWN:
             touch_note_other_input(&a->touch);
-            if (input_pad_event_match(&a->in, ACT_PAUSE, e.cbutton.button)) { a->paused = !a->paused; title_apply(a); }
+            if (a->mv_open && input_pad_event_match(&a->in, ACT_PAUSE, e.cbutton.button)) mv_close(a);
+            else if (input_pad_event_match(&a->in, ACT_PAUSE, e.cbutton.button)) { a->paused = !a->paused; title_apply(a); }
             break;
         case SDL_KEYDOWN:
 #ifdef __ANDROID__
@@ -352,6 +507,8 @@ static void pump_events(App *a, Game *g)
                 if (!e.key.repeat && a->rest_qn < 16) a->rest_q[a->rest_qn++] = (int)e.key.keysym.sym;
                 break;
             }
+            if (a->mv_open && mv_key(a, &e.key)) break;
+            if (input_event_match(&a->in, ACT_MAP, &e.key)) { if (!e.key.repeat) mv_toggle(a, g); break; }
             if (input_event_match(&a->in, ACT_RESTORE, &e.key)) { if (!e.key.repeat) a->restore_req = 1; break; }
             if (input_event_match(&a->in, ACT_SPEED, &e.key)) { if (!e.key.repeat) a->speed_req = 1; break; }
             /* #42: every hotkey is looked up in the one binding table
@@ -431,7 +588,7 @@ static void pump_events(App *a, Game *g)
             continue;
         }
         switch (te.kind) {
-        case TEV_ESC:   a->esc_edge = 1; break;
+        case TEV_ESC:   if (a->mv_open) mv_close(a); else a->esc_edge = 1; break;
         case TEV_ITEMS: if (a->paused) { a->paused = 0; title_apply(a); } break;
         case TEV_QSAVE: if (g) { statekeys_request(&a->sk, &a->sh, STATE_REQ_SAVE, -1); } break;
         case TEV_QLOAD: if (g) { statekeys_request(&a->sk, &a->sh, STATE_REQ_LOAD, -1); } break;
@@ -482,8 +639,15 @@ static void frame_wait(App *a, Game *g, Uint64 *next)
 #ifdef __ANDROID__
         if (a->bg_flush) { a->bg_flush = 0; break; }   /* let this frame end: the background save runs in frame_done */
 #endif
+        if (a->mv_open) a->esc_edge = 0;                 /* Esc closed the viewer; it is not a pause */
         if (a->esc_edge) { a->esc_edge = 0; a->paused = !a->paused; title_apply(a); }
-        if (a->quit) break;
+        if (a->quit) { mv_close(a); break; }
+        if (a->mv_open) {                                /* the map viewer holds the game: redraw it (the marker blinks) */
+            present_frame(a, a->pf_w, a->pf_h);
+            SDL_Delay(16);
+            *next = SDL_GetPerformanceCounter();
+            continue;
+        }
         if (a->paused) { SDL_Delay(16); *next = SDL_GetPerformanceCounter(); continue; }
         now = SDL_GetPerformanceCounter();
         if (now >= *next) break;
@@ -1483,7 +1647,9 @@ static void present(Game *g)
 
     /* wait out the frame (4*speed ticks), pumping events */
     static Uint64 next = 0;
+    a->scene = (!g->status && !g->tear && !g->dsv_pic) ? 1 : 0;
     frame_wait(a, g, &next);
+    a->scene = 0;
     if (g->dsv_pic) return;                             /* a dissolve pass reads no keys */
     const Uint8 *k = SDL_GetKeyboardState(NULL);
     audio_hotkeys(a, k);
@@ -1574,7 +1740,9 @@ static void town_present(Town *t)
         title_paused(a, title);
     }
     static Uint64 next = 0;
+    a->scene = (!t->shop && !t->status && !t->dsv_pic) ? 2 : 0;
     frame_wait(a, t->g, &next);              /* the Game, so the save/load keys work in a town too */
+    a->scene = 0;
     if (t->dsv_pic) return;                             /* a dissolve pass reads no keys */
     const Uint8 *k = SDL_GetKeyboardState(NULL);
     audio_hotkeys(a, k);

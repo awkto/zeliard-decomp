@@ -51,10 +51,10 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 
 ```
 cd port
-make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 13 test binaries
+make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 15 test binaries
 make test            # physics (149) + combat/AI (229) + town (176) + boss (642) + shop (195)
                      #   + status (87) + playthrough (176) + audio (394) + cutscene (52)
-                     #   + video (198) + config (46) + sync (144) = 2488 assertions.  Needs no game files:
+                     #   + video (198) + config (46) + sync (144) + mapview (37) = 2525 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 235 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -241,6 +241,7 @@ build's.
 | F7 | **Restore Game** (the original's own hotkey, #42): *Sure?(Y/N)*, then the *Input name:* box with the `*.usr` list; see below |
 | F9 | **Speed change** (the original's own hotkey, #116): *Select 0-9:*; see below |
 | touch | on-screen controls (`--touch auto\|on\|off`, see `touch.c`): joystick, Sword, Magic, Combo, 1-9/Y/N, Esc, Items, quick save/load |
+| M | **map viewer** (`key.map`): in a cavern the whole current map, painted live from the game's own tile bank (`mapview.c`), with a blinking red hero marker and yellow door markers (cyan for a door into town); the game is held while it is up.  The map wraps, so when it does not fit the window at 4 px per cell the arrows (or the movement keys) pan it with wrap-around, Home re-centres on you; M or Esc closes.  In a town it flashes *No map in town*.  Drawn in the presentation layer only, like the save-state messages: the engine framebuffer, traces and `make verify` never see it. |
 | F12 | dump the framebuffer to the `--screenshot` file |
 | F11 / Alt+Enter | toggle fullscreen (the window is resizable; `--fullscreen` starts there) |
 | Esc | **pause** — Esc or Enter resumes, **Q** quits |
@@ -1138,7 +1139,7 @@ Actions (default keys; controller defaults in brackets):
 * `sword` Space, X (+ Left/Right Ctrl in the cavern) (X) — Space is the original's fire key · `magic` cavern C, Left/Right Alt;
   town C, Left/Right Alt, Backspace (Y)
 * `menu` Return, Keypad Enter: the status screen (Start) · `pause` Escape (Back)
-* `music` F1 · `sfx` F2 · `filter` F3 · `restore` F7 · `speed` F9 · `fullscreen` F11 · `screenshot` F12
+* `music` F1 · `sfx` F2 · `filter` F3 · `restore` F7 · `speed` F9 · `map` M · `fullscreen` F11 · `screenshot` F12
 * `turbo` Left/Right Shift, held (controller: right shoulder): fast-forward, see [Fast-forward](#fast-forward-turbo)
 * `quicksave` Ctrl+. · `quickload` Ctrl+\ · `save1`..`save9` Ctrl+1..9 · `load1`..`load9` Alt+1..9
   (a `key.*` binding replaces both the cavern and the town default set)
