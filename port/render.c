@@ -264,7 +264,12 @@ static void draw_enemies(uint8_t *fb, const Game *g)
      * routines.  Each one first swaps the E900 screen-copy bytes under the
      * sprite for sentinels (a word xchg, so the write is unconditional), saving
      * the old bytes, and 356E then draws a cell only when its saved byte is not
-     * 0xFF/0xFC:
+     * 0xFF/0xFC (3573/3575; the call at 356B runs 356E twice, TL then TR through
+     * the saved bytes [5010]/[5011], and again at 34CB for BL/BR through
+     * [5012]/[5013]).  The word xchg at 3472 swaps ax = FFFE with [E900+cell-1..cell]
+     * (little endian: TL <- FE, TR <- FF) and the one at 347A swaps FFFF with the
+     * row below ([di+1B]: the screen is 28 cells wide), so the swap is
+     * unconditional and a cell already claimed by an earlier sprite saves FF:
      *   3468 (marker at screen col 0..26)  TL<-FE, TR<-FF, BL<-FF, BR<-FF; saved
      *        TL,TR,BL,BR each gate their own cell; row 17 skips the bottom pair
      *   34E3 (col 27)   TL<-FE, BL<-FF; only the left column is on screen
