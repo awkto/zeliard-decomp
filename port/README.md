@@ -54,7 +54,7 @@ cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 15 test binaries
 make test            # physics (149) + combat/AI (229) + town (176) + boss (642) + shop (195)
                      #   + status (87) + playthrough (176) + audio (394) + cutscene (52)
-                     #   + video (198) + config (58) + sync (144) + mapview (37) = 2537 assertions.  Needs no game files:
+                     #   + video (198) + config (59) + sync (144) + mapview (37) = 2538 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 235 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -125,7 +125,7 @@ artifact.  It is code only; no game data is built in.
   Alt, Ctrl/Alt+1..9, Ctrl+. , Ctrl+\\, Backspace, Tab, Space and the arrows, so the page
   and SDL keep them (SDL still sees every event).  It cannot claim a few reserved
   combinations in a normal tab, and it asks for the Keyboard Lock API once the game is
-  fullscreen (F11, Chromium only), which releases those too.  What a browser does with
+  fullscreen (F or F11, Chromium only), which releases those too.  What a browser does with
   each key outside fullscreen:
 
   | key | game use | browser | outcome |
@@ -137,7 +137,7 @@ artifact.  It is code only; no game data is built in.
   | F3 | video filter | find next | cancelled by `keys.js` |
   | F7 | Restore Game menu | caret browsing prompt (Firefox/Chrome) | cancelled by `keys.js` |
   | F9, F2 | speed menu, sfx toggle | nothing | work everywhere |
-  | F11 | fullscreen | browser fullscreen | cancelled, SDL's fullscreen runs instead (and unlocks the keyboard-lock keys above) |
+  | F, F11 | fullscreen | F: nothing; F11: browser fullscreen | F11 is cancelled, SDL's fullscreen runs instead (and unlocks the keyboard-lock keys above).  Either key works: SDL's Emscripten port defers the request to the next input event handler, which still counts as the user's gesture |
   | F12 | screenshot | developer tools | cancelled in the page; the shortcut Ctrl+Shift+I still opens them |
   | Shift | turbo | nothing | works everywhere |
   | Alt (magic) | magic | menu bar on Windows/Firefox on release | cancelled by `keys.js` |
@@ -234,7 +234,7 @@ build's.
 | key | action |
 |---|---|
 | Left / Right | walk 1 cell (8 px) per frame; the world scrolls, Garland stays on screen column 12 |
-| Up (or Z) | jump (hold for up to 2 rows), climb a ladder, enter a door, **ride an elevator up**; with Left/Right: diagonal jump |
+| Up | jump (hold for up to 2 rows), climb a ladder, enter a door, **ride an elevator up**; with Left/Right: diagonal jump.  **Z is no longer a jump key** (it is now the zoom toggle, below); the arrows are the only default movement keys |
 | Down | crouch, descend a ladder, let go of a ladder, **ride an elevator down** |
 | Space (or X / Ctrl) | **attack** — sword slash; with Up an upward slash; held with Down while airborne a down-thrust (×2 damage) |
 | A (hold) | **combo** (`key.combo`): Up+Down held and the sword pulsed automatically, so you attack while steering; Left/Right still walk |
@@ -248,7 +248,8 @@ build's.
 | touch | on-screen controls (`--touch auto\|on\|off`, see `touch.c`): joystick, Sword, Magic, Combo, 1-9/Y/N, Esc, Items, quick save/load |
 | M | **map viewer** (`key.map`): in a cavern the whole current map, painted live from the game's own tile bank (`mapview.c`), with a blinking red hero marker and yellow door markers (cyan for a door into town); the game is held while it is up.  The map wraps, so when it does not fit the window at 4 px per cell the arrows (or the movement keys) pan it with wrap-around, Home re-centres on you; M or Esc closes.  In a town it flashes *No map in town*.  Drawn in the presentation layer only, like the save-state messages: the engine framebuffer, traces and `make verify` never see it. |
 | F12 | dump the framebuffer to the `--screenshot` file |
-| F11 / Alt+Enter | toggle fullscreen (the window is resizable; `--fullscreen` starts there) |
+| F / F11 / Alt+Enter | toggle fullscreen (`key.fullscreen`; the window is resizable; `--fullscreen` starts there) |
+| Z | **zoom** (`key.zoom`): crops the decorative stone frame so the playfield and the HUD panel under it fill the window (`--zoom` starts there; remembered as `zoom=` in the config).  Applies to the cavern, the town, the shops and the status screen, which share one frame; the title, the intro and the ending are full pictures and are never cropped.  Flashes *ZOOM ON* / *ZOOM OFF*.  Presentation only (a source rectangle in `present.c`), so it combines with every display filter including crt-curved |
 | Esc | **pause** — Esc or Enter resumes, **Q** quits |
 
 **A / S attack shortcuts** (`autoatk.c`, interactive play only).  The game reads the sword as an
@@ -303,7 +304,8 @@ spins on `FF18`/`FF29` with no poll site, so no oracle scenario can reach it.
 | F3, V | cycle the display filter (integer → sharp-bilinear → smooth → scanlines → soft-scanlines → crt → crt-curved) |
 | F7 or \\ | **Restore Game**, as in the cavern |
 | F9 or Backspace | **Speed change**, as in the cavern (A / S do nothing in a town: Up is a door there) |
-| F11 / Alt+Enter | toggle fullscreen |
+| F / F11 / Alt+Enter | toggle fullscreen |
+| Z | zoom: crop the decorative frame (as in the cavern) |
 | Esc | **pause** — Esc or Enter resumes, **Q** quits |
 
 ### A game controller
@@ -805,7 +807,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   binary) remembers the game folder, `--scale`, `--fullscreen`, `--video`,
   `--filter`, `--aspect` and the audio settings (`music`, `sfx`, `speaker`, and
   `volume` if present).  Every command-line flag overrides it for that run, and
-  the in-game toggles (F3, F11, F1/F2) are written back on exit.  A headless run
+  the in-game toggles (F3, F, F11, Z, F1/F2) are written back on exit.  A headless run
   (`--screenshot`, `--script`, `--trace`) takes only the game folder from it, so
   `make verify` cannot be moved by a developer's saved window settings.  The save
   is atomic (a sibling `.tmp` then `rename`).  `shell_find_dir` now resolves the game
@@ -839,6 +841,15 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   renders through `video_to_rgb`) cannot see any of it.  The SDL-only half is
   exercised by `test_present` (SDL offscreen/dummy driver + software renderer), which
   is built and run separately from `make test`.
+  **Zoom** (Z): `present_zoom_rect()` is the crop of the 320x200 layout -- the playfield (x 48..271,
+  y 14..157) plus the HUD panel (y 158..195), 224x182 at (48,14); the stone frame (columns 0..47
+  and 272..319, rows 0..13) and the blank panel margin (rows 196..199) are cropped away.  It scales
+  with the source for the 640-wide modes.  `present_view()` returns the content rectangle of the
+  cropped picture plus that source rectangle, shared by the renderer and the touch layout.  The
+  playfield+HUD is nearly square (224x218 in display space), so in a 4:3 window it is pillarboxed:
+  zoom removes the frame and enlarges the picture by about 10%, without ever cutting a playfield
+  row or the HUD.  `test_present` checks the rectangle, the view and, through every filter, that no
+  frame pixel reaches the window.
 * `touch.c` / `touch.h` — **on-screen touch controls** (#54 step 1), drawn by the port
   itself over the presented frame (after `present.c`, with SDL_Render primitives) so the
   same code serves desktop touchscreens, Android and mobile web.  Layout, relative to
@@ -1119,7 +1130,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     music, preemption, a score change mid-effect, AX=3 pause, F1, the `FF24` fade) and
     all 65 `SNDJR` effects on their own match those hashes.  When python3 with Unicorn
     is installed (`ZEL_PYTHON=...`) the oracle is also run live from the test.
-* `test_config.c` — 58 assertions over the settings file (#42) and the attack-shortcut pulse machine: the sentinels
+* `test_config.c` — 59 assertions over the settings file (#42) and the attack-shortcut pulse machine: the sentinels
   `config_init` leaves, a full `key=value` parse, the lines it ignores (junk, a
   bare `=`, an unknown key, a bad boolean) and the whitespace/CRLF trimming, the
   `on`/`off`/`true`/`no` spellings, a lossless render+parse round trip, the atomic
@@ -1157,11 +1168,11 @@ movement read.
 Actions (default keys; controller defaults in brackets):
 
 * `left` Left (d-pad left) · `right` Right (d-pad right) · `down` Down (d-pad down)
-* `up` Up, Z (d-pad up, A)
+* `up` Up (d-pad up, A) — Z used to be a second jump key; it is the zoom key now
 * `sword` Space, X (+ Left/Right Ctrl in the cavern) (X) — Space is the original's fire key · `magic` cavern C, Left/Right Alt;
   town the same
 * `menu` Return, Keypad Enter: the status screen (Start) · `pause` Escape (Back)
-* `music` F1 · `sfx` F2 · `filter` F3 · `restore` F7, \ · `speed` F9, Backspace · `combo` A, held (Up+Down and a pulsing sword) · `autofire` S, held (a pulsing sword; held steady with Down) · `map` M · `fullscreen` F11 · `screenshot` F12
+* `music` F1 · `sfx` F2 · `filter` F3 · `restore` F7, \ · `speed` F9, Backspace · `combo` A, held (Up+Down and a pulsing sword) · `autofire` S, held (a pulsing sword; held steady with Down) · `map` M · `fullscreen` F, F11 · `zoom` Z · `screenshot` F12
 * `turbo` Left/Right Shift, held (controller: right shoulder): fast-forward, see [Fast-forward](#fast-forward-turbo)
 * `quicksave` Ctrl+. · `quickload` Ctrl+\ · `save1`..`save9` Ctrl+1..9 · `load1`..`load9` Alt+1..9
   (a `key.*` binding replaces both the cavern and the town default set)

@@ -84,6 +84,44 @@ void present_content_rect_ex(int filter, int win_w, int win_h,
     if (h) *h = ch;
 }
 
+static int g_zoom;
+void present_set_zoom(int on) { g_zoom = on != 0; }
+
+void present_zoom_rect(int sw, int sh, int *x, int *y, int *w, int *h)
+{
+    int rx = 0, ry = 0, rw = 0, rh = 0;
+    if (sw > 0 && sh > 0) {
+        rx = PRESENT_ZOOM_X * sw / PRESENT_ZOOM_REF_W;
+        ry = PRESENT_ZOOM_Y * sh / PRESENT_ZOOM_REF_H;
+        rw = (PRESENT_ZOOM_X + PRESENT_ZOOM_W) * sw / PRESENT_ZOOM_REF_W - rx;
+        rh = (PRESENT_ZOOM_Y + PRESENT_ZOOM_H) * sh / PRESENT_ZOOM_REF_H - ry;
+    }
+    if (x) *x = rx;
+    if (y) *y = ry;
+    if (w) *w = rw;
+    if (h) *h = rh;
+}
+
+void present_view(int filter, int win_w, int win_h, int sw, int sh, int dw, int dh,
+                  int top, int zoom,
+                  int *x, int *y, int *w, int *h,
+                  int *sx, int *sy, int *sw_, int *sh_)
+{
+    int cx = 0, cy = 0, cw = sw, ch = sh;
+    if (zoom && sw > 0 && sh > 0) {
+        present_zoom_rect(sw, sh, &cx, &cy, &cw, &ch);
+        /* the display shape of the cropped picture keeps the pixel aspect */
+        dw = dw * cw / sw;
+        dh = dh * ch / sh;
+    }
+    present_content_rect_ex(filter, win_w, win_h, zoom ? cw : sw, zoom ? ch : sh, dw, dh, top,
+                            x, y, w, h);
+    if (sx) *sx = cx;
+    if (sy) *sy = cy;
+    if (sw_) *sw_ = cw;
+    if (sh_) *sh_ = ch;
+}
+
 int present_prescale(int cw, int ch, int sw, int sh)
 {
     if (sw <= 0 || sh <= 0) return 1;
@@ -185,19 +223,23 @@ static int target_ensure(SDL_Renderer *ren, int w, int h)
 /* Draw the filter's base picture (src through nearest-prescale+linear, or plain
  * linear) into `dst` of the current render target, then the multiply mask. */
 static void draw_flat(SDL_Renderer *ren, SDL_Texture *src, int sw, int sh,
-                      const SDL_Rect *dst, int sharp, int mask)   /* mask: 0 none, 1 scan, 2 scan+grille */
+                      const SDL_Rect *dst, int sharp, int mask,   /* mask: 0 none, 1 scan, 2 scan+grille */
+                      const SDL_Rect *crop)                       /* NULL = the whole source */
 {
+    int cw = crop ? crop->w : sw, ch = crop ? crop->h : sh;
     int done = 0;
     SDL_Texture *cur = SDL_GetRenderTarget(ren);
     if (sharp) {
-        int n = present_prescale(dst->w, dst->h, sw, sh);
+        int n = present_prescale(dst->w, dst->h, cw, ch);
         if (n > 1 && target_ensure(ren, sw * n, sh * n) == 0 && cur != g_target) {
             if (SDL_SetRenderTarget(ren, g_target) == 0) {
                 SDL_SetTextureScaleMode(src, SDL_ScaleModeNearest);
                 SDL_RenderCopy(ren, src, NULL, NULL);    /* integer pre-scale */
                 SDL_SetRenderTarget(ren, cur);
                 SDL_SetTextureScaleMode(g_target, SDL_ScaleModeLinear);
-                SDL_RenderCopy(ren, g_target, NULL, dst);   /* to the output */
+                SDL_Rect cs = { 0, 0, 0, 0 };
+                if (crop) { cs.x = crop->x * n; cs.y = crop->y * n; cs.w = crop->w * n; cs.h = crop->h * n; }
+                SDL_RenderCopy(ren, g_target, crop ? &cs : NULL, dst);   /* to the output */
                 done = 1;
             } else SDL_SetRenderTarget(ren, cur);
         }
@@ -205,10 +247,10 @@ static void draw_flat(SDL_Renderer *ren, SDL_Texture *src, int sw, int sh,
     }
     if (!done) {
         SDL_SetTextureScaleMode(src, SDL_ScaleModeLinear);
-        SDL_RenderCopy(ren, src, NULL, dst);
+        SDL_RenderCopy(ren, src, crop, dst);
     }
     if (mask) {
-        SDL_Texture *m = mask_ensure(ren, dst->w, dst->h, sw, sh, mask == 2);
+        SDL_Texture *m = mask_ensure(ren, dst->w, dst->h, cw, ch, mask == 2);
         if (m) SDL_RenderCopy(ren, m, NULL, dst);
     }
 }
@@ -248,14 +290,15 @@ static int flat_ensure(SDL_Renderer *ren, int w, int h)
 /* crt-curved: the flat crt picture into g_flat, then a (NX x NY) mesh whose
  * vertices sit at the barrel-mapped positions with the flat UVs, then the
  * vignette over the whole rectangle.  Returns 0, or -1 to fall back to flat. */
-static int draw_curved(SDL_Renderer *ren, SDL_Texture *src, int sw, int sh, const SDL_Rect *dst)
+static int draw_curved(SDL_Renderer *ren, SDL_Texture *src, int sw, int sh, const SDL_Rect *dst,
+                       const SDL_Rect *crop)
 {
     if (flat_ensure(ren, dst->w, dst->h) != 0) return -1;
     SDL_Rect flat = { 0, 0, dst->w, dst->h };
     if (SDL_SetRenderTarget(ren, g_flat) != 0) return -1;
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
     SDL_RenderClear(ren);
-    draw_flat(ren, src, sw, sh, &flat, 1, 2);
+    draw_flat(ren, src, sw, sh, &flat, 1, 2, crop);
     SDL_SetRenderTarget(ren, NULL);
 
     static SDL_Vertex vt[(CURVE_NX + 1) * (CURVE_NY + 1)];
@@ -292,9 +335,12 @@ int present_render(SDL_Renderer *ren, SDL_Texture *src,
     int ow = 0, oh = 0;
     if (SDL_GetRendererOutputSize(ren, &ow, &oh) != 0) return -1;
     int x, y, w, h;
-    present_content_rect_ex(filter, ow, oh, sw, sh, dw, dh, g_top, &x, &y, &w, &h);
+    SDL_Rect crop;
+    present_view(filter, ow, oh, sw, sh, dw, dh, g_top, g_zoom, &x, &y, &w, &h,
+                 &crop.x, &crop.y, &crop.w, &crop.h);
     if (w <= 0 || h <= 0) return -1;
     SDL_Rect dst = { x, y, w, h };
+    const SDL_Rect *cp = g_zoom ? &crop : NULL;
 
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
     SDL_RenderClear(ren);                            /* the letterbox bars */
@@ -302,21 +348,21 @@ int present_render(SDL_Renderer *ren, SDL_Texture *src,
     switch (filter) {
     case FILTER_INTEGER:
         SDL_SetTextureScaleMode(src, SDL_ScaleModeNearest);
-        SDL_RenderCopy(ren, src, NULL, &dst);
+        SDL_RenderCopy(ren, src, cp, &dst);
         break;
-    case FILTER_SHARP:          draw_flat(ren, src, sw, sh, &dst, 1, 0); break;
-    case FILTER_SCANLINES:      draw_flat(ren, src, sw, sh, &dst, 1, 1); break;
-    case FILTER_SOFT_SCANLINES: draw_flat(ren, src, sw, sh, &dst, 0, 1); break;
-    case FILTER_CRT:            draw_flat(ren, src, sw, sh, &dst, 1, 2); break;
+    case FILTER_SHARP:          draw_flat(ren, src, sw, sh, &dst, 1, 0, cp); break;
+    case FILTER_SCANLINES:      draw_flat(ren, src, sw, sh, &dst, 1, 1, cp); break;
+    case FILTER_SOFT_SCANLINES: draw_flat(ren, src, sw, sh, &dst, 0, 1, cp); break;
+    case FILTER_CRT:            draw_flat(ren, src, sw, sh, &dst, 1, 2, cp); break;
     case FILTER_CRT_CURVED:
 #if SDL_VERSION_ATLEAST(2, 0, 18)
-        if (draw_curved(ren, src, sw, sh, &dst) == 0) break;
+        if (draw_curved(ren, src, sw, sh, &dst, cp) == 0) break;
         SDL_SetRenderTarget(ren, NULL);
         SDL_RenderClear(ren);
 #endif
-        draw_flat(ren, src, sw, sh, &dst, 1, 2);
+        draw_flat(ren, src, sw, sh, &dst, 1, 2, cp);
         break;
-    default:                    draw_flat(ren, src, sw, sh, &dst, 0, 0); break;
+    default:                    draw_flat(ren, src, sw, sh, &dst, 0, 0, cp); break;
     }
     return 0;
 }
