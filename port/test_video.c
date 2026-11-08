@@ -366,16 +366,16 @@ static void t_gd_tables(const char *dir)
     /* the conversion: a frame of 0x44 pixels through each stage */
     static uint8_t fb[320 * 200], rgb[VIDEO_MAX_W * VIDEO_MAX_H * 3];
     memset(fb, 0x44, sizeof fb);
-    video_gd_to_rgb(&c, 1, fb, rgb);
+    video_gd_to_rgb(&c, 1, fb, NULL, rgb);
     ck(rgb[0] == 0xFF && rgb[1] == 0xFF && rgb[2] == 0xFF, "cga record 1, pair 0x44: white");
-    video_gd_to_rgb(&h, 1, fb, rgb);
+    video_gd_to_rgb(&h, 1, fb, NULL, rgb);
     ck(rgb[((size_t)video_hgc_line(0) * 720 + 40) * 3] == 0xAA, "hgc record 1, pair 0x44: lit");
-    video_gd_to_rgb(&t, 1, fb, rgb);
+    video_gd_to_rgb(&t, 1, fb, NULL, rgb);
     ck(rgb[0] == 0xFF && rgb[1] == 0xFF && rgb[2] == 0xFF, "tandy record 1, pair 0x44: bright white");
-    video_gd_to_rgb(&e, 1, fb, rgb);
+    video_gd_to_rgb(&e, 1, fb, NULL, rgb);
     ck(rgb[0] == rgb[3] && rgb[1] == rgb[4] && rgb[2] == rgb[5], "ega: both halves of pair 0x44 are the same colour");
     fb[0] = 0x10; fb[1] = 0x01;                 /* two different pixels: left/right halves split on EGA */
-    video_gd_to_rgb(&e, 1, fb, rgb);
+    video_gd_to_rgb(&e, 1, fb, NULL, rgb);
     ck(memcmp(rgb, rgb + 3, 3) != 0 || e.regs[1][1] == e.regs[1][0], "ega: pair 0x10 shows colour 1 left of colour 0");
 
     /* the intro's sand (gd_fx_sand): every build has the same 24 records' *shape*, but
@@ -434,9 +434,9 @@ static void t_gd_tables(const char *dir)
                 ck(sfb[18 * 320 + 18] == SAND_PIN(2) && sfb[19 * 320 + 16] == SAND_PIN(2) && sfb[19 * 320 + 18] == SAND_PIN(2),
                    "row 2 is 8A: pixels 2 0 2 2");
                 /* a palette change never recolours it: pin 2 is red under every record */
-                video_gd_to_rgb(&c2, 1, sfb, srgb);
+                video_gd_to_rgb(&c2, 1, sfb, g.pin, srgb);
                 uint8_t r1 = srgb[(16 * 320 + 16) * 3];
-                video_gd_to_rgb(&c2, 7, sfb, srgb);
+                video_gd_to_rgb(&c2, 7, sfb, g.pin, srgb);
                 ck(srgb[(16 * 320 + 16) * 3] == r1, "a sand pixel keeps its colour when the record changes");
                 g.vg = &h2;
                 gd_set_palette(&g, 1);

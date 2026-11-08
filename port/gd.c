@@ -603,6 +603,21 @@ void gd_tile_map(Gd *g, const uint8_t *map, const uint8_t *ttl2)
         }
 }
 
+/* A sand pixel is a driver colour that no later palette record recolours (the
+ * hardware does not either).  fb[] holds SAND_PIN(c) and pin[] c + 1; both must
+ * still agree, so a pixel a later picture overwrote is an ordinary pair again
+ * (the data of the cutscenes does use bytes 0x90..0x9F). */
+static void pin_put(Gd *g, int off, int c)
+{
+    g->fb[off] = SAND_PIN(c);
+    g->pin[off] = (uint8_t)((c & 15) + 1);
+}
+static int pin_at(const Gd *g, const uint8_t *p)
+{
+    int off = (int)(p - g->fb);
+    return g->pin[off] && *p == SAND_PIN(g->pin[off] - 1) ? g->pin[off] - 1 : -1;
+}
+
 /* 37B4 — draw scratch row `row`: the left half straight at screen bytes 0..135
  * and its pixel-mirrored copy at 184..319.  plane0&plane1 -> weight 1,
  * plane1 -> weights 2+4+8, so "both" = 15, "plane 1 only" = 14, "plane 0 only"
@@ -656,7 +671,7 @@ void gd_ornament_row(Gd *g, int row)
             uint8_t *dst[2] = { &d[c], &d[GD_W - 1 - c] };
             uint8_t src[2] = { px[c], mirror };
             for (int s = 0; s < 2; s++) {
-                uint8_t nc = t[src[s]], oc = (*dst[s] >> 4) == 9 ? (*dst[s] & 15) : t[*dst[s]];
+                uint8_t nc = t[src[s]], oc = pin_at(g, dst[s]) >= 0 ? pin_at(g, dst[s]) : t[*dst[s]];
                 if (!nc || (oc | nc) == oc) continue;
                 for (int p = 0; p < 256; p++)
                     if (t[p] == (oc | nc)) { *dst[s] = (uint8_t)p; break; }
@@ -676,7 +691,7 @@ void gd_ornament_row(Gd *g, int row)
             uint8_t src[2] = { px[c], mirror };
             for (int s = 0; s < 2; s++) {
                 if (!vis[c]) { *dst[s] = src[s]; continue; }              /* both opaque: the mask clears */
-                uint8_t nc = t[src[s]], oc = (*dst[s] >> 4) == 9 ? (*dst[s] & 15) : t[*dst[s]];
+                uint8_t nc = t[src[s]], oc = pin_at(g, dst[s]) >= 0 ? pin_at(g, dst[s]) : t[*dst[s]];
                 if (!nc || (oc | nc) == oc) continue;
                 for (int p = 0; p < 256; p++)
                     if (t[p] == (oc | nc)) { *dst[s] = (uint8_t)p; break; }
@@ -785,7 +800,7 @@ static void fx_tile(Gd *g, int id, int di, int phase0, int flags)
             uint8_t b = (uint8_t)((rec[r] & flags) | rec[4 + r]);
             for (int k = 0; k < 4; k++) {
                 int off = di + r * GD_W + k;
-                if (off >= 0 && off < GD_W * GD_H) g->fb[off] = SAND_PIN((b >> (6 - 2 * k)) & 3);
+                if (off >= 0 && off < GD_W * GD_H) pin_put(g, off, (b >> (6 - 2 * k)) & 3);
             }
         }
         return;
@@ -807,7 +822,7 @@ static void fx_tile(Gd *g, int id, int di, int phase0, int flags)
             if (off < 0 || off >= GD_W * GD_H) continue;
             /* gdtga 4AE4 turns the pair into its 4-bit colour through the current
              * record's table at once and stores that; the hardware never recolours it */
-            if (tandy) g->fb[off] = SAND_PIN(vg->tbl[g->pal_rec][(v[k] << 4) | v[k + 1]]);
+            if (tandy) pin_put(g, off, vg->tbl[g->pal_rec][(v[k] << 4) | v[k + 1]]);
             else       g->fb[off] = (uint8_t)((v[k] << 4) | v[k + 1]);
         }
     }

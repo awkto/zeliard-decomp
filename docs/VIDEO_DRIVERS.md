@@ -121,6 +121,14 @@ rotates `al` instead of `ah`, so every odd row uses the pass's unrotated mask). 
 to the driver's colour, ANDs it, and stores a pair that converts back to it (every colour of the CGA and Tandy
 pair tables has one); EGA clears the pair's halves.
 
+Verified against DOSBox-X captures of the real game's shop entry (Muralla drug store, `--video MODE --load DRUG`
+vs. `capture_video_mode.sh` with the CPU slowed 5x or 24x by Ctrl+F11, `port/tools/compare_dsv.py` / `dsv_rows.py`):
+CGA, HGC and Tandy mid-pass captures match the port's pass pictures on every playfield row (each row is the pass
+before or the pass in flight; one or two rows per shot differ only where the capture caught the scan), and EGA's
+mid-pass capture matches 130 of 144 rows exactly (the rest within 1%, sprite/animation pixels that also differ in
+the pre-dissolve town frame).  The before/after pictures of all four are exact.  CGA2 (mode 6) has no capture of
+its own; it is the same GMCGA.BIN.
+
 (Overlay listing addresses are given as real addresses: listing + 0x6000 for
 fight/town, + 0xA000 for select. STICK/GAME listings already have the right origin.)
 

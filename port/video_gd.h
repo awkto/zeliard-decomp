@@ -18,17 +18,16 @@ typedef struct VideoGd {
     int     has_sand2;              /* CGA / CGA2 / HGC: sand_pat / sand_mode are valid */
     uint8_t sand_pat[192];
     uint8_t sand_mode[3];
-    int     pins;                   /* CGA/HGC/Tandy: SAND_PIN bytes mean a driver colour */
 } VideoGd;
 
-/* a framebuffer byte whose high nibble is 9 (never a PC-88 colour) carries a
- * driver colour in its low nibble, bypassing the record's pair table */
+/* a sand pixel: the framebuffer byte SAND_PIN(c) with the Gd's `pin` plane (colour + 1)
+ * agreeing carries driver colour c, bypassing the record's pair table */
 #define SAND_PIN(c) ((uint8_t)(0x90 | ((c) & 15)))
 
 /* read the tables of the gd*.bin that `mode` loads (MCGA: nothing to read) */
 int  video_gd_load(VideoGd *v, int mode, const char *dir);
 /* a 320x200 cutscene frame (bytes `l<<4|r`) through record `rec`; `rgb` holds
  * video_size(mode) * 3 bytes */
-void video_gd_to_rgb(const VideoGd *v, int rec, const uint8_t *fb, uint8_t *rgb);
+void video_gd_to_rgb(const VideoGd *v, int rec, const uint8_t *fb, const uint8_t *pin, uint8_t *rgb);
 
 #endif

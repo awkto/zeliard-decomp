@@ -594,9 +594,10 @@ exactly on the driver's own row mapping (`video_hgc_line`), so the sand is one g
 `gdtga 399B` builds the *same* nibbles as MCGA (same records, flags and phase) and converts each pair through
 the **current record's table** at once (`4AE4`), storing the Tandy colour.  Neither the CGA/HGC/Tandy colour
 nor the sand's own patterns are recoloured by a later `gd_set_palette` (the hardware is not), so the port
-writes the sand as a *pinned driver colour*: a framebuffer byte whose high nibble is 9 (never a PC-88 colour)
-carries the colour in its low nibble and `video_gd_to_rgb` turns it into that colour whatever the record
-(`SAND_PIN`, video_gd.h).  gdega keeps its register palette like the hardware, so it needs nothing.
+writes the sand as a *pinned driver colour*: the byte `SAND_PIN(c)` (0x90 | c) in the framebuffer plus the colour in a
+parallel plane (`Gd.pin`), and `video_gd_to_rgb` turns such a pixel into that colour whatever the record
+(video_gd.h).  The plane is needed because the cutscene pictures do use bytes 0x90..0x9F themselves (they are black),
+and a pixel a later picture overwrote is an ordinary pair again.  gdega keeps its register palette like the hardware, so it needs nothing.
 
 Ground truth, DOSBox-X captures of the real game in each mode (`port/tools/compare_sand.py`: the sand's
 window x 16..303, y 16..119, every port frame 7090..7200 of act 3, best match): CGA, CGA2 and HGC 100.00%

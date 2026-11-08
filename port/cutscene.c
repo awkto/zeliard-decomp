@@ -173,7 +173,7 @@ void cutscene_size(const Cutscene *c, int *w, int *h) { video_size(c->vmode, w, 
 void cutscene_to_rgb(const Cutscene *c, uint8_t *rgb)
 {
     if (c->vmode == VID_MCGA) gd_to_rgb(&c->gd, c->fb, rgb);
-    else video_gd_to_rgb(&c->vgd, c->gd.pal_rec, c->fb, rgb);
+    else video_gd_to_rgb(&c->vgd, c->gd.pal_rec, c->fb, c->gd.pin, rgb);
 }
 
 /* ------------------------------------------------------- the scrollers */

@@ -41,6 +41,7 @@ typedef struct Gd {
     uint8_t  dac[256][3];               /* the DAC as programmed, 8-bit RGB */
     int      pal_rec;
     uint8_t *fb;                        /* A000:0000, GD_W*GD_H, caller-owned */
+    uint8_t  pin[GD_W * GD_H];          /* sand pixels (SAND_PIN, video_gd.h): colour + 1 where fb[] holds a pinned driver colour */
     uint8_t *scratch;                   /* (CS+0x2000), GD_SCRATCH, caller-owned */
     uint8_t  textbuf[GD_W * 10];        /* 4511: gd_text_line's 320x10 buffer */
     uint8_t  orn[GD_W];                 /* 5191: gd_draw_ornament_row's buffer */
