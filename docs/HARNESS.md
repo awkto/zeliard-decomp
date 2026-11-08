@@ -114,6 +114,64 @@ instead of the cave-mouth backdrop and the old HUD.  Fixed (#121): the Tear scen
 differed by 83 pixels at (77,50)-(95,67) in the A085 picture 3,1: the first [A002] pass of the bank entry
 runs at elapsed 0, `bank_entry` now makes it, so the teller's 30-tick steps land on the original's ticks.  The oracle's first step is a few ticks later or not, by the save's file name alone: BANK.usr, BANKW.usr = at elapsed 0, byte-identical BANKD.usr = 1..9 ticks late, because [FF50] is free-running from boot and sits at the 0x1E threshold at the bank door.  `bank_deposit` / `bank_hold` therefore start from BANK.usr.)
 
+### CPU time in the shop text path (#120, #125)
+
+The shops animate from the `[A002]` hook (kenjpro `AB47`, the others alike), which `idle_poll` (town `7042`, the hook at `7064`)
+calls once per pass of every polling loop.  `[FF50]` is incremented by the 236.7 Hz ISR (STICK `027F`) and the hook steps when it has
+reached its threshold (2 for the Sage), then resets it to 0.  The CPU does not stop between ticks: the text printer spends real
+time (a glyph about 440 cycles, the line scroll 7105 cycles a step, the word scan of `7269` three ticks, the menu and window draws
+thousands), during which there is no pass, so `[FF50]` jumps by more than the threshold, one step runs when the next pass comes and
+the surplus is lost.  The port used to charge those routines nothing, which left the Sage's blink and aura out of phase (#106
+patched a part with `scan/240` polled ticks; #120, #125).  `port/shop.c` now keeps a clock in cycles of the oracle (3000 per ms,
+12675 per tick) beside the tick count:
+
+* `shop_edge` is one ISR tick (`[FF50]++`, `[FF1A]++`, then the pass that sees it, then the presented-frame clock: the picture has the tick's hook step in it, which `make verify`'s armour frame 36 depends on); `shop_pass` is one pass of idle_poll (the hook, a
+  no-op until the next edge); `shop_burn(cycles)` is unpolled CPU time and every edge it crosses is an edge without a pass.
+* A polled wait is `[FF1A] = 0`, a pass, then an edge and a pass per tick until `[FF1A]` reaches the count; the compare that exits
+  follows a pass, so the last edge is seen by the hook.  `shop_wait_rest` does not reset `[FF1A]`: the Sage's arm frames reset it
+  *before* the draw (`A1E2`), so the draw is part of the 25 ticks, while the level-up flash draws first (`A2BD`) and resets after.
+* `print_text` does what `706C` does: the first word's `7224` scan, then per byte the 6-tick wait, and per glyph the draw and, after a
+  space or when muted, the next word's scan.  Printed names and numbers (`print_str`) go through the same printer.
+* The box and shop code around it: window clears, the bordered boxes, the menu labels, the page marker, the hook's own draws.
+
+Costs (cycles).  Measured with the oracle's `ORACLE_IPLOG` (`tools/harness/oracle-dosbox-x.patch`): the log has an `EDGE` for every ISR
+entry, `STEP`/`STEPEND` around each hook pass that steps, `IP` lines for the addresses listed in `ORACLE_IPLOG=706C,7084,...`
+(timestamps in cycles), and with `ORACLE_CALLLOG=1` a `CALL` line per `call [cs:xxxx]` with its duration and registers.  `rep movsw/stosw`
+costs 1.26 cycles an iteration in DOSBox-X, any other instruction 1.
+
+| What | Address | Cycles | How |
+|---|---|---|---|
+| tick | ISR `027F` to `027F` | 12675 | 65 consecutive EDGE lines |
+| pass latency after an edge | `7042` to `7064` | 40 | EDGE to the first `7064`, 24..56 |
+| line scroll step | `718E`, `[2024]` at `71A7` | 7065 + a pass | `7196` to `71AF`: 71046 for the ten steps |
+| glyph | `7093` to `7084`; `[2022]` at `7118` | 397 + 2 x set bits (`[2022]`: 346.7 + 1.99 x bits) | regression over 923 glyphs |
+| word scan | `7224` | 22 a byte + 22 | instruction count; `706C` to `7084` is 45 for a 1-byte word |
+| line-count scan | `7269` | 18 a byte + 16 + the word scan at each space | instruction count, 39138 for the sage verdict text (3.1 ticks) |
+| text box clear | `[2000]` bordered, `7221` | 8812 (54 x 55) | CALL |
+| page marker | `71BC` to `71DF` | 390 | IP |
+| marker window | `[2000]` at `71D4`, 2 x 10 | 172 | CALL |
+| window clear | `[2000]` with al = 0, `20E8` | 12 + rows x (10 + 2.52 x w4) | 5420 for 29 x 65 (`A983`) |
+| bordered box | `[2000]` with al != 0 | see `win_box_cycles` | 4132 for 28 x 45 (`A0D6`), 8812 for 54 x 55 |
+| menu label | `[2038]` at `752D` | 392 a character - 50 (+ 13 an item) | CALL, four items: 3186, 2816, 5023, 5393 |
+| aura draw | `AA16`, 32 x `[3016]` | 13250 | STEP..STEPEND 13240..13343; a cell is 401..406 |
+| blink draw | `ABDF` | 422 | STEP..STEPEND |
+| hook step, nothing drawn | `AB47` | 11 | STEP..STEPEND |
+| playfield XOR (level-up flash) | `[3000]` at `A2BD` | 66000 | CALL, 66112..66531 with the ISR inside |
+
+The Sage's `A1BD` is a `call [6004]` on what is left of the ritual text (one `00` byte, one 6-tick wait) that the port skipped.
+
+Result: `death_sage` and `water_current` (#120, the aura at the exit dissolve) and the Sage's text, ritual and level-up flash are on the
+oracle's hook steps edge for edge (the STEP lines of `ORACLE_IPLOG` against the port's, for `sage_levelup`, `sage_capped`).  What is
+left is a race the port cannot know: an ISR that lands between the hook's read of `[FF50]` and the next look at the clock (the
+`cmp [FF1A]` that exits a wait, or the poll site that writes a boundary, a few cycles later) makes the loop leave without the hook
+having seen that edge, in about one wait in five, and the outcome depends on the phase of the edge inside a 40-cycle iteration.  The
+port always lets the hook see it.  The result of the scenarios that print text and then draw a long menu follows from where it falls, and
+it depends on the start save: the file name changes the cycles the restore spends and with them the phase of the first waits, so the
+runs fall into a few classes by name (`LVNO` is one where the first wait ends without the hook's pass: the step is lost, 38 frames of the
+blink out of phase; `LVN` is not).  Like `BANK.usr` for #124, `sage_notyet` starts from `LVN.usr` for that reason.  The remaining
+differences are the eye cell (4 pixels) in the boundary frames where the blink toggles on the same edge as the boundary, listed as
+narrow `# allow-px` lines in the three Sage scenarios.
+
 ## 2. Inputs
 
 The port's `--script` language is the input language for both sides: `U D L R`
