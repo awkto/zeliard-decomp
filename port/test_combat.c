@@ -15,6 +15,7 @@
 #include "enemy.h"
 #include "text.h"
 #include "png.h"
+#include "autoatk.h"
 
 static int fails = 0, checks = 0;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { fails++; fprintf(stderr, "  FAIL %s:%d: ", __FILE__, __LINE__); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
@@ -948,6 +949,41 @@ static void t_hud(void)
     if (have_font) { /* nothing to free: TextFont is a plain struct */ }
 }
 
+/* The A / S pulse (autoatk.c) against the swing engine.  Measured on the original
+ * (tests/scenarios/pulse_*.zs, all clean): a swing is 3 boundary frames long for a
+ * slash (7 steps, 3E54) and 2 for an upward slash (5 steps), and the frame it ends in
+ * still ran 6E96 with `attacking` set, so a new swing starts the frame after: one
+ * 0 between swings, 1110 1110 / 110 110.  A press during a swing latches the edge
+ * (FF1D) and is NOT lost, never cuts the swing short; so the 1-on / 1-off pulse is
+ * back to back with the game's own cadence, and a slower pulse gains nothing. */
+static void pulse_run(int combo, int autofire, int n, char *out)
+{
+    AutoAtk at; autoatk_reset(&at);
+    start(30, 12, 0);
+    G.sword = 1;
+    for (int i = 0; i < n; i++) {
+        uint8_t d = 0, b = 0;
+        autoatk_step(&at, combo, autofire, &d, &b);
+        step(d, b);
+        out[i] = G.attacking ? '1' : '0';
+    }
+    out[n] = 0;
+}
+static void t_pulse(void)
+{
+    char s[64];
+    pulse_run(0, 1, 32, s);
+    CHECK(!strcmp(s, "11101110111011101110111011101110"), "S auto-fire: full slashes back to back, one gap frame (%s)", s);
+    pulse_run(1, 0, 32, s);
+    CHECK(!strncmp(s, "110110110110110110110110110110", 30), "A combo: full upward slashes back to back, one gap frame (%s)", s);
+    /* a slower pulse is never faster: same cadence, so the 1/1 pulse loses nothing */
+    start(30, 12, 0); G.sword = 1;
+    char q[40]; int pos = 0;
+    for (int i = 0; i < 36; i++) { step(DIR_UP | DIR_DOWN, (i % 3) == 0 ? 1 : 0); q[pos++] = G.attacking ? '1' : '0'; }
+    q[pos] = 0;
+    CHECK(!strncmp(q, "110110110110110110110110110110", 30), "combo pulsed 1 on / 2 off gives the same swings (%s)", q);
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -963,7 +999,7 @@ int main(int argc, char **argv)
         {"sword", t_sword}, {"sword render", t_sword_render}, {"drops", t_drop}, {"items", t_items}, {"bat wake", t_bat_wake}, {"frog hop", t_frog_hop},
         {"shots", t_shots}, {"magic", t_magic}, {"orbs", t_orbs}, {"sound", t_sound},
         {"eai tables", t_overlays}, {"eai run", t_overlay_run}, {"tall spawn", t_tall_spawn},
-        {"hud", t_hud},
+        {"hud", t_hud}, {"pulse", t_pulse},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = fails;

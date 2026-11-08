@@ -298,6 +298,13 @@ economy: caverns drop almas and the town bank exchanges them for gold (docs/TOWN
   (`6E91`).
 * Button-1 **held** + "down" while airborne and not on a conveyor →
   `attack_type = 2` (down-thrust), sound 4 once (`6E5C`).
+* **Swing cadence and repeated presses** (oracle, `tests/scenarios/pulse_{sword,up,combo}.zs`: 1 on / 1, 2, 3
+  off, plain, Up, Up+Down; all clean).  At the frame boundary a slash shows `attacking` for 3 frames and an
+  upward slash for 2 (7 and 5 steps of two per frame; the step that ends it runs in the frame after the last
+  one shown, and `6E81` has already run with `attacking` set).  A press during a swing latches `FF1D`, which
+  stays until `6EF7` consumes it: it never shortens the swing, and the next swing starts on the next frame.
+  Back to back that is `1110` (a slash, 4 frames) or `110` (an upward slash, 3 frames) repeating, whatever
+  the press rhythm, as long as one press arrives within each swing.
 * The renderer runs the swing: it increments `FF46` each frame and clears
   `attacking` when done (gfmcga `3E45`, `3F1A`); `FF44` is its frame flag.
 
