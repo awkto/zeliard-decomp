@@ -22,19 +22,20 @@
 
 /* --------------------------------------------------------------- loading */
 
-/* gfmcga 4B51 / 4990 read 2-bpp art out of their own image: two big-endian
- * plane words per row, MSB = leftmost pixel, value 0 transparent. */
+/* gfmcga 4B51 / 4990 read 2-bpp art out of their own image through 4092: each
+ * row is `w/8` bytes read as big-endian words, every word holding 8 PACKED
+ * pixels of two bits (the top two bits of the word are the leftmost pixel;
+ * 4092 shifts them out with add ax,ax / adc bl,bl).  Value 0 is transparent.
+ * (Not two bit planes: that reading was #121.) */
 static void load_2bpp(const uint8_t *src, int w, int rows, uint8_t *out, int stride)
 {
-    int words = w / 16;
+    int words = w / 8;
     for (int r = 0; r < rows; r++)
         for (int k = 0; k < words; k++) {
-            unsigned a = ((unsigned)src[0] << 8) | src[1];
-            unsigned b = ((unsigned)src[2] << 8) | src[3];
-            src += 4;
-            for (int i = 0; i < 16; i++)
-                out[r * stride + k * 16 + i] =
-                    (uint8_t)((((b >> (15 - i)) & 1) << 1) | ((a >> (15 - i)) & 1));
+            unsigned a = ((unsigned)src[0] << 8) | src[1];               /* lodsw; xchg al,ah */
+            src += 2;
+            for (int i = 0; i < 8; i++)
+                out[r * stride + k * 8 + i] = (uint8_t)((a >> (14 - 2 * i)) & 3);
         }
 }
 

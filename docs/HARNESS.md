@@ -109,9 +109,7 @@ pictures pairwise, and a picture on one side only is a failure.
 
 **What the audit found (all fixed unless marked open).** The port had no fade-in over the encounter card, an inverted and too fast card with the wrong HUD under
 it, no hero under the card, and a Tear scene played over the destination map with the destination's HUD
-instead of the cave-mouth backdrop and the old HUD.  Open: the Tear scene's raised-sword picture differs
-(about 100 pixels in the 16 x 24 blade area, none of the three `4A31` pictures matches the oracle: the
-scenarios have an `allow-px` for it), the spell 7 burst and the level-up flash are not drawn, the doorway to the past is not there, and `bank_menu` / `bank_withdraw` differ by 83
+instead of the cave-mouth backdrop and the old HUD.  Fixed (#121): the Tear scene's sword and sparkle pictures were read as two bit planes instead of the packed 2-bpp words 4092 shifts out. Open: the spell 7 burst and the level-up flash are not drawn, the doorway to the past is not there, and `bank_menu` / `bank_withdraw` differ by 83
 pixels at (77,50)-(95,67) in the first bank picture.
 
 ## 2. Inputs

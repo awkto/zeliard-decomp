@@ -1,5 +1,4 @@
 # start: JASHD.usr
-# allow-px: 36,2,187,109 frames 677 -- the Tear scene's raised sword, sparks and new slot icon differ (#121)
 # make: --town 8 --town-col 4 --level 99 --life 4000 --sword 6 --shield 4 --keys 1 --save JASHD
 # cave: 0,29,6,0,0x1B
 # what: Jashiin killed and the ending reached (#111).  `jashiin_damage`'s route and save; the autopilot's `boss` step (route `keys L3 .20 U3 .296; boss; door -1`, `kill_lookahead` in nav.c once he is within two blows of dead) kills him at ~f660 (phase 2 below 200 HP, 80-HP regeneration every 32 frames AB88, death ABC4, reward 71CC, 72F1's exit door), then by hand: U on the exit door (target MPA0 itself, system map 0x1E; MPA0's patch list sets [49] = FF on the reload, 6BFC), the Tear scene, 6266 -> 98FC death (hero_die: 99B4 town 0x80), Felishika's Castle entered alive (6055), the advisor's text (X), R62 to Princess Felicia's door (col 95), U: omoypro A03D -> enddemo.bin.  Since #113 the oracle has boundary sites in the ending (`end:wait`): the script's last 40 idle frames run into its first waits; jashiin_ending runs the whole ending.
