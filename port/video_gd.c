@@ -88,6 +88,16 @@ int video_gd_load(VideoGd *v, int mode, const char *dir)
             }
         }
     }
+    if (mode == VID_CGA || mode == VID_CGA2 || mode == VID_HGC) {
+        /* sand: 24 pattern records and the mode byte of each variant (CGA @3945 / @3AFC,
+         * HGC @3A0B / @3BC2); the variant indexes the bytes directly, no doubling */
+        unsigned pat = mode == VID_HGC ? 0x3A0B : 0x3945, mb = mode == VID_HGC ? 0x3BC2 : 0x3AFC;
+        if (pat - 0x3000 + 192 <= len && mb - 0x3000 + 3 <= len) {
+            memcpy(v->sand_pat, img + (pat - 0x3000), 192);
+            memcpy(v->sand_mode, img + (mb - 0x3000), 3);
+            v->has_sand2 = 1;
+        }
+    }
     free(img);
     v->loaded = 1;
     return 0;
@@ -95,13 +105,14 @@ int video_gd_load(VideoGd *v, int mode, const char *dir)
 
 void video_gd_size(int mode, int *w, int *h) { video_size(mode, w, h); }
 
-void video_gd_to_rgb(const VideoGd *v, int rec, const uint8_t *fb, uint8_t *rgb)
+void video_gd_to_rgb(const VideoGd *v, int rec, const uint8_t *fb, const uint8_t *pin, uint8_t *rgb)
 {
     static uint8_t idx[FB_W * FB_H];
     if (rec < 0 || rec > 9) rec = 0;
     if (v->mode == VID_EGA) { video_ega_regs_to_rgb(fb, v->regs[rec], rgb); return; }
     const uint8_t *t = v->tbl[rec];
-    for (int i = 0; i < FB_W * FB_H; i++) idx[i] = t[fb[i]];
+    for (int i = 0; i < FB_W * FB_H; i++)
+        idx[i] = pin && pin[i] && fb[i] == SAND_PIN(pin[i] - 1) ? (uint8_t)(pin[i] - 1) : t[fb[i]];
     switch (v->mode) {
     case VID_CGA:   video_cga_idx_to_rgb(idx, rgb);   break;
     case VID_CGA2:  video_cga2_idx_to_rgb(idx, rgb);  break;

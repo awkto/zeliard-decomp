@@ -108,6 +108,27 @@ routines clobber freely (AX BX CX DX SI DI BP ES; DS preserved where noted).
 | 2042 | `vid_clear_screen` | – | whole screen to 0 | 2C01 | 2D66 | 2E63 | 2E02 | 2DC3 | town 0x7617 (after loading overlay to A000) |
 | 2044 | `vid_convert_cells` | DS:SI bank, CX count | copy CX×48-byte PC-88 cells to staging, rewrite bank in native format (§2) | 2C2A | 2D99 | **2E92 = `ret`** | 2E37 | 2DF6 | fight 0x6205: `ds=[FF2C], si=0x8030, cx=0x66` (DCHR bank) |
 
+**The dissolve per driver (#118 follow-up, `video_dissolve_pass`).**  All five walk the same playfield
+(x 48..271, rows 14..157: the even rows, then the odd ones) eight times with a 0x1F40 delay after each
+pass, and each pass is a subset of the one before, so the passes accumulate.  What differs is the mask and
+what it does to a pixel: MCGA `218D` (01 03 07 0F 1F 3F 7F FF, a pixel per bit, rotating one bit a pixel and
+3 bits back a row) sets a pixel to 0 where the bit is set; CGA `217F` and HGC `21D6` (FE EE EA AA A8 88 80 00)
+AND each byte of four 2-bit pixels with the row's mask, rotated left 3 bits a row, so a colour loses bits
+rather than going black at once; Tandy `21A7` (FFFC FCFC FCCC CCCC CCC0 C0C0 C000 0000) ANDs a word of four
+4-bit pixels, rotated left 6 bits a row; EGA `21C0` (01 11 15 55 57 77 7F FF) is a bit-mask register value
+(write mode 2, data 0) over the EGA's half-pixels, rotated 3 bits a row on the even rows only (the odd loop
+rotates `al` instead of `ah`, so every odd row uses the pass's unrotated mask).  The port converts the pixel
+to the driver's colour, ANDs it, and stores a pair that converts back to it (every colour of the CGA and Tandy
+pair tables has one); EGA clears the pair's halves.
+
+Verified against DOSBox-X captures of the real game's shop entry (Muralla drug store, `--video MODE --load DRUG`
+vs. `capture_video_mode.sh` with the CPU slowed 5x or 24x by Ctrl+F11, `port/tools/compare_dsv.py` / `dsv_rows.py`):
+CGA, HGC and Tandy mid-pass captures match the port's pass pictures on every playfield row (each row is the pass
+before or the pass in flight; one or two rows per shot differ only where the capture caught the scan), and EGA's
+mid-pass capture matches 130 of 144 rows exactly (the rest within 1%, sprite/animation pixels that also differ in
+the pre-dissolve town frame).  The before/after pictures of all four are exact.  CGA2 (mode 6) has no capture of
+its own; it is the same GMCGA.BIN.
+
 (Overlay listing addresses are given as real addresses: listing + 0x6000 for
 fight/town, + 0xA000 for select. STICK/GAME listings already have the right origin.)
 

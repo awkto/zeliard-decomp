@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "gd.h"
+#include "video.h"
 #include "sar.h"
 
 #define GD_IMG(g, addr) ((g)->img + ((addr) - 0x3000))
@@ -602,6 +603,21 @@ void gd_tile_map(Gd *g, const uint8_t *map, const uint8_t *ttl2)
         }
 }
 
+/* A sand pixel is a driver colour that no later palette record recolours (the
+ * hardware does not either).  fb[] holds SAND_PIN(c) and pin[] c + 1; both must
+ * still agree, so a pixel a later picture overwrote is an ordinary pair again
+ * (the data of the cutscenes does use bytes 0x90..0x9F). */
+static void pin_put(Gd *g, int off, int c)
+{
+    g->fb[off] = SAND_PIN(c);
+    g->pin[off] = (uint8_t)((c & 15) + 1);
+}
+static int pin_at(const Gd *g, const uint8_t *p)
+{
+    int off = (int)(p - g->fb);
+    return g->pin[off] && *p == SAND_PIN(g->pin[off] - 1) ? g->pin[off] - 1 : -1;
+}
+
 /* 37B4 — draw scratch row `row`: the left half straight at screen bytes 0..135
  * and its pixel-mirrored copy at 184..319.  plane0&plane1 -> weight 1,
  * plane1 -> weights 2+4+8, so "both" = 15, "plane 1 only" = 14, "plane 0 only"
@@ -655,7 +671,7 @@ void gd_ornament_row(Gd *g, int row)
             uint8_t *dst[2] = { &d[c], &d[GD_W - 1 - c] };
             uint8_t src[2] = { px[c], mirror };
             for (int s = 0; s < 2; s++) {
-                uint8_t nc = t[src[s]], oc = t[*dst[s]];
+                uint8_t nc = t[src[s]], oc = pin_at(g, dst[s]) >= 0 ? pin_at(g, dst[s]) : t[*dst[s]];
                 if (!nc || (oc | nc) == oc) continue;
                 for (int p = 0; p < 256; p++)
                     if (t[p] == (oc | nc)) { *dst[s] = (uint8_t)p; break; }
@@ -675,7 +691,7 @@ void gd_ornament_row(Gd *g, int row)
             uint8_t src[2] = { px[c], mirror };
             for (int s = 0; s < 2; s++) {
                 if (!vis[c]) { *dst[s] = src[s]; continue; }              /* both opaque: the mask clears */
-                uint8_t nc = t[src[s]], oc = t[*dst[s]];
+                uint8_t nc = t[src[s]], oc = pin_at(g, dst[s]) >= 0 ? pin_at(g, dst[s]) : t[*dst[s]];
                 if (!nc || (oc | nc) == oc) continue;
                 for (int p = 0; p < 256; p++)
                     if (t[p] == (oc | nc)) { *dst[s] = (uint8_t)p; break; }
@@ -775,19 +791,39 @@ int gd_storm(Gd *g, const uint8_t *drops, const uint8_t *bolts)      /* 3437 */
  * inward-spiral run lengths at 3BE3; a tile is 4 screen bytes x 4 rows. */
 static void fx_tile(Gd *g, int id, int di, int phase0, int flags)
 {
+    const VideoGd *vg = g->vg;
+    if (vg && vg->loaded && vg->has_sand2) {
+        /* gdcga 38DF / gdhgc 3997: a row is one byte of four 2-bit pixels,
+         * (record[r] & mode) | record[4+r], no phase rotation */
+        const uint8_t *rec = vg->sand_pat + (id - 1) * 8;
+        for (int r = 0; r < 4; r++) {
+            uint8_t b = (uint8_t)((rec[r] & flags) | rec[4 + r]);
+            for (int k = 0; k < 4; k++) {
+                int off = di + r * GD_W + k;
+                if (off >= 0 && off < GD_W * GD_H) pin_put(g, off, (b >> (6 - 2 * k)) & 3);
+            }
+        }
+        return;
+    }
     const uint8_t *rec = GD_IMG(g, 0x3A5F) + (id - 1) * 8;
+    int tandy = vg && vg->loaded && vg->mode == VID_TANDY;
     for (int r = 0; r < 4; r++) {
         uint8_t phase = (uint8_t)phase0;
         if (r & 1) phase = (uint8_t)((phase >> 1) | (phase << 7));
         uint8_t b = rec[4 + r], t = (uint8_t)(rec[r] & phase);
+        uint8_t v[8];
         for (int k = 0; k < 8; k++) {
             int bit = (b >> (7 - k)) & 1, dith = (t >> (7 - k)) & 1;
-            uint8_t v = (uint8_t)(bit ? 6 : 0);
-            if (dith) { if (flags & 1) v |= 1; if (flags & 2) v |= 2; if (flags & 4) v |= 4; }
+            v[k] = (uint8_t)(bit ? 6 : 0);
+            if (dith) { if (flags & 1) v[k] |= 1; if (flags & 2) v[k] |= 2; if (flags & 4) v[k] |= 4; }
+        }
+        for (int k = 0; k < 8; k += 2) {
             int off = di + r * GD_W + k / 2;
             if (off < 0 || off >= GD_W * GD_H) continue;
-            if (k & 1) g->fb[off] = (uint8_t)((g->fb[off] & 0xF0) | v);
-            else       g->fb[off] = (uint8_t)((g->fb[off] & 0x0F) | (v << 4));
+            /* gdtga 4AE4 turns the pair into its 4-bit colour through the current
+             * record's table at once and stores that; the hardware never recolours it */
+            if (tandy) pin_put(g, off, vg->tbl[g->pal_rec][(v[k] << 4) | v[k + 1]]);
+            else       g->fb[off] = (uint8_t)((v[k] << 4) | v[k + 1]);
         }
     }
 }
@@ -797,6 +833,7 @@ int gd_fx_sand(Gd *g, int variant)                                   /* 38E6 */
     if (variant < 0 || variant > 2) variant = 0;
     int flags  = GD_IMG(g, 0x3C16)[variant * 2];
     int phase0 = GD_IMG(g, 0x3C17)[variant * 2];
+    if (g->vg && g->vg->loaded && g->vg->has_sand2) flags = g->vg->sand_mode[variant];
     int di = 16 * GD_W + 16;
     const uint8_t *si = GD_IMG(g, 0x3B1F);
     static const int STEP[4] = { 0x500, 4, -0x500, -4 };

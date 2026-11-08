@@ -366,17 +366,176 @@ static void t_gd_tables(const char *dir)
     /* the conversion: a frame of 0x44 pixels through each stage */
     static uint8_t fb[320 * 200], rgb[VIDEO_MAX_W * VIDEO_MAX_H * 3];
     memset(fb, 0x44, sizeof fb);
-    video_gd_to_rgb(&c, 1, fb, rgb);
+    video_gd_to_rgb(&c, 1, fb, NULL, rgb);
     ck(rgb[0] == 0xFF && rgb[1] == 0xFF && rgb[2] == 0xFF, "cga record 1, pair 0x44: white");
-    video_gd_to_rgb(&h, 1, fb, rgb);
+    video_gd_to_rgb(&h, 1, fb, NULL, rgb);
     ck(rgb[((size_t)video_hgc_line(0) * 720 + 40) * 3] == 0xAA, "hgc record 1, pair 0x44: lit");
-    video_gd_to_rgb(&t, 1, fb, rgb);
+    video_gd_to_rgb(&t, 1, fb, NULL, rgb);
     ck(rgb[0] == 0xFF && rgb[1] == 0xFF && rgb[2] == 0xFF, "tandy record 1, pair 0x44: bright white");
-    video_gd_to_rgb(&e, 1, fb, rgb);
+    video_gd_to_rgb(&e, 1, fb, NULL, rgb);
     ck(rgb[0] == rgb[3] && rgb[1] == rgb[4] && rgb[2] == rgb[5], "ega: both halves of pair 0x44 are the same colour");
     fb[0] = 0x10; fb[1] = 0x01;                 /* two different pixels: left/right halves split on EGA */
-    video_gd_to_rgb(&e, 1, fb, rgb);
+    video_gd_to_rgb(&e, 1, fb, NULL, rgb);
     ck(memcmp(rgb, rgb + 3, 3) != 0 || e.regs[1][1] == e.regs[1][0], "ega: pair 0x10 shows colour 1 left of colour 0");
+
+    /* the intro's sand (gd_fx_sand): every build has the same 24 records' *shape*, but
+     * gdcga / gdhgc carry their own 2 bpp ones, read here out of the overlays */
+    {
+        static const struct { int mode, res; unsigned pat, mode_b, border, spiral; } SD[] = {
+            { VID_CGA, 2, 0x3945, 0x3AFC, 0x3A05, 0x3AC9 }, { VID_HGC, 3, 0x3A0B, 0x3BC2, 0x3ACB, 0x3B8F },
+            { VID_TANDY, 4, 0x3A44, 0x3BFB, 0x3B04, 0x3BC8 }, { VID_EGA, 1, 0x39AC, 0x3B63, 0, 0x3B30 },
+        };
+        size_t ml = 0;
+        uint8_t *mc = sar_load(dir, 0, 5, 1, &ml);
+        if (mc) {
+            const uint8_t *mpat = mc + (0x3A5F - 0x3000), *mborder = mc + (0x3B1F - 0x3000), *mspiral = mc + (0x3BE3 - 0x3000);
+            for (unsigned i = 0; i < sizeof SD / sizeof *SD; i++) {
+                size_t len = 0;
+                uint8_t *b = sar_load(dir, 0, SD[i].res, 1, &len);
+                if (!b) continue;
+                const char *n = video_mode_name(SD[i].mode);
+                if (SD[i].mode == VID_TANDY || SD[i].mode == VID_EGA) {
+                    ck(!memcmp(b + SD[i].pat - 0x3000, mpat, 192), "%s: the sand's 24 records are gdmcga's", n);
+                    ck(!memcmp(b + SD[i].mode_b - 0x3000, mc + 0x3C16 - 0x3000, 6), "%s: the sand's mode table is gdmcga's", n);
+                } else {
+                    ck(memcmp(b + SD[i].pat - 0x3000, mpat, 192), "%s: the sand's records are its own 2 bpp ones", n);
+                    int diff = 0;
+                    for (int k = 0; k < 192; k++) diff += b[SD[i].pat - 0x3000 + k] != mpat[k];
+                    ck(diff == 79, "%s: 79 of 192 sand bytes differ from MCGA's (%d)", n, diff);
+                }
+                if (SD[i].border) ck(!memcmp(b + SD[i].border - 0x3000, mborder, 0xC4), "%s: the sand's border script is gdmcga's", n);
+                ck(!memcmp(b + SD[i].spiral - 0x3000, mspiral, 51), "%s: the sand's spiral run lengths (51 bytes up to the 0) are gdmcga's", n);
+                free(b);
+            }
+            free(mc);
+        }
+        VideoGd c2, h2;
+        if (!video_gd_load(&c2, VID_CGA, dir) && !video_gd_load(&h2, VID_HGC, dir)) {
+            size_t len = 0;
+            uint8_t *bc = sar_load(dir, 0, 2, 1, &len), *bh = sar_load(dir, 0, 3, 1, &len);
+            ck(c2.has_sand2 && h2.has_sand2 && bc && bh, "gdcga / gdhgc sand tables load");
+            if (bc && bh) {
+                ck(!memcmp(c2.sand_pat, bc + 0x3945 - 0x3000, 192) && !memcmp(c2.sand_mode, bc + 0x3AFC - 0x3000, 3), "gdcga sand tables read back");
+                ck(!memcmp(h2.sand_pat, bh + 0x3A0B - 0x3000, 192) && !memcmp(h2.sand_mode, bh + 0x3BC2 - 0x3000, 3), "gdhgc sand tables read back");
+                ck(!memcmp(c2.sand_pat, h2.sand_pat, 192), "the two builds carry the same 2 bpp records");
+                ck(c2.sand_mode[0] == 0x00 && c2.sand_mode[1] == 0xAA && c2.sand_mode[2] == 0x55, "sand mode bytes 00 / AA / 55 (CGA)");
+            }
+            free(bc); free(bh);
+            /* a sand tile: record 1 is AND 00 00 00 03 / OR 80 80 8A 88; the first row is byte 0x80 = pixels 2 0 0 0 */
+            static uint8_t sfb[320 * 200], sscr[0x10000], srgb[VIDEO_MAX_W * VIDEO_MAX_H * 3];
+            Gd g;
+            if (!gd_init(&g, dir, sfb, sscr, NULL)) {
+                g.vg = &c2;
+                gd_set_palette(&g, 1);
+                ck(gd_fx_sand(&g, 0) == 0, "the sand runs");
+                ck(sfb[16 * 320 + 16] == SAND_PIN(2) && sfb[16 * 320 + 17] == SAND_PIN(0) &&
+                   sfb[17 * 320 + 16] == SAND_PIN(2) && sfb[18 * 320 + 16] == SAND_PIN(2) && sfb[19 * 320 + 19] == SAND_PIN(0),
+                   "CGA sand tile 1 at (16,16) is rows 80 80 8A 88 in 2-bit pixels (record 0, mode 00)");
+                ck(sfb[18 * 320 + 18] == SAND_PIN(2) && sfb[19 * 320 + 16] == SAND_PIN(2) && sfb[19 * 320 + 18] == SAND_PIN(2),
+                   "row 2 is 8A: pixels 2 0 2 2");
+                /* a palette change never recolours it: pin 2 is red under every record */
+                video_gd_to_rgb(&c2, 1, sfb, g.pin, srgb);
+                uint8_t r1 = srgb[(16 * 320 + 16) * 3];
+                video_gd_to_rgb(&c2, 7, sfb, g.pin, srgb);
+                ck(srgb[(16 * 320 + 16) * 3] == r1, "a sand pixel keeps its colour when the record changes");
+                g.vg = &h2;
+                gd_set_palette(&g, 1);
+                memset(sfb, 0, sizeof sfb);
+                gd_fx_sand(&g, 1);
+                ck(sfb[19 * 320 + 19] == SAND_PIN(2), "HGC sand variant 1 (mode AA): last pixel of row 3 = (03 & AA) | 88 -> 2");
+                gd_free(&g);
+            }
+        }
+    }
+}
+
+/* The dissolve of each driver (issue #118): the masks are read back out of the
+ * GM*.BIN files, then the passes are checked on a frame of one colour. */
+static int dsv_colour(int mode, uint8_t v)
+{
+    uint8_t bd;
+    if (video_town_pixel(mode, 20, v, &bd)) return bd;
+    return mode == VID_TANDY ? VID_TGA_PAIR[v & 63] : VID_CGA_PAIR[v & 63];
+}
+
+static void t_dissolve(const char *dir)
+{
+    printf("dissolve        ");
+    static const struct { const char *file; unsigned at; size_t n; const void *have; } T[] = {
+        { "GMCGA.BIN", 0x217F, 8,  VID_DSV_CGA }, { "GMHGC.BIN", 0x21D6, 8, VID_DSV_CGA },
+        { "GMEGA.BIN", 0x21C0, 8,  VID_DSV_EGA }, { "GMTGA.BIN", 0x21A7, 16, VID_DSV_TGA },
+    };
+    for (unsigned i = 0; i < sizeof T / sizeof *T; i++) {
+        char path[1024];
+        snprintf(path, sizeof path, "%s/%s", dir, T[i].file);
+        FILE *f = fopen(path, "rb");
+        if (!f) continue;
+        uint8_t d[0x400];
+        size_t n = fread(d, 1, sizeof d, f);
+        fclose(f);
+        if (n < T[i].at - 0x2000 + T[i].n) { n = 0; }
+        else ck(!memcmp(d + T[i].at - 0x2000, T[i].have, T[i].n), "%s @%04X dissolve masks", T[i].file, T[i].at);
+        (void)n;
+    }
+    static uint8_t fb[320 * 200], a[320 * 200];
+    /* CGA / HGC / CGA2: pair 6 is colour 3 (white); the mask of a row is rotated left 3 bits a row */
+    for (int m = VID_CGA; m <= VID_TANDY; m++) {
+        if (m == VID_EGA) continue;
+        int tandy = m == VID_TANDY;
+        const uint8_t *pt = tandy ? VID_TGA_PAIR : VID_CGA_PAIR;
+        uint8_t full = 0;
+        for (int i = 0; i < 64; i++) if (pt[i] == (tandy ? 15 : 3)) { full = (uint8_t)i; break; }
+        memset(fb, full, sizeof fb);
+        video_dissolve_pass(m, fb, 0);
+        const char *nm = video_mode_name(m);
+        int ok = 1;
+        /* row 14: mask FE (CGA/HGC, fields 3 3 3 2) / FFFC (Tandy, nibbles F C F F); row 15 is the same, row 16 rotated */
+        static const int want_cga[3][4] = { {3,3,3,2}, {3,3,3,2}, {3,3,1,3} };
+        static const int want_tga[3][4] = { {15,12,15,15}, {15,12,15,15}, {3,15,15,15} };   /* row 16: FFFC rol 6 = FF3F */
+        int rows[3] = { 14, 15, 16 };
+        for (int k = 0; k < 3; k++)
+            for (int x = 0; x < 224; x++) {
+                int c = dsv_colour(m, fb[rows[k] * 320 + 48 + x]);
+                int w = tandy ? want_tga[k][x & 3] : want_cga[k][x & 3];
+                if (c != w) ok = 0;
+            }
+        ck(ok, "%s pass 0: the byte/word mask picks the colour bits of each pixel", nm);
+        /* outside the playfield nothing moves */
+        ck(fb[14 * 320 + 47] == full && fb[14 * 320 + 272] == full && fb[13 * 320 + 100] == full && fb[158 * 320 + 100] == full,
+           "%s: the dissolve stays inside x 48..271, rows 14..157", nm);
+        /* cumulative and idempotent: passes 0..3 one by one == pass 3 alone */
+        memset(fb, full, sizeof fb); memset(a, full, sizeof a);
+        for (int n = 0; n < 4; n++) video_dissolve_pass(m, fb, n);
+        video_dissolve_pass(m, a, 3);
+        int same = 1;
+        for (int y = 14; y < 158; y++)
+            for (int x = 48; x < 272; x++)
+                if (dsv_colour(m, fb[y * 320 + x]) != dsv_colour(m, a[y * 320 + x])) same = 0;
+        ck(same, "%s: passes 0..3 in place show what pass 3 alone shows", nm);
+        /* the last pass blanks the playfield completely */
+        video_dissolve_pass(m, fb, 7);
+        int blank = 1;
+        for (int y = 14; y < 158; y++)
+            for (int x = 48; x < 272; x++) if (dsv_colour(m, fb[y * 320 + x]) != 0) blank = 0;
+        ck(blank, "%s: pass 7 clears every pixel", nm);
+    }
+    /* EGA: the mask is a bit mask over the EGA's half-pixels; the even rows rotate it, the odd rows do not (214E's
+     * `rol al` instead of `rol ah`) */
+    {
+        memset(fb, 0x3F, sizeof fb);
+        video_dissolve_pass(VID_EGA, fb, 0);                         /* 01: the right half of every 4th game pixel */
+        ck(fb[14 * 320 + 48 + 3] == 0x38 && fb[14 * 320 + 48 + 2] == 0x3F && fb[14 * 320 + 48 + 7] == 0x38,
+           "EGA pass 0 row 14: bit 0 = the right half of pixel x%%4 == 3");
+        ck(fb[16 * 320 + 48 + 2] == 0x07 && fb[16 * 320 + 48 + 3] == 0x3F,
+           "EGA pass 0 row 16: 01 rotated left 3 = 08 = the left half of pixel 2");
+        ck(fb[17 * 320 + 48 + 3] == 0x38 && fb[17 * 320 + 48 + 2] == 0x3F && fb[15 * 320 + 48 + 3] == 0x38,
+           "EGA pass 0 odd rows: the mask is never rotated");
+        video_dissolve_pass(VID_EGA, fb, 7);
+        int blank = 1;
+        for (int y = 14; y < 158; y++)
+            for (int x = 48; x < 272; x++) if (fb[y * 320 + x]) blank = 0;
+        ck(blank && fb[14 * 320 + 47] == 0x3F, "EGA pass 7 (FF) clears the playfield and nothing else");
+    }
 }
 
 /* The drivers all drew for a 4:3 monitor, so the presentation shape is not the
@@ -417,6 +576,7 @@ int main(int argc, char **argv)
     t_tables(dir); printf("ok\n");
     t_town_tables(dir); printf("ok\n");
     t_gd_tables(dir); printf("ok\n");
+    t_dissolve(dir); printf("ok\n");
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;
 }

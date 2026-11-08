@@ -92,6 +92,26 @@ extern const uint8_t VID_GT_TGA[64];        /* gttga.bin @3DCB */
 extern const uint8_t VID_YM_MTN_C[16], VID_YM_MTN_T[16], VID_YM_GND_C[16], VID_YM_GND_T0[16], VID_YM_GND_T1[16];
 extern const uint8_t VID_CK_MTN_C[16], VID_CK_MTN_T[16], VID_CK_GND_C[16], VID_CK_GND_T[16];
 
+/* The screen dissolve, [2040] (gmmcga 2130, issue #118): each driver has its own.
+ * MCGA zeroes a pixel where the rotating mask bit is set; CGA / HGC (2124 / 2143)
+ * AND the 2-bit colours of every byte with a row mask (FE EE EA AA A8 88 80 00),
+ * Tandy (2124) AND the 4-bit colours with a 16-bit mask (FFFC .. C000 0000), EGA
+ * (214E) writes colour 0 through the bit-mask register on the EGA's half-pixels
+ * (01 11 15 55 57 77 7F FF).  The pair buffer holds a *pair*, so for the modes
+ * whose result is a colour of its own the pass converts the pixel to the driver's
+ * colour first and stores a pair that converts back to the masked colour (every
+ * colour of both tables has a pair).  Pass n (0..7) is done in place; passes
+ * are cumulative and idempotent, like the originals' masks (each is a subset of
+ * the one before).  MCGA's is render_dissolve_pass(). */
+void video_dissolve_pass(int mode, uint8_t *fb, int pass);
+extern const uint8_t VID_DSV_CGA[8];        /* GMCGA.BIN @217F == GMHGC.BIN @21D6 */
+extern const uint16_t VID_DSV_TGA[8];       /* GMTGA.BIN @21A7 (words) */
+extern const uint8_t VID_DSV_EGA[8];        /* GMEGA.BIN @21C0 */
+/* the video mode the engine is rendering in, for the renderers that have no
+ * access to the App (render_dissolve_pass picks the driver's pass from it) */
+void video_set_current(int mode);
+int  video_current(void);
+
 /* GMHGC.BIN @2E11: game row -> Hercules scan line (3 rows over 4 lines, +37) */
 int video_hgc_line(int y);
 

@@ -1,5 +1,6 @@
 #include "render.h"
 #include "gfx.h"
+#include "video.h"
 #include "text.h"
 #include "enemy.h"
 #include <string.h>
@@ -810,6 +811,7 @@ void render_to_rgb(const uint8_t *fb, uint8_t *rgb)
 /* ---- gmmcga 2130 vid_dissolve_playfield, one pass ---- */
 void render_dissolve_pass(uint8_t *fb, int pass)
 {
+    if (video_current() != VID_MCGA) { video_dissolve_pass(video_current(), fb, pass); return; }   /* the driver's own 2124 / 214E / 2143 */
     static const uint8_t masks[8] = { 0x01, 0x03, 0x07, 0x0F, 0x1F, 0x3F, 0x7F, 0xFF };   /* 218D */
     unsigned al = masks[pass & 7];
     uint8_t *p = fb + 0x11B0;                           /* 213C: row 14, x 48 */
