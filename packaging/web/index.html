@@ -35,6 +35,7 @@
   <p><small>Saves (.usr), save states and settings are kept in this browser (IndexedDB), along with the game files you picked, so you only choose them once.</small></p>
 </div>
 <div id="stage"><canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas></div>
+<script src="sync.js"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -193,6 +194,7 @@ function start() {
   new MutationObserver(fit).observe($('canvas'), { attributes: true, attributeFilter: ['width', 'height'] });
   audioUnlock();
   persistLoop();
+  if (window.ZelSync) ZelSync.apply();      // cloud sync settings -> zeliard.ini (sync.js)
   // callMain runs inside a click/change handler or just after one, so SDL may start audio
   Module.callMain(['--dir', '/game', '--scale', '3', '--touch', 'auto']);
   $('canvas').focus();

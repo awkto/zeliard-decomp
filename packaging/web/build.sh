@@ -11,12 +11,12 @@ REPO="$(cd "$HERE/../.." && pwd)"
 OUT="$REPO/build/web"
 cd "$REPO/port"
 rm -f *.o zeliard.js zeliard.wasm
-# SDL comes from -sUSE_SDL=2; empty CURL_* selects net_stub.c; local.mk is ignored
+# SDL comes from -sUSE_SDL=2; net_fetch.c is the network backend; local.mk is ignored
 # CFLAGS goes in the environment: a command-line CFLAGS would also override the
 # Makefile's per-target `CFLAGS +=` (miniz's include path)
 CFLAGS="-std=c11 -O2 -Wall -Wno-unused-parameter" emmake make zeliard.js CC=emcc ${WEB_ASYNC:+WEB_ASYNC="$WEB_ASYNC"} \
   SDL_CFLAGS="-sUSE_SDL=2" SDL_LIBS="-sUSE_SDL=2" CURL_CFLAGS= CURL_LIBS=
 rm -rf "$OUT"; mkdir -p "$OUT"
 cp zeliard.js zeliard.wasm "$OUT/"
-cp "$HERE/index.html" "$HERE/keys.js" "$OUT/"
+cp "$HERE/index.html" "$HERE/keys.js" "$HERE/sync.js" "$OUT/"
 ls -l "$OUT"

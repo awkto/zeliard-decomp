@@ -624,6 +624,23 @@ static void title_paused(App *a, const char *base)
     title_apply(a);
 }
 
+#ifdef __EMSCRIPTEN__
+/* Save sync in the web build (#55).  No threads: a push queued by the save hook
+ * runs here, in frame_wait, right after a frame was presented -- never deep in
+ * the engine's call stack.  The fetch yields to the browser (net_fetch.c, every
+ * request capped at 8 s); a dead server costs one short hitch, not a hang. */
+static void (*web_push_fn)(void *);
+static void *web_push_arg;
+static void web_push_run(void)
+{
+    if (!web_push_fn) return;
+    void (*f)(void *) = web_push_fn; web_push_fn = NULL;
+    f(web_push_arg);
+}
+static void *web_push_spawn(void (*fn)(void *), void *arg) { web_push_fn = fn; web_push_arg = arg; return &web_push_fn; }
+static void web_push_join(void *h) { (void)h; web_push_run(); }
+#endif
+
 /* Wait out one frame, pumping events; while paused, keep pumping and hold the
  * frame clock so resuming does not fast-forward. */
 static void frame_wait(App *a, Game *g, Uint64 *next)
@@ -661,6 +678,7 @@ static void frame_wait(App *a, Game *g, Uint64 *next)
     }
 #ifdef __EMSCRIPTEN__
     if (!slept) emscripten_sleep(0);   /* ASYNCIFY: still hand the thread back once a frame */
+    web_push_run();                    /* a queued save-sync push (#55) */
 #endif
 }
 
@@ -1088,6 +1106,9 @@ static void on_usr_saved(const char *dir, const char *name)
     synclife_request_push(&g_sl);                       /* returns at once: the push is on its own thread */
 }
 #ifdef HAVE_SDL
+#ifdef __EMSCRIPTEN__
+static const SyncRunner sync_runner = { web_push_spawn, web_push_join };
+#else
 static int sync_thread_main(void *p)
 {
     void **v = p; ((void (*)(void *))v[0])(v[1]); return 0;
@@ -1112,6 +1133,7 @@ static void sync_join(void *handle)
     free(h[1]); free(h);
 }
 static const SyncRunner sync_runner = { sync_spawn, sync_join };
+#endif
 
 /* the "Two saves found for this key" modal, over a black frame, before the
  * first town loads.  Keys come through the same SDL pump as the F7 dialog. */

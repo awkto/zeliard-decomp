@@ -84,8 +84,9 @@ WEB_LDFLAGS = -O2 -sUSE_SDL=2 $(WEB_ASYNC) -sASYNCIFY_STACK_SIZE=262144 -sSTACK_
               -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=67108864 -lidbfs.js \
               -sINVOKE_RUN=0 -sEXIT_RUNTIME=0 -sFORCE_FILESYSTEM=1 \
               -sEXPORTED_RUNTIME_METHODS=FS,callMain,IDBFS -sEXPORTED_FUNCTIONS=_main
-zeliard.js: main.o trace.o $(CORE) $(SDL_ONLY) $(SYNC_OBJ) syncdlg.o $(NET_OBJ)
-	$(CC) -o $@ $^ $(LIBS) $(NET_LIBS) $(WEB_LDFLAGS)
+# the web build's network backend is fetch() (net_fetch.c, #55), never libcurl/the stub
+zeliard.js: main.o trace.o $(CORE) $(SDL_ONLY) $(SYNC_OBJ) syncdlg.o net_fetch.o
+	$(CC) -o $@ $^ $(LIBS) $(WEB_LDFLAGS)
 
 test_physics: test_physics.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
@@ -140,6 +141,7 @@ test_sync.o: CFLAGS += -Ithird_party/miniz
 net_curl.o: net_curl.c net.h
 	$(CC) $(CFLAGS) $(CURL_CFLAGS) -c -o $@ $<
 net_stub.o: net_stub.c net.h
+net_fetch.o: net_fetch.c net.h
 net_winhttp.o: net_winhttp.c net.h
 main.o: sync.h synclife.h syncdlg.h
 

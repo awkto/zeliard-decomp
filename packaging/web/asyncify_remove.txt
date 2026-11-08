@@ -84,10 +84,8 @@ config_render
 config_save
 config_set
 decfloat
-do_push
 do_putc
 fclose
-fetch_auto
 fflush
 fiprintf
 flow
@@ -148,7 +146,6 @@ player_save_usr
 png_write_rgb
 pop_arg
 printf_core
-push_worker
 puts
 qsort
 read_all
@@ -181,18 +178,12 @@ strtox
 sync_backup
 sync_bundle_extract
 sync_bundle_merge
-sync_cli
 sync_ctx_init
-sync_health
 sync_key_resolve
 sync_key_store
 sync_link_get
 sync_link_mark
-sync_pull
-sync_push
-sync_remote_auto
 sync_scan_local
-sync_status
 syncdlg_draw
 syncdlg_open
 synclife_begin
