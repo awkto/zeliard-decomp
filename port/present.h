@@ -91,6 +91,34 @@ void present_curve_map(float u, float v, float *x, float *y);
 /* Vignette darkness (0 clear .. 255 black) at position u,v in 0..1. */
 int  present_vignette_alpha(float u, float v);
 
+/* Zoom (Z): a source rectangle that crops the decorative stone frame off the
+ * in-game screens (cavern, town, shops, the status screen), leaving the
+ * playfield and the HUD panel under it.  Presentation only: the engine
+ * framebuffer is untouched, so every filter (crt-curved included) just samples
+ * the sub-rectangle.  The rectangle is fixed on the 320x200 MCGA layout --
+ * playfield x 48..271, y 14..157; HUD panel y 158..195 (rows 196..199 are
+ * blank panel margin) -- and scales with the source for the 640-wide modes. */
+#define PRESENT_ZOOM_X 48
+#define PRESENT_ZOOM_Y 14
+#define PRESENT_ZOOM_W 224
+#define PRESENT_ZOOM_H 182
+#define PRESENT_ZOOM_REF_W 320
+#define PRESENT_ZOOM_REF_H 200
+/* The crop rectangle in a sw x sh source (zero size if the source is empty). */
+void present_zoom_rect(int sw, int sh, int *x, int *y, int *w, int *h);
+
+/* One call that answers "where does the picture go, and which part of the
+ * source is it": the content rectangle (as present_content_rect_ex, but of the
+ * cropped picture when `zoom`) plus the source rectangle `sx,sy,sw_,sh_` it
+ * shows (the whole source when !zoom).  Shared by the renderer and the touch
+ * layout so both agree. */
+void present_view(int filter, int win_w, int win_h, int sw, int sh, int dw, int dh,
+                  int top, int zoom,
+                  int *x, int *y, int *w, int *h,
+                  int *sx, int *sy, int *sw_, int *sh_);
+/* Zoom for the next present_render() calls (like present_set_portrait_top). */
+void present_set_zoom(int on);
+
 #ifdef HAVE_SDL
 struct SDL_Renderer;
 struct SDL_Texture;

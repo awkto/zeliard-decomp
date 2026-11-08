@@ -159,6 +159,9 @@ typedef struct {
     SDL_Texture *mv_tex;                /* the map raster, built when it opens */
     int      mv_ox, mv_oy, mv_center;   /* view origin in cells; mv_center: re-centre on the hero at the next draw */
     Uint32   mv_note_until;             /* "No map in town" shows until this SDL tick */
+    int      zoom;                      /* Z: crop the decorative border (present.h) */
+    int      zoomable;                  /* the picture about to be presented has the stone frame (cavern, town, shops, status) */
+    int      pf_zoom;                   /* ...and what the last present_frame did, for the viewer's redraw */
     int      pf_w, pf_h;                /* the last picture size present_frame drew, so the viewer can redraw under itself */
 #endif
     int turbo, turbo_n, force_draw;     /* host fast-forward (hold ACT_TURBO): shorter frame wait, most presents skipped, audio muted */
@@ -425,20 +428,22 @@ static int mv_key(App *a, const SDL_KeyboardEvent *k)
  * the sampling.  Presentation only: `make verify` never reaches this path. */
 static void present_frame(App *a, int sw, int sh)
 {
-    a->pf_w = sw; a->pf_h = sh;
+    a->pf_w = sw; a->pf_h = sh; a->pf_zoom = a->zoomable;
     int dw = sw, dh = sh;
+    int zoomed = a->zoom && a->zoomable;
     if (turbo_skip(a)) return;               /* fast-forward: most pictures are never drawn */
     if (!a->square) video_display_size(a->video, &dw, &dh);
     /* #54: where the picture goes decides where the controls can; in a portrait
      * window the picture rides at the top once the overlay is up (the layout is
      * computed as if it were, so the first touch finds the controls in place) */
     {
-        int ow = 0, oh = 0, x, y, w, h;
+        int ow = 0, oh = 0, x, y, w, h, cx, cy, cw, ch;
         if (a->touch.mode != TOUCH_OFF && SDL_GetRendererOutputSize(a->ren, &ow, &oh) == 0) {
-            present_content_rect_ex(a->filter, ow, oh, sw, sh, dw, dh, 1, &x, &y, &w, &h);
+            present_view(a->filter, ow, oh, sw, sh, dw, dh, 1, zoomed, &x, &y, &w, &h, &cx, &cy, &cw, &ch);
             touch_set_content(&a->touch, ow, oh, x, y, w, h);
         }
         present_set_portrait_top(touch_visible(&a->touch));
+        present_set_zoom(zoomed);
         touch_set_dialog(&a->touch, a->rest.state || a->spd.state || a->sync_dlg);
     }
     if (present_render(a->ren, a->tex, sw, sh, dw, dh, a->filter) != 0)
@@ -532,6 +537,13 @@ static void pump_events(App *a, Game *g)
                     snprintf(nm, sizeof nm, "%s", present_filter_name(a->filter));
                     for (char *q = nm; *q; q++) if (*q >= 'a' && *q <= 'z') *q -= 32;
                     statekeys_osd(&a->sk, "FILTER: %s", nm);
+                }
+            }
+            else if (input_event_match(&a->in, ACT_ZOOM, &e.key)) {
+                if (!e.key.repeat) {
+                    a->zoom = !a->zoom;
+                    fprintf(stderr, "[video] zoom: %s\n", a->zoom ? "on" : "off");
+                    statekeys_osd(&a->sk, "ZOOM %s", a->zoom ? "ON" : "OFF");
                 }
             }
             else if (input_event_match(&a->in, ACT_MENU, &e.key)) {
@@ -668,12 +680,18 @@ static void frame_wait(App *a, Game *g, Uint64 *next)
         if (a->esc_edge) { a->esc_edge = 0; a->paused = !a->paused; title_apply(a); }
         if (a->quit) { mv_close(a); break; }
         if (a->mv_open) {                                /* the map viewer holds the game: redraw it (the marker blinks) */
+            a->zoomable = a->pf_zoom;
             present_frame(a, a->pf_w, a->pf_h);
+            a->zoomable = 0;
             SDL_Delay(16);
             *next = SDL_GetPerformanceCounter();
             continue;
         }
-        if (a->paused) { SDL_Delay(16); *next = SDL_GetPerformanceCounter(); continue; }
+        if (a->paused) {
+            /* keep redrawing the held picture, so Z / F3 and their OSD message show while paused */
+            if (a->pf_w > 0) { a->zoomable = a->pf_zoom; present_frame(a, a->pf_w, a->pf_h); a->zoomable = 0; }
+            SDL_Delay(16); *next = SDL_GetPerformanceCounter(); continue;
+        }
         now = SDL_GetPerformanceCounter();
         if (now >= *next) break;
         Uint64 rem = (*next - now) * 1000 / freq;
@@ -794,7 +812,8 @@ static void usage(void)
         "  --touch M   on-screen touch controls: auto (default: shown on the first touch,\n"
         "              hidden again by keyboard or controller use), on or off; size and opacity\n"
         "              are touch.size / touch.opacity in zeliard.ini\n"
-        "  --fullscreen  start full-screen (F11 or Alt+Enter toggles; Esc pauses, Q quits)\n"
+        "  --fullscreen  start full-screen (F or F11, or Alt+Enter, toggles; Esc pauses, Q quits)\n"
+        "  --zoom        start with the decorative border cropped (Z toggles)\n"
         "  --video M   render through one of the five original drivers:\n"
         "              mcga (default) cga cga2 ega hgc tandy — the RESOURCE.CFG\n"
         "              `videoDrv` set, at each driver's own screen size\n"
@@ -1014,7 +1033,9 @@ static void restore_modal(App *a, Game *g, Town *t)
             int vw, vh;
             const uint8_t *rgb = video_out(a, &vw, &vh);
             SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+            a->zoomable = 1;                                /* the F7 / F9 dialogs sit over the game screen */
             present_frame(a, vw, vh);
+            a->zoomable = 0;
             frame_wait(a, g, &next);                        /* pumps events into rest_q */
             if (a->rest_qn) {
                 int sym = a->rest_q[0];
@@ -1088,7 +1109,9 @@ static void speed_modal(App *a, Game *g, Town *t)
             int vw, vh;
             const uint8_t *rgb = video_out(a, &vw, &vh);
             SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+            a->zoomable = 1;                                /* the F7 / F9 dialogs sit over the game screen */
             present_frame(a, vw, vh);
+            a->zoomable = 0;
             frame_wait(a, g, &next);
             if (a->rest_qn) {
                 int sym = a->rest_q[0];
@@ -1669,7 +1692,9 @@ static void present(Game *g)
         const uint8_t *rgb = video_out(a, &vw, &vh);
         SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
         a->force_draw = 1;
+        a->zoomable = 1;                                    /* the stone frame is on screen: Z can crop it */
         present_frame(a, vw, vh);
+        a->zoomable = 0;
         char title[256];
         snprintf(title, sizeof title, "Zeliard - %s  (%d,%d)  LIFE %u/%u  EXP %u  GOLD %u  %s", g->map->name,
                  game_hero_map_col(g), game_hero_map_row(g), g->hp, g->max_hp, g->exp, (unsigned)g->gold, g->message);
@@ -1766,7 +1791,9 @@ static void town_present(Town *t)
         const uint8_t *rgb = video_out(a, &vw, &vh);
         SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
         a->force_draw = 1;
+        a->zoomable = 1;
         present_frame(a, vw, vh);
+        a->zoomable = 0;
         char title[768];
         snprintf(title, sizeof title, "Zeliard - %s  col %d  LIFE %u/%u  GOLD %u  %.400s", t->map->label,
                  town_hero_col(t), t->g->hp, t->g->max_hp, (unsigned)t->g->gold, t->message);
@@ -1823,6 +1850,7 @@ static void config_capture(Config *c, const App *a, const char *dir, int backend
     if (remember_dir && dir) snprintf(c->dir, sizeof c->dir, "%s", dir);
     c->scale = a->scale;
     c->fullscreen = a->fullscreen;
+    c->zoom = a->zoom;
     snprintf(c->video, sizeof c->video, "%s", video_mode_name(a->video));
     snprintf(c->filter, sizeof c->filter, "%s", present_filter_name(a->filter));
     snprintf(c->aspect, sizeof c->aspect, "%s", a->square ? "1:1" : "4:3");
@@ -1900,7 +1928,7 @@ int main(int argc, char **argv)
     int want_audio = 1, audio_backend = AUDIO_ADLIB, music_force = -2;
     /* #42: which settings the command line named, so the config can fill in
      * only the rest (a flag always wins). */
-    int have_scale = 0, have_fullscreen = 0, have_video = 0, have_filter = 0,
+    int have_scale = 0, have_fullscreen = 0, have_zoom = 0, have_video = 0, have_filter = 0,
         have_aspect = 0, have_music = 0, have_speaker = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--dir") && i + 1 < argc) dir = argv[++i];
@@ -1921,6 +1949,7 @@ int main(int argc, char **argv)
             if (touch_mode < 0) { fprintf(stderr, "--touch: expected on, off or auto\n"); return 2; }
         }
         else if (!strcmp(argv[i], "--fullscreen")) { a.fullscreen = 1; have_fullscreen = 1; }
+        else if (!strcmp(argv[i], "--zoom")) { a.zoom = 1; have_zoom = 1; }       /* start zoomed (Z toggles) */
         /* the drivers all drew for a 4:3 monitor, so their pixels are not
          * square; --aspect 1:1 turns the correction off for pixel-peeping
          * against docs/screenshots/, which are native framebuffer grabs */
@@ -2033,6 +2062,7 @@ int main(int argc, char **argv)
     if (!a.headless) {
         if (!have_scale && cfg.scale > 0) a.scale = cfg.scale;
         if (!have_fullscreen && cfg.fullscreen >= 0) a.fullscreen = cfg.fullscreen;
+        if (!have_zoom && cfg.zoom >= 0) a.zoom = cfg.zoom;
         if (!have_video && cfg.video[0])   { int m = video_mode_by_name(cfg.video); if (m >= 0) a.video = m; }
         if (!have_filter && cfg.filter[0]) { int f = present_filter_by_name(cfg.filter); if (f >= 0) a.filter = f; }
         if (!have_aspect && cfg.aspect[0]) a.square = !strcmp(cfg.aspect, "1:1") || !strcmp(cfg.aspect, "square");

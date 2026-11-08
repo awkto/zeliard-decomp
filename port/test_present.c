@@ -159,6 +159,53 @@ static void t_geometry(void)
     ck(w <= 100 && h <= 100 && w > 0 && h > 0, "a tiny window falls back to a fit");
 }
 
+/* ----------------------------------------------------------- the zoom crop */
+static void t_zoom(void)
+{
+    printf("zoom crop       ");
+    int x, y, w, h;
+    present_zoom_rect(320, 200, &x, &y, &w, &h);
+    ck(x == 48 && y == 14 && w == 224 && h == 182, "320x200: the playfield + HUD (48,14 224x182, got %d,%d %dx%d)", x, y, w, h);
+    ck(x + w == 272 && y + h <= 200, "the crop stays inside the source and ends at the playfield's right edge");
+    present_zoom_rect(640, 200, &x, &y, &w, &h);
+    ck(x == 96 && w == 448 && y == 14 && h == 182, "640x200 doubles the columns only (got %d,%d %dx%d)", x, y, w, h);
+    present_zoom_rect(0, 0, &x, &y, &w, &h);
+    ck(w == 0 && h == 0, "an empty source gives an empty crop");
+    int ok = 1;
+    static const int sizes[][2] = { {320, 200}, {640, 200}, {640, 350}, {720, 348}, {160, 100}, {1, 1} };
+    for (unsigned i = 0; i < sizeof sizes / sizeof *sizes; i++) {
+        present_zoom_rect(sizes[i][0], sizes[i][1], &x, &y, &w, &h);
+        if (x < 0 || y < 0 || w < 0 || h < 0 || x + w > sizes[i][0] || y + h > sizes[i][1]) ok = 0;
+    }
+    ck(ok, "the crop fits inside every source size");
+
+    /* the view: 1000x700 window, 320x200 shown at 320x240 */
+    int cx, cy, cw, ch, vx, vy, vw, vh;
+    present_view(FILTER_SMOOTH, 1000, 700, 320, 200, 320, 240, 0, 0, &vx, &vy, &vw, &vh, &cx, &cy, &cw, &ch);
+    ck(vw == 933 && vh == 700 && cx == 0 && cy == 0 && cw == 320 && ch == 200, "zoom off is the whole source in the usual rect");
+    present_view(FILTER_SMOOTH, 1000, 700, 320, 200, 320, 240, 0, 1, &vx, &vy, &vw, &vh, &cx, &cy, &cw, &ch);
+    ck(cx == 48 && cy == 14 && cw == 224 && ch == 182, "zoom on shows the crop rectangle");
+    ck(vh == 700 && vw == 700 * 224 / 218 && vx == (1000 - vw) / 2 && vy == 0,
+       "zoomed: height-bound, pillarboxed and centred (%dx%d at %d,%d)", vw, vh, vx, vy);
+    /* the crop keeps the pixel aspect: an output row is 1.2 output columns, as unzoomed */
+    ck(vh * 500 * cw >= vw * 594 * ch && vh * 500 * cw <= vw * 606 * ch,       /* within 1% */
+       "a source row is 1.2 source columns tall, as in the unzoomed picture");
+    {
+        int ux, uy, uw, uh;
+        present_view(FILTER_SMOOTH, 1000, 700, 320, 200, 320, 240, 0, 0, &ux, &uy, &uw, &uh, NULL, NULL, NULL, NULL);
+        ck(vh * 1000 / ch > uh * 1000 / 200, "zoom magnifies (a source row covers more output rows)");
+    }
+    present_view(FILTER_INTEGER, 1000, 700, 320, 200, 320, 240, 0, 1, &vx, &vy, &vw, &vh, &cx, &cy, &cw, &ch);
+    ck(vw % 224 == 0 && vh % 182 == 0 && vw / 224 == vh / 182 && vw / 224 == 3,
+       "integer + zoom: a 3x multiple of the 224x182 crop (%dx%d)", vw, vh);
+    ck(vx >= 0 && vy >= 0 && vx + vw <= 1000 && vy + vh <= 700, "integer + zoom fits the window");
+    /* --aspect 1:1 and a portrait window with the touch overlay (top = 1) */
+    present_view(FILTER_SMOOTH, 600, 1000, 320, 200, 320, 200, 1, 1, &vx, &vy, &vw, &vh, &cx, &cy, &cw, &ch);
+    ck(vw == 600 && vy == 0 && vh == 600 * 182 / 224, "portrait top + zoom: width-bound, at the top (%dx%d at %d,%d)", vw, vh, vx, vy);
+    present_view(FILTER_SMOOTH, 0, 0, 320, 200, 320, 240, 0, 1, &vx, &vy, &vw, &vh, NULL, NULL, NULL, NULL);
+    ck(vw == 0 && vh == 0, "a zero window is empty");
+}
+
 #ifdef HAVE_SDL
 #include <SDL.h>
 
@@ -358,6 +405,36 @@ static void t_render(void)
         }
     }
 
+    /* zoom: the frame (outside the crop) is red, the crop green.  Through every
+     * filter, with zoom on, nothing red may reach the window. */
+    {
+        int cx, cy, cw, ch;
+        present_zoom_rect(SRC_W, SRC_H, &cx, &cy, &cw, &ch);
+        for (int j = 0; j < SRC_H; j++)
+            for (int i = 0; i < SRC_W; i++) {
+                int in = i >= cx && i < cx + cw && j >= cy && j < cy + ch;
+                sbuf[(size_t)j * SRC_W + i] = in ? 0xFF00C000u : 0xFFD00000u;
+            }
+        SDL_UpdateTexture(src, NULL, sbuf, SRC_W * 4);
+        present_set_zoom(1);
+        for (int k = 0; k < FILTER_COUNT; k++) {
+            render_read(ren, src, k, f[0], ow, oh);
+            int red = 0, green = 0;
+            for (size_t p = 0; p < (size_t)ow * oh; p++) {
+                unsigned v = f[0][p], r = (v >> 16) & 255, g = (v >> 8) & 255;
+                if (r > 100 && r > g * 2) red++;
+                if (g > 60 && g > r * 2) green++;
+            }
+            ck(red == 0, "%s + zoom: no frame pixel (red) reaches the window (%d did)", present_filter_name(k), red);
+            ck(green > 100000, "%s + zoom: the crop fills the window (%d green pixels)", present_filter_name(k), green);
+        }
+        present_set_zoom(0);
+        render_read(ren, src, FILTER_SMOOTH, f[0], ow, oh);
+        int red = 0;
+        for (size_t p = 0; p < (size_t)ow * oh; p++) { unsigned v = f[0][p]; if (((v >> 16) & 255) > 100 && ((v >> 8) & 255) < 50) red++; }
+        ck(red > 10000, "zoom off shows the frame again (%d red pixels)", red);
+    }
+
     for (int k = 0; k < FILTER_COUNT; k++) free(f[k]);
     free(sbuf);
     SDL_DestroyTexture(src);
@@ -374,6 +451,7 @@ int main(void)
     t_names();      printf("ok\n");
     t_curve();      printf("ok\n");
     t_geometry();   printf("ok\n");
+    t_zoom();       printf("ok\n");
 #ifdef HAVE_SDL
     t_render();     printf("ok\n");
 #else
