@@ -1,7 +1,5 @@
 # Roadmap
 
-Canonical copy: https://gitlab.dnsif.ca/github/zeliard-decomp/-/issues/11 (tracking epic).
-
 Tracking epic for all remaining work. Written to be executable without prior session context. Read this top-to-bottom before starting any sub-issue.
 
 ## Ground rules

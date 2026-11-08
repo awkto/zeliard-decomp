@@ -13,12 +13,6 @@ Code locations:
 - Desktop client (Go): `wasm:native/launcher/core/sync.go`, `link.go`,
   `states.go`; CLI in `wasm:native/launcher/cli.go`.
 - Android client (Kotlin): `wasm:android-native/app/src/main/java/com/awkto/zeliard/SaveSync.kt`.
-- Deployment on pro: container `zeliard` (image `awkto/zeliard-wasm:latest`,
-  127.0.0.1:5025), volume `zeliard-saves` mounted at `/saves`, nginx vhost
-  `/etc/nginx/sites-available/zeliard.pro.dnsif.ca`. Live check:
-  `GET /api/health` returned `{"ok": true, "auth": "none"}` (no `SYNC_TOKEN` set
-  there). Another deployment is named in `wasm:js/sync-config.js:10`
-  (`https://zeliard.box.dnsif.ca/`, only a comment).
 
 ## 1. Endpoints
 

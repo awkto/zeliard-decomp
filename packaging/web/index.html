@@ -20,7 +20,7 @@
 <body>
 <div id="pick">
   <h1>Zeliard</h1>
-  <p>This runs the C port in your browser. It needs your own copy of the game files
+  <p id="intro">This runs the C port in your browser. It needs your own copy of the game files
      (the folder with <code>ZELRES1.SAR</code>). They are read locally and never uploaded.</p>
   <label for="dir">Game folder</label>
   <input id="dir" type="file" webkitdirectory multiple>
@@ -35,7 +35,6 @@
   <p><small>Saves (.usr), save states and settings are kept in this browser (IndexedDB), along with the game files you picked, so you only choose them once.</small></p>
 </div>
 <div id="stage"><canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas></div>
-<script src="sync.js"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -91,6 +90,7 @@ function showPick() {
   $('saved').style.display = have ? '' : 'none';
   status(have ? (fromServer ? 'Game files provided by this server. Press Play.' : 'Your game files are stored in this browser.')
               : 'Choose your game folder or zip.');
+  if (fromServer) $('intro').textContent = 'This runs the C port in your browser. This site provides the game files.';
   if (have) $('play').focus();
 }
 $('play').onclick = () => begin(null);
@@ -194,7 +194,6 @@ function start() {
   new MutationObserver(fit).observe($('canvas'), { attributes: true, attributeFilter: ['width', 'height'] });
   audioUnlock();
   persistLoop();
-  if (window.ZelSync) ZelSync.apply();      // cloud sync settings -> zeliard.ini (sync.js)
   // callMain runs inside a click/change handler or just after one, so SDL may start audio
   Module.callMain(['--dir', '/game', '--scale', '3', '--touch', 'auto']);
   $('canvas').focus();
