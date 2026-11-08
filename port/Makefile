@@ -15,7 +15,7 @@ CORE = sar.o gfx.o map.o physics.o render.o png.o enemy.o ai.o combat.o shots.o 
        boss.o boss_crab.o boss_tako.o boss_tori.o boss_zela.o boss_meda.o boss_lega.o \
        boss_drgn.o boss_akma.o boss_mao1.o boss_mao2.o boss_generic.o \
        text.o player.o shop.o status.o shell.o savestate.o nav.o playthrough.o opl2.o sn76496.o sndjr.o msd.o audio.o \
-       config.o statekeys.o restore.o speed.o \
+       config.o statekeys.o restore.o speed.o mapview.o \
        gd.o cutscene.o tear.o \
        video.o video_mcga.o video_cga.o video_ega.o video_hgc.o video_tandy.o video_gd.o
 # SDL-only objects: the display filters (#53) and the key/controller remapping
@@ -59,7 +59,7 @@ ifeq ($(SAN),1)
   LIBS   += -fsanitize=address,undefined
 endif
 
-all: zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config test_sync test_present test_touch
+all: zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config test_sync test_mapview test_present test_touch
 
 # present.o is the SDL display-filter stage (#53).  It is *not* in CORE: the
 # engine test binaries must stay SDL-free, so only zeliard and test_present
@@ -118,6 +118,9 @@ test_video: test_video.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
 
 # the settings-file parser/writer (#42); pure C, no game files needed
+test_mapview: test_mapview.o $(CORE)
+	$(CC) -o $@ $^ $(LIBS)
+
 test_config: test_config.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
 
@@ -164,7 +167,7 @@ COUNTS = $(CURDIR)/.test_counts.txt
 
 test: SHELL := /bin/bash
 test: .SHELLFLAGS := -o pipefail -c
-test: test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config test_sync
+test: test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config test_sync test_mapview
 	@rm -f $(COUNTS)
 	./test_physics 2>&1 | tee -a $(COUNTS)
 	./test_combat 2>&1 | tee -a $(COUNTS)
@@ -178,6 +181,7 @@ test: test_physics test_combat test_town test_boss test_shop test_status test_pl
 	./test_video ../zeliard 2>&1 | tee -a $(COUNTS)
 	./test_config 2>&1 | tee -a $(COUNTS)
 	./test_sync 2>&1 | tee -a $(COUNTS)
+	./test_mapview 2>&1 | tee -a $(COUNTS)
 	tools/check_counts.sh $(COUNTS)
 
 # random-input soak test (tools/monkey.py): `make monkey N=50 FRAMES=600 SEED=1`
@@ -1036,7 +1040,7 @@ fuzz-smoke: fuzz fuzz-corpus
 	./fuzz/fuzz_grp -max_total_time=$(FUZZ_TIME) -close_fd_mask=3 $(FUZZ_CORPUS)/grp
 
 clean:
-	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config test_sync test_present test_touch
+	rm -f *.o zeliard test_physics test_combat test_town test_boss test_shop test_status test_playthrough test_audio test_cutscene test_video test_config test_sync test_mapview test_present test_touch
 	rm -rf fuzz/obj fuzz/fuzz_sar fuzz/fuzz_map fuzz/fuzz_grp fuzz/fuzz_seed
 
 .PHONY: all test verify monkey soak playthrough clean fuzz fuzz-corpus fuzz-smoke
