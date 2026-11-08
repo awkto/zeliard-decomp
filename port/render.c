@@ -5,12 +5,20 @@
 #include "enemy.h"
 #include <string.h>
 
+/* Smooth scrolling (#127): NULL on the engine's own path */
+static const SmoothOfs *s_sm;
+void render_set_smooth(const SmoothOfs *ofs) { s_sm = ofs && ofs->active ? ofs : NULL; }
+
 static void blit8(uint8_t *fb, const Cell8 *c, int x, int y)
 {
+    /* x is clipped to the playfield too: a tile drawn part-way through a smooth
+     * slide straddles its edge (an aligned tile never does, so nothing changes) */
+    int x0 = x < PF_X ? PF_X : x, x1 = x + 8 > PF_X + PF_W ? PF_X + PF_W : x + 8;
+    if (x1 <= x0) return;
     for (int r = 0; r < 8; r++) {
         int yy = y + r;
         if (yy < PF_Y || yy >= PF_Y + PF_H) continue;
-        memcpy(fb + yy * FB_W + x, c->px[r], 8);
+        memcpy(fb + yy * FB_W + x0, c->px[r] + (x0 - x), (size_t)(x1 - x0));
     }
 }
 
@@ -167,7 +175,8 @@ static void draw_hero_at(uint8_t *fb, const Game *g, const HeroGfx *h, int hx, i
 
 static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
 {
-    draw_hero_at(fb, g, h, PF_X + g->hero_scr_col * 8, PF_Y + g->hero_scr_row * 8, g->hero_entering);
+    draw_hero_at(fb, g, h, PF_X + g->hero_scr_col * 8 + (s_sm ? s_sm->hx : 0),
+                 PF_Y + g->hero_scr_row * 8 + (s_sm ? s_sm->hy : 0), g->hero_entering);
 }
 
 /* gfmcga 3E34/3FD0 compute the blade's pixel origin [4FF7] = [4FED] + the
@@ -225,6 +234,7 @@ static void draw_sword(uint8_t *fb, const Game *g, const HeroGfx *h)
 {
     int x0, y0;
     if (!sword_origin(g, h, &x0, &y0)) return;
+    if (s_sm) { x0 += s_sm->hx; y0 += s_sm->hy; }
     const SwordGfx *sg = &h->sword;
     int sw = g->sword > 6 ? 6 : g->sword;
     int sec = SWORD_SECTION[sw - 1];                                     /* kernel mode 4 */
@@ -346,7 +356,8 @@ static void draw_enemies(uint8_t *fb, const Game *g)
             if (!cell || cell >= g->egfx->ncells) continue;
             int cx = sc + (k & 1), cy = sr + (k >> 1);
             if (cx < -1 || cx > SCREEN_COLS) continue;
-            blit2r(fb, &g->egfx->cell[cell], PAL2BPP[pal], PF_X + cx * 8, PF_Y + cy * 8);
+            blit2r(fb, &g->egfx->cell[cell], PAL2BPP[pal], PF_X + cx * 8 + (s_sm ? s_sm->ox[i] : 0),
+                   PF_Y + cy * 8 + (s_sm ? s_sm->oy[i] : 0));
         }
     }
 }
@@ -360,12 +371,16 @@ static void draw_shots(uint8_t *fb, const Game *g)
         if (s->col == 0xFF) break;
         if (!s->col) continue;
         int sc = (int)s->col - 4;
-        if (sc < 0 || sc >= SCREEN_COLS) continue;
         int sr = (int)((s->row - g->scroll_row) & 0x3F);
+        if (s_sm) {                              /* a slide reveals the ring column / row just outside the window */
+            if (sc < -1 || sc > SCREEN_COLS) continue;
+            if (sr == 0x3F) sr = -1;
+        } else if (sc < 0 || sc >= SCREEN_COLS) continue;
         if (sr >= SCREEN_ROWS) continue;
         uint8_t cell = shot_draw_cell(s);
         if (!cell || !g->tiles->present[cell]) continue;
-        blit8t(fb, &g->tiles->cell[cell], PF_X + sc * 8, PF_Y + sr * 8);
+        blit8t(fb, &g->tiles->cell[cell], PF_X + sc * 8 + (s_sm ? s_sm->sx[i] : 0),
+               PF_Y + sr * 8 + (s_sm ? s_sm->sy[i] : 0));
     }
 }
 
@@ -383,10 +398,12 @@ static void draw_magic(uint8_t *fb, const Game *g)
         int sc = (int)rcol - 4, sr = (int)((m->row - g->scroll_row) & 0x3F);
         for (int k = 0; k < 4; k++) {
             int cx = sc + OFS[k][0], cy = sr + OFS[k][1];
-            if (cx < 0 || cx >= SCREEN_COLS || cy < 0 || cy >= SCREEN_ROWS) continue;
+            if (s_sm ? (cx < -1 || cx > SCREEN_COLS || cy < -1 || cy >= SCREEN_ROWS)
+                     : (cx < 0 || cx >= SCREEN_COLS || cy < 0 || cy >= SCREEN_ROWS)) continue;
             uint8_t cell = cells[k];
             if (!cell || !g->tiles->present[cell]) continue;
-            blit8t(fb, &g->tiles->cell[cell], PF_X + cx * 8, PF_Y + cy * 8);
+            blit8t(fb, &g->tiles->cell[cell], PF_X + cx * 8 + (s_sm ? s_sm->mx[i] : 0),
+                   PF_Y + cy * 8 + (s_sm ? s_sm->my[i] : 0));
         }
     }
 }
@@ -605,9 +622,17 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
         if (h) draw_hero(fb, g, h);                     /* the hero stands under the card (oracle side pictures w60EF / w6108, #119) */
         return;
     }
-    for (int sr = 0; sr < SCREEN_ROWS; sr++) {
-        for (int sc = 0; sc < SCREEN_COLS; sc++) {
-            uint8_t v = game_bg_cell(g, sc, sr);        /* 3159: the cell before 315C animates it */
+    /* Smooth scrolling draws the tiles at a pixel offset and so needs the ring
+     * cell just beyond the window on the side being revealed (the ring is 36
+     * wide: 4 spare columns each side, and its rows wrap) */
+    int wx = s_sm ? s_sm->wx : 0, wy = s_sm ? s_sm->wy : 0;
+    int sc0 = wx > 0 ? -((wx + 7) / 8) : 0, sc1 = SCREEN_COLS + (wx < 0 ? (-wx + 7) / 8 : 0);
+    int sr0 = wy > 0 ? -((wy + 7) / 8) : 0, sr1 = SCREEN_ROWS;
+    for (int sr = sr0; sr < sr1; sr++) {
+        for (int sc = sc0; sc < sc1; sc++) {
+            int rp = (game_win(g) + sr * RING_W + sc + 4) % RING_SIZE;
+            if (rp < 0) rp += RING_SIZE;
+            uint8_t v = g->bg_ring[rp];                 /* 3159: the cell before 315C animates it (game_bg_cell, wrapped both ways) */
             if (v & 0x80) {                             /* a sprite marker hides the tile it covers;
                                                          * the background buffer (E900) keeps it */
                 int i = v & 0x7F;
@@ -615,7 +640,7 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
                 if (v & 0x80) continue;
             }
             if (!v || !g->tiles->present[v]) continue;
-            blit8(fb, &g->tiles->cell[v], PF_X + sc * 8, PF_Y + sr * 8);
+            blit8(fb, &g->tiles->cell[v], PF_X + sc * 8 + wx, PF_Y + sr * 8 + wy);
         }
     }
     /* fight.bin's frame order: the hero (gfmcga 39B9/40F0) is drawn at 70D4,

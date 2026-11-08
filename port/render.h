@@ -19,6 +19,21 @@ void render_fadein_pass(uint8_t *fb, const Game *g, int c);          /* gfmcga 4
 typedef void (*BurstWaitFn)(void *user);
 void render_burst(uint8_t *fb, const Game *g, BurstWaitFn wait, void *user);
 void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h);     /* fb: FB_W*FB_H VGA indices */
+
+/* Smooth scrolling (#127, port/smooth.h): pixel offsets the presentation layer
+ * hands render_frame so the 8 px cell steps can be drawn part-way through their
+ * slide.  All in framebuffer pixels, applied on top of the cell grid; never set
+ * on the engine's own path (render_set_smooth(NULL) is the default), so
+ * `make verify`, the traces and the scenarios render exactly as before. */
+typedef struct SmoothOfs {
+    int active;                     /* any offset non-zero */
+    int wx, wy;                     /* the background tiles (the world scroll) */
+    int hx, hy;                     /* the hero and his blade */
+    int ox[MAX_OBJS], oy[MAX_OBJS]; /* enemy / object record i */
+    int sx[MAX_SHOTS + 1], sy[MAX_SHOTS + 1];   /* projectile slot i */
+    int mx[4], my[4];               /* spell sprite slot i */
+} SmoothOfs;
+void render_set_smooth(const SmoothOfs *ofs);        /* NULL = off (the default) */
 /* LIFE bar, GOLD/ALMAS digits, the four narrow-font labels and the place name.
  * `tf` supplies the [F504] narrow glyphs (NULL = bars and digits only) and
  * `place` is the {x4, y, xoff, len, chars} record video [2010] draws: the

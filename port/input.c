@@ -11,7 +11,7 @@ static const char *const ACT_NAMES[ACT_COUNT] = {
     [ACT_SWORD] = "sword", [ACT_MAGIC] = "magic", [ACT_MENU] = "menu", [ACT_PAUSE] = "pause",
     [ACT_FILTER] = "filter", [ACT_FULLSCREEN] = "fullscreen", [ACT_SCREENSHOT] = "screenshot",
     [ACT_MUSIC] = "music", [ACT_SFX] = "sfx",
-    [ACT_QUICKSAVE] = "quicksave", [ACT_QUICKLOAD] = "quickload", [ACT_RESTORE] = "restore", [ACT_SPEED] = "speed", [ACT_TURBO] = "turbo", [ACT_MAP] = "map", [ACT_COMBO] = "combo", [ACT_AUTOFIRE] = "autofire", [ACT_ZOOM] = "zoom",
+    [ACT_QUICKSAVE] = "quicksave", [ACT_QUICKLOAD] = "quickload", [ACT_RESTORE] = "restore", [ACT_SPEED] = "speed", [ACT_TURBO] = "turbo", [ACT_MAP] = "map", [ACT_COMBO] = "combo", [ACT_AUTOFIRE] = "autofire", [ACT_ZOOM] = "zoom", [ACT_SMOOTH] = "smooth",
     [ACT_SAVE1] = "save1", [ACT_SAVE1 + 1] = "save2", [ACT_SAVE1 + 2] = "save3",
     [ACT_SAVE1 + 3] = "save4", [ACT_SAVE1 + 4] = "save5", [ACT_SAVE1 + 5] = "save6",
     [ACT_SAVE1 + 6] = "save7", [ACT_SAVE1 + 7] = "save8", [ACT_SAVE1 + 8] = "save9",
@@ -79,6 +79,7 @@ static void default_key(KeyBind *b, int act, int town)
     case ACT_FILTER:     kb_set(b, 0, SDL_SCANCODE_F3, SDL_SCANCODE_V, -1); return;
     case ACT_FULLSCREEN: kb_set(b, 0, SDL_SCANCODE_F11, SDL_SCANCODE_F, -1); return;
     case ACT_ZOOM:       kb_set(b, 0, SDL_SCANCODE_Z, -1); return;
+    case ACT_SMOOTH:     kb_set(b, 0, SDL_SCANCODE_T, -1); return;
     case ACT_SCREENSHOT: kb_set(b, 0, SDL_SCANCODE_F12, -1); return;
     case ACT_MUSIC:      kb_set(b, 0, SDL_SCANCODE_F1, -1); return;
     case ACT_SFX:        kb_set(b, 0, SDL_SCANCODE_F2, -1); return;
