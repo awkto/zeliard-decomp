@@ -10,7 +10,20 @@ typedef struct VideoGd {
     uint8_t regs[10][16];           /* EGA: [rec][colour] -> palette register value */
     int     has_putc;               /* CGA/HGC/Tandy: the putchar colour map below is valid */
     uint8_t putc[8];                /* the colour gd_putchar(c) ends up as, 2 bits (CGA/HGC) or 4 (Tandy) */
+    /* the intro's sand (gd_fx_sand, 38E6): gdcga / gdhgc carry their own 2 bpp
+     * pattern records (24 x 8 bytes: four AND masks, four OR bytes) and a mode
+     * byte per variant, and draw straight in the driver's colours, so the sand
+     * is written as a pinned driver colour (SAND_PIN) that no later palette
+     * record recolours -- the hardware does not either */
+    int     has_sand2;              /* CGA / CGA2 / HGC: sand_pat / sand_mode are valid */
+    uint8_t sand_pat[192];
+    uint8_t sand_mode[3];
+    int     pins;                   /* CGA/HGC/Tandy: SAND_PIN bytes mean a driver colour */
 } VideoGd;
+
+/* a framebuffer byte whose high nibble is 9 (never a PC-88 colour) carries a
+ * driver colour in its low nibble, bypassing the record's pair table */
+#define SAND_PIN(c) ((uint8_t)(0x90 | ((c) & 15)))
 
 /* read the tables of the gd*.bin that `mode` loads (MCGA: nothing to read) */
 int  video_gd_load(VideoGd *v, int mode, const char *dir);

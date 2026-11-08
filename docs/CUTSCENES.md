@@ -579,10 +579,32 @@ in), and the code around them was re-derived from the disassembly line by line:
 * The proof is not the reading but the picture: `opdemo_intro` (7439 boundaries, the sand in act 3 and the
   ornament's 100 steps in act 1, variant 0) and `jashiin_ending` (3691 boundaries, variants 0, 1 and 2) are
   pixel-identical against the oracle at **every wait** (HARNESS.md section 6).  The other three builds keep
-  their own copies of the tables: `gdega` and `gdtga` carry the *same* 24 patterns (at `39AC` / `3A44`), `gdcga` and
-  `gdhgc` carry their own, 2-bpp ones (79 of 192 bytes differ, `3945`); the port draws those two with the
-  MCGA patterns and converts (**not** pixel-verified: it is a transient between two pictures, and the
-  oracle only sees MCGA).
+  their own copies of the tables: `gdega` and `gdtga` carry the *same* 24 patterns (at `39AC` / `3A44`), the same
+  mode table and the same border script and spiral (test_video pins all of it); `gdcga` and
+  `gdhgc` carry their own, 2-bpp ones (79 of 192 bytes differ, `3945` / `3A0B`, and they are byte-identical to
+  each other).
+
+**The sand per video mode (#34 follow-up).**  The two 2-bpp builds are simpler than MCGA's: no phase byte, no
+planes.  `gdcga 3816` / `gdhgc 387D` take the variant *without doubling* (`mov bx,ax` then `[bx+3AFC]` /
+`[bx+3BC2]`: the bytes `00 AA 55` for variants 0, 1, 2) as the mode byte, and a tile (`38DF` / `3997`, id *n*,
+record `3945 + 8*(n-1)` / `3A0B + ...`) is four rows of **one byte of four 2-bit pixels**:
+`(record[r] & mode) | record[r+4]`.  The border script and spiral are `gdmcga`'s byte for byte, the tile is
+the same 4 pixels x 4 rows, and the Hercules build's bank-3 repeat (a row written again on the next line) lands
+exactly on the driver's own row mapping (`video_hgc_line`), so the sand is one grid in every mode.
+`gdtga 399B` builds the *same* nibbles as MCGA (same records, flags and phase) and converts each pair through
+the **current record's table** at once (`4AE4`), storing the Tandy colour.  Neither the CGA/HGC/Tandy colour
+nor the sand's own patterns are recoloured by a later `gd_set_palette` (the hardware is not), so the port
+writes the sand as a *pinned driver colour*: a framebuffer byte whose high nibble is 9 (never a PC-88 colour)
+carries the colour in its low nibble and `video_gd_to_rgb` turns it into that colour whatever the record
+(`SAND_PIN`, video_gd.h).  gdega keeps its register palette like the hardware, so it needs nothing.
+
+Ground truth, DOSBox-X captures of the real game in each mode (`port/tools/compare_sand.py`: the sand's
+window x 16..303, y 16..119, every port frame 7090..7200 of act 3, best match): CGA, CGA2 and HGC 100.00%
+including three to five mid-sand states each; Tandy and EGA 100.00% at every shot except two mid-draw ones
+(98.0 / 98.9 / 97.9%: a one-scanline strip of the *next picture* being drawn, not sand).  With the MCGA patterns
+converted (the earlier port) the same shots were 99.99%: variant 0 has mode byte 0, so the dither never shows
+and only a handful of pixels differed; variants 1 and 2, which only the ending uses, have no capture (a DOSBox
+run reaches the ending only by killing Jashiin) and are pinned by the tables alone.
 
 **The lip-sync tails** of `himp.grp` / `seip.grp` are exact for every frame the game can show: the ending's
 script (`6AA8`) uses `0x80..0x85` (seip: frames 0..5 of the 7 — frame 6 is never shown), `0xB0..0xB8` (himp: all

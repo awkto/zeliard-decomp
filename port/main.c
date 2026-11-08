@@ -1772,6 +1772,7 @@ int main(int argc, char **argv)
 #ifdef HAVE_SDL
     touch_init(&a.touch, touch_mode, a.headless ? -1 : cfg.touch_size, a.headless ? -1 : cfg.touch_opacity);
 #endif
+    video_set_current(a.video);
     if (a.intro < 0) a.intro = !explicit_start;
     /* GAME.BIN comes back from the demo and starts a new game in the castle */
     if (a.intro && !a.intro_only && !explicit_start && start_in_town < 0) start_in_town = 0;

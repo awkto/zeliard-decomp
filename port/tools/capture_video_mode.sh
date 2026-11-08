@@ -59,12 +59,16 @@ windowresolution=original
 showmenu=false
 [dosbox]
 machine=$MACHINE
+captures=$OUT/capt
 [render]
 aspect=false
 scaler=none
 monochrome_pal=white
 [cpu]
 cycles=3000
+# Ctrl+F11 / Ctrl+F12 step the cycles by this much (KEYS 29:ctrl+F11 slows a 3000-cycle run to 600)
+cycledown=2400
+cycleup=2400
 [autoexec]
 mount c $OUT/dos
 c:
@@ -92,13 +96,20 @@ trap 'kill $DPID $XPID 2>/dev/null || true' EXIT INT TERM
 ${DOSBOX:-dosbox} -conf "$OUT/zel.conf" >"$OUT/dosbox.log" 2>&1 &
 DPID=$!
 
-EVENTS=$( { for k in $KEYS; do echo "${k%%:*} key ${k#*:}"; done; for i in $TIMES; do echo "$i shot"; done; } | sort -n -s )
+EVENTS=$( { for k in $KEYS; do echo "${k%%:*} key ${k#*:}"; done; for i in $TIMES; do echo "$i shot"; done
+            for g in $GRAB; do echo "${g%%:*} grab ${g#*:}"; done; } | sort -n -s )
+mkdir -p "$OUT/capt"
 t=0
 echo "$EVENTS" | while read -r sec kind arg; do
   [ -n "$sec" ] || continue
   d=$(awk -v a="$sec" -v b="$t" 'BEGIN{d=a-b; if (d>0) print d}'); [ -n "$d" ] && sleep "$d"; t=$sec
   WIN=$(xdotool search --onlyvisible --class dosbox 2>/dev/null | head -1)
-  if [ "$kind" = key ]; then
+  if [ "$kind" = grab ]; then
+    WIN=$(xdotool search --onlyvisible --class dosbox 2>/dev/null | head -1)
+    [ -n "$WIN" ] && xdotool windowfocus --sync "$WIN" 2>/dev/null
+    xdotool key --delay "${arg#*:}" --repeat "${arg%%:*}" ctrl+F5 2>/dev/null
+    echo "  $sec s: ${arg%%:*} x Ctrl+F5 -> $OUT/capt/"
+  elif [ "$kind" = key ]; then
     [ -n "$WIN" ] && xdotool windowfocus --sync "$WIN" 2>/dev/null
     case "$arg" in
       +*) xdotool keydown "${arg#+}" 2>/dev/null ;;

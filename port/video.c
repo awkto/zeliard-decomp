@@ -6,6 +6,7 @@
  * INT 10h mode 5 and mode 6, which is why they share video_cga.c. */
 #include <string.h>
 #include "video.h"
+#include "render.h"
 
 /* -std=c11 hides POSIX strcasecmp, and the names are ASCII */
 static int ieq(const char *a, const char *b)
@@ -75,8 +76,13 @@ void video_size(int mode, int *w, int *h)
     if (h) *h = MODES[mode].h;
 }
 
+static int cur_mode = VID_MCGA;
+void video_set_current(int mode) { cur_mode = (mode >= 0 && mode < VID_COUNT) ? mode : VID_MCGA; }
+int  video_current(void) { return cur_mode; }
+
 void video_to_rgb(int mode, const uint8_t *fb, uint8_t *rgb)
 {
+    video_set_current(mode);
     switch (mode) {
     case VID_CGA:   video_cga_to_rgb(fb, rgb);   break;
     case VID_CGA2:  video_cga2_to_rgb(fb, rgb);  break;
@@ -152,4 +158,72 @@ int video_town_pixel(int mode, int y, uint8_t v, uint8_t *out)
     }
     *out = t[idx];
     return 1;
+}
+
+/* ---- the dissolve of each driver (video.h) ---- */
+const uint8_t  VID_DSV_CGA[8] = { 0xFE, 0xEE, 0xEA, 0xAA, 0xA8, 0x88, 0x80, 0x00 };
+const uint16_t VID_DSV_TGA[8] = { 0xFFFC, 0xFCFC, 0xFCCC, 0xCCCC, 0xCCC0, 0xC0C0, 0xC000, 0x0000 };
+const uint8_t  VID_DSV_EGA[8] = { 0x01, 0x11, 0x15, 0x55, 0x57, 0x77, 0x7F, 0xFF };
+
+/* a pair that converts to colour c in this mode's table (untagged) */
+static uint8_t pair_for(const uint8_t *tbl, int n, uint8_t c)
+{
+    for (int i = 0; i < 64; i++) if (tbl[i] == c && c < n) return (uint8_t)i;
+    return 0;
+}
+
+void video_dissolve_pass(int mode, uint8_t *fb, int pass)
+{
+    pass &= 7;
+    const int X0 = 48, W = 224;
+    switch (mode) {
+    case VID_CGA: case VID_CGA2: case VID_HGC: case VID_TANDY: {
+        /* the rows are walked even then odd (14, 16 .. 156; 15, 17 .. 157); the mask is
+         * rotated left by 3 bits (CGA / HGC, a byte) or 6 (Tandy, a word) a row and is
+         * back where it started when the odd rows begin (72 rows x 3 = 216 = 0 mod 8) */
+        int tandy = mode == VID_TANDY;
+        const uint8_t *pt = tandy ? VID_TGA_PAIR : VID_CGA_PAIR;
+        for (int half = 0; half < 2; half++)
+            for (int r = 0; r < 72; r++) {
+                int y = 14 + 2 * r + half;
+                unsigned m;
+                if (tandy) {
+                    unsigned w = VID_DSV_TGA[pass], k = (6u * r) & 15;
+                    m = ((w << k) | (w >> (16 - k))) & 0xFFFF;
+                } else {
+                    unsigned b = VID_DSV_CGA[pass], k = (3u * r) & 7;
+                    m = ((b << k) | (b >> (8 - k))) & 0xFF;
+                }
+                for (int x = 0; x < W; x++) {
+                    uint8_t *p = fb + y * FB_W + X0 + x;
+                    uint8_t bd, c;
+                    c = video_town_pixel(mode, y, *p, &bd) ? bd : pt[*p & 63];
+                    int px = x & 3, f;
+                    if (tandy) f = (int)((m >> (px == 0 ? 4 : px == 1 ? 0 : px == 2 ? 12 : 8)) & 15);
+                    else       f = (int)((m >> (6 - 2 * px)) & 3);
+                    *p = pair_for(pt, tandy ? 16 : 4, (uint8_t)(c & f));
+                }
+            }
+        break;
+    }
+    case VID_EGA:
+        /* 214E: the bit mask (bit 7 = the leftmost EGA pixel) of the even rows is rotated left
+         * 3 bits a row; the odd rows rotate AL, not AH, so they all use the unrotated mask */
+        for (int half = 0; half < 2; half++)
+            for (int r = 0; r < 72; r++) {
+                int y = 14 + 2 * r + half;
+                unsigned b = VID_DSV_EGA[pass], k = half ? 0 : (3u * r) & 7;
+                unsigned m = ((b << k) | (b >> (8 - k))) & 0xFF;
+                for (int x = 0; x < W; x++) {
+                    uint8_t *p = fb + y * FB_W + X0 + x;
+                    int j = (2 * x) & 7;                        /* the left half's pixel in its byte */
+                    uint8_t v = *p;
+                    if (m & (0x80 >> j))       v &= (uint8_t)~0x38;     /* the left half is the high 3 bits */
+                    if (m & (0x80 >> (j + 1))) v &= (uint8_t)~0x07;
+                    *p = v;
+                }
+            }
+        break;
+    default: break;
+    }
 }

@@ -35,7 +35,8 @@ void render_screen_frame(uint8_t *fb, const struct ScreenFrame *f, int y0, int y
  * screen buffer takes the passes one by one, like VRAM); the town and the cavern are redrawn
  * from state every frame, so they use render_dissolve(fb, n) = passes 0..n-1 over a fresh
  * frame.  The other drivers' dissolves (CGA 2124, EGA 214E, HGC 2143, TGA 2124) have their
- * own byte masks; the port runs this one on the pair buffer for every --video. */
+ * own masks: under --video cga/cga2/hgc/ega/tandy this runs video_dissolve_pass() (video.h)
+ * instead, on the pair buffer, with the driver's mask. */
 void render_dissolve_pass(uint8_t *fb, int pass);
 void render_dissolve(uint8_t *fb, int passes);
 void render_to_rgb(const uint8_t *fb, uint8_t *rgb);                  /* FB_W*FB_H*3 */
