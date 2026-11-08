@@ -97,18 +97,20 @@ static void shop_tick_hook(Shop *s, int run_hook)
     /* tests: stop after `headless_guard` frames, i.e. exactly 20x that many ticks */
     if (s->headless_guard && (int)s->frames >= s->headless_guard) { s->leave = 1; return; }
     if (run_hook) shop_hook_tick(s);
+    else s->hk.ff50++;                  /* the ISR counts on, only the hook call is skipped */
     wait_tick();
     if (++s->tick_acc >= SHOP_TICKS_PER_FRAME) { s->tick_acc = 0; shop_frame(s); }
 }
 static void shop_tick(Shop *s) { shop_tick_hook(s, 1); }
 
 /* the shops' timed waits, in 236.7 Hz ticks: no boundary, no input */
-static void shop_wait(Shop *s, int ticks)
+static void shop_wait_x(Shop *s, int ticks, int run_hook)
 {
-    for (int n = 0; n < ticks && !s->leave; n++) shop_tick(s);
+    for (int n = 0; n < ticks && !s->leave; n++) shop_tick_hook(s, run_hook);
     /* #119: the oracle writes the screen as each `cmp [FF1A],n / jc` wait of 8+ ticks ends (side_<f>_<k>_w<IP>.png) */
     if (ticks >= 8 && !s->leave && s->t && s->t->side) s->t->side(s->t, SIDE_WAIT, 0, 0);
 }
+static void shop_wait(Shop *s, int ticks) { shop_wait_x(s, ticks, 1); }
 
 /* [2040] over the shop's own screen (#118): the passes are destructive, as on VRAM, so the
  * playfield stays black until the overlay draws on it again.  One presented frame per pass
@@ -1579,7 +1581,7 @@ static void sage_action(Shop *s, uint8_t op)
         vid_window(s->fb, 0, 0x27, 0x17, 0x1D, 0x41);
         switch (row) {
         case 0: say(s, 0xADEB); return;
-        case 1: say(s, s->bought ? (s->cursor_row ? 0xAF03 : 0xAEA7) : 0xAE08); return;
+        case 1: say(s, !s->bought ? 0xAE08 : s->kj_spirits_gone ? 0xAE42 : s->cursor_row ? 0xAF03 : 0xAEA7); return;   /* A126 */
         case 2: say(s, img16(s, 0xB5EB + 2u * (unsigned)(s->town_id - 1))); print_text(s);
                 say(s, 0xADBF); return;
         default:                                                /* A178 Record Experience */
@@ -1607,7 +1609,7 @@ static void sage_action(Shop *s, uint8_t op)
         s->hk.kj_blink_off = s->hk.kj_eyes_closed = 0xFF;
         for (int i = 0; i < 3 && !s->leave; i++) {
             kenj_draw_ritual(s, img8(s, 0xA1FD + (unsigned)i));
-            shop_wait(s, 0x19);
+            shop_wait_x(s, 0x19, 0);        /* A1EC / A218: a bare [FF1A] loop, no hook */
         }
         s->hk.kj_blink_off = 0;
         shop_wait(s, 140);                                      /* A410 */
@@ -1620,7 +1622,7 @@ static void sage_action(Shop *s, uint8_t op)
         s->hk.kj_blink_off = 0xFF;
         for (int i = 1; i >= 0 && !s->leave; i--) {
             kenj_draw_ritual(s, img8(s, 0xA1FD + (unsigned)i));
-            shop_wait(s, 0x19);
+            shop_wait_x(s, 0x19, 0);        /* A1EC / A218: a bare [FF1A] loop, no hook */
         }
         s->hk.kj_blink_off = s->hk.kj_eyes_closed = 0;
         say(s, img16(s, 0xB029 + 2u * (unsigned)sage_assess(s)));
@@ -1634,7 +1636,19 @@ static void sage_action(Shop *s, uint8_t op)
         }
         return;
     case 4: shop_wait(s, 140); return;
-    case 5: sage_level_up(s); return;                           /* A2B4 */
+    case 5:                                                     /* A2B4 */
+        s->kj_spirits_gone = 1;                                 /* A2B4 mov byte [BB16],FF: See Power now answers AE42 */
+        /* A2B7..A2CF: eight times { [3000] GT_INIT_PLAYFIELD = XOR the playfield
+         * (rows 14..157, x 48..271) with 0x36, [FF1A] = 0, wait 10 ticks } --
+         * an even count, so the picture ends as it began.  The oracle writes
+         * side_*_wA2C7 at each wait. */
+        for (int i = 0; i < 8 && !s->leave; i++) {
+            for (int y = 14; y < 158; y++)
+                for (int x = 48; x < 272; x++) s->fb[y * TEXT_W + x] ^= 0x36;
+            shop_wait_x(s, 10, 0);          /* A2C7: a bare loop too */
+        }
+        sage_level_up(s);
+        return;
     case 6: say(s, 0xADBF); return;
     default: return;
     }

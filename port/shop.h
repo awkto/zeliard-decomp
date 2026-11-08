@@ -79,6 +79,7 @@ typedef struct Shop {
 
     int      cursor_main, cursor_list, cursor_row;
     int      bought, leave, saved;
+    int      kj_spirits_gone;           /* [BB16] set by A2B4 (kenj_level_up) */
     const char *dir;
     unsigned frames;                /* port counter */
     int      tick_acc;              /* ticks since the last presented frame (shop_tick) */

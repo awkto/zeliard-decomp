@@ -1313,7 +1313,7 @@ void drug_play_anim(const u16 *seq)
 u16  kj_portrait_pos;      /* BB12  BH x4 / BL y of the portrait: 0x0717 normal, 0x0E17 on the death entry */
 u8   kj_menu_cursor;       /* BB14  last main-menu row (persists while the overlay is resident) */
 u8   kj_power_done;        /* BB15  "See Power" already used in this visit */
-u8   kj_spirits_gone;      /* BB16  never written -> the AE42 text ("spirits are no longer with you") is dead */
+u8   kj_spirits_gone;      /* BB16  set by kenj_level_up (A2B4 `mov byte [0xbb16],0xff`): the sage will not see power again this visit (AE42) */
 u8   kj_level_capped;      /* BB17  this sage cannot raise the level further (cap table A2AC) */
 u8   kj_ritual_on;         /* BB18  hook: ritual aura animation running */
 u8   kj_blink_off;         /* BB19  hook: suppress eye blink */
@@ -1470,7 +1470,7 @@ void kenj_main_menu(void)
     case 0: kenj_clear_menu_area(); shop_text_ptr = 0xADEB; break;          /* A11C "\x0CThe Spirits are with you.\x11\xFF\xFF" */
     case 1: kenj_clear_menu_area();                                         /* A126 */
         if (!kj_power_done)          shop_text_ptr = 0xAE08;                /* "\x0CI shall call upon the Spirits and their powers..... /\xFF\x04\xFF\x01" */
-        else if (kj_spirits_gone)    shop_text_ptr = 0xAE42;                /* dead: BB16 never set */
+        else if (kj_spirits_gone)    shop_text_ptr = 0xAE42;                /* after a level-up: "I fear the spirits are no longer with you ..." */
         else                         shop_text_ptr = kj_level_capped ? 0xAF03 : 0xAEA7;
         /* AEA7 "\x0CYou are brave, but your experience is lacking. Come back when you have accomplished more.\xFF\x00"
            AF03 "\x0CI can no longer impart the power of the Spirits to you. Continue on your quest. You will soon find others to help you.\xFF\x00" */
@@ -1630,6 +1630,7 @@ u8 kenj_assess(void)
 /* ==== kenj_level_up @ A2B4  (action 5) ==== */
 void kenj_level_up(void)
 {
+    kj_spirits_gone = 0xFF;                                    /* A2B4: the first instruction (the linear disassembly shows it as `push es`) */
     for (i = 0; i < 8; i++) { GT_INIT_PLAYFIELD(); wait 10 ticks; }   /* A2B7..A2CF: XOR-flash of the playfield */
     if (level >= 16) { kj_new_maxhp = 800; for (i = 0; i < 7; i++) kj_new_magic[i] = sat_add(magic_max[i], 2); }  /* A2D6..A2F3 */
     else memcpy(&kj_new_maxhp, &LEVEL_TABLE[level], 9);        /* A2F5..A304 */
