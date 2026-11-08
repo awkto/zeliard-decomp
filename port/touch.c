@@ -5,8 +5,6 @@
 
 #define TOUCH_DEF_SIZE 100
 #define TOUCH_DEF_OPACITY 50
-#define COMBO_PERIOD_MS 100              /* ~10 Hz auto-repeat, as the attack-keys patch */
-#define COMBO_ON_MS 50
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -333,13 +331,14 @@ uint8_t touch_dirs(const Touch *t)
     return d;
 }
 
-uint8_t touch_buttons(const Touch *t, unsigned ms)
+int touch_combo_held(const Touch *t) { return touch_visible(t) && touch_ctl_down(t, TC_COMBO); }
+
+uint8_t touch_buttons(const Touch *t)
 {
     if (!touch_visible(t)) return 0;
     uint8_t b = 0;
     if (touch_ctl_down(t, TC_SWORD)) b |= 1;
     if (touch_ctl_down(t, TC_MAGIC)) b |= 2;
-    if (touch_ctl_down(t, TC_COMBO) && (ms % COMBO_PERIOD_MS) < COMBO_ON_MS) b |= 1;
     return b;
 }
 

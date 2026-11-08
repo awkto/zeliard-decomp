@@ -36,6 +36,7 @@
 #include "syncdlg.h"
 #ifdef HAVE_SDL
 #include "input.h"
+#include "autoatk.h"
 #endif
 #include "touch.h"
 #ifdef __EMSCRIPTEN__
@@ -83,6 +84,7 @@ typedef struct {
     int      speed;                     /* FF33: 1 fastest .. 10 slowest, loader default 5 */
     SpeedDlg spd;                       /* F9 "Speed change" (#116) */
     int      speed_req;
+    AutoAtk  atk;                       /* the A / S / Combo pulse state (autoatk.h) */
     int      scale;
     int      square;                /* --aspect 1:1: present the framebuffer unscaled in shape */
     int      filter;                /* --filter: a FILTER_* value (#53) */
@@ -509,8 +511,8 @@ static void pump_events(App *a, Game *g)
             }
             if (a->mv_open && mv_key(a, &e.key)) break;
             if (input_event_match(&a->in, ACT_MAP, &e.key)) { if (!e.key.repeat) mv_toggle(a, g); break; }
-            if (input_event_match(&a->in, ACT_RESTORE, &e.key)) { if (!e.key.repeat) a->restore_req = 1; break; }
-            if (input_event_match(&a->in, ACT_SPEED, &e.key)) { if (!e.key.repeat) a->speed_req = 1; break; }
+            if (input_event_match(&a->in, ACT_RESTORE, &e.key)) { if (!e.key.repeat) a->restore_req = 1; }
+            if (input_event_match(&a->in, ACT_SPEED, &e.key)) { if (!e.key.repeat) a->speed_req = 1; }   /* no break: Backspace still reaches a shop's name box below */
             /* #42: every hotkey is looked up in the one binding table
              * (input.c); the defaults are the keys this used to hard-code.
              * Esc used to quit outright, with no confirmation -- one reflex
@@ -604,13 +606,13 @@ static void pump_events(App *a, Game *g)
     }
     if (a->rest.state || a->spd.state || a->sync_dlg) {          /* stick edges and Sword/Magic: list, caret, Space, Backspace */
         static const struct { int dir, sym; } dm[] = { { DIR_UP, SDLK_UP }, { DIR_DOWN, SDLK_DOWN }, { DIR_LEFT, SDLK_LEFT }, { DIR_RIGHT, SDLK_RIGHT } };
-        int nb = touch_buttons(&a->touch, 0) & ~a->touch_prev_btn;
+        int nb = touch_buttons(&a->touch) & ~a->touch_prev_btn;
         for (int i = 0; i < 4; i++) if ((tdirs & dm[i].dir) && !(a->touch_prev_dirs & dm[i].dir) && a->rest_qn < 16) a->rest_q[a->rest_qn++] = dm[i].sym;
         if ((nb & 1) && a->rest_qn < 16) a->rest_q[a->rest_qn++] = SDLK_SPACE;
         if ((nb & 2) && a->rest_qn < 16) a->rest_q[a->rest_qn++] = SDLK_BACKSPACE;
     }
     a->touch_prev_dirs = tdirs;
-    a->touch_prev_btn = touch_buttons(&a->touch, 0);
+    a->touch_prev_btn = touch_buttons(&a->touch);
     turbo_poll(a);
 }
 
@@ -1684,7 +1686,7 @@ static void present(Game *g)
     audio_hotkeys(a, k);
     /* Paused: hand the engine a frame of nothing rather than the keys the
      * player is using to talk to the pause screen. */
-    if (a->paused) { g->dirs = 0; set_buttons(g, 0); g->menu_key = 0; return; }
+    if (a->paused) { autoatk_reset(&a->atk); g->dirs = 0; set_buttons(g, 0); g->menu_key = 0; return; }
     uint8_t d = pad_dirs(a);
     d |= key_dirs(a, k, 0);
     d |= touch_dirs(&a->touch);
@@ -1692,7 +1694,9 @@ static void present(Game *g)
     uint8_t b = pad_btns(a);
     int combo = a->sk_combo;
     b |= key_btns(a, k, 0, combo);
-    b |= touch_buttons(&a->touch, SDL_GetTicks());
+    b |= touch_buttons(&a->touch);
+    autoatk_step(&a->atk, input_key_down(&a->in, ACT_COMBO, 0, k, combo) || touch_combo_held(&a->touch),
+                 input_key_down(&a->in, ACT_AUTOFIRE, 0, k, combo), &g->dirs, &b);
     set_buttons(g, b);
     g->menu_key = (uint8_t)(key_menu(a, k, 0) || pad_menu(a));   /* FF18 bit0 */
 #endif
@@ -1775,7 +1779,7 @@ static void town_present(Town *t)
     if (t->dsv_pic) return;                             /* a dissolve pass reads no keys */
     const Uint8 *k = SDL_GetKeyboardState(NULL);
     audio_hotkeys(a, k);
-    if (a->paused) { t->dirs = 0; t->buttons = 0; t->menu_key = 0; return; }
+    if (a->paused) { autoatk_reset(&a->atk); t->dirs = 0; t->buttons = 0; t->menu_key = 0; return; }
     uint8_t d = pad_dirs(a);
     d |= key_dirs(a, k, 1);
     d |= touch_dirs(&a->touch);
@@ -1783,7 +1787,12 @@ static void town_present(Town *t)
     uint8_t b = pad_btns(a);
     int combo = a->sk_combo;
     b |= key_btns(a, k, 1, combo);
-    b |= touch_buttons(&a->touch, SDL_GetTicks());
+    b |= touch_buttons(&a->touch);
+    {   /* the A / S keys are cavern-only (Up is a door here); the touch Combo keeps its old town behaviour */
+        uint8_t td = d;
+        autoatk_step(&a->atk, touch_combo_held(&a->touch), 0, &td, &b);
+        t->dirs = td;
+    }
     if ((b & 1) && !(t->buttons & 1)) t->btn1_edge = 0xFF;
     if ((b & 2) && !(t->buttons & 2)) t->btn2_edge = 0xFF;
     t->buttons = b;

@@ -54,7 +54,7 @@ cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 15 test binaries
 make test            # physics (149) + combat/AI (229) + town (176) + boss (642) + shop (195)
                      #   + status (87) + playthrough (176) + audio (394) + cutscene (52)
-                     #   + video (198) + config (46) + sync (144) + mapview (37) = 2525 assertions.  Needs no game files:
+                     #   + video (198) + config (58) + sync (144) + mapview (37) = 2537 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 235 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -233,21 +233,31 @@ build's.
 
 | key | action |
 |---|---|
-| Left / Right (or A / D) | walk 1 cell (8 px) per frame; the world scrolls, Garland stays on screen column 12 |
-| Up (or W / Z) | jump (hold for up to 2 rows), climb a ladder, enter a door, **ride an elevator up**; with Left/Right: diagonal jump |
-| Down (or S) | crouch, descend a ladder, let go of a ladder, **ride an elevator down** |
+| Left / Right | walk 1 cell (8 px) per frame; the world scrolls, Garland stays on screen column 12 |
+| Up (or Z) | jump (hold for up to 2 rows), climb a ladder, enter a door, **ride an elevator up**; with Left/Right: diagonal jump |
+| Down | crouch, descend a ladder, let go of a ladder, **ride an elevator down** |
 | Space (or X / Ctrl) | **attack** — sword slash; with Up an upward slash; held with Down while airborne a down-thrust (×2 damage) |
+| A (hold) | **combo** (`key.combo`): Up+Down held and the sword pulsed automatically, so you attack while steering; Left/Right still walk |
+| S (hold) | **auto-fire** (`key.autofire`): repeated fresh sword presses while held; **Down + S** holds the sword steady instead (the downward piercing thrust) |
 | Alt (or C) | **cast the selected spell** (`magic_sel`, picked on the status screen) |
 | Enter | **the status / inventory screen** (select.bin): pick a spell, wear a key item, drink a potion |
 | F1 / F2 | toggle the music / the sound effects (STICK's own hotkeys) |
 | F3, V | **cycle the display filter** (`key.filter`): integer → sharp-bilinear → smooth → scanlines → soft-scanlines → crt → crt-curved; the name flashes on screen (presentation only; remembered in the config) |
-| F7 | **Restore Game** (the original's own hotkey, #42): *Sure?(Y/N)*, then the *Input name:* box with the `*.usr` list; see below |
-| F9 | **Speed change** (the original's own hotkey, #116): *Select 0-9:*; see below |
+| F7 or \\ | **Restore Game** (the original's own hotkey, #42; plain `\`, Ctrl+`\` stays quick-load): *Sure?(Y/N)*, then the *Input name:* box with the `*.usr` list; see below |
+| F9 or Backspace | **Speed change** (the original's own hotkey, #116): *Select 0-9:*; see below |
 | touch | on-screen controls (`--touch auto\|on\|off`, see `touch.c`): joystick, Sword, Magic, Combo, 1-9/Y/N, Esc, Items, quick save/load |
 | M | **map viewer** (`key.map`): in a cavern the whole current map, painted live from the game's own tile bank (`mapview.c`), with a blinking red hero marker and yellow door markers (cyan for a door into town); the game is held while it is up.  The map wraps, so when it does not fit the window at 4 px per cell the arrows (or the movement keys) pan it with wrap-around, Home re-centres on you; M or Esc closes.  In a town it flashes *No map in town*.  Drawn in the presentation layer only, like the save-state messages: the engine framebuffer, traces and `make verify` never see it. |
 | F12 | dump the framebuffer to the `--screenshot` file |
 | F11 / Alt+Enter | toggle fullscreen (the window is resizable; `--fullscreen` starts there) |
 | Esc | **pause** — Esc or Enter resumes, **Q** quits |
+
+**A / S attack shortcuts** (`autoatk.c`, interactive play only).  The game reads the sword as an
+*edge* (`set_buttons` latches a 0 to 1 transition, fight.bin consumes it at 6E81), so a held sword
+is one swing; the shortcuts therefore pulse it: high one game frame, low the next
+(`AUTOATK_PERIOD` = 2 frames, about 5.9 swings/s at the default speed 5, the fastest a fresh press
+can be made; the emulated build's 10 presses/s is 10 Hz of wall time).  The touch overlay's Combo
+button runs the same state machine.  Headless, `--trace` and `--script` runs never use it (their
+inputs are the script tokens), so traces and `make verify` are unaffected.
 
 **F7 Restore Game** (#42 step 2b) is the original's flow, from the disassembly: the kernel's
 `[11E]` (STICK 092D) polls F7 in town.bin's frame (68DC) and wait loops (704E) and in
@@ -291,8 +301,8 @@ spins on `FF18`/`FF29` with no poll site, so no oracle scenario can reach it.
 | Enter | **the status / inventory screen** (select.bin); the potion row is disabled in town, as in the original |
 | F1 / F2 | toggle the music / the sound effects |
 | F3, V | cycle the display filter (integer → sharp-bilinear → smooth → scanlines → soft-scanlines → crt → crt-curved) |
-| F7 | **Restore Game**, as in the cavern |
-| F9 | **Speed change**, as in the cavern |
+| F7 or \\ | **Restore Game**, as in the cavern |
+| F9 or Backspace | **Speed change**, as in the cavern (A / S do nothing in a town: Up is a door there) |
 | F11 / Alt+Enter | toggle fullscreen |
 | Esc | **pause** — Esc or Enter resumes, **Q** quits |
 
@@ -326,7 +336,7 @@ changes.
 |---|---|
 | Up / Down | move the red menu cursor (or scroll the list) |
 | Space (or X, Enter) | select / advance the text a page |
-| C (or Alt, Backspace) | cancel — the same as picking "Go outside" |
+| C (or Alt) | cancel — the same as picking "Go outside" |
 
 ### Save states (anywhere the game is not in a menu)
 
@@ -1109,7 +1119,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     music, preemption, a score change mid-effect, AX=3 pause, F1, the `FF24` fade) and
     all 65 `SNDJR` effects on their own match those hashes.  When python3 with Unicorn
     is installed (`ZEL_PYTHON=...`) the oracle is also run live from the test.
-* `test_config.c` — 46 assertions over the settings file (#42): the sentinels
+* `test_config.c` — 58 assertions over the settings file (#42) and the attack-shortcut pulse machine: the sentinels
   `config_init` leaves, a full `key=value` parse, the lines it ignores (junk, a
   bare `=`, an unknown key, a bad boolean) and the whitespace/CRLF trimming, the
   `on`/`off`/`true`/`no` spellings, a lossless render+parse round trip, the atomic
@@ -1146,12 +1156,12 @@ movement read.
 
 Actions (default keys; controller defaults in brackets):
 
-* `left` Left, A (d-pad left) · `right` Right, D (d-pad right) · `down` Down, S (d-pad down)
-* `up` Up, W, Z (d-pad up, A)
+* `left` Left (d-pad left) · `right` Right (d-pad right) · `down` Down (d-pad down)
+* `up` Up, Z (d-pad up, A)
 * `sword` Space, X (+ Left/Right Ctrl in the cavern) (X) — Space is the original's fire key · `magic` cavern C, Left/Right Alt;
-  town C, Left/Right Alt, Backspace (Y)
+  town the same
 * `menu` Return, Keypad Enter: the status screen (Start) · `pause` Escape (Back)
-* `music` F1 · `sfx` F2 · `filter` F3 · `restore` F7 · `speed` F9 · `map` M · `fullscreen` F11 · `screenshot` F12
+* `music` F1 · `sfx` F2 · `filter` F3 · `restore` F7, \ · `speed` F9, Backspace · `combo` A, held (Up+Down and a pulsing sword) · `autofire` S, held (a pulsing sword; held steady with Down) · `map` M · `fullscreen` F11 · `screenshot` F12
 * `turbo` Left/Right Shift, held (controller: right shoulder): fast-forward, see [Fast-forward](#fast-forward-turbo)
 * `quicksave` Ctrl+. · `quickload` Ctrl+\ · `save1`..`save9` Ctrl+1..9 · `load1`..`load9` Alt+1..9
   (a `key.*` binding replaces both the cavern and the town default set)

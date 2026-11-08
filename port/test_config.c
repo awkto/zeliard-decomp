@@ -8,6 +8,8 @@
 #include <string.h>
 #include <unistd.h>
 #include "config.h"
+#include "autoatk.h"
+#include "physics.h"
 
 static int checks, failures;
 static void ck(int ok, const char *fmt, ...)
@@ -212,6 +214,55 @@ static void t_binds(void)
     ck(config_set(&f, "key.overflow", "X") == 0 && f.n_key == CONFIG_MAX_BIND, "a full table refuses more");
 }
 
+/* The attack shortcut keys' pulse machine (autoatk.h).  The game reads the sword
+ * as an edge (set_buttons latches a 0->1 transition), so a pulse must go low
+ * between presses; these count the fresh presses the engine would see. */
+static int edges(const uint8_t *seq, int n)
+{
+    int e = 0, prev = 0;
+    for (int i = 0; i < n; i++) { int b = seq[i] & 1; if (b && !prev) e++; prev = b; }
+    return e;
+}
+
+static void t_autoatk(void)
+{
+    AutoAtk s; autoatk_reset(&s);
+    uint8_t d, b, seq[40];
+
+    d = 0; b = 0; autoatk_step(&s, 0, 0, &d, &b);
+    ck(d == 0 && b == 0, "nothing held: inputs untouched");
+
+    for (int i = 0; i < 40; i++) { d = 0; b = 0; autoatk_step(&s, 0, 1, &d, &b); seq[i] = b; }
+    ck(seq[0] == 1 && seq[1] == 0 && seq[2] == 1 && seq[3] == 0, "auto-fire: press on the first frame, released on the next");
+    ck(edges(seq, 40) == 40 / AUTOATK_PERIOD, "auto-fire: %d fresh presses in 40 frames", edges(seq, 40));
+
+    for (int i = 0; i < 12; i++) { d = DIR_LEFT; b = 0; autoatk_step(&s, 0, 1, &d, &b); }
+    ck(d == DIR_LEFT, "auto-fire does not touch the direction");
+
+    for (int i = 0; i < 20; i++) { d = DIR_DOWN; b = 0; autoatk_step(&s, 0, 1, &d, &b); seq[i] = b; }
+    ck(edges(seq, 20) == 1 && seq[0] == 1 && seq[1] == 1 && seq[19] == 1, "Down+auto-fire: the sword is held, not pulsed (piercing thrust)");
+
+    for (int i = 0; i < 40; i++) { d = DIR_RIGHT; b = 0; autoatk_step(&s, 1, 0, &d, &b); seq[i] = b; }
+    ck(d == (DIR_RIGHT | DIR_UP | DIR_DOWN), "combo: Up and Down held, Left/Right still steer");
+    ck(edges(seq, 40) == 40 / AUTOATK_PERIOD, "combo: %d fresh presses in 40 frames", edges(seq, 40));
+
+    for (int i = 0; i < 20; i++) { d = DIR_DOWN; b = 0; autoatk_step(&s, 1, 1, &d, &b); seq[i] = b; }
+    ck(edges(seq, 20) == 20 / AUTOATK_PERIOD, "combo wins over auto-fire and keeps pulsing with Down held");
+
+    autoatk_step(&s, 0, 0, &d, &b);                  /* released */
+    d = 0; b = 0; autoatk_step(&s, 0, 1, &d, &b);
+    ck(b == 1, "a new hold starts on a press again (phase reset on release)");
+    autoatk_step(&s, 0, 1, &d, &b);                  /* now a low frame */
+    autoatk_reset(&s);
+    d = 0; b = 0; autoatk_step(&s, 0, 1, &d, &b);
+    ck(b == 1, "autoatk_reset restarts the pulse high");
+
+    d = 0; b = 1; autoatk_step(&s, 0, 0, &d, &b);
+    ck(b == 1, "the player's own held sword is left alone");
+    d = 0; b = 1; autoatk_step(&s, 0, 1, &d, &b); d = 0; b = 1; autoatk_step(&s, 0, 1, &d, &b);
+    ck(b == 1, "...also with auto-fire on (level OR pulse)");
+}
+
 int main(void)
 {
     t_defaults();  printf("ok\n");
@@ -222,6 +273,7 @@ int main(void)
     t_save();      printf("ok\n");
     t_paths();     printf("ok\n");
     t_binds();     printf("ok\n");
+    t_autoatk();   printf("ok\n");
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;
 }

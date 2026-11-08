@@ -11,7 +11,7 @@ static const char *const ACT_NAMES[ACT_COUNT] = {
     [ACT_SWORD] = "sword", [ACT_MAGIC] = "magic", [ACT_MENU] = "menu", [ACT_PAUSE] = "pause",
     [ACT_FILTER] = "filter", [ACT_FULLSCREEN] = "fullscreen", [ACT_SCREENSHOT] = "screenshot",
     [ACT_MUSIC] = "music", [ACT_SFX] = "sfx",
-    [ACT_QUICKSAVE] = "quicksave", [ACT_QUICKLOAD] = "quickload", [ACT_RESTORE] = "restore", [ACT_SPEED] = "speed", [ACT_TURBO] = "turbo", [ACT_MAP] = "map",
+    [ACT_QUICKSAVE] = "quicksave", [ACT_QUICKLOAD] = "quickload", [ACT_RESTORE] = "restore", [ACT_SPEED] = "speed", [ACT_TURBO] = "turbo", [ACT_MAP] = "map", [ACT_COMBO] = "combo", [ACT_AUTOFIRE] = "autofire",
     [ACT_SAVE1] = "save1", [ACT_SAVE1 + 1] = "save2", [ACT_SAVE1 + 2] = "save3",
     [ACT_SAVE1 + 3] = "save4", [ACT_SAVE1 + 4] = "save5", [ACT_SAVE1 + 5] = "save6",
     [ACT_SAVE1 + 6] = "save7", [ACT_SAVE1 + 7] = "save8", [ACT_SAVE1 + 8] = "save9",
@@ -58,20 +58,20 @@ static void pb_set(PadBind *b, ...)
 static void default_key(KeyBind *b, int act, int town)
 {
     switch (act) {
-    case ACT_LEFT:  kb_set(b, 0, SDL_SCANCODE_LEFT, SDL_SCANCODE_A, -1); return;
-    case ACT_RIGHT: kb_set(b, 0, SDL_SCANCODE_RIGHT, SDL_SCANCODE_D, -1); return;
-    case ACT_DOWN:  kb_set(b, 0, SDL_SCANCODE_DOWN, SDL_SCANCODE_S, -1); return;
+    case ACT_LEFT:  kb_set(b, 0, SDL_SCANCODE_LEFT, -1); return;
+    case ACT_RIGHT: kb_set(b, 0, SDL_SCANCODE_RIGHT, -1); return;
+    case ACT_DOWN:  kb_set(b, 0, SDL_SCANCODE_DOWN, -1); return;
     /* The original's fire keys (kernel INT 9, docs/SERVICES.md FF16) are Space =
      * bit 0 (sword / talk) and Alt = bit 1 (magic / cancel) in towns AND caverns;
      * Up jumps.  Space used to jump in the cavern here, which DOS players found
      * backwards. */
-    case ACT_UP:     kb_set(b, 0, SDL_SCANCODE_UP, SDL_SCANCODE_W, SDL_SCANCODE_Z, -1); return;
+    case ACT_UP:     kb_set(b, 0, SDL_SCANCODE_UP, SDL_SCANCODE_Z, -1); return;
     case ACT_SWORD:
         if (town) kb_set(b, 0, SDL_SCANCODE_SPACE, SDL_SCANCODE_X, -1);
         else      kb_set(b, 0, SDL_SCANCODE_SPACE, SDL_SCANCODE_X, SDL_SCANCODE_LCTRL, SDL_SCANCODE_RCTRL, -1);
         return;
     case ACT_MAGIC:
-        if (town) kb_set(b, 0, SDL_SCANCODE_C, SDL_SCANCODE_LALT, SDL_SCANCODE_RALT, SDL_SCANCODE_BACKSPACE, -1);
+        if (town) kb_set(b, 0, SDL_SCANCODE_C, SDL_SCANCODE_LALT, SDL_SCANCODE_RALT, -1);
         else      kb_set(b, 0, SDL_SCANCODE_C, SDL_SCANCODE_LALT, SDL_SCANCODE_RALT, -1);
         return;
     case ACT_MENU:       kb_set(b, 0, SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER, -1); return;
@@ -81,10 +81,12 @@ static void default_key(KeyBind *b, int act, int town)
     case ACT_SCREENSHOT: kb_set(b, 0, SDL_SCANCODE_F12, -1); return;
     case ACT_MUSIC:      kb_set(b, 0, SDL_SCANCODE_F1, -1); return;
     case ACT_SFX:        kb_set(b, 0, SDL_SCANCODE_F2, -1); return;
-    case ACT_RESTORE:    kb_set(b, 0, SDL_SCANCODE_F7, -1); return;
-    case ACT_SPEED:      kb_set(b, 0, SDL_SCANCODE_F9, -1); return;
+    case ACT_RESTORE:    kb_set(b, 0, SDL_SCANCODE_F7, SDL_SCANCODE_BACKSLASH, -1); return;
+    case ACT_SPEED:      kb_set(b, 0, SDL_SCANCODE_F9, SDL_SCANCODE_BACKSPACE, -1); return;
     case ACT_TURBO:      kb_set(b, 0, SDL_SCANCODE_LSHIFT, SDL_SCANCODE_RSHIFT, -1); return;
     case ACT_MAP:        kb_set(b, 0, SDL_SCANCODE_M, -1); return;
+    case ACT_COMBO:      kb_set(b, 0, SDL_SCANCODE_A, -1); return;
+    case ACT_AUTOFIRE:   kb_set(b, 0, SDL_SCANCODE_S, -1); return;
     case ACT_QUICKSAVE:  kb_set(b, KMOD_CTRL, SDL_SCANCODE_PERIOD, -1); return;
     case ACT_QUICKLOAD:  kb_set(b, KMOD_CTRL, SDL_SCANCODE_BACKSLASH, -1); return;
     default:
@@ -271,9 +273,14 @@ static int mods_held(int have, int need)
 int input_event_match(const Input *in, int act, const SDL_KeyboardEvent *k)
 {
     const KeyBind *b = &in->cav[act];               /* hotkeys are engine-independent */
-    for (int i = 0; i < b->n; i++)
+    for (int i = 0; i < b->n; i++) {
+        /* plain \ (Restore) and Backspace (speed) must not fire under Ctrl/Alt:
+         * Ctrl+\ is quick-load */
+        if (!b->mod[i] && (b->sc[i] == SDL_SCANCODE_BACKSLASH || b->sc[i] == SDL_SCANCODE_BACKSPACE)
+            && (k->keysym.mod & (KMOD_CTRL | KMOD_ALT | KMOD_GUI))) continue;
         if (k->keysym.scancode == b->sc[i] && mods_held(k->keysym.mod, b->mod[i]))
             return 1;
+    }
     return 0;
 }
 
