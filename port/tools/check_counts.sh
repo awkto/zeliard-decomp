@@ -4,7 +4,7 @@
 # the per-binary bullets, and nothing caught it).
 #
 # Usage: tools/check_counts.sh COUNTS_LOG   (run from port/; `make test` does)
-# COUNTS_LOG holds the thirteen binaries' "N checks, M failures" lines in run order.
+# COUNTS_LOG holds the fourteen binaries' "N checks, M failures" lines in run order.
 # Checked against:
 #   * port/README.md's `make test` block: the per-binary "(N)" list + total
 #   * every "* `test_X.c` — N assertions" bullet in port/README.md
@@ -29,14 +29,14 @@ fail=0
 complain() { echo "COUNT DRIFT: $*" >&2; fail=1; }
 
 # the run order of `make test` (matches the recipe)
-names="physics combat town boss shop status playthrough audio cutscene video config sync mapview"
+names="physics combat town boss shop status playthrough audio cutscene video config sync mapview smooth"
 counts=$(grep -oE '^[0-9]+ checks' "$log" | awk '{print $1}')
 n=$(echo "$counts" | wc -w)
-[ "$n" -eq 13 ] || { complain "expected 13 'N checks' lines in $log, found $n"; exit 1; }
+[ "$n" -eq 14 ] || { complain "expected 14 'N checks' lines in $log, found $n"; exit 1; }
 total=0
 for c in $counts; do total=$((total + c)); done
 
-# --- README's `make test` block: thirteen "(N)" in run order, then "= N assertions"
+# --- README's `make test` block: fourteen "(N)" in run order, then "= N assertions"
 block=$(awk '/^make test /,/assertions/' README.md)
 block_counts=$(echo "$block" | grep -oE '\([0-9]+\)' | tr -d '()')
 if [ "$(echo "$block_counts" | tr '\n' ' ')" != "$(echo "$counts" | tr '\n' ' ')" ]; then
@@ -69,4 +69,4 @@ if [ "$fail" -ne 0 ]; then
     echo "Update port/README.md / docs/ROADMAP.md to the numbers above." >&2
     exit 1
 fi
-echo "counts: $total assertions in 13 binaries, $vcount verify comparisons — the docs agree"
+echo "counts: $total assertions in 14 binaries, $vcount verify comparisons — the docs agree"

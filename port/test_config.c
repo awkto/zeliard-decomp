@@ -40,9 +40,10 @@ static void t_parse(void)
     Config c; config_init(&c);
     int n = config_parse(&c,
         "dir=/games/zeliard\nscale=4\nfullscreen=1\nvideo=ega\nfilter=integer\n"
-        "aspect=1:1\nmusic=0\nsfx=1\nspeaker=1\naudio=tandy\nvolume=7\nzoom=on\n");
-    ck(n == 12, "all twelve keys recognised (got %d)", n);
+        "aspect=1:1\nmusic=0\nsfx=1\nspeaker=1\naudio=tandy\nvolume=7\nzoom=on\nsmooth=1\n");
+    ck(n == 13, "all thirteen keys recognised (got %d)", n);
     ck(c.zoom == 1, "zoom");
+    ck(c.smooth == 1, "smooth");
     ck(!strcmp(c.audio, "tandy"), "audio back end");
     ck(!strcmp(c.dir, "/games/zeliard"), "dir");
     ck(c.scale == 4, "scale");
@@ -88,7 +89,7 @@ static void t_roundtrip(void)
     printf("round trip      ");
     Config a; config_init(&a);
     snprintf(a.dir, sizeof a.dir, "/opt/Zeliard Files");
-    a.scale = 5; a.fullscreen = 1; a.zoom = 1;
+    a.scale = 5; a.fullscreen = 1; a.zoom = 1; a.smooth = 1;
     snprintf(a.video, sizeof a.video, "hgc");
     snprintf(a.filter, sizeof a.filter, "smooth");
     snprintf(a.aspect, sizeof a.aspect, "4:3");
@@ -101,8 +102,8 @@ static void t_roundtrip(void)
 
     Config b; config_init(&b);
     int n = config_parse(&b, text);
-    ck(n == 12, "every rendered key parses back (got %d)", n);
-    ck(!strcmp(a.dir, b.dir) && a.scale == b.scale && a.fullscreen == b.fullscreen && a.zoom == b.zoom &&
+    ck(n == 13, "every rendered key parses back (got %d)", n);
+    ck(!strcmp(a.dir, b.dir) && a.scale == b.scale && a.fullscreen == b.fullscreen && a.zoom == b.zoom && a.smooth == b.smooth &&
        !strcmp(a.video, b.video) && !strcmp(a.filter, b.filter) && !strcmp(a.aspect, b.aspect) &&
        a.music == b.music && a.sfx == b.sfx && a.speaker == b.speaker && a.volume == b.volume &&
        !strcmp(a.audio, b.audio),

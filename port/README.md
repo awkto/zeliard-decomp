@@ -51,10 +51,10 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 
 ```
 cd port
-make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 15 test binaries
+make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 16 test binaries
 make test            # physics (149) + combat/AI (232) + town (176) + boss (642) + shop (195)
                      #   + status (87) + playthrough (176) + audio (394) + cutscene (52)
-                     #   + video (198) + config (59) + sync (144) + mapview (37) = 2541 assertions.  Needs no game files:
+                     #   + video (198) + config (60) + sync (144) + mapview (37) + smooth (45) = 2587 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 235 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -250,6 +250,7 @@ build's.
 | F12 | dump the framebuffer to the `--screenshot` file |
 | F / F11 / Alt+Enter | toggle fullscreen (`key.fullscreen`; the window is resizable; `--fullscreen` starts there) |
 | Z | **zoom** (`key.zoom`): crops the decorative stone frame so the playfield and the HUD panel under it fill the window (`--zoom` starts there; remembered as `zoom=` in the config).  Applies to the cavern, the town, the shops and the status screen, which share one frame; the title, the intro and the ending are full pictures and are never cropped.  Flashes *ZOOM ON* / *ZOOM OFF*.  Presentation only (a source rectangle in `present.c`), so it combines with every display filter including crt-curved |
+| T | **smooth scrolling** (`key.smooth`, `--smooth`, `smooth=` in the config; off by default; #127): the game still steps about 12 times a second in whole 8 px cells and the new state is on screen the moment it happens, but the cavern's scroll, the hero, enemies, shots and spells are drawn displaced back to where the previous step had them and slide to their true place over the step (`smooth.c`; the offset at progress `t` is `(previous - current) * (1 - t)`, linear, so a held key scrolls at constant speed).  The HUD and frame never move.  It is pixel-quantised in the 320x200 source, so it works through every filter and zoom, and it switches itself off during fast-forward (Shift), menus and cutscenes.  In the web build the between-step presents are paced by `requestAnimationFrame`.  The towns still step (their parallax backdrop and NPC redraw are separate).  `ZEL_PRESENT_DUMP=dir` writes every presented picture as a PNG, for recording what it does.  Presentation only: `make verify`, the traces and the scenarios never reach it. |
 | Esc | **pause** — Esc or Enter resumes, **Q** quits |
 
 **A / S attack shortcuts** (`autoatk.c`, interactive play only).  The game reads the sword as an
@@ -1136,7 +1137,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     music, preemption, a score change mid-effect, AX=3 pause, F1, the `FF24` fade) and
     all 65 `SNDJR` effects on their own match those hashes.  When python3 with Unicorn
     is installed (`ZEL_PYTHON=...`) the oracle is also run live from the test.
-* `test_config.c` — 59 assertions over the settings file (#42) and the attack-shortcut pulse machine: the sentinels
+* `test_config.c` — 60 assertions over the settings file (#42) and the attack-shortcut pulse machine: the sentinels
   `config_init` leaves, a full `key=value` parse, the lines it ignores (junk, a
   bare `=`, an unknown key, a bad boolean) and the whitespace/CRLF trimming, the
   `on`/`off`/`true`/`no` spellings, a lossless render+parse round trip, the atomic
@@ -1178,7 +1179,7 @@ Actions (default keys; controller defaults in brackets):
 * `sword` Space, X (+ Left/Right Ctrl in the cavern) (X) — Space is the original's fire key · `magic` cavern C, Left/Right Alt;
   town the same
 * `menu` Return, Keypad Enter: the status screen (Start) · `pause` Escape (Back)
-* `music` F1 · `sfx` F2 · `filter` F3 · `restore` F7, \ · `speed` F9, Backspace · `combo` A, held (Up+Down and a pulsing sword) · `autofire` S, held (a pulsing sword; held steady with Down) · `map` M · `fullscreen` F, F11 · `zoom` Z · `screenshot` F12
+* `music` F1 · `sfx` F2 · `filter` F3 · `restore` F7, \ · `speed` F9, Backspace · `combo` A, held (Up+Down and a pulsing sword) · `autofire` S, held (a pulsing sword; held steady with Down) · `map` M · `fullscreen` F, F11 · `zoom` Z · `smooth` T · `screenshot` F12
 * `turbo` Left/Right Shift, held (controller: right shoulder): fast-forward, see [Fast-forward](#fast-forward-turbo)
 * `quicksave` Ctrl+. · `quickload` Ctrl+\ · `save1`..`save9` Ctrl+1..9 · `load1`..`load9` Alt+1..9
   (a `key.*` binding replaces both the cavern and the town default set)
