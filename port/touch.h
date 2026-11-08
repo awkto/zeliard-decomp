@@ -128,10 +128,11 @@ void touch_note_other_input(Touch *t);
 
 /* Polled, like the keyboard: DIR_* bits, the sword/magic bits (1 = sword,
  * 2 = magic, as the engine's button byte), and whether Items is held.  The
- * combo button holds UP and DOWN and pulses sword at ~10 Hz; `ms` is any
- * monotonic millisecond clock. */
+ * combo button holds UP and DOWN; its sword pulse is the shared per-frame
+ * state machine in autoatk.h (main.c feeds touch_combo_held() to it). */
 uint8_t touch_dirs(const Touch *t);
-uint8_t touch_buttons(const Touch *t, unsigned ms);
+uint8_t touch_buttons(const Touch *t);
+int     touch_combo_held(const Touch *t);            /* the COMBO button is down: main.c runs autoatk.h on it */
 int     touch_menu_held(const Touch *t);
 int     touch_turbo_held(const Touch *t);            /* the TURBO button is down */
 int     touch_ctl_down(const Touch *t, int ctl);     /* is a finger on it? */

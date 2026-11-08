@@ -234,7 +234,7 @@ static void t_fingers(void)
     const TouchLayout *L = &t.L;
     int x, y, ex, ey;
 
-    ck(touch_dirs(&t) == 0 && touch_buttons(&t, 0) == 0 && !touch_menu_held(&t), "nothing held to begin with");
+    ck(touch_dirs(&t) == 0 && touch_buttons(&t) == 0 && !touch_menu_held(&t), "nothing held to begin with");
 
     /* finger 1 on the stick, pushed up-right; finger 2 on sword: independent */
     touch_finger_down(&t, 1, L->stick_cx, L->stick_cy);
@@ -243,31 +243,31 @@ static void t_fingers(void)
     ck(touch_dirs(&t) == (DIR_UP | DIR_RIGHT), "stick finger pushed up-right");
     centre(L, TC_SWORD, &x, &y);
     touch_finger_down(&t, 2, x, y);
-    ck(touch_buttons(&t, 0) == 1 && touch_dirs(&t) == (DIR_UP | DIR_RIGHT), "sword down while the stick is held: both register");
+    ck(touch_buttons(&t) == 1 && touch_dirs(&t) == (DIR_UP | DIR_RIGHT), "sword down while the stick is held: both register");
     centre(L, TC_MAGIC, &x, &y);
     touch_finger_down(&t, 3, x, y);
-    ck(touch_buttons(&t, 0) == 3, "a third finger adds magic");
+    ck(touch_buttons(&t) == 3, "a third finger adds magic");
     touch_finger_up(&t, 2);
-    ck(touch_buttons(&t, 0) == 2 && touch_dirs(&t) == (DIR_UP | DIR_RIGHT), "lifting sword leaves magic and the stick alone");
+    ck(touch_buttons(&t) == 2 && touch_dirs(&t) == (DIR_UP | DIR_RIGHT), "lifting sword leaves magic and the stick alone");
     touch_finger_up(&t, 1);
-    ck(touch_dirs(&t) == 0 && touch_buttons(&t, 0) == 2, "lifting the stick finger stops the walk only");
+    ck(touch_dirs(&t) == 0 && touch_buttons(&t) == 2, "lifting the stick finger stops the walk only");
     touch_finger_up(&t, 3);
-    ck(touch_buttons(&t, 0) == 0, "all fingers up: nothing held");
+    ck(touch_buttons(&t) == 0, "all fingers up: nothing held");
 
     /* each finger stays bound to the control it began on */
     centre(L, TC_SWORD, &x, &y);
     touch_finger_down(&t, 4, x, y);
     centre(L, TC_MAGIC, &ex, &ey);
     touch_finger_move(&t, 4, ex, ey);
-    ck(touch_buttons(&t, 0) == 1, "a finger that slides from sword onto magic is still sword");
+    ck(touch_buttons(&t) == 1, "a finger that slides from sword onto magic is still sword");
     touch_finger_move(&t, 4, L->win_w / 2, L->win_h / 2);
-    ck(touch_buttons(&t, 0) == 1, "...and sliding off the controls does not release it");
+    ck(touch_buttons(&t) == 1, "...and sliding off the controls does not release it");
     touch_finger_up(&t, 4);
     /* a finger that starts on empty ground does nothing, even if it slides onto a button */
     touch_finger_down(&t, 5, L->win_w / 2, L->win_h / 2);
     centre(L, TC_SWORD, &x, &y);
     touch_finger_move(&t, 5, x, y);
-    ck(touch_buttons(&t, 0) == 0, "a finger that starts on nothing never presses sword");
+    ck(touch_buttons(&t) == 0, "a finger that starts on nothing never presses sword");
     touch_finger_up(&t, 5);
     /* a finger that starts on the stick and wanders outside the ring keeps steering */
     touch_finger_down(&t, 6, L->stick_cx, L->stick_cy);
@@ -284,9 +284,7 @@ static void t_fingers(void)
     centre(L, TC_COMBO, &x, &y);
     touch_finger_down(&t, 7, x, y);
     ck(touch_dirs(&t) == (DIR_UP | DIR_DOWN), "combo holds up and down");
-    int on = 0, off = 0;
-    for (unsigned ms = 0; ms < 1000; ms += 10) { if (touch_buttons(&t, ms) & 1) on++; else off++; }
-    ck(on > 30 && off > 30, "combo pulses sword (%d on / %d off per second)", on, off);
+    ck(touch_combo_held(&t) && touch_buttons(&t) == 0, "combo is level-reported; the pulse comes from autoatk.h");
     touch_finger_up(&t, 7);
 
     /* items is held, and queues an event */
@@ -347,9 +345,9 @@ static void t_visibility(void)
     ck(!touch_visible(&t), "...keyboard use while hidden changes nothing");
     centre(&t.L, TC_SWORD, &x, &y);
     touch_finger_down(&t, 1, x, y);
-    ck(touch_visible(&t) && touch_buttons(&t, 0) == 1, "the first touch shows it (and the touch counts)");
+    ck(touch_visible(&t) && touch_buttons(&t) == 1, "the first touch shows it (and the touch counts)");
     touch_note_other_input(&t);
-    ck(!touch_visible(&t) && touch_buttons(&t, 0) == 0 && touch_dirs(&t) == 0, "keyboard/controller use hides it and releases every finger");
+    ck(!touch_visible(&t) && touch_buttons(&t) == 0 && touch_dirs(&t) == 0, "keyboard/controller use hides it and releases every finger");
     touch_finger_down(&t, 2, x, y);
     ck(touch_visible(&t), "a later touch brings it back");
 
@@ -363,7 +361,7 @@ static void t_visibility(void)
     touch_resize(&t, 1280, 720);
     centre(&t.L, TC_SWORD, &x, &y);
     touch_finger_down(&t, 1, x, y);
-    ck(!touch_visible(&t) && touch_buttons(&t, 0) == 0, "off ignores touches");
+    ck(!touch_visible(&t) && touch_buttons(&t) == 0, "off ignores touches");
 
     touch_init(&t, TOUCH_AUTO, 9999, 3);
     ck(t.size == TOUCH_SIZE_MAX && t.opacity == TOUCH_OPACITY_MIN, "size and opacity clamp (%d, %d)", t.size, t.opacity);
