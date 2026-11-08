@@ -8,6 +8,7 @@
 #include <string.h>
 #include "smooth.h"
 #include "physics.h"
+#include "town.h"
 
 static int checks, failures;
 static void ck(int ok, const char *fmt, ...)
@@ -212,12 +213,146 @@ static void t_render(void)
     free(g);
 }
 
+/* ------------------------------------------------------------------ towns */
+static TownMap TM; static TownTiles TT; static TownSprites TS; static TownHero TH; static TownBackdrop TB; static Town TW;
+
+static void town_setup(void)
+{
+    memset(&TM, 0, sizeof TM); memset(&TT, 0, sizeof TT); memset(&TS, 0, sizeof TS); memset(&TH, 0, sizeof TH);
+    memset(&TB, 0, sizeof TB); memset(&TW, 0, sizeof TW);
+    TM.width = 100; TM.index = 1;
+    for (int v = 1; v < 8; v++) {
+        TT.present[v] = 1;
+        for (int r = 0; r < 8; r++) for (int c = 0; c < 8; c++) TT.cell[v].px[r][c] = (uint8_t)(v * 16 + (c == 0 ? 1 : 2));
+    }
+    for (int c = 0; c < TM.width; c++) for (int r = 0; r < TOWN_ROWS; r++) TM.grid[c][r] = (uint8_t)(1 + (c % 7));
+    /* backdrop strips with a different value per column so their motion can be read off */
+    TB.loaded = 1; TB.has_far = 1; TB.back_y0 = 14; TB.back_y1 = 78;
+    for (int x = 0; x < 112; x++)
+        for (int r = 0; r < 16; r++) {
+            TB.far14[r][x] = (uint8_t)(x + 1);
+            if (r < 8) { TB.near142[r][x] = (uint8_t)(x + 1); TB.near150[r][x] = (uint8_t)(x + 1); }
+        }
+    TM.nnpcs = 1;
+    TM.npcs[0].col = 20; TM.npcs[0].sprite = 0x80; TM.npcs[0].saved = 1; TM.npcs[0].type = 1;
+    TM.grid[20][TOWN_NPC_ROW] = TOWN_MARK;
+    TS.ncells = 1; TS.frame[0][4][0] = 1; TS.frame[0][0][0] = 1;
+    for (int r = 0; r < 8; r++) for (int c = 0; c < 8; c++) { TS.cell[0].px[r][c] = 200; TS.cell[0].mask[r][c] = 1; }
+    TW.map = &TM; TW.tiles = &TT; TW.spr = &TS; TW.hero = &TH; TW.back = &TB;
+    TW.scroll_col = 10; TW.hero_scr_col = 12; TW.back_steps = 3;
+}
+
+static void t_town_steps(void)
+{
+    printf("town steps      ");
+    town_setup();
+    SmoothTown s; smooth_town_reset(&s);
+    smooth_town_step(&s, &TW);
+    ck(!s.start.active, "no history: nothing slides");
+    TW.scroll_col = 11; TW.back_steps = 4;               /* walking right: the camera follows the hero */
+    smooth_town_step(&s, &TW);
+    ck(s.start.active && s.start.wx == 8 && s.start.hx == 0, "a scroll step: the tiles were 8 px to the right, the hero stays");
+    ck(s.start.fx[0] == 4 && s.start.fx[1] == 8 && s.start.fx[2] == 16, "each parallax layer slides by its own step: 4 / 8 / 16 px");
+    ck(s.start.nx[0] == 8, "a still NPC rides the map: it was 8 px to the right on screen");
+    TW.scroll_col = 10; TW.back_steps = 3;               /* walking left */
+    smooth_town_step(&s, &TW);
+    ck(s.start.wx == -8 && s.start.fx[0] == -4 && s.start.fx[1] == -8 && s.start.fx[2] == -16 && s.start.nx[0] == -8, "and the other way");
+    TW.scroll_col = 10; TW.hero_scr_col = 13;            /* the hero walks across the screen, no scroll */
+    smooth_town_step(&s, &TW);
+    ck(s.start.hx == -8 && s.start.wx == 0 && s.start.fx[1] == 0 && s.start.nx[0] == 0, "the hero alone: his own cell delta, the world and layers still");
+    TW.hero_scr_col = 20;                                /* a door: a jump */
+    smooth_town_step(&s, &TW);
+    ck(s.start.hx == 0, "a jump of more than 3 cells is not slid");
+    TW.scroll_col = 30; TW.back_steps = 40;              /* a whole new place */
+    smooth_town_step(&s, &TW);
+    ck(s.start.wx == 0 && s.start.fx[2] == 0 && s.start.nx[0] == 0, "a scroll or phase jump is not slid");
+    TW.scroll_col = 10; TW.back_steps = 3;
+    smooth_town_step(&s, &TW);
+    TM.npcs[0].col = 21; TM.grid[20][TOWN_NPC_ROW] = 1; TM.grid[21][TOWN_NPC_ROW] = TOWN_MARK;   /* the NPC walks right a cell */
+    smooth_town_step(&s, &TW);
+    TM.npcs[0].col = 22; TM.grid[21][TOWN_NPC_ROW] = 1; TM.grid[22][TOWN_NPC_ROW] = TOWN_MARK;
+    smooth_town_step(&s, &TW);
+    ck(s.start.nx[0] == -8 && s.start.wx == 0, "an NPC that walks is matched by index and slides by its own move");
+    TW.scroll_col = 11; TW.back_steps = 4; TM.npcs[0].col = 23; TM.grid[22][TOWN_NPC_ROW] = 1; TM.grid[23][TOWN_NPC_ROW] = TOWN_MARK;
+    smooth_town_step(&s, &TW);
+    ck(s.start.wx == 8 && s.start.nx[0] == 0, "walking with the scroll: the NPC's own and the map's slides cancel on screen (it kept its cell)");
+    TM.grid[23][TOWN_NPC_ROW] = 1;                       /* the marker lifted (a door frame) */
+    smooth_town_step(&s, &TW);
+    ck(s.start.nx[0] == 0, "an NPC that is not drawn has no offset");
+    TM.index = 2;
+    smooth_town_step(&s, &TW);
+    ck(!s.start.active, "a different town forgets the history");
+    SmoothOfs h; smooth_ofs_at(&s.start, 0.5, &h);
+    ck(!h.active, "an idle step stays idle");
+    TW.scroll_col = 12; TW.back_steps = 5;
+    smooth_town_step(&s, &TW);
+    smooth_ofs_at(&s.start, 0.5, &h);
+    ck(h.active && h.wx == 4 && h.fx[0] == 2 && h.fx[1] == 4 && h.fx[2] == 8, "halfway: every layer half way, each by its own amount");
+    smooth_ofs_at(&s.start, 1, &h);
+    ck(!h.active && h.fx[2] == 0, "settled at t = 1");
+}
+
+static int strip_phase(const uint8_t *fb, int y)       /* the value at the left edge of the window: x + 1 shifted */
+{
+    return fb[y * FB_W + 48];
+}
+
+static void t_town_render(void)
+{
+    printf("town render     ");
+    town_setup();
+    static uint8_t a[FB_W * FB_H], b[FB_W * FB_H];
+    TW.scroll_col = 10; TW.back_steps = 3;
+    town_render(a, &TW);
+    SmoothOfs z; memset(&z, 0, sizeof z);
+    town_set_smooth(&z); town_render(b, &TW); town_set_smooth(NULL);
+    ck(memcmp(a, b, sizeof a) == 0, "inactive offsets render byte-identically");
+
+    /* the plain picture at the next step, for comparing a slide's end to */
+    SmoothOfs o; memset(&o, 0, sizeof o); o.active = 1; o.wx = 8; o.fx[0] = 4; o.fx[1] = 8; o.fx[2] = 16; o.nx[0] = 8;
+    town_set_smooth(&o); town_render(b, &TW); town_set_smooth(NULL);
+    int ok = 1;
+    for (int y = 78; y < 142; y++) for (int x = 48 + 8; x < 48 + 224; x++) {
+        if (y >= 78 + 5 * 8 && y < 78 + 8 * 8) continue;        /* the NPC row: its sprite moves too */
+        if (b[y * FB_W + x] != a[y * FB_W + x - 8]) ok = 0;
+    }
+    ck(ok, "wx = +8: the map tiles are the plain picture moved 8 px right");
+    int rev = 1;
+    for (int y = 78; y < 78 + 40; y++) for (int x = 48; x < 56; x++)
+        if (b[y * FB_W + x] != TT.cell[TM.grid[TW.scroll_col + 3][0]].px[0][x - 48 + 0] && y == 78) rev = 0;   /* map column scroll_col + 3 */
+    ck(rev, "the revealed column is the map column just before the window");
+    /* the layers: with fx the strip phase differs from the plain one by exactly that many px */
+    int p0 = strip_phase(a, 14), p1 = strip_phase(b, 14);
+    ck(((p0 - p1) % 112 + 112) % 112 == 4 || ((p1 - p0) % 112 + 112) % 112 == 4, "the far strip is displaced 4 px (%d vs %d)", p0, p1);
+    p0 = strip_phase(a, 142); p1 = strip_phase(b, 142);
+    ck(((p1 - p0) % 112 + 112) % 112 == 104 || ((p0 - p1) % 112 + 112) % 112 == 8, "the middle strip is displaced 8 px (%d vs %d)", p0, p1);
+    p0 = strip_phase(a, 150); p1 = strip_phase(b, 150);
+    ck(((p0 - p1) % 112 + 112) % 112 == 16 || ((p1 - p0) % 112 + 112) % 112 == 16, "the near strip is displaced 16 px (%d vs %d)", p0, p1);
+    int leak = 0;
+    for (int y = 0; y < FB_H; y++) { for (int x = 0; x < 48; x++) leak |= b[y * FB_W + x]; for (int x = 48 + 224; x < FB_W; x++) leak |= b[y * FB_W + x]; }
+    ck(!leak, "nothing leaks out of the window: the frame and HUD columns stay put");
+    /* NPC at screen col 20-(10+4)=6 -> x 48+48=96; +8 px */
+    int sx = 48 + 6 * 8 + 8, sy = 78 + 5 * 8;
+    ck(b[sy * FB_W + sx] == 200 && b[sy * FB_W + sx + 7] == 200 && b[sy * FB_W + sx - 1] != 200, "the NPC sprite is drawn at its offset");
+    ok = 1;
+    memset(&o, 0, sizeof o); o.active = 1; o.hx = 8;
+    town_set_smooth(&o); town_render(b, &TW); town_set_smooth(NULL);
+    for (int y = 78; y < 142; y++) for (int x = 48; x < 48 + 224; x++) {
+        int hx0 = 48 + TW.hero_scr_col * 8;                    /* the hero's two columns: only these may differ */
+        if (x >= hx0 - 0 && x < hx0 + 24) continue;
+        if (b[y * FB_W + x] != a[y * FB_W + x]) ok = 0;
+    }
+    ck(ok, "a hero offset changes only the hero");
+}
+
 int main(void)
 {
     t_math();    printf("ok\n");
     t_step();    printf("ok\n");
     t_objects(); printf("ok\n");
     t_render();  printf("ok\n");
+    t_town_steps();  printf("ok\n");
+    t_town_render(); printf("ok\n");
     printf("%d checks, %d failures\n", checks, failures);
     return failures != 0;
 }

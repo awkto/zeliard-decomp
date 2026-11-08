@@ -170,6 +170,7 @@ typedef struct {
      * keep presenting, sm_gap_ms the least time between two such presents (the display period) */
     int smooth, sm_live;
     Smooth sm;
+    SmoothTown tsm;                     /* the town frame's history (scene 2) */
     SmoothOfs sm_ofs;
     Uint64 sm_last_pc;
     double sm_gap_ms;
@@ -886,7 +887,7 @@ static void pump_events(App *a, Game *g)
             else if (input_event_match(&a->in, ACT_SMOOTH, &e.key)) {
                 if (!e.key.repeat) {
                     a->smooth = !a->smooth;
-                    a->sm_live = 0; smooth_reset(&a->sm);
+                    a->sm_live = 0; smooth_reset(&a->sm); smooth_town_reset(&a->tsm);
                     fprintf(stderr, "[video] smooth scrolling: %s\n", a->smooth ? "on" : "off");
                     statekeys_osd(&a->sk, "SMOOTH %s", a->smooth ? "ON" : "OFF");
                 }
@@ -1020,6 +1021,7 @@ EM_ASYNC_JS(void, smooth_raf_wait, (int ms), {
 #endif
 
 static void cavern_draw(App *a, Game *g, const SmoothOfs *so);
+static void town_draw(App *a, Town *t, const SmoothOfs *so);
 
 /* One between-step present of a sliding step (#127): where the step is in its interval
  * picks the offsets; nothing is drawn when they quantise to what is already shown, or
@@ -1027,15 +1029,16 @@ static void cavern_draw(App *a, Game *g, const SmoothOfs *so);
 static int smooth_tick(App *a, Game *g, Uint64 next, double period_ms)
 {
     if (!a->smooth || !a->sm_live || a->turbo || a->paused || a->mv_open || a->headless) return 0;
+    int town = a->scene == 2;
     Uint64 freq = SDL_GetPerformanceFrequency(), now = SDL_GetPerformanceCounter();
     if (now >= next) return 0;
     if ((double)(now - a->sm_last_pc) * 1000.0 / (double)freq < a->sm_gap_ms) return 0;
     double left = (double)(next - now) * 1000.0 / (double)freq;
     SmoothOfs o;
-    smooth_at(&a->sm, smooth_progress(period_ms - left, period_ms), &o);
+    smooth_ofs_at(town ? &a->tsm.start : &a->sm.start, smooth_progress(period_ms - left, period_ms), &o);
     if (smooth_same(&o, &a->sm_ofs)) return 0;
     a->sm_ofs = o;
-    cavern_draw(a, g, &o);
+    if (town) town_draw(a, &a->sh.town, &o); else cavern_draw(a, g, &o);
     a->sm_last_pc = now;
     a->sm_presents++;
     return 1;
@@ -1068,7 +1071,7 @@ static void frame_wait(App *a, Game *g, Uint64 *next)
             continue;
         }
         if (a->paused) {
-            if (a->sm_live) { a->sm_live = 0; if (a->scene == 1) cavern_draw(a, g, NULL); }   /* hold the settled picture, not a mid-slide one */
+            if (a->sm_live) { a->sm_live = 0; if (a->scene == 1) cavern_draw(a, g, NULL); else if (a->scene == 2) town_draw(a, &a->sh.town, NULL); }   /* hold the settled picture, not a mid-slide one */
             /* keep redrawing the held picture, so Z / F3 and their OSD message show while paused */
             if (a->pf_w > 0) { a->zoomable = a->pf_zoom; present_frame(a, a->pf_w, a->pf_h); a->zoomable = 0; }
             SDL_Delay(16); *next = SDL_GetPerformanceCounter(); continue;
@@ -1076,10 +1079,10 @@ static void frame_wait(App *a, Game *g, Uint64 *next)
         now = SDL_GetPerformanceCounter();
         if (now >= *next) break;
         Uint64 rem = (*next - now) * 1000 / freq;
-        if (a->scene == 1 && g) smooth_tick(a, g, *next, frame_period_ms(a, a->frame_ms));
+        if ((a->scene == 1 || a->scene == 2) && g) smooth_tick(a, g, *next, frame_period_ms(a, a->frame_ms));
 #ifdef __EMSCRIPTEN__
         slept = 1;
-        if (a->scene == 1 && a->smooth && a->sm_live && !a->turbo)
+        if ((a->scene == 1 || a->scene == 2) && a->smooth && a->sm_live && !a->turbo)
             smooth_raf_wait((int)(rem ? rem : 1));      /* smooth: wake at the display's rate to present the slide */
         else
         emscripten_sleep((unsigned)(rem ? rem : 1));    /* ASYNCIFY: sleep to the frame deadline in the browser instead of spinning */
@@ -1199,7 +1202,7 @@ static void usage(void)
         "              are touch.size / touch.opacity in zeliard.ini\n"
         "  --fullscreen  start full-screen (F or F11, or Alt+Enter, toggles; Esc pauses, Q quits)\n"
         "  --zoom        start with the decorative border cropped (Z toggles)\n"
-        "  --smooth      slide the cavern scroll, hero, enemies and shots between game steps (T toggles)\n"
+        "  --smooth      slide the cavern or town scroll, parallax layers, hero, NPCs, enemies and shots between game steps (T toggles)\n"
         "  --video M   render through one of the five original drivers:\n"
         "              mcga (default) cga cga2 ega hgc tandy — the RESOURCE.CFG\n"
         "              `videoDrv` set, at each driver's own screen size\n"
@@ -2036,6 +2039,28 @@ static void cavern_draw(App *a, Game *g, const SmoothOfs *so)
     a->zoomable = 0;
 }
 
+/* The town picture: the frame, HUD and every layer, uploaded and presented (like cavern_draw). */
+static void town_draw(App *a, Town *t, const SmoothOfs *so)
+{
+    if (t->status) memcpy(a->fb, status_framebuffer(t->status), FB_W * FB_H);
+    else if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
+    else {
+        town_set_smooth(so);
+        town_render(a->fb, t);
+        town_set_smooth(NULL);
+    }
+    render_hud(a->fb, t->g, &a->sh.font, &a->sh.tfont, town_place_record(t->map));
+    itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, t->g);
+    tear_draw_slots(a->fb, t->g, &a->sh.tear_art);
+    int vw, vh;
+    const uint8_t *rgb = video_out(a, &vw, &vh);
+    SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+    a->force_draw = 1;
+    a->zoomable = 1;
+    present_frame(a, vw, vh);
+    a->zoomable = 0;
+}
+
 static void present(Game *g)
 {
     App *a = app_of(g->user);
@@ -2097,6 +2122,7 @@ static void present(Game *g)
     a->sm_live = 0;
     if (a->smooth && !a->turbo && !g->status && !g->tear && !g->dsv_pic && !g->walk_in && !g->encounter_frames &&
         !g->fade_card && !g->dissolve) {
+        smooth_town_reset(&a->tsm);
         smooth_step(&a->sm, g);
         smooth_at(&a->sm, 0, &so);
         slide = so.active;
@@ -2192,20 +2218,22 @@ static void town_present(Town *t)
         return;
     }
 #ifdef HAVE_SDL
+    /* #127 smooth scrolling in a town: only the plain street frame slides */
+    SmoothOfs so;
+    int slide = 0;
+    a->sm_live = 0;
+    if (a->smooth && !a->turbo && !t->status && !t->shop && !t->dsv_pic && !t->dissolve) {
+        smooth_reset(&a->sm);
+        smooth_town_step(&a->tsm, t);
+        smooth_ofs_at(&a->tsm.start, 0, &so);
+        slide = so.active;
+        a->sm_live = slide;
+        a->sm_ofs = so;
+        a->sm_last_pc = SDL_GetPerformanceCounter();
+        if (a->sm_gap_ms <= 0) a->sm_gap_ms = 1000.0 / 60 - 1;
+    } else smooth_town_reset(&a->tsm);
     if (!turbo_skip(a)) {
-        if (t->status) memcpy(a->fb, status_framebuffer(t->status), FB_W * FB_H);
-        else if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
-        else town_render(a->fb, t);
-        render_hud(a->fb, t->g, &a->sh.font, &a->sh.tfont, town_place_record(t->map));
-        itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, t->g);
-        tear_draw_slots(a->fb, t->g, &a->sh.tear_art);
-        int vw, vh;
-        const uint8_t *rgb = video_out(a, &vw, &vh);
-        SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
-        a->force_draw = 1;
-        a->zoomable = 1;
-        present_frame(a, vw, vh);
-        a->zoomable = 0;
+        town_draw(a, t, slide ? &so : NULL);
         char title[768];
         snprintf(title, sizeof title, "Zeliard - %s  col %d  LIFE %u/%u  GOLD %u  %.400s", t->map->label,
                  town_hero_col(t), t->g->hp, t->g->max_hp, (unsigned)t->g->gold, t->message);
