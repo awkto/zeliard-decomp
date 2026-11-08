@@ -6,35 +6,187 @@
 <link rel="icon" href="data:,">
 <title>Zeliard (C port, web)</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #000; color: #ccc; font: 16px system-ui, sans-serif; }
-  #pick { max-width: 34em; margin: 8vh auto; padding: 0 1em; }
+  :root { --bg:#000; --fg:#ccc; --dim:#888; --line:#2c2c2c; --panel:#111; --acc:#9c9; --focus:#7ad; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--fg); font: 16px system-ui, sans-serif; }
+  body { overflow-x: hidden; }
+  #pick { max-width: 38em; margin: 4vh auto; padding: 0 1em 2em; }
   #pick h1 { font-size: 1.4em; }
-  #pick label { display: block; margin: 1em 0 .3em; }
-  #status { margin-top: 1em; min-height: 1.4em; color: #9c9; }
+  #pick h2 { font-size: 1.05em; margin: 1.4em 0 .4em; }
+  #status { margin-top: 1em; min-height: 1.4em; color: var(--acc); }
   #err { color: #f88; }
   #stage { display: none; position: fixed; inset: 0; align-items: center; justify-content: center; }
   canvas { background: #000; touch-action: none; image-rendering: pixelated; outline: none; }
-  small { color: #888; }
+  small, .hint { color: var(--dim); }
+  code, kbd { font: .9em ui-monospace, monospace; }
+  kbd { background: #222; border: 1px solid #444; border-radius: 3px; padding: 0 .35em; white-space: nowrap; }
+  a { color: #8bd; }
+  button { font: inherit; color: var(--fg); background: #222; border: 1px solid #555; border-radius: 4px; padding: .45em .9em; cursor: pointer; min-height: 2.5em; }
+  button:hover { background: #2c2c2c; }
+  #play { background: #1d3a1d; border-color: #5a5; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  #fileinputs label { display: block; margin: 1em 0 .3em; }
+  input[type=file] { max-width: 100%; }
+  #settings fieldset { border: 1px solid var(--line); border-radius: 6px; background: var(--panel); margin: .8em 0; padding: .3em 1em .8em; min-width: 0; }
+  #settings legend { padding: 0 .4em; color: var(--acc); font-weight: 600; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: .2em 1em; padding: .55em 0; border-top: 1px solid var(--line); }
+  .row:first-of-type { border-top: 0; }
+  .row > label { flex: 1 1 11em; min-width: 0; }
+  .row > select { flex: 1 1 15em; min-width: 0; max-width: 100%; font: inherit; color: var(--fg); background: #1c1c1c; border: 1px solid #555; border-radius: 4px; padding: .4em; min-height: 2.5em; }
+  .row > input[type=checkbox] { flex: 0 0 auto; width: 1.5em; height: 1.5em; margin: 0 .3em; accent-color: #6b6; }
+  .row .hint { flex: 1 0 100%; font-size: .85em; }
+  .row:has(> input[type=checkbox]) > label { order: 1; }
+  .row:has(> input[type=checkbox]) > input { order: 2; margin-left: auto; }
+  .row:has(> input[type=checkbox]) .hint { order: 3; }
+  #settingsBtns { display: flex; gap: .6em; flex-wrap: wrap; align-items: center; }
+  details.keys { border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: .2em 1em; margin: .8em 0; }
+  details.keys > summary { cursor: pointer; padding: .5em 0; color: var(--acc); font-weight: 600; }
+  .kt { width: 100%; border-collapse: collapse; margin: .2em 0 .8em; }
+  .kt caption { text-align: left; font-weight: 600; padding: .5em 0 .2em; }
+  .kt td { padding: .25em .4em .25em 0; vertical-align: top; border-top: 1px solid var(--line); }
+  .kt td:first-child { width: 42%; }
+  .note { font-size: .88em; color: var(--dim); }
+  #saved { margin-top: 1em; }
+  #saved > * { margin: .2em .3em .2em 0; }
+  #helpBtn { display: none; position: fixed; top: max(6px, env(safe-area-inset-top)); left: max(6px, env(safe-area-inset-left)); z-index: 5;
+             width: 2.2em; min-height: 0; height: 2.2em; padding: 0; border-radius: 50%; opacity: .45; }
+  #helpBtn:hover, #helpBtn:focus-visible { opacity: 1; }
+  #help { position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,.97); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  #help[hidden] { display: none; }
+  #help .inner { max-width: 38em; margin: 0 auto; padding: 1em 1em 3em; }
+  #help .top { display: flex; justify-content: space-between; align-items: center; gap: 1em; }
+  #help h2 { margin: .2em 0; font-size: 1.2em; }
 </style>
 </head>
 <body>
-<div id="pick">
+<main id="pick">
   <h1>Zeliard</h1>
   <p id="intro">This runs the C port in your browser. It needs your own copy of the game files
      (the folder with <code>ZELRES1.SAR</code>). They are read locally and never uploaded.</p>
-  <label for="dir">Game folder</label>
-  <input id="dir" type="file" webkitdirectory multiple>
-  <label for="zip">or a zip of it</label>
-  <input id="zip" type="file" accept=".zip,application/zip">
+
+  <form id="settings" onsubmit="return false" aria-label="Settings">
+    <h2>Settings</h2>
+    <fieldset>
+      <legend>Display</legend>
+      <div class="row"><label for="s-filter">Video filter</label>
+        <select id="s-filter">
+          <option value="integer">Integer (crisp pixels)</option>
+          <option value="sharp-bilinear">Sharp bilinear (default)</option>
+          <option value="smooth">Smooth</option>
+          <option value="scanlines">Scanlines</option>
+          <option value="soft-scanlines">Soft scanlines</option>
+          <option value="crt">CRT</option>
+          <option value="crt-curved">CRT, curved</option>
+        </select><span class="hint">In game: <kbd>V</kbd> or <kbd>F3</kbd> cycles them.</span></div>
+      <div class="row"><label for="s-video">Video mode</label>
+        <select id="s-video">
+          <option value="mcga">VGA / MCGA, 256 colours (default)</option>
+          <option value="ega">EGA, 16 colours</option>
+          <option value="cga">CGA, 4 colours</option>
+          <option value="cga2">CGA, high resolution</option>
+          <option value="hgc">Hercules, monochrome</option>
+          <option value="tandy">Tandy, 16 colours</option>
+        </select><span class="hint">The original graphics drivers. Chosen at start; no key switches it in game.</span></div>
+      <div class="row"><label for="s-aspect">Aspect ratio</label>
+        <select id="s-aspect">
+          <option value="4:3">4:3, like the original monitor (default)</option>
+          <option value="1:1">1:1, square pixels</option>
+        </select></div>
+      <div class="row"><label for="s-zoom">Zoom: crop the stone border</label>
+        <input type="checkbox" id="s-zoom"><span class="hint">In game: <kbd>Z</kbd>.</span></div>
+      <div class="row"><label for="s-smooth">Smooth scrolling</label>
+        <input type="checkbox" id="s-smooth"><span class="hint">Slides the scroll and sprites between game steps. In game: <kbd>T</kbd>.</span></div>
+      <div class="row"><label for="s-fullscreen">Start fullscreen</label>
+        <input type="checkbox" id="s-fullscreen"><span class="hint">In game: <kbd>F</kbd> or <kbd>F11</kbd>.</span></div>
+    </fieldset>
+    <fieldset>
+      <legend>Gameplay</legend>
+      <div class="row"><label for="s-speed">Game speed</label>
+        <select id="s-speed"></select>
+        <span class="hint">1 is fastest, 10 slowest, 5 is the original. In game: <kbd>F9</kbd> or <kbd>Backspace</kbd>, then a digit (9 is fastest). Hold <kbd>Shift</kbd> to fast-forward.</span></div>
+    </fieldset>
+    <fieldset>
+      <legend>Audio</legend>
+      <div class="row"><label for="s-music">Music</label>
+        <input type="checkbox" id="s-music"><span class="hint">In game: <kbd>F1</kbd>.</span></div>
+      <div class="row"><label for="s-sfx">Sound effects</label>
+        <input type="checkbox" id="s-sfx"><span class="hint">In game: <kbd>F2</kbd>. The port has no volume setting; use your device volume.</span></div>
+    </fieldset>
+    <fieldset>
+      <legend>Controls</legend>
+      <div class="row"><label for="s-touch">On-screen touch controls</label>
+        <select id="s-touch">
+          <option value="auto">Auto: appear on first touch (default)</option>
+          <option value="on">Always on</option>
+          <option value="off">Off</option>
+        </select><span class="hint">Auto hides them again when you use a keyboard or controller.</span></div>
+    </fieldset>
+    <div id="settingsBtns"><button type="button" id="s-reset">Reset settings to defaults</button>
+      <small id="s-note">Settings are remembered in this browser, and keys pressed in game update them.</small></div>
+  </form>
+
+  <details class="keys" id="keys"><summary>Controls: every keyboard shortcut</summary><div id="keysBody"></div></details>
+
+  <h2>Game files</h2>
+  <div id="fileinputs">
+    <label for="dir">Game folder</label>
+    <input id="dir" type="file" webkitdirectory multiple>
+    <label for="zip">or a zip of it</label>
+    <input id="zip" type="file" accept=".zip,application/zip">
+  </div>
   <div id="saved" style="display:none">
     <button id="play">Play</button> <button id="forget">Forget game files</button>
     <small>(keeps your saves)</small>
   </div>
-  <div id="status">Loading engine...</div>
-  <div id="err"></div>
+  <div id="status" role="status">Loading engine...</div>
+  <div id="err" role="alert"></div>
   <p><small>Saves (.usr), save states and settings are kept in this browser (IndexedDB), along with the game files you picked, so you only choose them once.</small></p>
-</div>
+</main>
+<template id="keytpl">
+  <table class="kt"><caption>Moving and fighting</caption>
+    <tr><td><kbd>Left</kbd> <kbd>Right</kbd></td><td>Walk</td></tr>
+    <tr><td><kbd>Up</kbd></td><td>Jump, climb, enter a door, ride a lift up</td></tr>
+    <tr><td><kbd>Down</kbd></td><td>Crouch, climb down, ride a lift down</td></tr>
+    <tr><td><kbd>Space</kbd> <kbd>X</kbd> <kbd>Ctrl</kbd></td><td>Sword attack</td></tr>
+    <tr><td><kbd>Alt</kbd> <kbd>C</kbd></td><td>Cast the selected spell</td></tr>
+    <tr><td>hold <kbd>A</kbd></td><td>Combo: upward slashes while you steer</td></tr>
+    <tr><td>hold <kbd>S</kbd></td><td>Auto-attack (with <kbd>Down</kbd>: the downward thrust)</td></tr>
+    <tr><td>hold <kbd>Shift</kbd></td><td>Fast-forward about 6x (sound is muted)</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>Status screen: spells, items, potions</td></tr>
+    <tr><td><kbd>M</kbd></td><td>Map of the current cavern</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Pause; <kbd>Esc</kbd> or <kbd>Enter</kbd> resumes, <kbd>Q</kbd> quits</td></tr>
+  </table>
+  <table class="kt"><caption>Display</caption>
+    <tr><td><kbd>V</kbd> <kbd>F3</kbd></td><td>Cycle the video filter</td></tr>
+    <tr><td><kbd>Z</kbd></td><td>Zoom (crop the border)</td></tr>
+    <tr><td><kbd>T</kbd></td><td>Smooth scrolling</td></tr>
+    <tr><td><kbd>F</kbd> <kbd>F11</kbd> <kbd>Alt</kbd>+<kbd>Enter</kbd></td><td>Fullscreen</td></tr>
+  </table>
+  <table class="kt"><caption>Game and sound</caption>
+    <tr><td><kbd>F9</kbd> <kbd>Backspace</kbd></td><td>Change speed, then press a digit 0-9 (9 is fastest). The game does not remember it; the Speed setting above does</td></tr>
+    <tr><td><kbd>F7</kbd> <kbd>\</kbd></td><td>Restore a saved .usr game</td></tr>
+    <tr><td><kbd>F1</kbd></td><td>Music on/off</td></tr>
+    <tr><td><kbd>F2</kbd></td><td>Sound effects on/off</td></tr>
+    <tr><td><kbd>?</kbd></td><td>Show this list (also the ? button, top left)</td></tr>
+  </table>
+  <table class="kt"><caption>Save states (anywhere outside a menu)</caption>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>.</kbd></td><td>Quick save</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>\</kbd></td><td>Quick load</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Keypad 1</kbd> to <kbd>9</kbd></td><td>Save to slot 1-9</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>Keypad 1</kbd> to <kbd>9</kbd></td><td>Load slot 1-9</td></tr>
+  </table>
+  <p class="note">Browser notes: Ctrl+1..9 and Alt+1..9 (the number row) are your browser's tab-switching keys, so use the
+    keypad digits above, or go fullscreen (<kbd>F</kbd>), which lets the game claim them in Chrome and Edge. Ctrl+W, Ctrl+T and Ctrl+N
+    cannot be blocked by a page, and Ctrl is also a sword key, so go fullscreen first. Ctrl+<kbd>.</kbd> and Ctrl+<kbd>\</kbd> work everywhere.</p>
+  <p class="note">Touch: on-screen buttons appear when you touch the game (joystick, sword, magic, combo, quick save and load).
+    Arrow keys and the others can be remapped in <code>zeliard.ini</code>.</p>
+</template>
 <div id="stage"><canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas></div>
+<button id="helpBtn" type="button" aria-label="Show the keyboard shortcuts" title="Controls (?)">?</button>
+<div id="help" role="dialog" aria-modal="true" aria-labelledby="helpTitle" hidden>
+  <div class="inner"><div class="top"><h2 id="helpTitle">Controls</h2><button type="button" id="helpClose">Close</button></div>
+    <div id="helpBody"></div></div>
+</div>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -64,6 +216,7 @@ async function setupPersistence() {
   for (const d of ['/libsdl', '/game']) { FS.mkdir(d); FS.mount(Module.IDBFS, {}, d); }
   try { await syncfs(true); } catch (e) { fail('Could not open browser storage (private window?): ' + e); }
   ready = true;
+  loadSettings();
   if (!hasGame()) await serverGame();
   showPick();
 }
@@ -85,6 +238,7 @@ async function serverGame() {
 $('dir').disabled = $('zip').disabled = true;
 
 function showPick() {
+  enableSettings();
   $('dir').disabled = $('zip').disabled = false;
   const have = hasGame();
   $('saved').style.display = have ? '' : 'none';
@@ -179,6 +333,107 @@ $('zip').onchange = async ev => {
   try { begin(await unzip(await f.arrayBuffer())); } catch (e) { fail(e.message || String(e)); }
 };
 
+// ---- settings -------------------------------------------------------------
+// One source of truth per setting.  Everything the port itself keeps lives in
+// zeliard.ini (/libsdl/awkto/zeliard/zeliard.ini, the file SDL_GetPrefPath names):
+// the port rewrites it when V / Z / T / F1 / F2 / F change something in game (web
+// build only, see prefs_save in main.c), the form below reads it after syncfs and
+// edits only its own keys, leaving key.* bindings and the rest alone.  Two things
+// the port has no ini key for stay in localStorage and reach it as flags:
+// game speed (--speed; the port deliberately forgets F9 changes) and touch mode.
+const INI_PATH = '/libsdl/awkto/zeliard/zeliard.ini';
+const DEFAULTS = { filter: 'sharp-bilinear', video: 'mcga', aspect: '4:3', zoom: 0, smooth: 0, fullscreen: 0, music: 1, sfx: 1 };
+const BOOLS = ['zoom', 'smooth', 'fullscreen', 'music', 'sfx'], SELECTS = ['filter', 'video', 'aspect'];
+const ALIAS = { filter: { sharp: 'sharp-bilinear', linear: 'smooth', soft: 'smooth', curved: 'crt-curved' },
+                video: { tga: 'tandy', herc: 'hgc', hercules: 'hgc' }, aspect: { square: '1:1', crt: '4:3' } };
+const WEB_DEFAULTS = { speed: 5, touch: 'auto' };
+let web = { ...WEB_DEFAULTS };
+for (let i = 1; i <= 10; i++) {
+  const o = document.createElement('option');
+  o.value = i; o.textContent = i + (i === 1 ? ' (fastest)' : i === 5 ? ' (original)' : i === 10 ? ' (slowest)' : '');
+  $('s-speed').appendChild(o);
+}
+
+function readIni() {
+  const v = {}, FS = Module.FS;
+  let text = '';
+  try { text = FS.readFile(INI_PATH, { encoding: 'utf8' }); } catch (e) { return v; }
+  for (const line of text.split('\n')) {
+    const m = /^\s*([A-Za-z_.]+)\s*=\s*(.*?)\s*$/.exec(line);
+    if (m) v[m[1]] = m[2];
+  }
+  return v;
+}
+function formValues() {
+  const v = {};
+  for (const k of SELECTS) v[k] = $('s-' + k).value;
+  for (const k of BOOLS) v[k] = $('s-' + k).checked ? 1 : 0;
+  return v;
+}
+function showValues(v) {
+  for (const k of SELECTS) {
+    let x = String(v[k] ?? DEFAULTS[k]).toLowerCase();
+    x = (ALIAS[k] && ALIAS[k][x]) || x;
+    const sel = $('s-' + k);
+    sel.value = [...sel.options].some(o => o.value === x) ? x : DEFAULTS[k];
+  }
+  for (const k of BOOLS) {
+    const x = v[k] === undefined ? DEFAULTS[k] : /^(1|on|true|yes)$/i.test(v[k]) ? 1 : 0;
+    $('s-' + k).checked = !!x;
+  }
+}
+function loadSettings() {
+  showValues(readIni());
+  try { Object.assign(web, JSON.parse(localStorage.getItem('zeliard.web') || '{}')); } catch (e) {}
+  if (!(web.speed >= 1 && web.speed <= 10)) web.speed = WEB_DEFAULTS.speed;
+  if (!['auto', 'on', 'off'].includes(web.touch)) web.touch = WEB_DEFAULTS.touch;
+  $('s-speed').value = web.speed; $('s-touch').value = web.touch;
+}
+// write our keys into the ini (upsert line by line), keeping everything else as it is
+function writeIni(v) {
+  const FS = Module.FS;
+  let text = '';
+  try { text = FS.readFile(INI_PATH, { encoding: 'utf8' }); } catch (e) { text = '# zeliard.ini - the Zeliard port\'s settings\n'; }
+  const lines = text.split('\n');
+  while (lines.length && lines[lines.length - 1] === '') lines.pop();
+  for (const k of Object.keys(v)) {
+    const re = new RegExp('^\\s*' + k + '\\s*=');
+    const i = lines.findIndex(l => re.test(l));
+    if (i >= 0) lines[i] = k + '=' + v[k]; else lines.push(k + '=' + v[k]);
+  }
+  try { FS.mkdirTree('/libsdl/awkto/zeliard'); } catch (e) {}
+  FS.writeFile(INI_PATH, lines.join('\n') + '\n');
+}
+function saveWeb() {
+  web.speed = +$('s-speed').value; web.touch = $('s-touch').value;
+  try { localStorage.setItem('zeliard.web', JSON.stringify(web)); } catch (e) {}
+}
+function applySettings() { if (!ready) return; writeIni(formValues()); saveWeb(); flush(); }
+$('settings').addEventListener('change', applySettings);
+$('s-reset').onclick = () => { showValues({}); $('s-speed').value = WEB_DEFAULTS.speed; $('s-touch').value = WEB_DEFAULTS.touch; applySettings(); };
+$('settings').querySelectorAll('select, input, button').forEach(e => { e.disabled = true; });
+const enableSettings = () => $('settings').querySelectorAll('select, input, button').forEach(e => { e.disabled = false; });
+
+// ---- the controls list: on the start screen and as an in-game overlay (? key or button)
+for (const id of ['keysBody', 'helpBody']) $(id).appendChild($('keytpl').content.cloneNode(true));
+function helpToggle(on) {
+  const h = $('help');
+  on = on === undefined ? h.hidden : on;
+  h.hidden = !on;
+  if (on) $('helpClose').focus(); else if (started) $('canvas').focus();
+}
+$('helpBtn').onclick = () => helpToggle(true);
+$('helpClose').onclick = () => helpToggle(false);
+// capture phase on window: runs before SDL's listeners, and while the overlay is up the game gets no keys
+addEventListener('keydown', e => {
+  if (!started) return;
+  if (!$('help').hidden) {
+    if (e.key === 'Escape' || e.key === '?') { helpToggle(false); e.preventDefault(); }
+    if (e.key !== 'Tab') e.stopImmediatePropagation();
+  } else if (e.key === '?' && !e.ctrlKey && !e.altKey && !e.metaKey) { helpToggle(true); e.preventDefault(); e.stopImmediatePropagation(); }
+}, true);
+addEventListener('keyup', e => { if (started && !$('help').hidden && e.key !== 'Tab') e.stopImmediatePropagation(); }, true);
+
 // ---- running -------------------------------------------------------------
 function fit() {
   const c = $('canvas'), r = c.width / c.height || 1.6;
@@ -194,8 +449,10 @@ function start() {
   new MutationObserver(fit).observe($('canvas'), { attributes: true, attributeFilter: ['width', 'height'] });
   audioUnlock();
   persistLoop();
+  $('helpBtn').style.display = 'block';
   // callMain runs inside a click/change handler or just after one, so SDL may start audio
-  Module.callMain(['--dir', '/game', '--scale', '3', '--touch', 'auto']);
+  applySettings();     // zeliard.ini (display, audio) is already written; speed and touch are page-only, so they go as flags
+  Module.callMain(['--dir', '/game', '--scale', '3', '--touch', web.touch, '--speed', String(web.speed)]);
   $('canvas').focus();
 }
 

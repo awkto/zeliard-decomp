@@ -148,6 +148,12 @@ artifact.  It is code only; no game data is built in.
   real browser's reserved keys are released; the table is from the browsers' documented
   behaviour, so check Ctrl+1..9 in the browser you play in.  The touch overlay's SAVE
   and LOAD buttons (quick slot) are the always-available alternative on a phone.
+* **Start-screen settings.** `index.html` shows Display / Gameplay / Audio / Controls settings and the
+  full shortcut list before Play, and a `?` key or button opens the list in game.  `zeliard.ini` is the
+  single source of truth for filter, video, aspect, zoom, smooth, fullscreen, music and sfx: the page reads
+  it after syncfs and edits only those keys.  The web build writes the ini when V/Z/T/F/F1/F2 change
+  something (`prefs_save`), since a tab never exits.  Game speed (`--speed`) and touch mode (`--touch`)
+  have no ini key and live in localStorage, passed as flags.
 * **Network.** `net_fetch.c` is the `net.h` backend (an `EM_ASYNC_JS` `fetch()`, at most 8 s a
   request; `emscripten_fetch`'s synchronous mode needs pthreads, which this build lacks), so
   `--sync` can work from a page whose host serves the sync API, with `sync`, `sync_base` and
