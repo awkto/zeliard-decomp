@@ -17,7 +17,7 @@
 void config_init(Config *c)
 {
     memset(c, 0, sizeof *c);
-    c->scale = c->fullscreen = c->zoom = c->smooth = c->music = c->sfx = -1;
+    c->scale = c->fullscreen = c->zoom = c->smooth = c->wide = c->music = c->sfx = -1;
     c->speaker = c->volume = -1;
     c->touch_size = c->touch_opacity = -1;
     c->sync = -1;
@@ -78,6 +78,7 @@ int config_set(Config *c, const char *key, const char *val)
     if (!strcmp(key, "fullscreen"))     { int v; if (!parse_bool(val, &v)) return 0; c->fullscreen = v; return 1; }
     if (!strcmp(key, "zoom"))           { int v; if (!parse_bool(val, &v)) return 0; c->zoom = v; return 1; }
     if (!strcmp(key, "smooth"))         { int v; if (!parse_bool(val, &v)) return 0; c->smooth = v; return 1; }
+    if (!strcmp(key, "wide"))           { int v; if (!parse_bool(val, &v)) return 0; c->wide = v; return 1; }
     if (!strcmp(key, "video"))          { copy_str(c->video, sizeof c->video, val); return 1; }
     if (!strcmp(key, "filter"))         { copy_str(c->filter, sizeof c->filter, val); return 1; }
     if (!strcmp(key, "aspect"))         { copy_str(c->aspect, sizeof c->aspect, val); return 1; }
@@ -134,6 +135,7 @@ void config_render(const Config *c, char *out, size_t n)
     if (c->fullscreen >= 0) EMIT("fullscreen=%d\n", c->fullscreen);
     if (c->zoom >= 0)   EMIT("zoom=%d\n", c->zoom);
     if (c->smooth >= 0) EMIT("smooth=%d\n", c->smooth);
+    if (c->wide >= 0) EMIT("wide=%d\n", c->wide);
     if (c->video[0])    EMIT("video=%s\n", c->video);
     if (c->filter[0])   EMIT("filter=%s\n", c->filter);
     if (c->aspect[0])   EMIT("aspect=%s\n", c->aspect);

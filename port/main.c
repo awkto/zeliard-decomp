@@ -169,6 +169,12 @@ typedef struct {
      * on screen now, sm_live is set while the current step is still sliding and frame_wait should
      * keep presenting, sm_gap_ms the least time between two such presents (the display period) */
     int smooth, sm_live;
+    /* #126 the wide (16:10) cavern view, opt-in, presentation only: `wide` is the setting (W), wfb the
+     * 384x200 screen it is composed in (render_frame_view + the HUD band of fb), tex_w/tex_h the size of
+     * `tex`, which follows the picture (320x200 for everything but a plain wide cavern frame) */
+    int wide, wide_dirty;
+    int tex_w, tex_h;
+    uint8_t wfb[RENDER_WIDE_MAX_W * FB_H];
     Smooth sm;
     SmoothTown tsm;                     /* the town frame's history (scene 2) */
     SmoothOfs sm_ofs;
@@ -749,6 +755,32 @@ static int mv_key(App *a, const SDL_KeyboardEvent *k)
 #ifndef __EMSCRIPTEN__
 static void present_dump(App *a);
 #endif
+/* W: the wide cavern view on / off.  The window follows the picture's shape when it is a plain window
+ * (not fullscreen or maximised), so the extra width is not just letterboxed away; the cavern itself
+ * is redrawn on the next frame (at once while paused). */
+static void wide_toggle(App *a)
+{
+    a->wide = !a->wide;
+    a->wide_dirty = 1;
+    if (a->wide && a->video != VID_MCGA) {
+        fprintf(stderr, "[video] wide: only the MCGA driver\n");
+        statekeys_osd(&a->sk, "WIDE: MCGA ONLY");
+        a->wide = 0;
+        return;
+    }
+    fprintf(stderr, "[video] wide: %s\n", a->wide ? "on" : "off");
+    statekeys_osd(&a->sk, "WIDE %s", a->wide ? "ON" : "OFF");
+    if (a->win && !(SDL_GetWindowFlags(a->win) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_MAXIMIZED))) {
+        int ww = 0, wh = 0;
+        SDL_GetWindowSize(a->win, &ww, &wh);
+        if (ww > 0 && wh > 0) {
+            int nw = a->wide ? ww * (FB_W + 64) / FB_W : ww * FB_W / (FB_W + 64);
+            SDL_SetWindowSize(a->win, nw, wh);
+        }
+    }
+    PREFS_CHANGED(a);
+}
+
 static void present_frame(App *a, int sw, int sh)
 {
     a->pf_w = sw; a->pf_h = sh; a->pf_zoom = a->zoomable;
@@ -756,6 +788,11 @@ static void present_frame(App *a, int sw, int sh)
     int zoomed = a->zoom && a->zoomable;
     if (turbo_skip(a)) return;               /* fast-forward: most pictures are never drawn */
     if (!a->square) video_display_size(a->video, &dw, &dh);
+    {   /* the wide cavern frame (#126) is wider than its driver's screen: same pixel shape, more of them */
+        int vw0, vh0;
+        video_size(a->video, &vw0, &vh0);
+        if (sw != vw0 && vw0 > 0) dw = dw * sw / vw0;
+    }
     /* #54: where the picture goes decides where the controls can; in a portrait
      * window the picture rides at the top once the overlay is up (the layout is
      * computed as if it were, so the first touch finds the controls in place) */
@@ -907,6 +944,9 @@ static void pump_events(App *a, Game *g)
                     statekeys_osd(&a->sk, "SMOOTH %s", a->smooth ? "ON" : "OFF");
                     PREFS_CHANGED(a);
                 }
+            }
+            else if (input_event_match(&a->in, ACT_WIDE, &e.key)) {
+                if (!e.key.repeat) wide_toggle(a);
             }
             else if (input_event_match(&a->in, ACT_MENU, &e.key)) {
                 if (e.key.keysym.mod & KMOD_ALT) toggle_fullscreen(a);   /* Alt+Enter */
@@ -1086,6 +1126,7 @@ static void frame_wait_to(App *a, Game *g, Uint64 *next, Uint64 *stop)
             continue;
         }
         if (a->paused) {
+            if (a->wide_dirty && a->scene == 1) cavern_draw(a, g, NULL);       /* W while paused: show the other view */
             if (a->sm_live) { a->sm_live = 0; if (a->scene == 1) cavern_draw(a, g, NULL); else if (a->scene == 2) town_draw(a, &a->sh.town, NULL); }   /* hold the settled picture, not a mid-slide one */
             /* keep redrawing the held picture, so Z / F3 and their OSD message show while paused */
             if (a->pf_w > 0) { a->zoomable = a->pf_zoom; present_frame(a, a->pf_w, a->pf_h); a->zoomable = 0; }
@@ -1200,6 +1241,21 @@ static const uint8_t *video_out(App *a, int *w, int *h)
     return rgb;
 }
 
+#ifdef HAVE_SDL
+/* Upload a picture of any size to the one streaming texture, re-creating it when the size changes
+ * (only on entering or leaving a wide cavern frame). */
+static void tex_upload(App *a, const uint8_t *rgb, int w, int h)
+{
+    if (!a->tex || a->tex_w != w || a->tex_h != h) {
+        if (a->tex) SDL_DestroyTexture(a->tex);
+        a->tex = SDL_CreateTexture(a->ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, w, h);
+        a->tex_w = w; a->tex_h = h;
+        if (!a->tex) { fprintf(stderr, "[video] texture %dx%d: %s\n", w, h, SDL_GetError()); return; }
+    }
+    SDL_UpdateTexture(a->tex, NULL, rgb, w * 3);
+}
+#endif
+
 static void usage(void)
 {
     fprintf(stderr,
@@ -1233,6 +1289,8 @@ static void usage(void)
         "              are touch.size / touch.opacity in zeliard.ini\n"
         "  --fullscreen  start full-screen (F or F11, or Alt+Enter, toggles; Esc pauses, Q quits)\n"
         "  --zoom        start with the decorative border cropped (Z toggles)\n"
+        "  --wide        the 16:10 cavern view: all 36 live columns of the ring instead of 28, MCGA only; boss rooms, towns and\n"
+        "                menus keep the original frame (W toggles; off by default; never with --trace)\n"
         "  --smooth      slide the cavern or town scroll, parallax layers, hero, NPCs, enemies and shots between game steps (T toggles)\n"
         "  --video M   render through one of the five original drivers:\n"
         "              mcga (default) cga cga2 ega hgc tandy — the RESOURCE.CFG\n"
@@ -1452,7 +1510,7 @@ static void restore_modal(App *a, Game *g, Town *t)
         else {
             int vw, vh;
             const uint8_t *rgb = video_out(a, &vw, &vh);
-            SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+            tex_upload(a, rgb, vw, vh);
             a->zoomable = 1;                                /* the F7 / F9 dialogs sit over the game screen */
             present_frame(a, vw, vh);
             a->zoomable = 0;
@@ -1528,7 +1586,7 @@ static void speed_modal(App *a, Game *g, Town *t)
         else {
             int vw, vh;
             const uint8_t *rgb = video_out(a, &vw, &vh);
-            SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+            tex_upload(a, rgb, vw, vh);
             a->zoomable = 1;                                /* the F7 / F9 dialogs sit over the game screen */
             present_frame(a, vw, vh);
             a->zoomable = 0;
@@ -1600,7 +1658,7 @@ static int sync_ask_modal(App *a)
         syncdlg_draw(&d, &a->sh, a->fb);
         int vw, vh;
         const uint8_t *rgb = video_out(a, &vw, &vh);
-        SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+        tex_upload(a, rgb, vw, vh);
         present_frame(a, vw, vh);
         frame_wait(a, &a->sh.g, &next);
         while (a->rest_qn) {
@@ -1881,7 +1939,7 @@ static void cutscene_present(Cutscene *c)
     }
 #ifdef HAVE_SDL
     cutscene_to_rgb(c, rgb);
-    SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+    tex_upload(a, rgb, vw, vh);
     present_frame(a, vw, vh);
     static Uint64 next = 0;
     Uint64 now = SDL_GetPerformanceCounter(), freq = SDL_GetPerformanceFrequency();
@@ -1993,7 +2051,7 @@ static void side_show(App *a, const char *tag, unsigned ms)
     if (a->headless || !ms) return;
     int vw, vh;
     const uint8_t *rgb = video_out(a, &vw, &vh);
-    SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+    tex_upload(a, rgb, vw, vh);
     present_frame(a, vw, vh);
     Uint32 until = SDL_GetTicks() + ms;
     while (!a->quit && SDL_GetTicks() < until) {
@@ -2049,8 +2107,40 @@ static void side_town(Town *t, int kind, unsigned arg, unsigned ticks)
 
 /* The cavern picture: the frame, HUD and every layer, uploaded and presented.  Called once per
  * game step, and, in smooth mode, again between steps with `so` set to the slide still to go. */
+/* Is this cavern frame drawn in the wide view?  Only a plain cavern frame in the MCGA driver, and never on
+ * the engine's own paths (trace, headless: cavern_draw is not reached from them at all). */
+static int wide_now(const App *a, const Game *g)
+{
+    return a->wide && a->video == VID_MCGA && !a->headless && !a->trace_f && g->map && g->map->width >= RING_W &&
+           render_wide_ok(g);
+}
+
 static void cavern_draw(App *a, Game *g, const SmoothOfs *so)
 {
+    if (wide_now(a, g)) {
+        /* The playfield, with the 4 live ring columns beyond the screen on each side, is drawn straight into the
+         * 384-wide screen (render_frame_view); the HUD, item slots and Tear icons are drawn by their own code in
+         * the 320-wide screen and their band is copied across, centred (docs/WIDESCREEN.md 4.2). */
+        static uint8_t rgb[RENDER_WIDE_MAX_W * FB_H * 3];
+        const RenderView rv = RENDER_VIEW_WIDE;
+        const int w = render_view_width(&rv);
+        render_set_smooth(so);
+        render_frame_view(a->wfb, g, &a->sh.hero, &rv);
+        render_set_smooth(NULL);
+        render_screen_frame(a->fb, g->screen, 0, PF_Y);                 /* the Tear row sits on the strip above the playfield */
+        render_hud(a->fb, g, &a->sh.font, &a->sh.tfont, map_place_record(g->map));
+        itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, g);
+        tear_draw_slots(a->fb, g, &a->sh.tear_art);
+        render_wide_hud(a->wfb, w, a->fb);
+        video_mcga_n_to_rgb(a->wfb, w * FB_H, rgb);
+        tex_upload(a, rgb, w, FB_H);
+        a->force_draw = 1;
+        a->zoomable = 1;
+        present_frame(a, w, FB_H);
+        a->zoomable = 0;
+        a->wide_dirty = 0;
+        return;
+    }
     if (g->status) memcpy(a->fb, status_framebuffer(g->status), FB_W * FB_H);
     else if (g->tear) memcpy(a->fb, tear_framebuffer(g->tear), FB_W * FB_H);
     else {
@@ -2063,7 +2153,7 @@ static void cavern_draw(App *a, Game *g, const SmoothOfs *so)
     if (!g->tear) tear_draw_slots(a->fb, g, &a->sh.tear_art);   /* GAME.BIN A18E -> A3A5 */
     int vw, vh;
     const uint8_t *rgb = video_out(a, &vw, &vh);
-    SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+    tex_upload(a, rgb, vw, vh);
     a->force_draw = 1;
     a->zoomable = 1;                                    /* the stone frame is on screen: Z can crop it */
     present_frame(a, vw, vh);
@@ -2085,7 +2175,7 @@ static void town_draw(App *a, Town *t, const SmoothOfs *so)
     tear_draw_slots(a->fb, t->g, &a->sh.tear_art);
     int vw, vh;
     const uint8_t *rgb = video_out(a, &vw, &vh);
-    SDL_UpdateTexture(a->tex, NULL, rgb, vw * 3);
+    tex_upload(a, rgb, vw, vh);
     a->force_draw = 1;
     a->zoomable = 1;
     present_frame(a, vw, vh);
@@ -2349,6 +2439,7 @@ static void config_capture(Config *c, const App *a, const char *dir, int backend
     c->fullscreen = a->fullscreen;
     c->zoom = a->zoom;
     c->smooth = a->smooth;
+    c->wide = a->wide;
     snprintf(c->video, sizeof c->video, "%s", video_mode_name(a->video));
     snprintf(c->filter, sizeof c->filter, "%s", present_filter_name(a->filter));
     snprintf(c->aspect, sizeof c->aspect, "%s", a->square ? "1:1" : "4:3");
@@ -2435,7 +2526,7 @@ int main(int argc, char **argv)
     int want_audio = 1, audio_backend = AUDIO_ADLIB, music_force = -2;
     /* #42: which settings the command line named, so the config can fill in
      * only the rest (a flag always wins). */
-    int have_scale = 0, have_fullscreen = 0, have_zoom = 0, have_smooth = 0, have_video = 0, have_filter = 0,
+    int have_scale = 0, have_fullscreen = 0, have_zoom = 0, have_smooth = 0, have_wide = 0, have_video = 0, have_filter = 0,
         have_aspect = 0, have_music = 0, have_speaker = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--dir") && i + 1 < argc) dir = argv[++i];
@@ -2458,6 +2549,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--fullscreen")) { a.fullscreen = 1; have_fullscreen = 1; }
         else if (!strcmp(argv[i], "--zoom")) { a.zoom = 1; have_zoom = 1; }       /* start zoomed (Z toggles) */
         else if (!strcmp(argv[i], "--smooth")) { a.smooth = 1; have_smooth = 1; } /* smooth scrolling (T toggles, #127) */
+        else if (!strcmp(argv[i], "--wide")) { a.wide = 1; have_wide = 1; }       /* the 16:10 cavern view (W toggles, #126) */
         /* the drivers all drew for a 4:3 monitor, so their pixels are not
          * square; --aspect 1:1 turns the correction off for pixel-peeping
          * against docs/screenshots/, which are native framebuffer grabs */
@@ -2572,6 +2664,7 @@ int main(int argc, char **argv)
         if (!have_fullscreen && cfg.fullscreen >= 0) a.fullscreen = cfg.fullscreen;
         if (!have_zoom && cfg.zoom >= 0) a.zoom = cfg.zoom;
         if (!have_smooth && cfg.smooth >= 0) a.smooth = cfg.smooth;
+        if (!have_wide && cfg.wide >= 0) a.wide = cfg.wide;
         if (!have_video && cfg.video[0])   { int m = video_mode_by_name(cfg.video); if (m >= 0) a.video = m; }
         if (!have_filter && cfg.filter[0]) { int f = present_filter_by_name(cfg.filter); if (f >= 0) a.filter = f; }
         if (!have_aspect && cfg.aspect[0]) a.square = !strcmp(cfg.aspect, "1:1") || !strcmp(cfg.aspect, "square");
@@ -2579,6 +2672,14 @@ int main(int argc, char **argv)
         if (cfg.sfx >= 0) sfx_on = cfg.sfx;
         if (!have_speaker && cfg.speaker >= 0) audio_backend = cfg.speaker ? AUDIO_SPEAKER : AUDIO_ADLIB;
         if (!have_speaker && cfg.audio[0]) { int b = audio_backend_by_name(cfg.audio); if (b >= 0) audio_backend = b; }
+    }
+    /* #126: the wide view is a player-facing presentation of the live game.  The engine's own paths (the trace,
+     * the scenarios, --screenshot, any headless run) never draw it, so make verify and the oracle comparisons
+     * cannot see it. */
+    if (a.wide && a.headless) {
+        if (a.trace_dir) { fprintf(stderr, "--wide cannot be combined with --trace\n"); return 2; }
+        fprintf(stderr, "[video] --wide ignored: headless runs draw the original frame\n");
+        a.wide = 0;
     }
 #ifdef HAVE_SDL
     touch_init(&a.touch, touch_mode, a.headless ? -1 : cfg.touch_size, a.headless ? -1 : cfg.touch_opacity);
@@ -2823,6 +2924,7 @@ int main(int argc, char **argv)
          * reaches this path. */
         int lw = vw, lh = vh;
         if (!a.square) video_display_size(a.video, &lw, &lh);
+        if (a.wide && a.video == VID_MCGA) lw = lw * (FB_W + 64) / FB_W;     /* #126: open at the wide view's shape */
         Uint32 wflags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
 #ifdef __EMSCRIPTEN__
         wflags &= ~(Uint32)SDL_WINDOW_RESIZABLE;     /* the page scales the canvas with CSS; SDL would resize its buffer to the browser window */
@@ -2839,6 +2941,7 @@ int main(int argc, char **argv)
         /* no SDL_RenderSetLogicalSize: present.c computes the letterbox rect
          * itself so the integer and sharp-bilinear filters can differ (#53) */
         a.tex = SDL_CreateTexture(a.ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, vw, vh);
+        a.tex_w = vw; a.tex_h = vh;
     }
 #else
     if (!a.headless) { fprintf(stderr, "built without SDL2: running headless (use --screenshot / --script)\n"); a.headless = 1; }

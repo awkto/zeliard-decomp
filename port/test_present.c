@@ -171,14 +171,32 @@ static void t_zoom(void)
     ck(x == 96 && w == 448 && y == 14 && h == 182, "640x200 doubles the columns only (got %d,%d %dx%d)", x, y, w, h);
     present_zoom_rect(0, 0, &x, &y, &w, &h);
     ck(w == 0 && h == 0, "an empty source gives an empty crop");
+    /* the wide cavern frame (#126): 384 wide, the stone sides keep their 48 px, so the crop is what is wider */
+    present_zoom_rect(384, 200, &x, &y, &w, &h);
+    ck(x == 48 && y == 14 && w == 288 && h == 182 && x + w == 384 - 48, "384x200 (wide cavern): the playfield and HUD, 48 px stone off each side (got %d,%d %dx%d)", x, y, w, h);
+    present_zoom_rect(321, 200, &x, &y, &w, &h);
+    ck(x == 48 && w == 321 - 96, "any source between 320 and 640 wide keeps the 48 px sides");
+    present_zoom_rect(640, 200, &x, &y, &w, &h);
+    ck(x == 96 && w == 448, "640 wide is still the doubled mode");
     int ok = 1;
-    static const int sizes[][2] = { {320, 200}, {640, 200}, {640, 350}, {720, 348}, {160, 100}, {1, 1} };
+    static const int sizes[][2] = { {320, 200}, {640, 200}, {640, 350}, {720, 348}, {160, 100}, {1, 1}, {384, 200}, {352, 200} };
     for (unsigned i = 0; i < sizeof sizes / sizeof *sizes; i++) {
         present_zoom_rect(sizes[i][0], sizes[i][1], &x, &y, &w, &h);
         if (x < 0 || y < 0 || w < 0 || h < 0 || x + w > sizes[i][0] || y + h > sizes[i][1]) ok = 0;
     }
     ck(ok, "the crop fits inside every source size");
 
+    {   /* the wide frame in a 16:10 window: 384x200 shown at 384x240 fills it; zoomed, the crop keeps the pixel shape */
+        int cx, cy, cw, ch, vx, vy, vw, vh;
+        present_view(FILTER_SMOOTH, 1152, 720, 384, 200, 384, 240, 0, 0, &vx, &vy, &vw, &vh, &cx, &cy, &cw, &ch);
+        ck(vw == 1152 && vh == 720 && vx == 0 && vy == 0 && cw == 384 && ch == 200, "wide frame, 16:10 window: fills it (%dx%d)", vw, vh);
+        present_view(FILTER_SMOOTH, 1000, 700, 320, 200, 320, 240, 0, 0, &vx, &vy, &vw, &vh, &cx, &cy, &cw, &ch);
+        ck(vw == 933 && vh == 700, "the stock frame in the same window is pillarboxed (%dx%d)", vw, vh);
+        present_view(FILTER_SMOOTH, 1152, 720, 384, 200, 384, 240, 0, 1, &vx, &vy, &vw, &vh, &cx, &cy, &cw, &ch);
+        ck(cx == 48 && cy == 14 && cw == 288 && ch == 182 && vh == 720 && vw == 720 * 288 / 218,
+           "wide frame zoomed: the 288x182 crop, height-bound (%dx%d)", vw, vh);
+        ck(vh * 500 * cw >= vw * 594 * ch && vh * 500 * cw <= vw * 606 * ch, "...with the pixel shape kept (a row is 1.2 columns)");
+    }
     /* the view: 1000x700 window, 320x200 shown at 320x240 */
     int cx, cy, cw, ch, vx, vy, vw, vh;
     present_view(FILTER_SMOOTH, 1000, 700, 320, 200, 320, 240, 0, 0, &vx, &vy, &vw, &vh, &cx, &cy, &cw, &ch);
@@ -433,6 +451,46 @@ static void t_render(void)
         int red = 0;
         for (size_t p = 0; p < (size_t)ow * oh; p++) { unsigned v = f[0][p]; if (((v >> 16) & 255) > 100 && ((v >> 8) & 255) < 50) red++; }
         ck(red > 10000, "zoom off shows the frame again (%d red pixels)", red);
+    }
+
+    /* the wide frame through every filter: 384x200 shown at 384x240 (#126).  Zoomed, the crop is the playfield and
+     * the HUD (x 48..335 of the source) and nothing of the stone frame (red) may reach the window; unzoomed the picture
+     * (16:10) is wider than the 4:3 window's shape, so it is letterboxed, still filling the width. */
+    {
+        SDL_Texture *wsrc = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, 384, SRC_H);
+        unsigned *wbuf = malloc((size_t)384 * SRC_H * 4);
+        int cx, cy, cw, ch;
+        present_zoom_rect(384, SRC_H, &cx, &cy, &cw, &ch);
+        for (int j = 0; j < SRC_H; j++)
+            for (int i = 0; i < 384; i++) {
+                int in = i >= cx && i < cx + cw && j >= cy && j < cy + ch;
+                wbuf[(size_t)j * 384 + i] = in ? 0xFF00C000u : 0xFFD00000u;
+            }
+        SDL_UpdateTexture(wsrc, NULL, wbuf, 384 * 4);
+        for (int k = 0; k < FILTER_COUNT; k++) {
+            present_set_zoom(1);
+            memset(f[0], 0xAA, (size_t)ow * oh * 4);
+            if (present_render(ren, wsrc, 384, SRC_H, 384, 240, k) != 0)
+                printf("  wide present_render(%s): %s\n", present_filter_name(k), SDL_GetError());
+            SDL_RenderPresent(ren);
+            SDL_RenderReadPixels(ren, NULL, SDL_PIXELFORMAT_ARGB8888, f[0], ow * 4);
+            int red = 0, green = 0;
+            for (size_t p = 0; p < (size_t)ow * oh; p++) {
+                unsigned v = f[0][p], r = (v >> 16) & 255, g = (v >> 8) & 255;
+                if (r > 100 && r > g * 2) red++;
+                if (g > 60 && g > r * 2) green++;
+            }
+            ck(red == 0, "wide %s + zoom: no stone frame pixel reaches the window (%d did)", present_filter_name(k), red);
+            ck(green > 100000, "wide %s + zoom: the crop fills the window (%d green pixels)", present_filter_name(k), green);
+        }
+        present_set_zoom(0);
+        for (int j = 0; j < SRC_H; j++) for (int i = 0; i < 384; i++) wbuf[(size_t)j * 384 + i] = 0xFF00C000u;
+        SDL_UpdateTexture(wsrc, NULL, wbuf, 384 * 4);
+        int x, y, w, h;
+        present_content_rect(FILTER_SMOOTH, ow, oh, 384, SRC_H, 384, 240, &x, &y, &w, &h);
+        ck(w == ow && x == 0 && h == ow * 240 / 384, "the wide frame is fitted by width in a 4:3 window (%dx%d at %d,%d)", w, h, x, y);
+        free(wbuf);
+        SDL_DestroyTexture(wsrc);
     }
 
     for (int k = 0; k < FILTER_COUNT; k++) free(f[k]);

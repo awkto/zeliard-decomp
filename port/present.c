@@ -91,10 +91,16 @@ void present_zoom_rect(int sw, int sh, int *x, int *y, int *w, int *h)
 {
     int rx = 0, ry = 0, rw = 0, rh = 0;
     if (sw > 0 && sh > 0) {
-        rx = PRESENT_ZOOM_X * sw / PRESENT_ZOOM_REF_W;
         ry = PRESENT_ZOOM_Y * sh / PRESENT_ZOOM_REF_H;
-        rw = (PRESENT_ZOOM_X + PRESENT_ZOOM_W) * sw / PRESENT_ZOOM_REF_W - rx;
         rh = (PRESENT_ZOOM_Y + PRESENT_ZOOM_H) * sh / PRESENT_ZOOM_REF_H - ry;
+        if (sw > PRESENT_ZOOM_REF_W && sw < 2 * PRESENT_ZOOM_REF_W) {
+            /* a wide cavern frame (#126): the stone sides keep their 48 px, the playfield is what is wider */
+            rx = PRESENT_ZOOM_X;
+            rw = sw - 2 * PRESENT_ZOOM_X;
+        } else {
+            rx = PRESENT_ZOOM_X * sw / PRESENT_ZOOM_REF_W;
+            rw = (PRESENT_ZOOM_X + PRESENT_ZOOM_W) * sw / PRESENT_ZOOM_REF_W - rx;
+        }
     }
     if (x) *x = rx;
     if (y) *y = ry;

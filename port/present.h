@@ -97,7 +97,9 @@ int  present_vignette_alpha(float u, float v);
  * framebuffer is untouched, so every filter (crt-curved included) just samples
  * the sub-rectangle.  The rectangle is fixed on the 320x200 MCGA layout --
  * playfield x 48..271, y 14..157; HUD panel y 158..195 (rows 196..199 are
- * blank panel margin) -- and scales with the source for the 640-wide modes. */
+ * blank panel margin) -- and scales with the source for the 640-wide modes.  A source between 320 and
+ * 640 wide is the wide cavern frame (#126, docs/WIDESCREEN.md): the stone sides keep 48 px each, so the
+ * crop is x 48, w = sw - 96. */
 #define PRESENT_ZOOM_X 48
 #define PRESENT_ZOOM_Y 14
 #define PRESENT_ZOOM_W 224

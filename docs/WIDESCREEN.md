@@ -1,6 +1,7 @@
 # Widescreen mode: design study (issue #126)
 
-Status: design only, nothing implemented.  All citations are to `main` at 7ecb412.
+Status: steps 0-2 are implemented (section 8: the 16:10 view of the whole ring, `--wide` / `W` / `wide=`,
+presentation only); steps 3-9 (a wider ring, 16:9) are not.  The study's citations are to `main` at 7ecb412.
 `port/x.c:N` is the port; four-digit hex addresses are fight.bin (`disasm/overlays/fight.asm`)
 unless a file is named (gfmcga = `disasm/overlays/gfmcga.asm`).
 
@@ -137,7 +138,16 @@ oracle: **must stay 2304 bytes of stride 36 with the mode off**), `nav.c:771`, `
 Maps wrap horizontally (`ring_fill` wraps at `map->width`).  A ring wider than a map duplicates columns, and
 `remark_column` (equal `col`) would double-mark.  Cavern map widths must be checked against the largest
 ring (`MAP_MAX_WIDTH` is only an upper bound, `map.c:46`).  If any cavern is narrower than the wide ring,
-fall back to the original width for that map.  Not measured yet: step 1 does it.
+fall back to the original width for that map.
+
+**Measured (step 0, `port/map_widths.c`, `make map_widths && ./map_widths ../zeliard`).**  All 31 system
+maps are at least 42 columns wide, so none is narrower than the 36-column ring and nothing is duplicated
+in the tier-0 view (view = ring).  Narrowest first: MP90 42 (boss-flag clear, the E6-only final room),
+MP2D 52 (boss), MP84 64, MP62/MP7D/MP8D/MPA0 and the other boss rooms 70..73, MP21 96.  Cavern widths:
+MP10 240, MP20 224, MP21 96, MP30/MP31 204, MP40 320, MP41 192, MP50/MP51 240, MP60 320, MP61 256, MP62 73,
+MP70 208, MP71 196, MP72 128, MP80/MP81 256, MP82 192, MP83 128, MP84 64, MP90 42.  So the wide view needs
+no clamp or pillarbox for map width.  (A wider ring, steps 3+, has the room up to 42 columns, i.e. E <= 3
+on MP90; MP90 would then keep the original view.)  Boss rooms (`lvl_flags` bit 7) are pillarboxed regardless.
 
 ## 3. Bosses
 
@@ -328,3 +338,53 @@ their own, even if 3-5 never happen.
 10. **Anything else that persists the ring layout**: replay/trace tooling, `tools/harness/port2base.py`,
     `test_*` fixtures with hard-coded ring offsets.  Step 3 will find them.
 11. **Town and other screens**: out of scope; they remain 4:3 inside the wide window.
+
+## 8. What steps 0-2 built (issue #126)
+
+Presentation only, no simulation change.  Off (the default) every byte is as before; wide is never drawn
+under `--trace`, `--headless`, `--screenshot` or a harness run (`--wide --trace` is an error).
+
+**Step 0, measure.**  `port/map_widths.c` (`make map_widths`): the table is in section 2.9.  No cavern is narrower
+than the 36-column ring (the narrowest is MP90 at 42), so no map needs a clamp or a pillarbox for its width.
+
+**Step 1, plumbing.**
+* `render.c` takes its geometry from four statics set for the length of one `render_frame_view(fb, g, h, &view)`
+  call: the framebuffer stride, the playfield's left edge, and `lo` / `hi` extra ring columns each side (0..4).
+  Defaults give every stock expression back, `render_frame` is the same code, and the 320-wide paths (HUD,
+  dissolve, fade-in, burst) keep their constants.  A `{0,0}` view is checked byte-equal to `render_frame`.
+* `render_wide_frame` lays the stone frame out for the wider framebuffer (section 4.2): the 48 px sides at the
+  edges, the 224 px strip above tiled in phase with the centred copy, the 224 px HUD panel centred with its
+  edge columns repeated out to the stone.  The HUD, item slots and Tear icons are still drawn by their own
+  absolute-pixel code in a 320x200 scratch screen; `render_wide_hud` copies that centre band (rows 0..12 and
+  158..199) across.  So no HUD code changed.
+* The message box (a fixed 208x16 at x 56) is composed in a 320-wide scratch and copied, centred.
+* `present_zoom_rect`: a source between 320 and 640 wide is the wide frame, crop x 48, w = sw - 96.  The display
+  shape of a wide source is `sw` x 240 (same pixel shape as MCGA, more of them).  Every filter, crt-curved included,
+  samples any source size, so nothing else changed there.  The OSD, the touch layout and the M map viewer work in
+  window space.
+* `main.c`: the one streaming texture follows the picture (`tex_upload` re-creates it on a size change); the
+  window opens in the 16:10 shape when wide is set, and W resizes a plain (not maximised or fullscreen) window by
+  384/320 so the extra width is not letterboxed away (on the web the canvas follows through the page's `fit()`).
+* `video_mcga_n_to_rgb`: the MCGA stage for any pixel count.  Wide is MCGA only; the other drivers stay as they are.
+
+**Step 2, the ring in the margins.**  The margin columns are filled from the map by `ring_fill` and carry sprite
+markers like any column, so the renderer needed no new data, only its clips widened (all to `lo`/`hi`):
+* background cells (ring col `sc + 4`, `sc` from `-lo`); a smooth slide reveals one cell beyond the ring, which
+  is read from the map itself (columns `scroll_col - 1` / `scroll_col + 36`) because a ring index there would be
+  the neighbouring row's;
+* enemies: the E900 overlap array (`ff[]`) is `cols` wide and its three edge routines (3468 interior, 34E3 right edge,
+  33E3 left edge) are those of the wider view, so a sprite at ring col 35 is drawn like one at screen col 27 today;
+* shots, spell sprites, the hero (`VX(hero_scr_col)`: ring col 17, 16 cells in) and the sword block likewise.
+* `render_wide_ok(g)`: a boss room (`boss_map`), the walk-in, the encounter card (and its fade), the death
+  dissolve and its pictures, the status screen, the Tear scene and boss death sparks are not wide; they are
+  presented as 320x200, centred in the window by the content rectangle (so pillarboxed in a 16:10 window).  The
+  same holds for the F7 / F9 dialogs and a spell-7 burst while they are up.
+* Known gaps, all deliberate: (1) the animated cells of caverns 5..8 are advanced by `cell_anim`, which is simulation
+  state and consumes `krn_random` in cavern 6, over ring cols 4..0x1F only, so the margin water and lava is
+  static (step 6 of the plan, with the wide sim); (2) respawns happen at ring cols 1, 2 and 0x20..0x22, which are now
+  inside the picture, so an enemy can pop in a couple of cells from the edge (the spawn band moves out with step 5);
+  (3) nothing newly visible has a wider aggro range, as recommended in 2.1 row 5.
+
+Controls: `--wide`, `wide=` in zeliard.ini, the `W` key (action `wide`, rebindable via `key.wide`) with an OSD flash,
+and a checkbox in the web start screen's Display settings.  Tests: `test_smooth` (the layout and the render: 29 checks),
+`test_present` (the zoom crop and the wide frame through every filter), `test_config`.

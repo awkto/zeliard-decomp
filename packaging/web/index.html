@@ -110,6 +110,8 @@
         </select></div>
       <div class="row"><label for="s-zoom">Zoom: crop the stone border</label>
         <input type="checkbox" id="s-zoom"><span class="hint">In game: <kbd>Z</kbd>.</span></div>
+      <div class="row"><label for="s-wide">Wide cavern view (16:10)</label>
+        <input type="checkbox" id="s-wide"><span class="hint">Shows all 36 live columns of a cavern instead of 28. Boss rooms, towns and menus keep the original frame. In game: <kbd>W</kbd>.</span></div>
       <div class="row"><label for="s-smooth">Smooth scrolling</label>
         <input type="checkbox" id="s-smooth"><span class="hint">Slides the scroll and sprites between game steps. In game: <kbd>T</kbd>.</span></div>
       <div class="row"><label for="s-fullscreen">Start fullscreen</label>
@@ -164,6 +166,7 @@
     <tr><td><kbd>V</kbd> <kbd>F3</kbd></td><td>Cycle the video filter</td></tr>
     <tr><td><kbd>Z</kbd></td><td>Zoom (crop the border)</td></tr>
     <tr><td><kbd>T</kbd></td><td>Smooth scrolling</td></tr>
+    <tr><td><kbd>W</kbd></td><td>Wide cavern view (16:10, 36 columns)</td></tr>
     <tr><td><kbd>F</kbd> <kbd>F11</kbd> <kbd>Alt</kbd>+<kbd>Enter</kbd></td><td>Fullscreen</td></tr>
   </table>
   <table class="kt"><caption>Game and sound</caption>
@@ -340,14 +343,14 @@ $('zip').onchange = async ev => {
 // ---- settings -------------------------------------------------------------
 // One source of truth per setting.  Everything the port itself keeps lives in
 // zeliard.ini (/libsdl/awkto/zeliard/zeliard.ini, the file SDL_GetPrefPath names):
-// the port rewrites it when V / Z / T / F1 / F2 / F change something in game (web
+// the port rewrites it when V / Z / T / W / F1 / F2 / F change something in game (web
 // build only, see prefs_save in main.c), the form below reads it after syncfs and
 // edits only its own keys, leaving key.* bindings and the rest alone.  Two things
 // the port has no ini key for stay in localStorage and reach it as flags:
 // game speed (--speed; the port deliberately forgets F9 changes) and touch mode.
 const INI_PATH = '/libsdl/awkto/zeliard/zeliard.ini';
-const DEFAULTS = { filter: 'sharp-bilinear', video: 'mcga', aspect: '4:3', zoom: 0, smooth: 0, fullscreen: 0, music: 1, sfx: 1 };
-const BOOLS = ['zoom', 'smooth', 'fullscreen', 'music', 'sfx'], SELECTS = ['filter', 'video', 'aspect'];
+const DEFAULTS = { filter: 'sharp-bilinear', video: 'mcga', aspect: '4:3', zoom: 0, smooth: 0, wide: 0, fullscreen: 0, music: 1, sfx: 1 };
+const BOOLS = ['zoom', 'smooth', 'wide', 'fullscreen', 'music', 'sfx'], SELECTS = ['filter', 'video', 'aspect'];
 const ALIAS = { filter: { sharp: 'sharp-bilinear', linear: 'smooth', soft: 'smooth', curved: 'crt-curved' },
                 video: { tga: 'tandy', herc: 'hgc', hercules: 'hgc' }, aspect: { square: '1:1', crt: '4:3' } };
 const WEB_DEFAULTS = { speed: 5, touch: 'auto' };   // speed = the F9 digit (0..9, 9 fastest); --speed takes 10 - digit

@@ -28,3 +28,4 @@ test_present
 test_touch
 test_config
 test_sync
+map_widths
