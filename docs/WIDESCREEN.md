@@ -137,7 +137,16 @@ oracle: **must stay 2304 bytes of stride 36 with the mode off**), `nav.c:771`, `
 Maps wrap horizontally (`ring_fill` wraps at `map->width`).  A ring wider than a map duplicates columns, and
 `remark_column` (equal `col`) would double-mark.  Cavern map widths must be checked against the largest
 ring (`MAP_MAX_WIDTH` is only an upper bound, `map.c:46`).  If any cavern is narrower than the wide ring,
-fall back to the original width for that map.  Not measured yet: step 1 does it.
+fall back to the original width for that map.
+
+**Measured (step 0, `port/map_widths.c`, `make map_widths && ./map_widths ../zeliard`).**  All 31 system
+maps are at least 42 columns wide, so none is narrower than the 36-column ring and nothing is duplicated
+in the tier-0 view (view = ring).  Narrowest first: MP90 42 (boss-flag clear, the E6-only final room),
+MP2D 52 (boss), MP84 64, MP62/MP7D/MP8D/MPA0 and the other boss rooms 70..73, MP21 96.  Cavern widths:
+MP10 240, MP20 224, MP21 96, MP30/MP31 204, MP40 320, MP41 192, MP50/MP51 240, MP60 320, MP61 256, MP62 73,
+MP70 208, MP71 196, MP72 128, MP80/MP81 256, MP82 192, MP83 128, MP84 64, MP90 42.  So the wide view needs
+no clamp or pillarbox for map width.  (A wider ring, steps 3+, has the room up to 42 columns, i.e. E <= 3
+on MP90; MP90 would then keep the original view.)  Boss rooms (`lvl_flags` bit 7) are pillarboxed regardless.
 
 ## 3. Bosses
 

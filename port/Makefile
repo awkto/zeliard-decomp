@@ -126,6 +126,10 @@ test_mapview: test_mapview.o $(CORE)
 test_smooth: test_smooth.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
 
+# step 0 of the widescreen plan: print every map's width (docs/WIDESCREEN.md section 7)
+map_widths: map_widths.o $(CORE)
+	$(CC) -o $@ $^ $(LIBS)
+
 test_config: test_config.o $(CORE)
 	$(CC) -o $@ $^ $(LIBS)
 
