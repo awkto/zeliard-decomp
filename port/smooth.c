@@ -34,6 +34,13 @@ int smooth_is_slide(int dx, int dy)
 
 void smooth_reset(Smooth *s) { memset(s, 0, sizeof *s); }
 
+int smooth_fixture_rcol(int col, int scroll_col, int map_width)
+{
+    int d = col - scroll_col;
+    if (d < 0) d += map_width;
+    return (d < 0 || d > 0x21) ? -1 : d;
+}
+
 /* a screen cell (x, y) as 302C/3336/8366 would place it; ok = within the ring's reach */
 static SmoothPos pos_of(const Game *g, int rcol, int row, int type)
 {
@@ -84,6 +91,12 @@ void smooth_step(Smooth *s, const Game *g)
             cur.mag[i] = pos_of(g, rc, m->row, 0);
         }
 
+    for (int i = 0; i < g->nfix && i < SMOOTH_FIXES && g->map; i++) {
+        const Fixture *f = &g->fix[i];
+        int rc = smooth_fixture_rcol(f->col, g->scroll_col, g->map->width);
+        if (rc >= 0) cur.fix[i] = pos_of(g, rc, f->row, f->kind);
+    }
+
     SmoothOfs *o = &cur.start;
     memset(o, 0, sizeof *o);
     if (s->have && s->map == cur.map) {
@@ -95,10 +108,12 @@ void smooth_step(Smooth *s, const Game *g)
         for (int i = 0; i < MAX_OBJS; i++) obj_ofs(&s->obj[i], &cur.obj[i], o->wx, o->wy, &o->ox[i], &o->oy[i]);
         for (int i = 0; i <= MAX_SHOTS; i++) obj_ofs(&s->shot[i], &cur.shot[i], o->wx, o->wy, &o->sx[i], &o->sy[i]);
         for (int i = 0; i < 4; i++) obj_ofs(&s->mag[i], &cur.mag[i], o->wx, o->wy, &o->mx[i], &o->my[i]);
+        for (int i = 0; i < SMOOTH_FIXES; i++) obj_ofs(&s->fix[i], &cur.fix[i], o->wx, o->wy, &o->kx[i], &o->ky[i]);
         o->active = o->wx || o->wy || o->hx || o->hy;
         for (int i = 0; i < MAX_OBJS && !o->active; i++) o->active = o->ox[i] || o->oy[i];
         for (int i = 0; i <= MAX_SHOTS && !o->active; i++) o->active = o->sx[i] || o->sy[i];
         for (int i = 0; i < 4 && !o->active; i++) o->active = o->mx[i] || o->my[i];
+        for (int i = 0; i < SMOOTH_FIXES && !o->active; i++) o->active = o->kx[i] || o->ky[i];
     }
     *s = cur;
 }
@@ -113,6 +128,7 @@ void smooth_ofs_at(const SmoothOfs *a, double t, SmoothOfs *out)
     for (int i = 0; i < MAX_OBJS; i++) { out->ox[i] = smooth_remaining(a->ox[i], t); out->oy[i] = smooth_remaining(a->oy[i], t); }
     for (int i = 0; i <= MAX_SHOTS; i++) { out->sx[i] = smooth_remaining(a->sx[i], t); out->sy[i] = smooth_remaining(a->sy[i], t); }
     for (int i = 0; i < 4; i++) { out->mx[i] = smooth_remaining(a->mx[i], t); out->my[i] = smooth_remaining(a->my[i], t); }
+    for (int i = 0; i < SMOOTH_FIXES; i++) { out->kx[i] = smooth_remaining(a->kx[i], t); out->ky[i] = smooth_remaining(a->ky[i], t); }
     for (int i = 0; i < 3; i++) out->fx[i] = smooth_remaining(a->fx[i], t);
     for (int i = 0; i < SMOOTH_NPCS; i++) out->nx[i] = smooth_remaining(a->nx[i], t);
     out->active = a->active && (t < 1);

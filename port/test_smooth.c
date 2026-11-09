@@ -213,6 +213,105 @@ static void t_render(void)
     free(g);
 }
 
+/* ---------------------------------------------------------------- fixtures */
+static void put_fix(Game *g, int i, int col, int row, int cell, int kind)
+{
+    Fixture *f = &g->fix[i];
+    memset(f, 0, sizeof *f);
+    f->col = (uint16_t)col; f->row = (uint8_t)row; f->cell = (uint8_t)cell; f->kind = (uint8_t)kind;
+    if (g->nfix <= i) g->nfix = i + 1;
+}
+
+static void t_fixtures(void)
+{
+    printf("fixtures        ");
+    static Map m; static Tileset t; Game *g = new_game(&m, &t);
+    ck(smooth_fixture_rcol(60, 50, 100) == 10 && smooth_fixture_rcol(5, 90, 100) == 15 && smooth_fixture_rcol(84, 50, 100) == -1 &&
+       smooth_fixture_rcol(83, 50, 100) == 33 && smooth_fixture_rcol(49, 50, 100) == -1, "the ring column of a fixture, over the seam, and off the ring");
+
+    /* an elevator the hero rides: it and the scroll both move a row, so it stays put on screen */
+    Smooth s; smooth_reset(&s);
+    g->scroll_col = 50; g->scroll_row = 10; g->hero_scr_col = 12; g->hero_scr_row = 6;
+    put_fix(g, 0, 60, 19, 0x40, 0);      /* A elevator under the hero */
+    put_fix(g, 1, 70, 19, 0x43, 1);      /* a B gate nobody rides */
+    put_fix(g, 2, 55, 18, 0x46, 2);      /* a C platform that moves right a column a step */
+    put_fix(g, 3, 140, 18, 0x46, 2);     /* a platform off the ring */
+    smooth_step(&s, g);
+    ck(!s.start.active, "the first step has no history");
+    g->scroll_row = 11; g->fix[0].row = 20; g->fix[1].row = 19; g->fix[2].col = 56;
+    smooth_step(&s, g);
+    ck(s.start.wy == 8 && s.start.hy == 0, "the world scrolls down a row, the hero holds his screen row");
+    ck(s.start.kx[0] == 0 && s.start.ky[0] == 0, "an elevator sinking with the scroll keeps its screen place (%d,%d)", s.start.kx[0], s.start.ky[0]);
+    ck(s.start.kx[1] == 0 && s.start.ky[1] == 8, "a gate that did not move slides with the world (%d,%d)", s.start.kx[1], s.start.ky[1]);
+    ck(s.start.kx[2] == -8 && s.start.ky[2] == 8, "a platform moving right while the scroll holds slides on its own (%d,%d)", s.start.kx[2], s.start.ky[2]);
+    ck(s.start.kx[3] == 0 && s.start.ky[3] == 8, "an off-ring platform has no position: it rides the world");
+    ck(s.start.active, "a slide is active");
+    SmoothOfs o;
+    smooth_at(&s, 0.5, &o);
+    ck(o.ky[0] == 0 && o.ky[1] == 4 && o.kx[2] == -4, "halfway: the lift holds, the gate is half way");
+    smooth_at(&s, 1, &o);
+    ck(!o.active && !o.ky[1], "settled");
+    /* the way up, and the ring's wrap: the scroll row crosses 0 */
+    g->scroll_row = 0; g->fix[0].row = 9;
+    smooth_step(&s, g);
+    g->scroll_row = 63; g->fix[0].row = 8;
+    smooth_step(&s, g);
+    ck(s.start.wy == -8 && s.start.ky[0] == 0, "a lift rising across the ring's wrap keeps its place (wy %d, ky %d)", s.start.wy, s.start.ky[0]);
+    /* a fixture changing record index space (a new map) forgets */
+    static Map m2; m2.width = 100; g->map = &m2;
+    smooth_step(&s, g);
+    ck(!s.start.active && s.start.ky[0] == 0, "a new map has no history");
+
+    /* rendering: the fixture's cells are drawn at their own offset, the tiles at the world's */
+    memset(&t, 0, sizeof t); g->map = &m;
+    for (int v = 1; v < 0x49; v++) {
+        if (v > 1 && v < 0x40) continue;
+        t.present[v] = 1;
+        for (int r = 0; r < 8; r++) for (int c = 0; c < 8; c++) t.cell[v].px[r][c] = (uint8_t)(v == 1 ? 3 : 0x80 + v + (c == 0 ? 1 : 0) + (r == 0 ? 2 : 0));
+    }
+    g->scroll_col = 50; g->scroll_row = 5;
+    memset(g->ring, 0, sizeof g->ring);
+    for (int i = 0; i < RING_SIZE; i++) g->bg_ring[i] = (i / RING_W) % 2 ? 1 : 0;   /* striped rows: every second tile row */
+    g->nfix = 0;
+    put_fix(g, 0, 60, 10, 0x40, 0);                                   /* ring col 10..12, screen cell 6..8, row 5 */
+    for (int k = 0; k < 3; k++) g->bg_ring[10 * RING_W + 10 + k] = (uint8_t)(0x40 + k);
+    static uint8_t a[FB_W * FB_H], b[FB_W * FB_H];
+    render_frame(a, g, NULL);
+    int fy = PF_Y + 5 * 8, fx = PF_X + 6 * 8;
+    ck(a[fy * FB_W + fx] != 3 && a[fy * FB_W + fx] != 0, "the plain frame draws the elevator");
+    SmoothOfs w; memset(&w, 0, sizeof w); w.active = 1; w.wy = 8; w.ky[0] = 0;
+    render_set_smooth(&w); render_frame(b, g, NULL); render_set_smooth(NULL);
+    int ok = 1;
+    for (int y = 0; y < 8; y++) for (int x = 0; x < 24; x++) if (b[(fy + y) * FB_W + fx + x] != a[(fy + y) * FB_W + fx + x]) ok = 0;
+    ck(ok, "wy = +8 with the lift's own ky = 0: the lift stays where it was");
+    int ok2 = 1;
+    for (int y = 16; y < PF_H; y++) for (int x = 0; x < PF_W; x++) {
+        int yy = PF_Y + y, xx = PF_X + x;
+        if (yy >= fy && yy < fy + 8 && x >= 6 * 8 && x < 9 * 8) continue;
+        if (b[yy * FB_W + xx] != a[(yy - 8) * FB_W + xx] && !(yy - 8 >= fy && yy - 8 < fy + 8 && x >= 6 * 8 && x < 9 * 8)) ok2 = 0;
+    }
+    ck(ok2, "...and the scenery moves 8 px, the lift's old cells left empty");
+    memset(&w, 0, sizeof w); w.active = 1; w.wy = 8; w.ky[0] = 8;
+    render_set_smooth(&w); render_frame(b, g, NULL); render_set_smooth(NULL);
+    ok = 1;
+    for (int y = 0; y < 8; y++) for (int x = 0; x < 24; x++) if (b[(fy + 8 + y) * FB_W + fx + x] != a[(fy + y) * FB_W + fx + x]) ok = 0;
+    ck(ok, "ky = +8: the lift moves with the world");
+    memset(&w, 0, sizeof w); w.active = 1; w.wx = 8; w.kx[0] = 0;
+    render_set_smooth(&w); render_frame(b, g, NULL); render_set_smooth(NULL);
+    ok = 1;
+    for (int y = 0; y < 8; y++) for (int x = 0; x < 24; x++) if (b[(fy + y) * FB_W + fx + x] != a[(fy + y) * FB_W + fx + x]) ok = 0;
+    ck(ok, "a platform keeping its screen column while the world slides sideways");
+    /* a lift half hidden under a sprite marker still draws */
+    g->bg_ring[10 * RING_W + 11] = 0x80 | 3; g->nobj = 4; g->under_sprite[3] = 0x41;
+    render_frame(a, g, NULL);
+    memset(&w, 0, sizeof w); w.active = 1; w.wy = 8;
+    render_set_smooth(&w); render_frame(b, g, NULL); render_set_smooth(NULL);
+    ok = 1;
+    for (int y = 0; y < 8; y++) for (int x = 0; x < 24; x++) if (b[(fy + y) * FB_W + fx + x] != a[(fy + y) * FB_W + fx + x]) ok = 0;
+    ck(ok, "a lift cell under a sprite marker is still drawn at the lift's offset");
+    free(g);
+}
+
 /* ------------------------------------------------------------------ towns */
 static TownMap TM; static TownTiles TT; static TownSprites TS; static TownHero TH; static TownBackdrop TB; static Town TW;
 
@@ -505,6 +604,7 @@ int main(void)
     t_objects(); printf("ok\n");
     t_render();  printf("ok\n");
     t_wide();    printf("ok\n");
+    t_fixtures(); printf("ok\n");
     t_town_steps();  printf("ok\n");
     t_town_render(); printf("ok\n");
     printf("%d checks, %d failures\n", checks, failures);

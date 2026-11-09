@@ -3,6 +3,7 @@
 #include "video.h"
 #include "text.h"
 #include "enemy.h"
+#include "smooth.h"
 #include <string.h>
 
 /* Smooth scrolling (#127): NULL on the engine's own path */
@@ -732,6 +733,20 @@ static void render_frame_impl(uint8_t *fb, const Game *g, const HeroGfx *h)
      * cell just beyond the window on the side being revealed (the ring is 36
      * wide: 4 spare columns each side, and its rows wrap) */
     int wx = s_sm ? s_sm->wx : 0, wy = s_sm ? s_sm->wy : 0;
+    /* the moving fixtures' cells are ring tiles, but their own slide differs from the world's (a lift
+     * the hero rides keeps its screen place while the rock scrolls past), so the tile pass leaves them
+     * out and they are drawn on top at their own offset.  fix_at[ring index] = record + 1 */
+    static uint16_t fix_at[RING_SIZE];
+    int use_fix = s_sm && g->nfix > 0 && g->map;
+    if (use_fix) {
+        memset(fix_at, 0, sizeof fix_at);
+        for (int i = 0; i < g->nfix && i < SMOOTH_FIXES; i++) {
+            const Fixture *f = &g->fix[i];
+            int rc = smooth_fixture_rcol(f->col, g->scroll_col, g->map->width);
+            for (int k = 0; rc >= 0 && k < 3 && rc + k < RING_W; k++)
+                fix_at[game_ring_index(g, f->row, (uint8_t)(rc + k))] = (uint16_t)(i + 1);
+        }
+    }
     int sc0 = -v_lo + (wx > 0 ? -((wx + 7) / 8) : 0), sc1 = SCREEN_COLS + v_hi + (wx < 0 ? (-wx + 7) / 8 : 0);
     int sr0 = wy > 0 ? -((wy + 7) / 8) : 0, sr1 = SCREEN_ROWS;
     for (int sr = sr0; sr < sr1; sr++) {
@@ -756,7 +771,28 @@ static void render_frame_impl(uint8_t *fb, const Game *g, const HeroGfx *h)
             }
             }
             if (!v || !g->tiles->present[v]) continue;
+            if (use_fix && sc + 4 >= 0 && sc + 4 < RING_W) {
+                int rp = (game_win(g) + sr * RING_W + sc + 4) % RING_SIZE;
+                if (rp < 0) rp += RING_SIZE;
+                int fi = fix_at[rp] - 1;
+                if (fi >= 0 && v == g->fix[fi].cell + ((rp % RING_W) - smooth_fixture_rcol(g->fix[fi].col, g->scroll_col, g->map->width))) continue;
+            }
             blit8(fb, &g->tiles->cell[v], VX(sc) + wx, PF_Y + sr * 8 + wy);
+        }
+    }
+    for (int i = 0; use_fix && i < g->nfix && i < SMOOTH_FIXES; i++) {
+        const Fixture *f = &g->fix[i];
+        int rc = smooth_fixture_rcol(f->col, g->scroll_col, g->map->width);
+        if (rc < 0) continue;
+        int sr = ((f->row - g->scroll_row) & 0x3F);
+        if (sr > 40) sr -= 64;
+        for (int k = 0; k < 3 && rc + k < RING_W; k++) {
+            int rp = game_ring_index(g, f->row, (uint8_t)(rc + k));
+            uint8_t v = g->bg_ring[rp];
+            if (v & 0x80) { int oi = v & 0x7F; v = oi < g->nobj ? g->under_sprite[oi] : 0; }
+            int scc = rc + k - 4;
+            if (scc < -v_lo - 1 || scc > SCREEN_COLS + v_hi || v != f->cell + k || !g->tiles->present[v]) continue;
+            blit8(fb, &g->tiles->cell[v], VX(scc) + s_sm->kx[i], PF_Y + sr * 8 + s_sm->ky[i]);
         }
     }
     /* fight.bin's frame order: the hero (gfmcga 39B9/40F0) is drawn at 70D4,
