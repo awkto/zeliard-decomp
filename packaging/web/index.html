@@ -15,7 +15,8 @@
   #pick h2 { font-size: 1.05em; margin: 1.4em 0 .4em; }
   #status { margin-top: 1em; min-height: 1.4em; color: var(--acc); }
   #err { color: #f88; }
-  #stage { display: none; position: fixed; inset: 0; align-items: center; justify-content: center; }
+  #stage { display: none; position: fixed; inset: 0; align-items: center; justify-content: center; background: #000; }
+  #stage:fullscreen { width: 100vw; height: 100vh; }
   canvas { background: #000; touch-action: none; image-rendering: pixelated; outline: none; }
   small, .hint { color: var(--dim); }
   code, kbd { font: .9em ui-monospace, monospace; }
@@ -442,20 +443,35 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => { if (started && !$('help').hidden && e.key !== 'Tab') e.stopImmediatePropagation(); }, true);
 
 // ---- running -------------------------------------------------------------
+// The canvas keeps SDL's backing size (the port never resizes it for fullscreen); this only picks the CSS
+// size that fits the stage (the fixed full-window element, which is also what goes fullscreen) at the
+// canvas's aspect.  It runs on every route that can change either: window resize, fullscreenchange (F, F11,
+// Alt+Enter, the browser's own Esc), a size change of the stage itself, and the canvas's width / height
+// attributes (W changes the window shape).  present.c letterboxes the picture inside the canvas.
 function fit() {
-  const c = $('canvas'), r = c.width / c.height || 1.6;
-  let w = innerWidth, h = innerWidth / r;
-  if (h > innerHeight) { h = innerHeight; w = h * r; }
+  const c = $('canvas'), st = $('stage');
+  const W = st.clientWidth || innerWidth, H = st.clientHeight || innerHeight, r = c.width / c.height || 1.6;
+  let w = W, h = W / r;
+  if (h > H) { h = H; w = h * r; }
   c.style.width = Math.floor(w) + 'px'; c.style.height = Math.floor(h) + 'px';
 }
+function fitSoon() { fit(); requestAnimationFrame(() => { fit(); requestAnimationFrame(fit); }); }   // browsers settle the new size a frame or two late
+document.addEventListener('fullscreenchange', () => {
+  Module.zelFs = document.fullscreenElement ? 1 : 0;      // read by the port (main.c web_fs_state)
+  $('s-fullscreen').checked = !!Module.zelFs;             // "Start fullscreen" follows what the player last chose
+  fitSoon();
+  if (started) applySettings();
+});
 
 function start() {
   $('pick').style.display = 'none';
   $('stage').style.display = 'flex';
-  fit(); addEventListener('resize', fit);
+  fit(); addEventListener('resize', fitSoon);
+  if (window.ResizeObserver) new ResizeObserver(fit).observe($('stage'));
   new MutationObserver(fit).observe($('canvas'), { attributes: true, attributeFilter: ['width', 'height'] });
   audioUnlock();
   persistLoop();
+  if ($('s-fullscreen').checked && window.zelToggleFullscreen) zelToggleFullscreen();   // best effort: needs the Play gesture to be fresh
   $('helpBtn').style.display = 'block';
   // callMain runs inside a click/change handler or just after one, so SDL may start audio
   applySettings();     // zeliard.ini (display, audio) is already written; speed and touch are page-only, so they go as flags
