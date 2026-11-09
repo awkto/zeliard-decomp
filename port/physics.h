@@ -253,6 +253,9 @@ struct Game {
     uint8_t  boss_intro;            /* 9F26 */
     unsigned encounter_frames;      /* 60E6: the 6 flashes of the encounter card */
     const uint8_t *old_screen;      /* the screen SIDE_SNAP kept (the front end's buffer), or NULL: the Tear scene plays over it (#119) */
+    struct { int8_t sc, sr; uint8_t cell, bgv, spr; } shot_pic[MAX_SHOTS + 1];  /* the projectile cells 8366 left on the screen (713B): still there at the next 712D, see render.c */
+    uint8_t  shot_pics;
+    uint8_t  mid_pic;               /* render_frame draws the half-way picture (fight.bin 712D) while the blade is out, see render.c */
     uint8_t  drawn_attacking, drawn_attack_var, drawn_cast_timer;   /* the blade as the last present drew it (7147 advances it after): the SIDE_SNAP picture (#119) */
     uint8_t  fade_card;             /* render only: draw the card up (the base the fade-in passes work over, #119) */
     Boss     boss;

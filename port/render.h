@@ -18,6 +18,7 @@ void render_fadein_pass(uint8_t *fb, const Game *g, int c);          /* gfmcga 4
  * undone.  `wait` is called after each of the 54 rectangles (the 444A timer wait), with the screen as it is then. */
 typedef void (*BurstWaitFn)(void *user);
 void render_burst(uint8_t *fb, const Game *g, BurstWaitFn wait, void *user);
+int  render_sprite_cell(const Game *g, int sc, int sr);               /* an enemy sprite's 2x2 block covers the screen cell */
 void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h);     /* fb: FB_W*FB_H VGA indices */
 
 /* Smooth scrolling (#127, port/smooth.h): pixel offsets the presentation layer

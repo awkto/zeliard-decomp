@@ -1044,13 +1044,12 @@ static int smooth_tick(App *a, Game *g, Uint64 next, double period_ms)
     return 1;
 }
 
-/* Wait out one frame, pumping events; while paused, keep pumping and hold the
- * frame clock so resuming does not fast-forward. */
-static void frame_wait(App *a, Game *g, Uint64 *next)
+/* Wait until `*stop`, pumping events; while paused, keep pumping and hold the frame clock so resuming does not
+ * fast-forward.  `*next` is the frame's own deadline: the slide of smooth mode is measured against it, and a
+ * pause restarts both.  A whole frame is `stop == next`; the half-frame wait of a swing (present) stops early. */
+static void frame_wait_to(App *a, Game *g, Uint64 *next, Uint64 *stop)
 {
-    Uint64 freq = SDL_GetPerformanceFrequency(), now = SDL_GetPerformanceCounter();
-    if (*next == 0 || now > *next + freq) *next = now;
-    *next += (Uint64)(frame_period_ms(a, a->frame_ms) / 1000.0 * (double)freq);
+    Uint64 freq = SDL_GetPerformanceFrequency(), now;
 #ifdef __EMSCRIPTEN__
     int slept = 0;
 #endif
@@ -1067,18 +1066,18 @@ static void frame_wait(App *a, Game *g, Uint64 *next)
             present_frame(a, a->pf_w, a->pf_h);
             a->zoomable = 0;
             SDL_Delay(16);
-            *next = SDL_GetPerformanceCounter();
+            *next = *stop = SDL_GetPerformanceCounter();
             continue;
         }
         if (a->paused) {
             if (a->sm_live) { a->sm_live = 0; if (a->scene == 1) cavern_draw(a, g, NULL); else if (a->scene == 2) town_draw(a, &a->sh.town, NULL); }   /* hold the settled picture, not a mid-slide one */
             /* keep redrawing the held picture, so Z / F3 and their OSD message show while paused */
             if (a->pf_w > 0) { a->zoomable = a->pf_zoom; present_frame(a, a->pf_w, a->pf_h); a->zoomable = 0; }
-            SDL_Delay(16); *next = SDL_GetPerformanceCounter(); continue;
+            SDL_Delay(16); *next = *stop = SDL_GetPerformanceCounter(); continue;
         }
         now = SDL_GetPerformanceCounter();
-        if (now >= *next) break;
-        Uint64 rem = (*next - now) * 1000 / freq;
+        if (now >= *stop) break;
+        Uint64 rem = (*stop - now) * 1000 / freq;
         if ((a->scene == 1 || a->scene == 2) && g) smooth_tick(a, g, *next, frame_period_ms(a, a->frame_ms));
 #ifdef __EMSCRIPTEN__
         slept = 1;
@@ -1094,6 +1093,22 @@ static void frame_wait(App *a, Game *g, Uint64 *next)
     if (!slept) emscripten_sleep(0);   /* ASYNCIFY: still hand the thread back once a frame */
     web_push_run();                    /* a queued save-sync push (#55) */
 #endif
+}
+
+/* The start of the frame's clock: where the previous frame's deadline left it (or now, after a stall). */
+static Uint64 frame_clock_base(const Uint64 *next)
+{
+    Uint64 freq = SDL_GetPerformanceFrequency(), now = SDL_GetPerformanceCounter();
+    return (*next == 0 || now > *next + freq) ? now : *next;
+}
+
+/* Wait out one frame (4*speed ticks), pumping events. */
+static void frame_wait(App *a, Game *g, Uint64 *next)
+{
+    Uint64 freq = SDL_GetPerformanceFrequency();
+    *next = frame_clock_base(next);
+    *next += (Uint64)(frame_period_ms(a, a->frame_ms) / 1000.0 * (double)freq);
+    frame_wait_to(a, g, next, next);
 }
 
 /* The analogue stick counts as a direction past half deflection. */
@@ -2061,6 +2076,17 @@ static void town_draw(App *a, Town *t, const SmoothOfs *so)
     a->zoomable = 0;
 }
 
+/* The swing's first-step picture (sword-frame): gfmcga 3E34 runs twice a frame, at 7047 and, after the half-way wait
+ * (712D, 2*speed ticks), at 7147, with 7136 erasing the blade in between.  So while the blade is out the screen shows
+ * the first step's blade from 7047 to 712D and the second's from 7147 to the end of the frame, half a frame each; the
+ * 717F boundary only ever holds the second.  The oracle writes the first as side_*_w712D.png (zel_oracle.cpp
+ * side_check: [FF43] set at 712D); a frame with the blade out presents it here, for the first half, first. */
+static int mid_wanted(const Game *g)
+{
+    return g->attacking && !g->status && !g->tear && !g->dsv_pic && !g->walk_in && !g->encounter_frames &&
+           !g->fade_card && !g->dissolve;
+}
+
 static void present(Game *g)
 {
     App *a = app_of(g->user);
@@ -2078,6 +2104,10 @@ static void present(Game *g)
                 g->dirs, g->hp, g->attacking, g->attack_var, g->on_hazard ? " HAZARD" : "",
                 g->hero_hit ? " HIT" : "");
     if (a->trace_f) {                                /* inputs move only at the boundaries */
+        if (mid_wanted(g) && a->png_every && !a->trace_done) {   /* the half-way picture of a swing (712D) */
+            g->mid_pic = 1; fb_fight(a, g); g->mid_pic = 0;
+            side_show(a, "w712D", 0);
+        }
         if (g->dsv_pic && a->png_every && !a->trace_done) {   /* #118: the death dissolve (99A8), dsv_<next boundary>_<k>.png */
             char path[1100];
             snprintf(path, sizeof path, "%s/dsv_%05u_%03u.png", a->trace_dir, a->trace_n, a->dsv_n++);
@@ -2131,6 +2161,18 @@ static void present(Game *g)
         a->sm_last_pc = SDL_GetPerformanceCounter();
         if (a->sm_gap_ms <= 0) a->sm_gap_ms = 1000.0 / 60 - 1;
     } else smooth_reset(&a->sm);
+    static Uint64 next = 0;
+    a->scene = (!g->status && !g->tear && !g->dsv_pic) ? 1 : 0;
+    if (mid_wanted(g) && !a->turbo && !a->paused && !turbo_skip(a)) {
+        /* the first half of the frame: the swing's first step (712D), see mid_wanted */
+        Uint64 freq = SDL_GetPerformanceFrequency(), period = (Uint64)(frame_period_ms(a, a->frame_ms) / 1000.0 * (double)freq);
+        Uint64 base = frame_clock_base(&next), full = base + period, stop = base + period / 2;
+        g->mid_pic = 1;
+        cavern_draw(a, g, slide ? &so : NULL);
+        frame_wait_to(a, g, &full, &stop);
+        g->mid_pic = 0;
+        if (slide) so = a->sm_ofs;                       /* the slide goes on from where the first half left it */
+    }
     if (!turbo_skip(a)) {
         cavern_draw(a, g, slide ? &so : NULL);
         char title[256];
@@ -2140,7 +2182,6 @@ static void present(Game *g)
     }
 
     /* wait out the frame (4*speed ticks), pumping events */
-    static Uint64 next = 0;
     a->scene = (!g->status && !g->tear && !g->dsv_pic) ? 1 : 0;
     frame_wait(a, g, &next);
     a->scene = 0;

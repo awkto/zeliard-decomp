@@ -307,6 +307,24 @@ economy: caverns drop almas and the town bank exchanges them for gold (docs/TOWN
   the press rhythm, as long as one press arrives within each swing.
 * The renderer runs the swing: it increments `FF46` each frame and clears
   `attacking` when done (gfmcga `3E45`, `3F1A`); `FF44` is its frame flag.
+* **Two blade pictures a frame (sword-frame; oracle, `tests/scenarios/sword_frames.zs`, `ORACLE_SWORDLOG`).**  The "7 or 5 steps
+  of two per frame" are two `[3006]` (`3E34`) calls, and each draws a picture: the frame is *logic, `703C` erase, `7047` step
+  1 (draw), `70D4`/`710F` hero and cell pass, wait `712D` until `[FF1A]` = 2*speed, `7136` erase, `7147` step 2 (draw), wait
+  `7179` until 4*speed, `717F`*.  The blade drawn at `7047` stays on the screen until `7136`, half a frame (42 ms at speed 5:
+  `[FF1A]` 0..10 at 236.7 Hz), and the one from `7147` until the next frame's `703C`; the `717F` boundary, which is where the
+  harness and the old port looked, only ever holds the second.  A slash is six pictures, frame `[FF46]-1` = 0..5 (each ~42 ms;
+  4 and 5 are the same drawing), the boundary sees 1, 3, 5; an upward slash is four (0..3, boundary 1, 3); the thrust two
+  (2, 3; boundary 3).  The first step's blade is at the hero's *previous* cell (`[4FED]`, the hero is drawn after it), the
+  second's at the current one.  Everything the frame draws before `712D` is in the first picture (the potion's LIFE `70D9`,
+  the hero, the enemies and death sparks `710F`/`7119`); what comes after the wait is not: `7136`'s erase, the shots (`8366`)
+  and spell sprites (`896E`), `7147`'s blade.  The shots of the *previous* frame are still there, since their erase (`83F3`)
+  is part of `8366`: a shot cell stays on the screen at its old place until something writes over it, which `302C`'s cell pass
+  does when the shadow at `E900` differs from the ring (a different or animated cell, a sprite's 2x2 block or a cell a sprite
+  held the frame before) and the hero's draw does over its 3x3 cells (`render_sprite_cell`, `draw_shots_mid`).  The oracle writes it as
+  `side_<f>_<k>_w712D.png` (`712D`'s exit while `[FF43]` is set); `sword_frames` diffs it.  The port used to present one picture
+  a frame (the second) for the whole 84 ms: the player saw 3 of the 6 blade pictures, each twice as long as the original's
+  ("the swing goes too fast / misses a frame").  Now `present()` (main.c) shows the first-step picture for half the frame and
+  then the second (native and web, smooth mode too; `Game.mid_pic`, `render.c`), and under `--trace` writes the same side picture.
 
 ### Blade shape and hit application (`6F07`, every rendered frame while attacking)
 Origin = 4 rows above the hero's top-left (3 when crouching). The shape is a

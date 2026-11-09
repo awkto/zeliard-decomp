@@ -76,7 +76,7 @@ new file mode 100644
 index 0000000..5b122a2
 --- /dev/null
 +++ b/src/misc/zel_oracle.cpp
-@@ -0,0 +1,676 @@
+@@ -0,0 +1,724 @@
 +/*
 + * zel_oracle.cpp -- Zeliard differential-test oracle (decomp-zel docs/HARNESS.md).
 + *
@@ -102,6 +102,12 @@ index 0000000..5b122a2
 + *                     boundaries are the waits' ends, site "intro:wait" (as the ending's "end:wait"); the run stops
 + *                     when the town loads (script tokens >= boundaries) or the script runs out
 + *   ORACLE_DEBUG_MS   during boot, write boot_<ms>.png every N emulated ms (debugging)
++ *   ORACLE_NOMID      "1" = no half-frame picture: by default, while the blade is out ([FF43]) the screen at the exit of the cavern
++ *                     frame's half-way wait (fight 712D, 2*speed ticks) is written as side_<f>_<k>_w712D.png (sword-frame)
++ *   ORACLE_SWORDLOG   "1" = evlog.txt (one line per draw point of a swing inside the frame: 703C 7041 704C 70D9 7114 712D 713B 714C 717F,
++ *                     with the screen's hash and [FF1A] [FF43] [FF44] [FF46]) and ev_<frame>_<ip>.png at each, while the blade is out
++ *   ORACLE_SUBMS      N = sublog.txt: every N emulated ms the screen's hash, ms since the last boundary and [FF1A] [FF43] [FF46];
++ *                     sub_<frame>_<k>_<ms>.png when the screen changed while the blade is out
 + */
 +#include <stdio.h>
 +#include <stdlib.h>
@@ -160,6 +166,10 @@ index 0000000..5b122a2
 +uint16_t rng = 0;
 +unsigned rng_calls = 0;
 +unsigned long frame = 0;
++unsigned sub_ms = 0;                 /* ORACLE_SUBMS=N: sub-frame sampling every N emulated ms (sublog.txt, sub_*.png) */
++bool sword_ev = false;               /* ORACLE_SWORDLOG=1: picture + log line at the swing's draw points inside the cavern frame (evlog.txt, ev_*.png) */
++bool no_mid = false;                 /* ORACLE_NOMID=1: no mid-frame picture (w712D) while the blade is out */
++FILE *f_sub = nullptr, *f_ev = nullptr;
 +std::string cur_input = ".";          /* input frame `frame` was played with */
 +uint8_t prev_btns = 0;
 +uint8_t typed = 0;                    /* the FF29 key applied with the current input (0 = none) */
@@ -208,6 +218,12 @@ index 0000000..5b122a2
 +    fclose(fp);
 +}
 +
++uint32_t screen_hash() {
++    uint32_t h = 2166136261u;
++    for (uint32_t a = 0; a < 64000; a++) { h ^= vga.mem.linear[(((a & ~3u) << 2) | (a & 3u)) & vga.mem.memmask]; h *= 16777619u; }
++    return h;
++}
++
 +void finish(int code, const char *why) {
 +    logf("finish: %s (frames=%lu, wait-loop boundaries=%lu, harness rng calls=%lu, BASE:0918 entries=%lu, at %04X:%04X)",
 +         why, frame, menu_boundaries, rng_total, dbg_0918, SegValue(cs), (unsigned)(uint16_t)reg_eip);
@@ -234,6 +250,9 @@ index 0000000..5b122a2
 +    }
 +    if ((s = getenv("ORACLE_PNG_EVERY"))) png_every = (unsigned)atoi(s);
 +    if ((s = getenv("ORACLE_SETTLE"))) settle = (unsigned)atoi(s);
++    if ((s = getenv("ORACLE_SUBMS"))) sub_ms = (unsigned)atoi(s);
++    if ((s = getenv("ORACLE_SWORDLOG"))) sword_ev = atoi(s) != 0;
++    if ((s = getenv("ORACLE_NOMID"))) no_mid = atoi(s) != 0;
 +    if ((s = getenv("ORACLE_MAX_MS"))) max_ms = strtoul(s, nullptr, 10);
 +    if ((s = getenv("ORACLE_STALL_MS"))) stall_ms = strtoul(s, nullptr, 10);
 +    if ((s = getenv("ORACLE_MENU_TICKS"))) menu_ticks = (unsigned)atoi(s);
@@ -502,6 +521,12 @@ index 0000000..5b122a2
 +    else if (p[0] == 0x38 && p[1] == 0x06 && p[2] == 0x1A && p[3] == 0xFF && p[4] == 0x72) lim = reg_al;
 +    else return;
 +    if (in_end) return;
++    /* the cavern frame's half-way wait (712D, 2*speed ticks): while the blade is out the screen holds the swing's
++     * first step (7047), which 7136/7147 replace for the second half; the boundary picture never shows it (#sword-frame) */
++    if (ip == 0x712D) {
++        if (!no_mid && mem_readb(SegPhys(ds) + 0xFF1A) >= lim && mem_readb(SegPhys(ds) + 0xFF43)) side_pic("w%04X", ip);
++        return;
++    }
 +    if (ip == 0x7179 || ip == 0x712D || ip == 0x7FA5 || ip == 0x68E7) return;                      /* fight / walk-in / town frame waits */
 +    if (lim < 8 && ip != 0x4471) return;                                                                            /* glyph, cursor and menu waits; spell 7's 4471 (3 ticks) is pictured anyway (#122) */
 +    ff1a = mem_readb(SegPhys(ds) + 0xFF1A);
@@ -648,6 +673,19 @@ index 0000000..5b122a2
 +        char name[64]; snprintf(name, sizeof name, "/walk_%05lu_%03u.png", frame, walk_k++);
 +        write_png(outdir + name);
 +    }
++    if (state == ST_TRACE && (sword_ev || sub_ms) && (ip == 0x703C || ip == 0x7041 || ip == 0x704C || ip == 0x70D9 || ip == 0x7114 ||
++        ip == 0x712D || ip == 0x713B || ip == 0x714C || ip == 0x717F)) {
++        if (!f_ev) f_ev = fopen((outdir + "/evlog.txt").c_str(), "w");
++        const uint8_t *B = base_ptr(0);
++        const uint8_t f43 = B[0xFF43], f44 = B[0xFF44], f46 = B[0xFF46];
++        if ((f43 || f44) && !(ip == 0x712D && B[0xFF1A] < reg_al)) {
++            const double now = (double)ms * 3000.0 + (double)(CPU_CycleMax - CPU_CycleLeft - CPU_Cycles);
++            const uint32_t h = screen_hash();
++            fprintf(f_ev, "EV %04X f=%lu ms=%lu cyc=%.0f ff1a=%u ff43=%u ff44=%u ff46=%u hash=%08x\n", ip, frame + 1, ms, now, B[0xFF1A], f43, f44, f46, h);
++            fflush(f_ev);
++            if (sword_ev) { char nm[64]; snprintf(nm, sizeof nm, "/ev_%05lu_%04X.png", frame + 1, ip); write_png(outdir + nm); }
++        }
++    }
 +    if (state == ST_TRACE && png_every) side_check(ip, p);
 +    /* the screen dissolve (gmmcga [2040] = 2130, #118) has no frame boundary either: after each of its 8 passes
 +     * (2184: mov cx,1F40, the delay loop) the picture goes to dsv_<last boundary + 1>_<k>.png, k counting up over
@@ -747,6 +785,16 @@ index 0000000..5b122a2
 +        if (t > 60000) finish(5, "no town boundary after restore");
 +        break;
 +    case ST_TRACE:
++        if (sub_ms && ms % sub_ms == 0) {
++            const uint8_t *q = base_ptr(0);
++            if (!f_sub) f_sub = fopen((outdir + "/sublog.txt").c_str(), "w");
++            static uint32_t last_h = 0; static unsigned sub_k = 0;
++            const uint32_t h = screen_hash();
++            fprintf(f_sub, "SUB ms=%lu since=%lu f=%lu ff1a=%u ff43=%u ff46=%u hash=%08x%s\n", ms, ms - last_boundary_ms, frame + 1, q[0xFF1A], q[0xFF43], q[0xFF46], h, h != last_h ? " NEW" : "");
++            if (h != last_h && (q[0xFF43] || q[0xFF44])) { char nm[64]; snprintf(nm, sizeof nm, "/sub_%05lu_%03u_%lu.png", frame + 1, sub_k++, ms); write_png(outdir + nm); }
++            last_h = h;
++            fflush(f_sub);
++        }
 +        if (ms - last_boundary_ms > stall_ms) finish(6, "stalled: no boundary for ORACLE_STALL_MS (an input loop the oracle has no site for?)");
 +        break;
 +    default:

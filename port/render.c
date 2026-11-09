@@ -202,20 +202,6 @@ static int sword_origin_at(const Game *g, const HeroGfx *h, int f, int hsr, int 
     return 1;
 }
 
-static int sword_origin_f(const Game *g, const HeroGfx *h, int f, int *x0, int *y0)
-{
-    return sword_origin_at(g, h, f, g->hero_scr_row, g->hero_scr_col, x0, y0);
-}
-
-/* 3EB7 draws frame [FF46] - 1 at each [3006]; the screen the 717F boundary
- * leaves is 7147's, [FF46] + 1 - 1 with attack_var the post-7047 value.  The
- * 302C row-pass blade (whose 32x32 block 7136 restores) is one [FF46] step
- * earlier, hence `sword_origin_f(g, h, attack_var - 1, ...)`. */
-static int sword_origin(const Game *g, const HeroGfx *h, int *x0, int *y0)
-{
-    return sword_origin_f(g, h, g->attack_var, x0, y0);
-}
-
 /* gfmcga 3FD0: the sword block.  The blade is a 4x4-cell (32x32 px) sprite
  * whose origin is the hero's top-left plus the frame's own {row, col} cell
  * offset (3ED9/3EEE, one cell row lower while crouching, `test [FF38]` at
@@ -230,17 +216,16 @@ static int sword_origin(const Game *g, const HeroGfx *h, int *x0, int *y0)
  * a wind-up frame's cells over the body are visible at all.  Nothing in the
  * port drew this: `sword_apply` used the shapes for the hit test only, so
  * Garland fought bare-handed (issue #35). */
-static void draw_sword(uint8_t *fb, const Game *g, const HeroGfx *h)
+static void draw_sword_at(uint8_t *fb, const Game *g, const HeroGfx *h, int f, int hsr, int hsc)
 {
     int x0, y0;
-    if (!sword_origin(g, h, &x0, &y0)) return;
+    if (!sword_origin_at(g, h, f, hsr, hsc, &x0, &y0)) return;
     if (s_sm) { x0 += s_sm->hx; y0 += s_sm->hy; }
     const SwordGfx *sg = &h->sword;
     int sw = g->sword > 6 ? 6 : g->sword;
     int sec = SWORD_SECTION[sw - 1];                                     /* kernel mode 4 */
     int kind = g->attack_type <= 2 ? g->attack_type : 0;                 /* [FF45] */
     int grp = kind + ((g->hero_flags & FACE_LEFT) ? 3 : 0);              /* 3E6C: test [C2],1 */
-    int f = g->attack_var;
     if (f >= SWORD_FRAMES[kind]) f = SWORD_FRAMES[kind] - 1;
     if (f < 0) f = 0;
     const uint8_t *blk = sg->block[sec][grp][f];
@@ -261,6 +246,14 @@ static void draw_sword(uint8_t *fb, const Game *g, const HeroGfx *h)
                 }
             }
         }
+}
+
+/* 3E34 draws frame [FF46] - 1 at each [3006]; the screen the 717F boundary leaves is 7147's, [FF46] + 1 - 1
+ * with attack_var the post-7047 value (the front end's trace boundary and present both hold it there):
+ * the second half of the frame, at the hero's current cell. */
+static void draw_sword(uint8_t *fb, const Game *g, const HeroGfx *h)
+{
+    draw_sword_at(fb, g, h, g->attack_var, g->hero_scr_row, g->hero_scr_col);
 }
 
 /* gfmcga 3336/33AB: every live object is a 2x2-cell sprite at its ring
@@ -381,6 +374,45 @@ static void draw_shots(uint8_t *fb, const Game *g)
         if (!cell || !g->tiles->present[cell]) continue;
         blit8t(fb, &g->tiles->cell[cell], PF_X + sc * 8 + (s_sm ? s_sm->sx[i] : 0),
                PF_Y + sr * 8 + (s_sm ? s_sm->sy[i] : 0));
+    }
+}
+
+/* Does an enemy sprite's 2x2 block cover the screen cell (sc, sr)?  (the ring marker sits on the top-left cell) */
+int render_sprite_cell(const Game *g, int sc, int sr)
+{
+    for (int i = 0; i < g->nobj; i++) {
+        const MapObj *o = &g->obj[i];
+        if ((o->col >> 8) == 0xFF || o->rcol == 0xFF) continue;
+        if (g->ring[game_ring_index(g, o->row, o->rcol)] != (uint8_t)(0x80 | i)) continue;
+        int c = (int)o->rcol - 4, r = (int)((o->row - g->scroll_row) & 0x3F);
+        if (r > 40) r -= 64;
+        if (sc >= c && sc <= c + 1 && sr >= r && sr <= r + 1) return 1;
+    }
+    return 0;
+}
+
+/* The projectile cells at the half-way wait (712D): 8366 drew them at 713B of the previous frame and its next pass (the
+ * erase at 83F3) is after the wait, so the screen still holds the old cells at the old places -- unless something wrote
+ * over them since (sword-frame, from the oracle's pictures at the draw points).  302C's cell pass (710F) redraws a
+ * background cell when the shadow at E900 differs from the ring: a different cell (a scroll, an animated one), a sprite
+ * block, or a cell a sprite held (its shadow was FE); the hero is drawn over its 3x3 cells, now and where it was. */
+static int ghost_in_block(int sc, int sr, int c0, int r0, int w, int h)
+{
+    return sc >= c0 && sc < c0 + w && sr >= r0 && sr < r0 + h;
+}
+
+static void draw_shots_mid(uint8_t *fb, const Game *g)
+{
+    for (int i = 0; i < g->shot_pics; i++) {
+        int sc = g->shot_pic[i].sc, sr = g->shot_pic[i].sr;
+        int rp = (game_win(g) + sr * RING_W + sc + 4) % RING_SIZE; if (rp < 0) rp += RING_SIZE;
+        uint8_t v = g->bg_ring[rp];
+        if (v != g->shot_pic[i].bgv || (v & 0x80) || g->shot_pic[i].spr || render_sprite_cell(g, sc, sr)) continue;
+        if (ghost_in_block(sc, sr, g->hero_scr_col, g->hero_scr_row, 3, 3)) continue;
+        if (g->hero_drawn_ok && ghost_in_block(sc, sr, g->hero_drawn_col, g->hero_drawn_row, 3, 3)) continue;
+        uint8_t cell = g->shot_pic[i].cell;
+        if (!cell || !g->tiles->present[cell]) continue;
+        blit8t(fb, &g->tiles->cell[cell], PF_X + sc * 8, PF_Y + sr * 8);
     }
 }
 
@@ -653,6 +685,7 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
      * sparks, matching 70D4 < 711B, and before the blade's save block below.
      * The shots land over the hero (8366 only skips 0xFF/0xFC), so they are
      * drawn after it (#104). */
+    if (g->mid_pic) draw_shots_mid(fb, g);      /* 713B of the previous frame, under everything this frame draws */
     draw_enemies(fb, g);
     if (h) draw_hero(fb, g, h);                 /* 70D4 */
     /* 3F42 saves the blade's 32x32 block before 302C's row pass draws the blade
@@ -666,6 +699,15 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h)
      * one.  (vista_fight f99/f102 differ by exactly this cell.) */
     int shr = g->sword_blk_ok ? g->sword_blk_row : g->hero_scr_row;
     int shc = g->sword_blk_ok ? g->sword_blk_col : g->hero_scr_col;
+    if (g->mid_pic) {
+        /* The picture at 712D, the half-way wait (sword-frame): 7047 drew the swing's first step, frame [FF46]-1 at the
+         * hero's previous cell, and 302C's row pass (710F) drew it again with the hero; the sparks (711B) lie over it,
+         * and 7136's erase, the shots (7138), the spell sprites (7141) and 7147's second step are all still to come. */
+        if (h) draw_sword_at(fb, g, h, g->attack_var - 1, shr, shc);
+        draw_sparks(fb, g, h);
+        draw_message_box(fb, g);
+        return;
+    }
     if (h && (have_sword = sword_origin_at(g, h, g->attack_var - 1, shr, shc, &sx0, &sy0))) {
         for (int r = 0; r < 32; r++) {
             int yy = sy0 + r;

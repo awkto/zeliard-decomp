@@ -6,6 +6,7 @@
  * moves one ring cell per frame in one of eight directions (table 85C2), a
  * magic bolt two map columns per frame (8BD0). */
 #include "enemy.h"
+#include "render.h"
 #include <string.h>
 
 /* ====================================================================== */
@@ -440,5 +441,20 @@ void shots_draw_pass(Game *g)
         uint8_t r = (uint8_t)((s->row - g->scroll_row) & 0x3F);         /* 837F */
         if (r >= 0x12) { s->col = 0; continue; }                        /* 8388 */
         s->last_row = r;                                                /* 838C */
+    }
+    /* what 8366 now leaves on the screen, until the next frame's 8366 erases it (83F3): the half-way picture
+     * (712D) of the next frame still shows these cells, the boundary picture the new ones (sword-frame) */
+    g->shot_pics = 0;
+    for (int i = 0; i <= MAX_SHOTS; i++) {
+        const Shot *s = &g->shots[i];
+        if (s->col == 0xFF) break;
+        if (!s->col) continue;
+        int sc = (int)s->col - 4, sr = (int)((s->row - g->scroll_row) & 0x3F);
+        if (sc < 0 || sc >= SCREEN_COLS || sr >= SCREEN_ROWS) continue;
+        int rp = (game_win(g) + sr * RING_W + sc + 4) % RING_SIZE; if (rp < 0) rp += RING_SIZE;
+        g->shot_pic[g->shot_pics].sc = (int8_t)sc; g->shot_pic[g->shot_pics].sr = (int8_t)sr;
+        g->shot_pic[g->shot_pics].spr = (uint8_t)render_sprite_cell(g, sc, sr);   /* a sprite held the cell: its shadow is FE */
+        g->shot_pic[g->shot_pics].bgv = g->bg_ring[rp];                 /* the cell under it, as 302C's shadow (E900) holds it */
+        g->shot_pic[g->shot_pics++].cell = shot_draw_cell(s);
     }
 }
