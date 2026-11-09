@@ -82,6 +82,8 @@ typedef struct {
     int      rest_q[16], rest_qn;       /* SDL keys the dialog has not consumed yet */
     int      sync_dlg;                  /* the ask-before-link dialog (#55) owns the keyboard */
     double   frame_ms;                  /* SPEED_FRAME_MS(speed): follows FF33 live (F9, --speed) */
+    Uint64   sp_b;                      /* #133: a shop's real-time clock: the performance counter at shop tick sp_n */
+    unsigned sp_n;
     int      speed;                     /* FF33: 1 fastest .. 10 slowest, loader default 5 */
     SpeedDlg spd;                       /* F9 "Speed change" (#116) */
     int      speed_req;
@@ -2051,6 +2053,25 @@ static int run_cutscenes(App *a, const char *dir)
     return 0;
 }
 
+/* ------------------------------------------------ a shop's real-time clock (#133) */
+/* The shops run on the 236.7 Hz ISR tick, whatever [FF33] says (the glyph wait is 6 ticks, the portraits'
+ * thresholds are in ticks): 20 ticks are 84.5 ms at every speed, so the shop's frame is not frame_ms.
+ * shop_pace waits until the real time of shop tick `n` (Shop.tick_n) -- the boundary present (town_present)
+ * and every picture / effect between boundaries (SIDE_SHOW) call it, in tick order, and nothing else
+ * sleeps, so a picture is on screen at the tick it was drawn at.  A clock that is more than two frames
+ * behind (a dissolve, a pause, a stall, a new shop) starts again from now. */
+#ifdef HAVE_SDL
+#define SHOP_TICKS_FRAME 20
+static void shop_pace(App *a, Town *t, unsigned n)
+{
+    Uint64 freq = SDL_GetPerformanceFrequency(), now = SDL_GetPerformanceCounter();
+    double tick = frame_period_ms(a, SPEED_FRAME_MS(SPEED_DEFAULT)) / SHOP_TICKS_FRAME / 1000.0 * (double)freq;
+    if (n < a->sp_n || (double)now > (double)a->sp_b + (double)(n - a->sp_n) * tick + 2 * SHOP_TICKS_FRAME * tick) { a->sp_b = now; a->sp_n = n; }
+    Uint64 stop = a->sp_b + (Uint64)((double)(n - a->sp_n) * tick), nx = now;
+    frame_wait_to(a, t->g, &nx, &stop);
+}
+#endif
+
 /* ---------------------------------------------------- side pictures (#119) */
 /* A loop of the original that waits (timer or CPU delay) and draws without a trace boundary.  With --trace
  * --png-every the screen goes to side_<next boundary>_<k>_<tag>.png, named as the oracle names it
@@ -2117,6 +2138,16 @@ static void side_fight(Game *g, int kind, unsigned arg, unsigned ticks)
 static void side_town(Town *t, int kind, unsigned arg, unsigned ticks)
 {
     App *a = app_of(t->user);
+    if (kind == SIDE_SHOW) {                    /* #133: a picture / effect of the shop at tick `arg`, in real time only */
+#ifdef HAVE_SDL
+        if (a->trace_f || a->headless || !t->shop || t->status || t->dsv_pic || t->dissolve) return;
+        shop_pace(a, t, arg);
+        if (a->quit) return;
+        a->scene = 0;
+        town_draw(a, t, NULL);
+#endif
+        return;
+    }
     if (!a->trace_f && a->headless) return;
     fb_town(a, t);
     char tag[24];
@@ -2337,7 +2368,7 @@ static void town_present(Town *t)
     YIELD_TEST(a);
     a->sk_combo = 0;                    /* a stale save/load combo must not suppress input */
     statekeys_osd_tick(&a->sk);
-    audio_advance_ms(a->frame_ms);
+    audio_advance_ms(t->shop ? SPEED_FRAME_MS(SPEED_DEFAULT) : a->frame_ms);   /* a shop's 20 ticks are 84.5 ms at any speed (#133) */
     if (a->speed_req) speed_modal(a, t->g, t);          /* kernel [114] at town.bin 68CD */
     if (a->restore_req) restore_modal(a, t->g, t);          /* kernel [11E] at town.bin 68DC */
     if (a->verbose)
@@ -2397,6 +2428,10 @@ static void town_present(Town *t)
         a->sm_last_pc = SDL_GetPerformanceCounter();
         if (a->sm_gap_ms <= 0) a->sm_gap_ms = 1000.0 / 60 - 1;
     } else smooth_town_reset(&a->tsm);
+    /* #133: inside a shop the picture is due at the real time of its tick (the frame wait that used to follow it
+     * would add a second 84 ms, and one that depends on the speed); shop_pace waits for it first */
+    const int shop_rt = t->shop && !t->status && !t->dsv_pic && !t->dissolve;
+    if (shop_rt) { a->scene = 0; shop_pace(a, t, t->shop->tick_n); }
     if (!turbo_skip(a)) {
         town_draw(a, t, slide ? &so : NULL);
         char title[768];
@@ -2406,7 +2441,8 @@ static void town_present(Town *t)
     }
     static Uint64 next = 0;
     a->scene = (!t->shop && !t->status && !t->dsv_pic) ? 2 : 0;
-    frame_wait(a, t->g, &next);              /* the Game, so the save/load keys work in a town too */
+    if (shop_rt) { Uint64 nx = SDL_GetPerformanceCounter(); frame_wait_to(a, t->g, &nx, &nx); }   /* events only: the wait was shop_pace */
+    else frame_wait(a, t->g, &next);         /* the Game, so the save/load keys work in a town too */
     a->scene = 0;
     if (t->dsv_pic) return;                             /* a dissolve pass reads no keys */
     const Uint8 *k = SDL_GetKeyboardState(NULL);

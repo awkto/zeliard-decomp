@@ -331,9 +331,17 @@ void trace_write_exit(FILE *f, unsigned n, unsigned rng_calls, const char *input
             n, rng_calls, input, code);
 }
 
+/* ,"sfx":"05.05" -- the effect requests since the previous boundary line (#133); nothing when there were none */
+static void sfx_key(char *out, size_t n)
+{
+    const char *x = audio_sfx_take();
+    if (*x) snprintf(out, n, ",\"sfx\":\"%s\"", x); else out[0] = 0;
+}
+
 void trace_write_site(FILE *f, unsigned n, const char *site, unsigned rng_calls, const char *input)
 {
-    fprintf(f, "{\"f\":%u,\"site\":\"%s\",\"rng_calls\":%u,\"input\":\"%s\"}\n", n, site, rng_calls, input);
+    char sx[560]; sfx_key(sx, sizeof sx);
+    fprintf(f, "{\"f\":%u,\"site\":\"%s\",\"rng_calls\":%u,\"input\":\"%s\"%s}\n", n, site, rng_calls, input, sx);
 }
 
 void trace_write_frame(FILE *f, unsigned n, const char *site, unsigned rng_calls, const char *input, Game *g, const Town *t)
@@ -341,8 +349,9 @@ void trace_write_frame(FILE *f, unsigned n, const char *site, unsigned rng_calls
     int mode = t ? M_TOWN : M_FIGHT;
     uint8_t page[256];
     build_page(g, t, page);
-    fprintf(f, "{\"f\":%u,\"site\":\"%s\",\"rng_calls\":%u,\"input\":\"%s\",\"fields\":{",
-            n, site, rng_calls, input);
+    char sx[560]; sfx_key(sx, sizeof sx);
+    fprintf(f, "{\"f\":%u,\"site\":\"%s\",\"rng_calls\":%u,\"input\":\"%s\"%s,\"fields\":{",
+            n, site, rng_calls, input, sx);
     Out o = {f, 1};
     char nm[16];
     for (int i = 0; i < STORY_FLAGS; i++) { snprintf(nm, sizeof nm, "flag_%02x", i); emit_int(&o, nm, page[i]); }

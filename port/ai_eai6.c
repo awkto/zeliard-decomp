@@ -4,6 +4,7 @@
  * class 3   charging beast HP 8 contact 40 EXP 50
  * class 4   falling rock  sword-immune, contact 80, EXP 0 */
 #include "enemy.h"
+#include "audio.h"
 #include <string.h>
 
 #define STEP(o, d) ai_step(g, (o), (d))
@@ -180,7 +181,7 @@ static void rock_update(Game *g, MapObj *e)
     if (e->next & 1) {                                                  /* A98C */
         if (!STEP(e, 6)) return;
         e->next |= 2; e->phase = 1;
-        if ((uint8_t)((e->row - (g->scroll_row - 1)) & 0x3F) < 0x13) g->sfx_request = 0x21;   /* A99C */
+        if ((uint8_t)((e->row - (g->scroll_row - 1)) & 0x3F) < 0x13) SFX_SET(g->sfx_request, 0x21);   /* A99C */
         return;
     }
     if (e->rcol < 8 || e->rcol >= 0x13) return;                         /* A96F */

@@ -76,7 +76,7 @@ new file mode 100644
 index 0000000..5b122a2
 --- /dev/null
 +++ b/src/misc/zel_oracle.cpp
-@@ -0,0 +1,724 @@
+@@ -0,0 +1,766 @@
 +/*
 + * zel_oracle.cpp -- Zeliard differential-test oracle (decomp-zel docs/HARNESS.md).
 + *
@@ -108,6 +108,10 @@ index 0000000..5b122a2
 + *                     with the screen's hash and [FF1A] [FF43] [FF44] [FF46]) and ev_<frame>_<ip>.png at each, while the blade is out
 + *   ORACLE_SUBMS      N = sublog.txt: every N emulated ms the screen's hash, ms since the last boundary and [FF1A] [FF43] [FF46];
 + *                     sub_<frame>_<k>_<ms>.png when the screen changed while the blade is out
++ *   ORACLE_SUBPNG     "1" = with ORACLE_SUBMS, the sub_*.png whenever the screen changed, not only while the blade is out
++ *   ORACLE_SFXLOG     "1" = sfxlog.txt (#133): REQ (each write to FF75 and its address), PUT / DRAWN (each text glyph handed to the video
++ *                     driver, town 711B, and the screen's hash before and after it); frames.jsonl carries "sfx":"05.05.1D", the ids written
++ *                     to FF75 since the previous boundary, always (tracediff compares it with the port's)
 + */
 +#include <stdio.h>
 +#include <stdlib.h>
@@ -170,6 +174,10 @@ index 0000000..5b122a2
 +bool sword_ev = false;               /* ORACLE_SWORDLOG=1: picture + log line at the swing's draw points inside the cavern frame (evlog.txt, ev_*.png) */
 +bool no_mid = false;                 /* ORACLE_NOMID=1: no mid-frame picture (w712D) while the blade is out */
 +FILE *f_sub = nullptr, *f_ev = nullptr;
++std::string sfx_pend;                /* the sound-effect requests since the last boundary, "05.05.1D" (frames.jsonl "sfx"; #133) */
++FILE *f_sfx = nullptr;               /* ORACLE_SFXLOG=1: sfxlog.txt (every request, the sound driver tick that takes it, every text glyph drawn) */
++bool sfx_log = false;
++bool sub_png = false;                /* ORACLE_SUBPNG=1: with ORACLE_SUBMS, a sub_*.png whenever the screen changed (not only while the blade is out) */
 +std::string cur_input = ".";          /* input frame `frame` was played with */
 +uint8_t prev_btns = 0;
 +uint8_t typed = 0;                    /* the FF29 key applied with the current input (0 = none) */
@@ -252,6 +260,8 @@ index 0000000..5b122a2
 +    if ((s = getenv("ORACLE_SETTLE"))) settle = (unsigned)atoi(s);
 +    if ((s = getenv("ORACLE_SUBMS"))) sub_ms = (unsigned)atoi(s);
 +    if ((s = getenv("ORACLE_SWORDLOG"))) sword_ev = atoi(s) != 0;
++    if ((s = getenv("ORACLE_SFXLOG"))) sfx_log = atoi(s) != 0;
++    if ((s = getenv("ORACLE_SUBPNG"))) sub_png = atoi(s) != 0;
 +    if ((s = getenv("ORACLE_NOMID"))) no_mid = atoi(s) != 0;
 +    if ((s = getenv("ORACLE_MAX_MS"))) max_ms = strtoul(s, nullptr, 10);
 +    if ((s = getenv("ORACLE_STALL_MS"))) stall_ms = strtoul(s, nullptr, 10);
@@ -384,13 +394,15 @@ index 0000000..5b122a2
 +    last_boundary_ms = ms;
 +    last_tick = (uint16_t)(base_ptr(0)[0xFF1B] | (base_ptr(0)[0xFF1C] << 8));
 +    armed = false;
++    const std::string sx = sfx_pend.empty() ? std::string() : ",\"sfx\":\"" + sfx_pend + "\"";
++    sfx_pend.clear();
 +    if (name) {
 +        menu_boundaries++;
-+        fprintf(f_jsonl, "{\"f\":%lu,\"site\":\"%s\",\"base\":\"0x%04X\",\"rng_calls\":%u,\"input\":\"%s\",\"ip\":\"%04X\"}\n",
-+                frame, name, oracle_base_seg, rng_calls, cur_input.c_str(), ip);
++        fprintf(f_jsonl, "{\"f\":%lu,\"site\":\"%s\",\"base\":\"0x%04X\",\"rng_calls\":%u,\"input\":\"%s\",\"ip\":\"%04X\"%s}\n",
++                frame, name, oracle_base_seg, rng_calls, cur_input.c_str(), ip, sx.c_str());
 +    } else
-+        fprintf(f_jsonl, "{\"f\":%lu,\"site\":\"%04X\",\"base\":\"0x%04X\",\"rng_calls\":%u,\"input\":\"%s\"}\n",
-+                frame, site, oracle_base_seg, rng_calls, cur_input.c_str());
++        fprintf(f_jsonl, "{\"f\":%lu,\"site\":\"%04X\",\"base\":\"0x%04X\",\"rng_calls\":%u,\"input\":\"%s\"%s}\n",
++                frame, site, oracle_base_seg, rng_calls, cur_input.c_str(), sx.c_str());
 +    fwrite(base_ptr(0), 1, 65536, f_base);
 +    if (png_every && frame % png_every == 0) {
 +        char name[64]; snprintf(name, sizeof name, "/frame_%05lu.png", frame);
@@ -637,11 +649,43 @@ index 0000000..5b122a2
 +    fflush(fp);
 +}
 +
++/* The sound-effect requests (#133).  Every `mov byte [FF75],imm8` (C6 06 75 FF nn) and `mov [FF75],ah` (88 26 75 FF, the cutscenes)
++ * executed from BASE with a non-zero id is one request; the ids since the last boundary go to frames.jsonl as "sfx":"05.05.1D", which
++ * tracediff compares with the port's list (the cs: prefixed forms too: opdemo's 60F9, STICK's dialogs).
++ * ORACLE_SFXLOG=1 also writes sfxlog.txt:
++ *   REQ t f ip id ff1a      each request
++ *   ISR t f ff75            each tick of STICK's ISR (the call [FF0C] at 025F) that finds FF75 non-zero: the driver takes it
++ *   PUT t f al x y          each glyph handed to the video driver (town 711B, call [2022])
++ *   DRAWN t f hash was      the screen's hash after it returns (7120) and before the call: the glyph is on screen at once */
++static void sfx_watch(uint16_t ip) {
++    const uint8_t *q = base_ptr(ip);
++    int id = 0;
++    const uint8_t *w = q[0] == 0x2E ? q + 1 : q;      /* cs: (opdemo, STICK) */
++    if (w[0] == 0xC6 && w[1] == 0x06 && w[2] == 0x75 && w[3] == 0xFF) id = w[4];
++    else if (w[0] == 0x88 && w[1] == 0x26 && w[2] == 0x75 && w[3] == 0xFF) id = (reg_eax >> 8) & 0xFF;
++    if (id) {
++        char b[8]; snprintf(b, sizeof b, "%s%02X", sfx_pend.empty() ? "" : ".", id);
++        sfx_pend += b;
++    }
++    if (!sfx_log) return;
++    const double now = (double)ms * 3000.0 + (double)(CPU_CycleMax - CPU_CycleLeft - CPU_Cycles);
++    if (!f_sfx) f_sfx = fopen((outdir + "/sfxlog.txt").c_str(), "w");
++    if (id) fprintf(f_sfx, "REQ %.0f f=%lu ip=%04X id=%02X ff1a=%u\n", now, frame, ip, id, base_ptr(0)[0xFF1A]);
++    if (ip == 0x025F && base_ptr(0)[0xFF75]) fprintf(f_sfx, "ISR %.0f f=%lu ff75=%02X\n", now, frame, base_ptr(0)[0xFF75]);
++    static uint32_t was = 0;
++    if (ip == 0x711B && q[0] == 0x2E && q[1] == 0xFF && q[2] == 0x16) {
++        was = screen_hash();
++        fprintf(f_sfx, "PUT %.0f f=%lu al=%02X x=%u y=%u\n", now, frame, (unsigned)(reg_eax & 0xFF), (unsigned)(reg_ebx & 0xFFFF), (unsigned)(reg_ecx & 0xFF));
++    }
++    if (ip == 0x7120 && q[0] == 0x58) fprintf(f_sfx, "DRAWN %.0f f=%lu hash=%08x was=%08x\n", now, frame, screen_hash(), was);
++    fflush(f_sfx);
++}
++
 +/* Called by the normal core before each instruction while CS == BASE. */
 +void ORACLE_Exec(void) {
 +    if (cpu.pmode) return;
 +    uint16_t ip = (uint16_t)reg_eip;
-+    if (state == ST_TRACE) { iplog(ip); muslog(ip); }
++    if (state == ST_TRACE) { iplog(ip); muslog(ip); sfx_watch(ip); }
 +    uint8_t *p = base_ptr(ip);
 +    if (state == ST_INTRO && intro_mode && !in_end && ip == 0x6002 && MATCH(0x6002, SIG_OP_ENTRY)) {
 +        in_end = true; cut_site = "intro:wait"; state = ST_TRACE;
@@ -791,7 +835,7 @@ index 0000000..5b122a2
 +            static uint32_t last_h = 0; static unsigned sub_k = 0;
 +            const uint32_t h = screen_hash();
 +            fprintf(f_sub, "SUB ms=%lu since=%lu f=%lu ff1a=%u ff43=%u ff46=%u hash=%08x%s\n", ms, ms - last_boundary_ms, frame + 1, q[0xFF1A], q[0xFF43], q[0xFF46], h, h != last_h ? " NEW" : "");
-+            if (h != last_h && (q[0xFF43] || q[0xFF44])) { char nm[64]; snprintf(nm, sizeof nm, "/sub_%05lu_%03u_%lu.png", frame + 1, sub_k++, ms); write_png(outdir + nm); }
++            if (h != last_h && (q[0xFF43] || q[0xFF44] || sub_png)) { char nm[64]; snprintf(nm, sizeof nm, "/sub_%05lu_%03u_%lu.png", frame + 1, sub_k++, ms); write_png(outdir + nm); }
 +            last_h = h;
 +            fflush(f_sub);
 +        }

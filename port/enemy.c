@@ -2,6 +2,7 @@
  * enemy pass (8D19), the death animation (90E6), respawning (94FF) and the
  * item/drop state machine (8E14).  docs/FIGHT.md §7-§8, src/fight.c. */
 #include "enemy.h"
+#include "audio.h"
 #include "boss.h"
 #include "sar.h"
 #include "player.h"      /* P_GLORY_CREST */
@@ -201,7 +202,7 @@ void item_update(Game *g, MapObj *o)
     if (st == 0x10) {                                                   /* 8E32 */
         if (!(o->link & 1)) {
             if (!(o->hit & 0x20)) return;                               /* 8E38: not struck */
-            g->sfx_request = 0x12;                                      /* 8E3F */
+            SFX_SET(g->sfx_request, 0x12);                                      /* 8E3F */
             o->hit &= 0x90;
             o->type = (uint8_t)((o->type & 0x7F) | 0x60);               /* 8E48 */
             o->link |= 1;
@@ -217,7 +218,7 @@ void item_update(Game *g, MapObj *o)
              * ring column at AL and AL+1 */
             uint8_t al = (uint8_t)(g->hero_scr_col + 3 + ((g->hero_flags & 1) ? 2 : 0));
             if (o->rcol != al && o->rcol != (uint8_t)(al + 1)) return;
-            g->sfx_request = 0x12;                                      /* 8EC0 */
+            SFX_SET(g->sfx_request, 0x12);                                      /* 8EC0 */
             o->link |= 1;                                               /* 8EC5: nothing else this frame */
             return;
         }
@@ -264,7 +265,7 @@ void item_update(Game *g, MapObj *o)
          * was one place out and the last two arms could never fire (#39).
          * Digit 0 is not a prize at all: 8F01 falls through to 8F07, which
          * turns the box into whatever its `next` hides. */
-        g->sfx_request = 0x14;                                          /* 8EFC */
+        SFX_SET(g->sfx_request, 0x14);                                          /* 8EFC */
         if (!(o->phase & 0xF)) {                                        /* 8F01 */
             uint8_t nx = o->next;                                       /* 8F07 */
             if (nx & 0x10) { nx = (uint8_t)(nx | 0x60); o->flags |= 0x80; o->timer = 0; }
@@ -302,13 +303,13 @@ void item_update(Game *g, MapObj *o)
          * own text for its 32 frames (the port used to overwrite it). */
         int lo = o->type & 0x0F;                                        /* 8FC0 */
         unsigned n = lo == 4 ? 1u : lo == 5 ? 10u : 100u;
-        almas_add(g, n); g->sfx_request = 0x10;                         /* 8FCC/8FD9/8FE2 -> 917C */
+        almas_add(g, n); SFX_SET(g->sfx_request, 0x10);                         /* 8FCC/8FD9/8FE2 -> 917C */
         enemy_remove(g, o);
         return; }
     /* 8FE8/8FF8 both go through 90D3, which sets sound **0x11**; the treasure
      * box is the one that uses 0x14 (8EFC).  The port had the two swapped. */
-    case 0x16: g->keys++;      g->sfx_request = 0x11; game_message_idx(g, MSG_KEY); enemy_remove(g, o); return;
-    case 0x17: g->lion_keys++; g->sfx_request = 0x11; game_message_idx(g, MSG_LION_KEY); enemy_remove(g, o); return;
+    case 0x16: g->keys++;      SFX_SET(g->sfx_request, 0x11); game_message_idx(g, MSG_KEY); enemy_remove(g, o); return;
+    case 0x17: g->lion_keys++; SFX_SET(g->sfx_request, 0x11); game_message_idx(g, MSG_LION_KEY); enemy_remove(g, o); return;
     /* 9008 and 901C write no sound at all -- the potions are silent; the port
      * gave them 0x13, which no arm of the item table ever asks for. */
     case 0x18: g->hp_regen_pending += 10;                       /* 9008: +80 HP */
@@ -329,14 +330,14 @@ void item_update(Game *g, MapObj *o)
             for (int i = 0; i < 5; i++) if (!g->page[0xA1 + i]) { g->page[0xA1 + i] = (uint8_t)sh; break; }
             game_message_idx(g, sh == 1 ? MSG_FERUZA : msg[sh]);
         }
-        g->sfx_request = 0x11; enemy_remove(g, o); return; }    /* 90D3 */
+        SFX_SET(g->sfx_request, 0x11); enemy_remove(g, o); return; }    /* 90D3 */
     case 0x1D: g->hero_crest = 0xFF;                            /* 907F */
-        game_message_idx(g, MSG_HERO_CREST); g->sfx_request = 0x11;
+        game_message_idx(g, MSG_HERO_CREST); SFX_SET(g->sfx_request, 0x11);
         enemy_remove(g, o); return;
     case 0x1C:                                                  /* 903C: a chest with a message */
         /* the message comes from the map's own [C017] table, which the port
          * does not decode; the latch is the point -- the record stays. */
-        if (!(o->next & 1)) { g->sfx_request = 0x11; o->flags |= 0x80; o->next |= 1; o->link = 0xEB; }
+        if (!(o->next & 1)) { SFX_SET(g->sfx_request, 0x11); o->flags |= 0x80; o->next |= 1; o->link = 0xEB; }
         else if (o->link) o->link++;
         else o->next &= (uint8_t)~1;
         return;

@@ -27,6 +27,7 @@
  * the ndisasm listing at org A000, #88).
  */
 #include "boss.h"
+#include "audio.h"
 #include <string.h>
 
 enum { S_INIT, S_ANIM, S_DIR, S_FRAME, S_FACE, S_ATTACK, S_BEAM, S_RETRACT, S_STEEP };
@@ -132,7 +133,7 @@ static uint16_t akma_hero_col(const Game *g)
 static void start_beam(Game *g)
 {
     ST(S_RETRACT) = 0; ST(S_BEAM) = 0; ST(S_ATTACK) = 0xFF;
-    g->sfx_request = 0x34;
+    SFX_SET(g->sfx_request, 0x34);
 }
 
 static uint8_t path_row(const Game *g, int right)
@@ -152,7 +153,7 @@ static void akma_death(Game *g)
         if (++ST(S_ANIM) == 3) ST(S_ANIM) = 0;
         ST(S_FRAME)++;
         ST(S_FACE) = (uint8_t)((ST(S_FACE) + 1) & 1);
-        if (!(ST(S_FRAME) & 3)) g->sfx_request = 0x37;
+        if (!(ST(S_FRAME) & 3)) SFX_SET(g->sfx_request, 0x37);
     } else { ST(S_ANIM) = 1; ST(S_FACE) = 1; }
     akma_draw(g);
     boss_parts_end(g);
@@ -166,7 +167,7 @@ void boss_akma_entry(Game *g)
     boss_hit_flash(g, hit != 0);   /* A5D1: every part this frame carries hit bit 5 */
 
     if (hit) {                                                      /* A38C: no scaling */
-        g->sfx_request = 0x22;
+        SFX_SET(g->sfx_request, 0x22);
         boss_damage(g, damage_for_source(g, (uint8_t)(hit & 0x1F)));
         if (g->boss.hp == 0) ST(S_ATTACK) = 0;                      /* A97E */
     }
@@ -174,7 +175,7 @@ void boss_akma_entry(Game *g)
 
     ST(S_FACE) = 0;                                                 /* A3B5 */
     if (++ST(S_ANIM) == 3) ST(S_ANIM) = 0;
-    if (ST(S_ANIM) == 1) g->sfx_request = 0x2B;
+    if (ST(S_ANIM) == 1) SFX_SET(g->sfx_request, 0x2B);
     ST(S_FRAME)++;
 
     /* A3D5 / A42E: a step sets the row from the path (A47A); at the end it

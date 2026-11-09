@@ -19,6 +19,7 @@
 #include "text.h"
 #include "player.h"
 #include "shop.h"
+#include "audio.h"
 
 static int fails = 0, checks = 0;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { fails++; fprintf(stderr, "  FAIL %s:%d: ", __FILE__, __LINE__); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
@@ -475,6 +476,42 @@ static int hook_run(Shop *s, int town, int dest, int frames)
 }
 static void hook_done(Shop *s) { shop_close(s); town_free_map(&TMAP); }
 
+/* #133: the greeting's glyphs each ask for effect 5 (town 7140) and the screen is shown between the 20-tick
+ * boundaries, at the tick it changed */
+static int SHOW_N, SHOW_FRAMES;
+static unsigned SHOW_TICK_LAST;
+static void side_count(Town *t, int kind, unsigned arg, unsigned ticks)
+{
+    (void)t; (void)ticks;
+    if (kind != SIDE_SHOW) return;
+    SHOW_N++;
+    if (arg < SHOW_TICK_LAST) SHOW_FRAMES++;                     /* the tick count never goes back */
+    SHOW_TICK_LAST = arg;
+}
+static void present_count(Town *t) { present(t); }
+static void t_text_effects(void)
+{
+    static const Step script[] = { {0, 0, 60}, {0, 2, 1}, {0, 0, 20}, {0, 2, 1}, {0, 0, 200} };   /* the greeting, Alt out */
+    fresh_player();
+    if (town_load_map(&TMAP, G_DIR, 1)) { CHECK(0, "cannot load town map 1"); return; }
+    memset(&TOWN, 0, sizeof TOWN);
+    TOWN.map = &TMAP; TOWN.g = &G; TOWN.present = present_count; TOWN.side = side_count;
+    TOWN.font = &FONT; TOWN.dir = G_DIR;
+    SCRIPT = script; SCRIPT_N = (int)(sizeof script / sizeof script[0]); SCRIPT_I = SCRIPT_LEFT = 0;
+    SHOW_N = SHOW_FRAMES = 0; SHOW_TICK_LAST = 0;
+    (void)audio_sfx_take();
+    shop_run(&TOWN, SHOP_ARMOUR);
+    town_free_map(&TMAP);
+    const char *ids = audio_sfx_take();
+    int n5 = 0;
+    for (const char *p = ids; *p; p += (p[2] ? 3 : 2)) if (!strncmp(p, "05", 2)) n5++;
+    /* "May I be of service, sir?" is 25 glyphs and 5 spaces */
+    CHECK(n5 >= 20, "the greeting's glyphs ask for effect 05: %d in \"%.60s\"", n5, ids);
+    CHECK(SHOW_N >= 20, "the shop was shown between boundaries %d times (one per glyph is ~20)", SHOW_N);
+    CHECK(SHOW_FRAMES == 0, "the shop's tick count ran backwards %d times", SHOW_FRAMES);
+    CHECK(sound_count(5) >= 20, "effect 5 reached sound_request %u times", sound_count(5));
+}
+
 static void t_hooks(void)
 {
     Shop s;
@@ -679,7 +716,7 @@ int main(int argc, char **argv)
         {"price tables", t_prices}, {"buy sword", t_buy_sword}, {"buy shield", t_buy_shield},
         {"drug shop", t_drug}, {"church", t_church}, {"inn", t_inn}, {"bank", t_bank},
         {"sage tables", t_sage_tables}, {"sage visit", t_sage_visit}, {"sage record", t_sage_record},
-        {"[A002] hooks", t_hooks}, {"dissolve", t_dissolve},
+        {"[A002] hooks", t_hooks}, {"dissolve", t_dissolve}, {"text effects", t_text_effects},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = fails;

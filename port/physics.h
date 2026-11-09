@@ -108,7 +108,8 @@ typedef void (*PresentFn)(Game *g);
 enum { SIDE_WAIT = 1,       /* the screen at the end of a timer wait: tag w<arg> (the cmp [FF1A] of the loop) */
        SIDE_SNAP,           /* remember the screen as it is: the base of a later SIDE_FADEIN with arg 739A */
        SIDE_BURST,          /* spell 7 (gfmcga 42F7): the flash and the 54 rectangles over the SIDE_SNAP screen, tag w4471 after each */
-       SIDE_FADEIN          /* gfmcga 4192: the 8-pass fade-in redraw of a boss map over the encounter card, tag w41D9 */
+       SIDE_FADEIN,         /* gfmcga 4192: the 8-pass fade-in redraw of a boss map over the encounter card, tag w41D9 */
+       SIDE_SHOW            /* #133: a shop's screen changed or a sound is due at ISR tick `arg` of the shop: show it at that tick's real time (no trace picture) */
 };
 typedef void (*SideFn)(Game *g, int kind, unsigned arg, unsigned ticks);
 /* the differential harness (docs/HARNESS.md §1): called at the port's

@@ -89,6 +89,8 @@ static void shop_hook_pass(Shop *s);            /* the [A002] hook, one pass */
 static void shop_frame(Shop *s)
 {
     s->frames++;
+    memcpy(s->shown, s->fb, sizeof s->shown);                   /* the picture this boundary shows (#133) */
+    s->shown_tick = s->tick_n;
     if (s->t && s->t->present) { s->t->frame_no++; s->t->present(s->t); }
 }
 
@@ -111,6 +113,31 @@ static void shop_frame(Shop *s)
 
 static void shop_pass(Shop *s) { if (!s->leave) shop_hook_pass(s); }
 
+/* a write to FF75 (#133): in the trace's list at once, as the oracle lists it; the driver takes it at the next tick */
+static void shop_sfx(Shop *s, int id) { SFX_SET(s->g->sfx_request, id); }
+
+/* What the player sees and hears between two boundaries (#133).  The original draws straight into the video
+ * memory (a glyph is on the screen 380 cycles after 706C's VID_PUTCHAR call, 711B..7120) and hands FF75 to the
+ * sound driver at the next ISR tick (7140: `mov byte [FF75],5` after every glyph but a space or while muted),
+ * so the picture and the effects follow the 236.7 Hz clock, not a 20-tick frame.  The port keeps its 20-tick
+ * boundary (the trace, the input, the pixel diff all hang on it) and shows what happened in between at the
+ * tick it happened: at an edge where the shop's picture differs from the last one shown (at least
+ * SHOW_GAP ticks apart: 8 ms, faster than a display refreshes) or an effect is requested, the front end waits
+ * for the real time of this tick (SIDE_SHOW) and puts the picture up, and the request goes to the sound
+ * driver (sound_request, the same path the cavern's effects take).  Under --trace and headless the callback
+ * does nothing but the effect still reaches sound_request, which the harness's "sfx" list records. */
+#define SHOW_GAP 2
+static void shop_between(Shop *s)
+{
+    int snd = s->g && s->g->sfx_request;
+    int pic = s->t && s->t->side && s->tick_n - s->shown_tick >= SHOW_GAP && memcmp(s->shown, s->fb, sizeof s->fb) != 0;
+    if (!pic && !snd) return;
+    if (s->t && s->t->side) s->t->side(s->t, SIDE_SHOW, s->tick_n, 0);
+    memcpy(s->shown, s->fb, sizeof s->shown);
+    s->shown_tick = s->tick_n;
+    if (snd) sound_request(s->g);
+}
+
 /* one ISR tick: [FF50]++, [FF1A]++, the real-time pace, then (a polled loop) the pass that sees it,
  * and last the presented frame every 20th: its picture has this tick's hook step in it */
 static void shop_edge(Shop *s, int run_hook)
@@ -120,8 +147,10 @@ static void shop_edge(Shop *s, int run_hook)
     s->hk.ff50++;
     s->ff1a++;
     wait_tick();
+    s->tick_n++;
     if (run_hook) shop_pass(s);
-    if (++s->tick_acc >= SHOP_TICKS_PER_FRAME) { s->tick_acc = 0; shop_frame(s); }
+    if (++s->tick_acc >= SHOP_TICKS_PER_FRAME) { s->tick_acc = 0; shop_frame(s); if (s->g && s->g->sfx_request) sound_request(s->g); }
+    else shop_between(s);
 }
 
 static void shop_tick_hook(Shop *s, int run_hook)
@@ -231,7 +260,7 @@ static void shop_wait_key(Shop *s)
         if (shop_btn(s, &cancel)) break;
         shop_tick(s);
     }
-    s->g->sfx_request = 0x1D;
+    shop_sfx(s, 0x1D);
 }
 
 /* ------------------------------------------------------- the text box 706C */
@@ -409,7 +438,7 @@ static uint8_t print_text(Shop *s)
         s->tx += FONT_ADVANCE[c - 0x20];
         if (s->last_len < (int)sizeof s->last_text - 1) s->last_text[s->last_len++] = (char)(c == '\\' ? '\'' : c);
         s->last_text[s->last_len] = 0;
-        if (!s->mute && c != ' ') { s->g->sfx_request = 5; continue; }  /* 7135..7145 */
+        if (!s->mute && c != ' ') { shop_sfx(s, 5); continue; }  /* 7135..7145 */
         /* 7148: after a space, or after any glyph while muted, the next word
          * (from here: the rest of this one) must fit */
         if (s->tx + word_width(s, s->tp) >= TEXT_WRAP) box_newline(s);
@@ -436,6 +465,7 @@ static void print_str(Shop *s, const char *str)
         s->tx += FONT_ADVANCE[c - 0x20];
         if (s->last_len < (int)sizeof s->last_text - 1) s->last_text[s->last_len++] = (char)c;
         s->last_text[s->last_len] = 0;
+        if (!s->mute && c != ' ') shop_sfx(s, 5);        /* 7135..7145: the same printer */
     }
     shop_wait(s, 6);                                            /* the terminating byte */
 }
@@ -566,7 +596,7 @@ static int menu_select(Shop *s, int *cursor)
          * on entry) */
         if (s->t && s->t->btn2_edge) { s->in_menu = 0; return 1; }   /* 7365: Alt, no erase */
         if (s->t && s->t->btn1_edge) {
-            s->g->sfx_request = 0x1F;
+            shop_sfx(s, 0x1F);
             *cursor = row;
             s->in_menu = 0;
             return 0;                                               /* 736D: Space, no erase */
@@ -1050,7 +1080,7 @@ static void armr_action(Shop *s, uint8_t op)
         for (int i = 0; i < 12 && !s->leave; i++) {             /* A6DF: sequence A6FD */
             uint8_t f = img8(s, 0xA6FD + (unsigned)i);
             if (f == 0xFF) break;
-            if (f & 0x80) s->g->sfx_request = 0x20;             /* A6ED: the hammer */
+            if (f & 0x80) shop_sfx(s, 0x20);             /* A6ED: the hammer */
             armr_draw_frame(s, f & 7);
             shop_wait(s, 50);                                   /* A870 */
         }
@@ -1803,7 +1833,7 @@ static void king_action(Shop *s, uint8_t op)
         }
         return;
     case 1:                                                     /* A09A: the 1000-gold gift */
-        for (int i = 0; i < 10 && !s->leave; i++) { shop_gold_add(s, 100); shop_wait(s, 20); }
+        for (int i = 0; i < 10 && !s->leave; i++) { shop_gold_add(s, 100); shop_sfx(s, 0x13); shop_wait(s, 0xF); }   /* A0A5..A0B7: +100, the coin effect; A0BC..A0C9: 15 ticks */
         s->g->page[P_KING_GIFT] = 0xFF;
         return;
     case 2: shop_wait(s, 150); return;                          /* A0D4 */

@@ -25,6 +25,7 @@
  * and 7..0x0A classes 3..6 (12-17 parts): Jashiin grows into the demon.
  */
 #include "boss.h"
+#include "audio.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -93,7 +94,7 @@ void boss_mao1_entry(Game *g)
     else switch (c & 0xF0) {
     case 0x80: mao1_text(g, c & 0x0F); break;           /* A376 */
     case 0xC0: g->boss_text = 0; g->message[0] = 0; break;   /* A3A2: force a redraw */
-    case 0xE0: g->sfx_request = 0x38; break;            /* A370 */
+    case 0xE0: SFX_SET(g->sfx_request, 0x38); break;            /* A370 */
     default:
         /* A364..A36A: [E6] = 0, then `ret` to A290 like every command (A350 pushed it): the last
          * pose is drawn once more, the parts stay in the list for this frame (jashiin_fight f160) */

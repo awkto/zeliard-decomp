@@ -45,6 +45,7 @@
  * the shell steps a silent copy of the score by frames (audio_clock_*).
  */
 #include "boss.h"
+#include "audio.h"
 #include <string.h>
 
 enum { S_INIT, S_POSE, S_FACING, S_STARTED, S_TYPEBITS, S_TELE, S_VARIANT, S_STEP,
@@ -136,7 +137,7 @@ static void launch_shot1(Game *g)                       /* A8E5 */
     ST(S_S1ON) = 0xFF; ST(S_S1AGE) = 0; ST(S_S1DIR) = ST(S_FACING);
     S1COL = (uint16_t)(ST(S_FACING) ? b->col + 5 : b->col);
     ST(S_S1ROW) = (uint8_t)((b->row + 4) & 0x3F);
-    g->sfx_request = 0x3A;
+    SFX_SET(g->sfx_request, 0x3A);
 }
 
 static void launch_shot2(Game *g)                       /* A90E */
@@ -196,7 +197,7 @@ static void mao2_regenerate(Game *g)
         ST(S_PHASE2) = 0; ST(S_STEP) = 10; ST(S_TELE) = 0xFF; ST(S_TYPEBITS) = 0x60;
     }
     b->hp = (uint16_t)hp;
-    g->sfx_request = 0x3C;
+    SFX_SET(g->sfx_request, 0x3C);
 }
 
 /* A617: one A666 entry per frame */
@@ -258,7 +259,7 @@ static void mao2_death(Game *g)
 {
     uint8_t t = g->boss.death_cnt;
     if (boss_death_tick(g) >= 0x28) { boss_parts_begin(g); boss_parts_end(g); return; }
-    if (!(t & 7)) g->sfx_request = 0x23;
+    if (!(t & 7)) SFX_SET(g->sfx_request, 0x23);
     if (t < 0x14) ST(S_POSE) = boss_img8(g, M2_DEATH + (unsigned)(t / 2));
     ST(S_TYPEBITS) = 0;
     boss_parts_begin(g);
@@ -278,7 +279,7 @@ void boss_mao2_entry(Game *g)
         unsigned d = (unsigned)damage_for_source(g, (uint8_t)(hit & 0x1F)) / 2;
         if ((hit & 0x1F) != 1) d /= 2;
         boss_damage(g, d);
-        g->sfx_request = 0x39;
+        SFX_SET(g->sfx_request, 0x39);
         if (b->hp == 0) { ST(S_S1ON) = 0; ST(S_S2ON) = 0; }     /* AB51 */
         else if (b->hp < 200) ST(S_PHASE2) = 0xFF;              /* A389 */
     }
@@ -304,7 +305,7 @@ void boss_mao2_entry(Game *g)
     ST(S_STEP)++;                                               /* A3F3 */
     if (ST(S_STEP) < 6 || (ST(S_STEP) >= 11 && ST(S_STEP) < 17)) {
         if (ST(S_STEP) & 1) { mao2_shots(g); return; }          /* not drawn */
-        g->sfx_request = 0x3B;
+        SFX_SET(g->sfx_request, 0x3B);
         ST(S_TYPEBITS) = 0x60;
         if (ST(S_STEP) < 6) ST(S_POSE) = (uint8_t)(ST(S_VARIANT) * 10);
     } else if (ST(S_STEP) < 11) {                               /* A41C: solid */

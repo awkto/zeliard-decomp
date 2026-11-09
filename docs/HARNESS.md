@@ -163,6 +163,36 @@ costs 1.26 cycles an iteration in DOSBox-X, any other instruction 1.
 | hook step, nothing drawn | `AB47` | 11 | STEP..STEPEND |
 | playfield XOR (level-up flash) | `[3000]` at `A2BD` | 66000 | CALL, 66112..66531 with the ISR inside |
 
+### What the player sees and hears in a shop (#133)
+
+The original draws straight into the video memory: a glyph is on the screen 380 cycles after `706C`'s call to `[2022]` (`711B`..`7120`,
+measured with `ORACLE_SFXLOG=1` and `ORACLE_SUBMS=1`: the screen's hash changes within a millisecond of every glyph, on the sample after it),
+one every 6 ticks (76000 cycles, 25.4 ms, 39.4 a second), and writes `mov byte [FF75],5` at `7140` after every glyph that is not a space
+(not while the mute opcode `13` is on), which the sound driver takes at its next ISR tick.  Nothing is presented at a boundary: the 20-tick
+frame is the port's own unit (the trace, the input, the pixel diff hang on it).
+
+The port used to show a shop only at that frame, 11.8 pictures a second whatever the text was doing (the greeting came out in bursts of three
+or four glyphs), and none of the effects reached the sound driver at all: the shops wrote `Game.sfx_request` and nothing in a shop consumed
+it (`sound_request` is called by the cavern frame and the town's `town_sound`).  Now `shop_edge` ends in `shop_between`: when the shop's
+picture differs from the one last shown (at least 2 ticks apart) or an effect was written, the front end waits for the real time of this
+ISR tick (`SIDE_SHOW`, `main.c shop_pace`) and puts the picture up, and `sound_deliver` hands the effect to the driver.  The boundary
+present waits the same way (before it draws, not after) so that the two never add up.  A shop's 20 ticks are 84.5 ms at every speed
+(the glyph wait and the portraits' thresholds are ticks of the ISR, not of `[FF33]`): the pace no longer follows `frame_ms`.  Under
+`--trace` and headless `SIDE_SHOW` does nothing and the effect only reaches the list below.  The other shop effects: `1D` page wait
+(`71FF`), `1F` menu Space (`736E`), `20` the smith's hammer (`A6ED`), `13` each of the king's ten gold gifts (`A0B7`, 15 ticks apart, `A0C4`).
+The town's NPC dialogue (`63C5`..`65A0`) prints a whole page with no wait and no per-glyph effect (only `1E` at `636B` and `1D` at `6599`).
+
+**Effect requests are compared.**  `frames.jsonl` of both sides carries `"sfx":"05.05.1D"`, the ids requested since the previous boundary
+line, in order (absent = none), and `tracediff` compares it like `input` and `rng_calls` (allow-list name `sfx`; a scenario lists boundaries it
+cannot match yet with `# allow-sfx: F,F -- reason`, which `run_scenarios.sh` turns into `sfx@F` rules).  The oracle lists every write to
+`FF75` executed from BASE: `mov byte [FF75],imm8` (`C6 06 75 FF nn`, also behind a `cs:` prefix, as opdemo's `60F9` and STICK's dialogs
+have it) and `mov [FF75],ah` (`88 26 75 FF`, the cutscenes).  The port lists the same writes: every `g->sfx_request = id` /
+`t->sfx_request = id` is `SFX_SET` (audio.h), which puts the id in the list at once, and `sound_request` / `town_sound` later hand
+what is in the byte to the driver (`audio_sfx_play`; one slot, a later write replaces it, like the byte).  Comparing the writes rather
+than what the driver takes is what showed two port-only effects (`0B` at the end of the status screen, `1E` twice for one dialogue) and
+the missing `3A` of Jashiin (#136).  `ORACLE_SFXLOG=1` also writes `sfxlog.txt` (every request with its address, every glyph handed to the video
+driver and the screen's hash around it).  Scenario `shop_text_weapon` is the greeting of the Muralla weapon shop.
+
 The Sage's `A1BD` is a `call [6004]` on what is left of the ritual text (one `00` byte, one 6-tick wait) that the port skipped.
 
 Result: `death_sage` and `water_current` (#120, the aura at the exit dissolve) and the Sage's text, ritual and level-up flash are on the
@@ -250,6 +280,7 @@ scenario must not move that list or copy from it (Space) -- the names differ.
 ### Oracle (`tools/oracle.sh` → `DIR/`)
 - `DIR/frames.jsonl`: one line per boundary:
   `{"f":n,"site":"717F","base":"0x1234","rng_calls":k,"input":"R"}`
+  (+ `"sfx":"05.05"` when sound effects were requested since the previous line, #133)
 - `DIR/base.bin`: for every boundary, the full 65536 bytes of segment `BASE`,
   concatenated (frame `n` at offset `n*65536`).
 - `DIR/frame_NNNNN.png` (optional, every `--png-every K` frames): the 320x200 screen

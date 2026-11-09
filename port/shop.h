@@ -83,6 +83,9 @@ typedef struct Shop {
     const char *dir;
     unsigned frames;                /* port counter */
     int      tick_acc;              /* ticks since the last presented frame (shop_tick) */
+    unsigned tick_n;                /* ISR ticks since the shop was opened: the real-time clock of the pictures and sounds (#133) */
+    unsigned shown_tick;            /* tick_n at the last picture shown (boundary or between) */
+    uint8_t  shown[TEXT_W * TEXT_H];/* the picture the last of them showed */
     unsigned ff1a;                  /* ISR ticks since [FF1A] was last reset (shop_wait_x) */
     unsigned cyc;                   /* CPU cycles run since the last whole tick (shop_burn) */
     int      kj_x8;                 /* kenjpro BB12 high byte: the portrait's x8, 7 or 0x0E (death entry) */

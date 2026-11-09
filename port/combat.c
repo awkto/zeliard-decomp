@@ -2,6 +2,7 @@
  * hero's HP.  Port of src/fight.c 6412 / 6E3B / 6F07 / 751F / 75E2 / 7685 /
  * 9851 / 96C1 / 96D5 / 97B5 (docs/FIGHT.md §6). */
 #include "enemy.h"
+#include "audio.h"
 #include "gfx.h"
 #include <stdio.h>
 #include <string.h>
@@ -18,14 +19,14 @@ void hero_damage(Game *g, unsigned dmg)
  * breaks at 0 (761A). */
 void hero_damage_shielded(Game *g, unsigned dmg)
 {
-    if (!g->shield) { hero_damage(g, dmg); g->sfx_request = 9; return; }
+    if (!g->shield) { hero_damage(g, dmg); SFX_SET(g->sfx_request, 9); return; }
     dmg = (dmg >> 1) >> ((g->shield + 1) >> 1);
     if (g->shield_hp <= dmg) {
         g->shield = 0; g->shield_hp = 0;
         g->hud_panels &= (uint8_t)~2;   /* 761F: [2004] style 0xFF greys bh 0xC5 w 0x18 */
         game_message_idx(g, MSG_SHIELD_BROKEN);
     } else g->shield_hp = (uint16_t)(g->shield_hp - dmg);
-    hero_damage(g, dmg); g->sfx_request = 8;
+    hero_damage(g, dmg); SFX_SET(g->sfx_request, 8);
 }
 
 /* 0x9715 */
@@ -106,7 +107,7 @@ void enemy_killed(Game *g, MapObj *o)
         o->phase = 0x80;
         o[1].phase = 0; o[1].type |= 0x68; o[1].hit &= 0x80;
     }
-    if ((uint8_t)((o->row - (g->scroll_row - 1)) & 0x3F) < 0x13) g->sfx_request = 7;   /* 96FD */
+    if ((uint8_t)((o->row - (g->scroll_row - 1)) & 0x3F) < 0x13) SFX_SET(g->sfx_request, 7);   /* 96FD */
 }
 
 /* 0x96C1 */
@@ -120,7 +121,7 @@ void kill_with_exp(Game *g, MapObj *o)
 void enemy_take_damage(Game *g, MapObj *o)
 {
     uint8_t d = damage_for_source(g, (uint8_t)(o->hit & 0x1F));
-    if (o->hp > d) { o->hp = (uint8_t)(o->hp - d); g->sfx_request = 6; return; }
+    if (o->hp > d) { o->hp = (uint8_t)(o->hp - d); SFX_SET(g->sfx_request, 6); return; }
     int i = (int)(o - g->obj);
     uint8_t *f = (!(o->type & 1) && (o->flags & 0x10) && i + 1 < g->nobj) ? &o[1].flags : &o->flags;   /* 97CD */
     if (!(*f & 0xF)) {
@@ -241,7 +242,7 @@ void sword_input(Game *g)
     if (!g->sword) return;
     if ((g->buttons & 1) && g->vstate != V_GROUND && !g->conveyor && (g->dirs & DIR_DOWN)) {   /* 6E45 */
         g->attack_type = 2; g->attack_var = 2;
-        if (!g->thrust_latch) { g->thrust_latch = 0xFF; g->sfx_request = 4; }
+        if (!g->thrust_latch) { g->thrust_latch = 0xFF; SFX_SET(g->sfx_request, 4); }
         g->btn1_edge = g->btn2_edge = 0; g->attacking = 0xFF;           /* 6EF7: both edges */
         return;
     }
@@ -262,7 +263,7 @@ void sword_input(Game *g)
         if (found) g->attack_type = 1;                                  /* 6EDC: upward slash */
     }
     if (!g->attack_type && (g->dirs & DIR_UP)) g->attack_type = 1;      /* 6ED6 */
-    g->sfx_request = 3;
+    SFX_SET(g->sfx_request, 3);
     g->btn1_edge = g->btn2_edge = 0; g->attacking = 0xFF;               /* 6EF7 / 6EFC / 6F01 */
 }
 
@@ -339,7 +340,7 @@ void hero_enemy_contact(Game *g)
         int facing_left = (g->hero_flags & FACE_LEFT) != 0;
         int shielded = i < 2 ? facing_left : !facing_left;              /* 75BA / 75CE */
         if (shielded) hero_damage_shielded(g, g->contact_damage);
-        else { hero_damage(g, g->contact_damage); g->sfx_request = 9; }
+        else { hero_damage(g, g->contact_damage); SFX_SET(g->sfx_request, 9); }
     }
     g->hero_hit = g->hero_hit_flash =
         (uint8_t)(g->hit_side[0] | g->hit_side[1] | g->hit_side[2] | g->hit_side[3]);

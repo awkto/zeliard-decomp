@@ -9,6 +9,7 @@
  *   classes (0xFF = empty); poses 0..8 share A71E, the jump pose 9 uses A75A.
  */
 #include "boss.h"
+#include "audio.h"
 #include <string.h>
 
 #define A70A 0xA70A                     /* u16[10] pose -> matrix */
@@ -117,7 +118,7 @@ static int death_step(Game *g)
 {
     Boss *b = &g->boss;
     uint8_t t = b->death_cnt;
-    if (t < 0x1E && !(t & 1)) g->sfx_request = 0x23;
+    if (t < 0x1E && !(t & 1)) SFX_SET(g->sfx_request, 0x23);
     if (boss_death_tick(g) >= 0x28) return 0;
     if (t < 0x14) {
         if (!b->walk_dir) { if (++b->pose >= 6) { b->pose = 5; b->walk_dir = 0xFF; } }
@@ -137,7 +138,7 @@ void boss_crab_entry(Game *g)
         unsigned d = (unsigned)damage_for_source(g, (uint8_t)(hit & 0x1F)) * 4u;
         if (hit & 0x80) d *= 2;
         boss_damage(g, d);                                                 /* A796 */
-        g->sfx_request = 0x22;
+        SFX_SET(g->sfx_request, 0x22);
         uint16_t hero = boss_hero_col(g, 12);                              /* A37E */
         if (b->col + 5 < hero) { step_left(g); step_left(g); }
         else                   { step_right(g); step_right(g); }

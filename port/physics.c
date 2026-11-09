@@ -316,7 +316,7 @@ static int door_unlock(Game *g, Door *d)
     uint8_t *n = (d->dflags & 1) ? &g->lion_keys : &g->keys;
     if (!*n) return 0;
     (*n)--;
-    g->sfx_request = 0x15;
+    SFX_SET(g->sfx_request, 0x15);
     d->letter |= 0x80;
     /* 7E15 writes the byte into the map image at C00A; the parsed Door is a
      * copy, so mirror it into raw (a 6BFC re-parse or a save-state reload that
@@ -390,7 +390,7 @@ static int door_check(Game *g)
         g->hero_anim = 0x80; g->ice_steps = 0;
         if (!g->door_msg_latch) {                                       /* 7B0D */
             g->door_msg_latch = 0xFF;
-            g->sfx_request = 0x16;
+            SFX_SET(g->sfx_request, 0x16);
             game_message_idx(g, MSG_DOOR_LOCKED);                      /* 9AC5 */
         }
         return 1;
@@ -917,7 +917,7 @@ static void hazard_check(Game *g)
     if (g->on_hazard) {                                                 /* 7505 */
         static const uint8_t hazard_damage[9] = {1, 1, 4, 8, 20, 20, 20, 20, 20};
         int c = g->map->cavern; if (c < 1) c = 1; if (c > 9) c = 9;
-        g->hero_hit_flash = 0xFF; g->sfx_request = 9; g->hazard_frames++;
+        g->hero_hit_flash = 0xFF; SFX_SET(g->sfx_request, 9); g->hazard_frames++;
         hero_damage(g, hazard_damage[c - 1]);
     }
 }
@@ -954,7 +954,7 @@ static void frame(Game *g)
     sword_advance(g);                                                   /* 7047: [3006], first swing step */
     hazard_check(g);
     if (g->map->cavern == 7 && g->shoes != 5 && ((++g->heat_timer & 0x3F) == 0)) {   /* 704F */
-        g->hero_hit_flash = 0xFF; g->sfx_request = 9; hero_damage(g, 0x0F);
+        g->hero_hit_flash = 0xFF; SFX_SET(g->sfx_request, 9); hero_damage(g, 0x0F);
         game_message_idx(g, MSG_TOO_HOT);                              /* 9BB9 */
     }
     message_tick(g);                                                    /* 7210 */
@@ -987,7 +987,7 @@ static void frame_7094(Game *g)
     if (!g->hero_dead && g->hp_regen_pending) {
         g->hp_regen_pending--; g->hp += 8;                              /* 70E7 / 70EB */
         if (g->hp > g->max_hp) { g->hp = g->max_hp; g->hp_regen_pending = 0; }   /* 70F3..70FF */
-        g->sfx_request = 0x13;                                          /* 7105 */
+        SFX_SET(g->sfx_request, 0x13);                                          /* 7105 */
     }
     cell_anim(g);                                                       /* 710F [3000]: gfmcga 302C's 315C hook */
     boss_sparks(g);                                                     /* 710F [3000] / 7114 [3010] */
@@ -1030,7 +1030,7 @@ static void check_status_menu(Game *g)
 {
     if (!g->menu_key) { g->menu_debounce = 0; return; }                  /* 7202 */
     if (g->menu_debounce || g->casting || g->magic_active || g->boss_intro) return;  /* 7275 */
-    g->sfx_request = 0x0B;                                               /* 728C */
+    SFX_SET(g->sfx_request, 0x0B);                                               /* 728C */
     g->menu_result = (uint8_t)status_run_fight(g);
     if (g->menu_result == 8) {                                           /* 729C -> 99E0 */
         g->cur_map = g->town_map ? g->town_map : 0x81;

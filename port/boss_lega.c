@@ -22,6 +22,7 @@
  * 0x28/0x29/0x3C -- transposed, like TORI, TAKO, ZELA and MEDA.)
  */
 #include "boss.h"
+#include "audio.h"
 #include <string.h>
 
 enum { S_FACE, S_FACET, S_RETREAT, S_RTIMER, S_ATTACK, S_ASTEP, S_UNUSED_BE,
@@ -87,7 +88,7 @@ static void lega_shot_step(Game *g)
         return;
     }
     if ((uint8_t)SHOTCOL < 0x12) {                                      /* A55A: byte compare */
-        ST(S_EXPLODE) = 0xFF; ST(S_SHOTFR) = 3; g->sfx_request = 0x32;
+        ST(S_EXPLODE) = 0xFF; ST(S_SHOTFR) = 3; SFX_SET(g->sfx_request, 0x32);
         return;
     }
     unsigned i = ST(S_SHOTIDX);                                         /* A571 */
@@ -96,7 +97,7 @@ static void lega_shot_step(Game *g)
     ST(S_SHOTROW) = (uint8_t)(ST(S_SHOTROW) + boss_img8(g, LEGA_PATH + 2 * i + 1));
     if (ST(S_SHOTIDX) < 0x10) ST(S_SHOTIDX)++;                          /* A589: cmp 10h / adc 0 */
     ST(S_SHOTFR) = (uint8_t)(ST(S_SHOTFR) + 1 >= 3 ? 0 : ST(S_SHOTFR) + 1);
-    if (ST(S_SHOTIDX) == 9 || ST(S_SHOTIDX) == 0x0C || ST(S_SHOTIDX) == 0x0F) g->sfx_request = 0x31;
+    if (ST(S_SHOTIDX) == 9 || ST(S_SHOTIDX) == 0x0C || ST(S_SHOTIDX) == 0x0F) SFX_SET(g->sfx_request, 0x31);
 }
 
 /* A44C: compose, place the parts, the shot part, then move the shot */
@@ -167,7 +168,7 @@ static void lega_death(Game *g)
     uint8_t n = g->boss.death_cnt;
     if (n < 10) {
         g->boss.pose = boss_img8(g, LEGA_DEATH + n);
-        if (g->boss.pose >= 3) g->sfx_request = 0x33;
+        if (g->boss.pose >= 3) SFX_SET(g->sfx_request, 0x33);
         lega_face_draw(g);
     } else { ST(S_FACE) = 6; lega_draw(g); }                            /* A6A5: `cmp ah,6` never below */
 }
@@ -185,7 +186,7 @@ void boss_lega_entry(Game *g)
         if (src == 1) d *= 2;                                           /* A292 */
         else if (src != 9) d >>= 3;                                     /* A296 */
         lega_damage(g, d);                                              /* A644 */
-        g->sfx_request = 0x2F;
+        SFX_SET(g->sfx_request, 0x2F);
         if ((uint8_t)b->col < 0x2F) { ST(S_RTIMER) = 0x14; ST(S_RETREAT) = 0xFF; }   /* A2A4 */
     }
     if (g->boss_cutscene) { lega_death(g); return; }                    /* A2B5 */
@@ -214,7 +215,7 @@ void boss_lega_entry(Game *g)
     if (!ST(S_RETREAT) && b->pose == 6 && !(krn_random(g) & 1) && !ST(S_SHOT)
         && b->col >= 0x14) {                                            /* A35F: the COLUMN, A37D */
         ST(S_ATTACK) = 0xFF; ST(S_ASTEP) = 0; ST(S_UNUSED_BE) = 0;
-        b->pose = 8; g->sfx_request = 0x30;
+        b->pose = 8; SFX_SET(g->sfx_request, 0x30);
     }
     lega_face_draw(g);                                                  /* A39F */
 }
