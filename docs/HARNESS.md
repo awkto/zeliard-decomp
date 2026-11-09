@@ -72,10 +72,15 @@ and boss overlays, rokademo), and running the whole library under an oracle that
 **The mechanism (generalising #117).** The oracle (`zel_oracle.cpp side_check`) writes a picture at
 
 * the **exit of any `cmp [FF1A],imm8 / jc` or `cmp [FF1A],al / jc` wait of 8 ticks or more** (tag `w<IP>`,
-  IP = the cmp), except the frame, walk-in and town frame waits (`7179`, `712D`, `7FA5`, `68E7`, which are
+  IP = the cmp), except the frame, walk-in and town frame waits (`7179`, `712D` (its own rule, below), `7FA5`, `68E7`, which are
   boundaries or have the walk pictures) and the ending (`end:wait`).  A new timer loop in any overlay
   therefore shows up by itself the first time a scenario passes through it (the one exception, added by hand: spell 7's `4471`, 3 ticks).  Waits of 7 ticks or less
   (glyph 6, cursor and menu 4) are not pictured: their effect is visible at the next boundary.
+
+* the **half-way wait of the cavern frame, `712D`, while the blade is out** (`[FF43]` set; tag `w712D`, sword-frame): the swing's first step is on
+  screen from `7047` to there and the boundary never shows it (docs/FIGHT.md, "two blade pictures a frame").  Port: `present()` writes it
+  under `--trace --png-every` and presents it for the first half of the frame in real time (`Game.mid_pic`).  Scenario `sword_frames`.
+  `ORACLE_NOMID=1` turns it off; `ORACLE_SWORDLOG=1` / `ORACLE_SUBMS=N` log the draw points and sample the screen inside the frame.
 
 The video dissolve (GMMCGA `2130`, a CPU delay, no timer) has its own pictures, `dsv_*.png` (#118), at every
 caller: town to cavern, death, the Feather, the shops, the inn.
@@ -87,7 +92,7 @@ pictures pairwise, and a picture on one side only is a failure.
 
 | Loop | Address | Boundary? | Port | Diffable? |
 |---|---|---|---|---|
-| Cavern frame wait | fight `712D` / `7179` | `717F` | `frame_7094` | yes (frames) |
+| Cavern frame wait | fight `712D` / `7179` | `717F` | `frame_7094` | yes (frames); the half-way picture while the blade is out, `w712D` (sword-frame) |
 | Town frame wait | town `68E7` | `68ED` | `town_present` | yes (frames) |
 | Walk-in, 26 passes (cave mouth, door, restart) | fight `7C6E`, wait `7FA5` | no | `walk_in_step` | yes, `walk_*.png` (#117) |
 | Encounter card, 6 x {card, clear}, 65 ticks each | fight `60E9`, waits `60EF` / `6108` | no | `encounter_step` | yes, `w60EF` / `w6108`.  Was wrong: the card/clear order was inverted, no hero under the card, the ENEMY name and gauge (or the place) drawn before the card ends, each half 20 ticks not 65 |

@@ -979,11 +979,9 @@ static void frame_7094(Game *g)
      * 70D4 presentation and the 717F trace PNG both see the same cells 302C's
      * 3159 did. */
     memcpy(g->bg_ring, g->ring, RING_SIZE);
-    if (g->present) g->present(g);                                      /* draw + wait 4*speed ticks + poll input */
-    g->drawn_attacking = g->attacking; g->drawn_attack_var = (uint8_t)g->attack_var;
-    g->drawn_cast_timer = g->cast_timer;
-    g->hero_drawn_ok = 1;                                               /* 70D4 drew the hero: [4FED] */
-    g->hero_drawn_row = g->hero_scr_row; g->hero_drawn_col = g->hero_scr_col;
+    /* 70D9..7119 come before the picture the front end presents: the potion's LIFE, the cell animation and the death
+     * sparks are on the screen at the half-way wait (712D, the swing's first picture) as well as at 717F; they ran after the
+     * present, which drew the previous frame's sparks and LIFE (sword-frame) */
     /* 70D9: the potion's +8 LIFE a frame, right after the 70D4 draw and before
      * the 717F boundary (it used to run after it, one frame late: #63) */
     if (!g->hero_dead && g->hp_regen_pending) {
@@ -993,6 +991,11 @@ static void frame_7094(Game *g)
     }
     cell_anim(g);                                                       /* 710F [3000]: gfmcga 302C's 315C hook */
     boss_sparks(g);                                                     /* 710F [3000] / 7114 [3010] */
+    if (g->present) g->present(g);                                      /* draw + wait 4*speed ticks + poll input */
+    g->drawn_attacking = g->attacking; g->drawn_attack_var = (uint8_t)g->attack_var;
+    g->drawn_cast_timer = g->cast_timer;
+    g->hero_drawn_ok = 1;                                               /* 70D4 drew the hero: [4FED] */
+    g->hero_drawn_row = g->hero_scr_row; g->hero_drawn_col = g->hero_scr_col;
     orbs_update(g);                                                     /* 7133: the second orb pass */
     shots_draw_pass(g);                                                 /* 713B: 8366 */
     sword_apply(g);                                                     /* 7144: 6F07, second half of the frame */
