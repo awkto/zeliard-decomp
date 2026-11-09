@@ -443,10 +443,26 @@ static double speaker_sample(void)
     return A.spk_phase < 0.5 ? 0.35 : -0.35;
 }
 
+/* host fast-forward (hold Shift): the INT 8 clock runs `ff` times faster while the OPL2 / SN76496 /
+ * speaker sample rate stays put, so the score's tempo and the effects' pace rise and pitch does not
+ * (a fast-forwarded tape that keeps its pitch).  Written by the main thread, read by SDL's audio
+ * thread once per callback chunk: a single int, so SDL_atomic. */
+#ifdef HAVE_SDL
+static SDL_atomic_t g_ff = {1};
+static int ff_get(void) { return SDL_AtomicGet(&g_ff); }
+void audio_set_turbo(int mult) { SDL_AtomicSet(&g_ff, mult < 1 ? 1 : mult > 16 ? 16 : mult); }
+#else
+static volatile int g_ff = 1;
+static int ff_get(void) { return g_ff; }
+void audio_set_turbo(int mult) { g_ff = mult < 1 ? 1 : mult > 16 ? 16 : mult; }
+#endif
+int audio_turbo(void) { return ff_get(); }
+
 static void render(float *out, int n)
 {
+    const double tick_step = INT8_HZ * ff_get() / A.rate;  /* one read per chunk: the rate never changes mid-chunk */
     for (int i = 0; i < n; i++) {
-        A.tick_acc += INT8_HZ / A.rate;
+        A.tick_acc += tick_step;
         while (A.tick_acc >= 1.0) { A.tick_acc -= 1.0; int8_tick(); }
         double v = A.backend == AUDIO_ADLIB ? opl2_sample(&A.opl)
                  : A.backend == AUDIO_TANDY ? sn76496_sample(&A.sn) : speaker_sample();
@@ -459,9 +475,6 @@ static void render(float *out, int n)
 }
 
 #ifdef HAVE_SDL
-static volatile int g_mute;
-void audio_set_mute(int on) { g_mute = on; }
-
 static void sdl_cb(void *u, Uint8 *stream, int bytes)
 {
     (void)u;
@@ -471,7 +484,7 @@ static void sdl_cb(void *u, Uint8 *stream, int bytes)
     while (n > 0) {
         int k = n > 4096 ? 4096 : n;
         render(buf, k);
-        for (int i = 0; i < k; i++) o[i] = g_mute ? 0 : (int16_t)(buf[i] * 30000.0f);
+        for (int i = 0; i < k; i++) o[i] = (int16_t)(buf[i] * 30000.0f);
         o += k; n -= k;
     }
 }

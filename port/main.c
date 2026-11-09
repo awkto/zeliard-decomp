@@ -175,7 +175,7 @@ typedef struct {
     Uint64 sm_last_pc;
     double sm_gap_ms;
     unsigned sm_presents;               /* extra (between-step) presents, for the web measurement */
-    int turbo, turbo_n, force_draw;     /* host fast-forward (hold ACT_TURBO): shorter frame wait, most presents skipped, audio muted */
+    int turbo, turbo_n, force_draw;     /* host fast-forward (hold ACT_TURBO): shorter frame wait, most presents skipped, music and effects ticked TURBO_MULT times faster */
     int yield_test;                     /* web only: --yield-test yields to the browser at every present, even headless (ASYNCIFY coverage under node) */
 } App;
 
@@ -231,7 +231,7 @@ static void turbo_poll(App *a)
         on = input_key_down(&a->in, ACT_TURBO, 0, k, 0) || input_pad_down(&a->in, ACT_TURBO, a->pad)
           || touch_turbo_held(&a->touch);
     }
-    if (on != a->turbo) { a->turbo = on; a->turbo_n = 0; audio_set_mute(on); }
+    if (on != a->turbo) { a->turbo = on; a->turbo_n = 0; audio_set_turbo(on ? TURBO_MULT : 1); }
 }
 /* true when this frame's picture is not to be drawn */
 static int turbo_skip(App *a)
