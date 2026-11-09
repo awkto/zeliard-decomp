@@ -36,6 +36,28 @@
   addEventListener('keydown', onKey, true);
   addEventListener('keyup', onKey, true);          // Alt's menu bar opens on keyup
 
+  // Fullscreen belongs to the page, not to SDL: the stage element goes fullscreen, the canvas keeps its
+  // size and index.html's fit() letterboxes it.  F, F11 and Alt+Enter are handled here, in the key event
+  // itself (a browser only grants fullscreen inside a user gesture, and SDL sees keys later).
+  // Module.zelFs mirrors document.fullscreenElement for the port (main.c web_fs_state).
+  function toggleFullscreen() {
+    if (document.fullscreenElement) return document.exitFullscreen && document.exitFullscreen().catch(() => {});
+    const el = document.getElementById('stage');
+    if (el && el.requestFullscreen) return el.requestFullscreen().catch(() => {});
+  }
+  window.zelToggleFullscreen = toggleFullscreen;
+  if (window.Module) window.Module.zelToggleFullscreen = toggleFullscreen;
+  addEventListener('keydown', e => {
+    if (!running() || e.repeat || (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))) return;
+    const help = document.getElementById('help');
+    if (help && !help.hidden) return;                                  // the controls overlay owns the keyboard
+    const hit = (e.code === 'F11' || e.code === 'KeyF') && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey ||
+                (e.code === 'Enter' || e.code === 'NumpadEnter') && e.altKey && !e.ctrlKey && !e.metaKey;
+    if (!hit) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    toggleFullscreen();
+  }, true);
+
   // Keyboard Lock (Chromium; only while fullscreen).  Without it Ctrl+1..9 and Ctrl+W stay the browser's.
   function syncLock() {
     const kb = navigator.keyboard;

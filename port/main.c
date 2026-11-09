@@ -247,8 +247,21 @@ static int turbo_skip(App *a)
 }
 static double frame_period_ms(const App *a, double ms) { return a->turbo ? ms / TURBO_MULT : ms; }
 
+#ifdef __EMSCRIPTEN__
+/* Web: the PAGE owns fullscreen (packaging/web/keys.js requests it on the stage element, in the key
+ * event so the browser grants it).  SDL's own Emscripten fullscreen resizes the canvas to the screen
+ * and restores a stale size and CSS when the browser (Esc) leaves it, which left the game cut off.
+ * The SDL window and the canvas backing never change; the page fits the canvas to the stage and
+ * present.c letterboxes inside it.  Module.zelFs is the DOM's state (-1 until the first change). */
+EM_JS(int, web_fs_state, (void), { return Module.zelFs === undefined ? -1 : Module.zelFs; });
+EM_JS(void, web_fs_toggle, (void), { if (Module.zelToggleFullscreen) Module.zelToggleFullscreen(); });
+#endif
 static void toggle_fullscreen(App *a)
 {
+#ifdef __EMSCRIPTEN__
+    web_fs_toggle();            /* only a rebound key lands here; the default keys are the page's */
+    return;
+#endif
     a->fullscreen = !a->fullscreen;
     if (SDL_SetWindowFullscreen(a->win, a->fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) != 0)
         fprintf(stderr, "[video] fullscreen: %s\n", SDL_GetError());
@@ -861,6 +874,11 @@ static void pad_closed(App *a, SDL_JoystickID id)
 static void pump_events(App *a, Game *g)
 {
     SDL_Event e;
+#ifdef __EMSCRIPTEN__
+    {   int fs = web_fs_state();            /* the page entered / left fullscreen (any route: F, F11, Esc) */
+        if (fs >= 0 && fs != a->fullscreen) { a->fullscreen = fs; PREFS_CHANGED(a); }
+    }
+#endif
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
         case SDL_QUIT: a->quit = 1; break;
@@ -2929,7 +2947,9 @@ int main(int argc, char **argv)
 #ifdef __EMSCRIPTEN__
         wflags &= ~(Uint32)SDL_WINDOW_RESIZABLE;     /* the page scales the canvas with CSS; SDL would resize its buffer to the browser window */
 #endif
-        if (a.fullscreen) wflags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+#ifndef __EMSCRIPTEN__
+        if (a.fullscreen) wflags |= SDL_WINDOW_FULLSCREEN_DESKTOP;   /* web: the page does it (see web_fs_toggle) */
+#endif
         a.win = SDL_CreateWindow("Zeliard port", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                  lw * vscale, lh * vscale, wflags);
 #ifdef __EMSCRIPTEN__
