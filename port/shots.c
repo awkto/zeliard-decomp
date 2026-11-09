@@ -6,6 +6,7 @@
  * moves one ring cell per frame in one of eight directions (table 85C2), a
  * magic bolt two map columns per frame (8BD0). */
 #include "enemy.h"
+#include "audio.h"
 #include "render.h"
 #include <string.h>
 
@@ -100,12 +101,12 @@ static void shot_move_and_hit(Game *g, Shot *s)
     if (g->shield && !g->attacking && !g->on_ladder && d != 2 && d != 6) {   /* 84D0 */
         int from_left = (d == 0 || d == 1 || d == 7);
         if (from_left == ((g->hero_flags & FACE_LEFT) != 0)) {
-            if (g->shield >= 4) { g->sfx_request = 0x0A; return; }       /* 854F */
-            if (shield_row_match(g, d, s->row)) { g->sfx_request = 0x0A; return; }
+            if (g->shield >= 4) { SFX_SET(g->sfx_request, 0x0A); return; }       /* 854F */
+            if (shield_row_match(g, d, s->row)) { SFX_SET(g->sfx_request, 0x0A); return; }
         }
     }
     hero_damage(g, s->damage);                                          /* 850E */
-    g->sfx_request = 9;
+    SFX_SET(g->sfx_request, 9);
     g->hero_hit = g->hero_hit_flash = 0xFF;
     if (d == 2 || d == 6)                { g->hit_side[0] = g->hit_side[1] = g->hit_side[2] = g->hit_side[3] = 0xFF; }
     else if (d == 0 || d == 1 || d == 7) { g->hit_side[0] = g->hit_side[1] = 0xFF; g->hit_side[2] = g->hit_side[3] = 0; }
@@ -254,7 +255,7 @@ static void spell_screen_wide(Game *g)
         }
     }
     g->magic_active = 0;                                                /* 8954 */
-    g->sfx_request = 0x19;
+    SFX_SET(g->sfx_request, 0x19);
     if (g->side) g->side(g, SIDE_BURST, 0, 0);                          /* 895E gfmcga [3018] 42F7 (#122) */
     g->gf_frame = 0;            /* 895E gfmcga [3018] 42F7: [4FFF] = 0x36, then 0 (4314 / 431C) */
     g->magic_extra_frame = 1;   /* 8963..896B: [FF1E] = 0, 73B3, jmp 6F9B */
@@ -270,7 +271,7 @@ void magic_input(Game *g)
         int sel = g->magic_sel;
         if (!g->magic_count[sel - 1]) return;                           /* 880B */
         g->magic_count[sel - 1]--;
-        g->sfx_request = 0x18;
+        SFX_SET(g->sfx_request, 0x18);
         g->magic_active = 0xFF;
         g->magic_casts++;
         for (int i = 0; i < 4; i++) g->magic[i].live = 0;
@@ -283,7 +284,7 @@ void magic_input(Game *g)
     if (!g->btn2_edge) return;
     g->btn1_edge = g->btn2_edge = 0;                                    /* 87C7 */
     if (g->attacking || g->magic_active) return;
-    g->cast_timer = 0; g->casting = 0xFF; g->sfx_request = 0x17;
+    g->cast_timer = 0; g->casting = 0xFF; SFX_SET(g->sfx_request, 0x17);
 }
 
 /* 0x8AAD  the per-frame spell effect (table 8AC6 by magic_sel). */

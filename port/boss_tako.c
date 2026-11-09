@@ -11,6 +11,7 @@
  *   final stage adds 8 for the attack pose.
  */
 #include "boss.h"
+#include "audio.h"
 #include <string.h>
 
 #define A9AF 0xA9AF                     /* u16[32] pose -> 7-byte bitmap */
@@ -79,7 +80,7 @@ static void tako_death(Game *g)
     if (t < 0x14) {
         ST(S_FRAME) = (uint8_t)((ST(S_FRAME) + 1) & 7);                    /* A550 */
         p = (uint8_t)(ST(S_STAGE) + (((t + 1) & 1) ? 8 : 0));              /* A555..A55D */
-        g->sfx_request = 0x28;                                             /* A563 */
+        SFX_SET(g->sfx_request, 0x28);                                             /* A563 */
     } else p = (uint8_t)(ST(S_STAGE) + 8);                                 /* A56D */
     tako_draw(g, (uint8_t)(p + ST(S_FRAME)));
 }
@@ -93,11 +94,11 @@ void boss_tako_entry(Game *g)
 
     if (hit) {                                                             /* A2DE */
         unsigned d = (unsigned)damage_for_source(g, (uint8_t)(hit & 0x1F)) * 2u;
-        if (hit & 0x80) { d *= 2; g->sfx_request = 0x24; } else g->sfx_request = 0x25;
+        if (hit & 0x80) { d *= 2; SFX_SET(g->sfx_request, 0x24); } else SFX_SET(g->sfx_request, 0x25);
         boss_damage(g, d);                                                 /* A503 */
         if (!(ST(S_REACT) & 0x10) && ST(S_STAGE) != 0x10) {                /* A309 */
             ST(S_STAGE) = (uint8_t)(ST(S_STAGE) + 8);
-            ST(S_REACT) = 0x10; ST(S_ATTACK) |= 0x20; g->sfx_request = 0x26;
+            ST(S_REACT) = 0x10; ST(S_ATTACK) |= 0x20; SFX_SET(g->sfx_request, 0x26);
         }
     }
     if (g->boss_cutscene) { tako_death(g); return; }                       /* A530 */
@@ -117,7 +118,7 @@ void boss_tako_entry(Game *g)
             if (!n) {                                                      /* A391: launch the ink cloud */
                 ST(S_ATTACK) = 0xA0;
                 INKCOL = (uint16_t)(b->col + 4); ST(S_INKROW) = (uint8_t)((b->row + 4) & 0x3F);
-                g->sfx_request = 0x27;
+                SFX_SET(g->sfx_request, 0x27);
             }
         }
         if (!(ST(S_ATTACK) & 0xA0) && !(ST(S_REACT) & 0x10)) ST(S_ATTACK) |= 0x40;   /* A3AC */

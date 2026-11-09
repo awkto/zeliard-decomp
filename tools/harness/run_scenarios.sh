@@ -29,6 +29,9 @@
 #   # what: TEXT               what the scenario exercises (free text)
 #   # allow: PATTERN [MODE]    optional, repeatable: a tracediff allow rule for this
 #                              scenario only (a known, filed divergence it must step over)
+#   # allow-sfx: F[,F..] -- reason
+#                              optional, repeatable: boundary frames whose effect list ("sfx", #133) is
+#                              not compared; the reason is mandatory
 #   # allow-px: x0,y0,x1,y1 [frames A-B] -- reason
 #                              optional, repeatable: pixels (inclusive rect, game 320x200
 #                              coords, optional frame range) ignored by the pixel compare;
@@ -115,9 +118,10 @@ run_one() {
   fi
   dargs=--first-only; [ "$PNG" = 1 ] && dargs=--png
   # `# allow: PATTERN [MODE]` lines add to tools/harness/allow.tsv for this scenario only
-  if grep -q '^# allow:' "$f"; then
+  if grep -q '^# allow\(-sfx\)\?:' "$f"; then
     { cat "$ROOT/tools/harness/allow.tsv" 2>/dev/null
-      sed -n 's/^# allow: *//p' "$f" | awk '{ print $1 "\t" ($2 == "" ? "any" : $2) }'; } >"$d/allow.tsv"
+      sed -n 's/^# allow: *//p' "$f" | awk '{ print $1 "\t" ($2 == "" ? "any" : $2) }'
+      sed -n 's/^# allow-sfx: *//p' "$f" | sed 's/ *--.*//' | tr ',' '\n' | awk 'NF { print "sfx@" $1 "\tany" }'; } >"$d/allow.tsv"
     dargs="$dargs --allow $d/allow.tsv"
   fi
   (cd "$ROOT" && python3 tools/tracediff.py "$d/o" "$d/p" $dargs) >"$d/diff.txt" 2>&1

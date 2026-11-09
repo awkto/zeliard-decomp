@@ -169,7 +169,7 @@ int wait_poll(Game *g, Town *t, const char *site)
 static void town_sound(Town *t)
 {
     if (!t->sfx_request) return;
-    audio_sfx_request(t->sfx_request);
+    audio_sfx_play(t->sfx_request);                     /* listed when written (SFX_SET) */
     t->sfx_request = 0;
 }
 
@@ -224,7 +224,7 @@ static int dlg_menu(Town *t, const char *a, const char *b, int x4, int y, int w4
         wait_poll(t->g, t, "7358");
         if (t->quit) break;
         if (t->btn2_edge) { t->btn2_edge = 0; row = 1; break; }      /* Alt = No */
-        if (t->btn1_edge) { t->btn1_edge = 0; t->sfx_request = 0x1F; break; }
+        if (t->btn1_edge) { t->btn1_edge = 0; SFX_SET(t->sfx_request, 0x1F); break; }
         uint8_t d = (uint8_t)(t->dirs & 3);
         int moved = 0;
         if (d == DIR_UP && row) { row--; moved = 1; }                   /* 7380 */
@@ -277,7 +277,7 @@ static void dlg_newline(Town *t, int *shown, int *left, int total)
         if (t->btn1_edge) break;
     }
     t->dlg.marker = 0;                                              /* 657D */
-    t->btn1_edge = 0; *shown = 0; t->sfx_request = 0x1D;            /* 658F */
+    t->btn1_edge = 0; *shown = 0; SFX_SET(t->sfx_request, 0x1D);            /* 658F */
 }
 
 void town_dialogue_run(Town *t, int script, int face_left)
@@ -290,7 +290,6 @@ void town_dialogue_run(Town *t, int script, int face_left)
 
     int was = t->dlg.hero_shown ? t->dlg.hero_shown : t->hero_anim + 1;
     t->hero_anim |= 1;                                              /* 63C5 */
-    t->sfx_request = 0x1E;                                          /* 636B */
     int total = dlg_count_lines(p, end);                            /* 63F2 */
     int left = total, shown = 0;
     int cl = total > 8 ? 8 : (total ? total : 1);                   /* 63FA */
@@ -877,7 +876,7 @@ static void check_talk(Town *t)
         if (step > 0) n->sprite |= 0x80; else n->sprite &= 0x7F;        /* face the hero */
         n->anim |= 1;
         town_draw_frame(t);                                             /* 6363..6368: FF1A=28, 68AF */
-        if (!t->quit) town_dialogue_run(t, n->script, (t->hero_flags & 1) != 0);   /* 638F */
+        if (!t->quit) { SFX_SET(t->sfx_request, 0x1E); town_dialogue_run(t, n->script, (t->hero_flags & 1) != 0); }   /* 636B, 638F */
         town_force_redraw(t);                                           /* 63AB */
         n->type = sv_type; n->sprite = sv_sprite;                       /* 62A6..62AA */
         return;
@@ -900,7 +899,7 @@ static void check_auto_talk(Town *t)
     t->dlg_forced = 0xFF;                                               /* 62ED: uncancellable */
     town_draw_frame(t);                                                 /* 6363..6368: FF1A=28, 68AF */
     if (t->quit) return;
-    t->sfx_request = 0x1E;                                              /* 636B */
+    SFX_SET(t->sfx_request, 0x1E);                                              /* 636B */
     town_dialogue_run(t, n->script, (t->hero_flags & 1) != 0);
     town_force_redraw(t);                                               /* 63AB */
 }
@@ -1024,7 +1023,7 @@ static void check_status_menu(Town *t)
 {
     if (!t->menu_key) { t->menu_debounce = 0; return; }                 /* 68F3 */
     if (t->menu_debounce) return;
-    t->g->sfx_request = 0x0B;                                           /* 68FC */
+    SFX_SET(t->g->sfx_request, 0x0B);                                           /* 68FC */
     status_run_town(t);                                                 /* 6909 */
     if (t->quit) return;
     town_force_redraw(t);                                               /* 6920 */

@@ -496,7 +496,7 @@ int status_use_potion(Status *s)
     if (bx > P_POTIONS) g->page[bx - 1] = 0;
     status_build_lists(s);                                                   /* A43B */
     s->menu_result = s->potion_sel;                                          /* A43E  FF4B */
-    g->sfx_request = (s->potion_sel == 8) ? 0x0F : 0x0E;
+    SFX_SET(g->sfx_request, (s->potion_sel == 8) ? 0x0F : 0x0E);
 
     switch (s->potion_sel - 1) {
     case 0:                                                                  /* A462 Ken'ko */
@@ -707,7 +707,7 @@ void status_loop(Status *s)
             }
         }
         if (want >= 0) {                                                     /* a row change */
-            s->g->sfx_request = 0x0D;
+            SFX_SET(s->g->sfx_request, 0x0D);
             row_cursor(s, 5);
             s->pane = (uint8_t)want;
             enter = 1;
@@ -721,7 +721,7 @@ void status_loop(Status *s)
         row_cursor(s, 0);
         *cur += left ? -1 : 1;
         row_cursor(s, 2);
-        s->g->sfx_request = 0x0C;
+        SFX_SET(s->g->sfx_request, 0x0C);
         if (s->pane == 0) status_select_magic(s);
         else if (s->pane == 1) status_select_item(s);
         else potion_show(s);
@@ -758,7 +758,6 @@ int status_run_town(struct Town *t)
     t->status = &st;
     status_loop(&st);
     t->status = NULL;
-    t->g->sfx_request = 0x0B;
     return st.menu_result;
 }
 
@@ -771,6 +770,5 @@ int status_run_fight(Game *g)
     g->status = &st;
     status_loop(&st);
     g->status = NULL;
-    g->sfx_request = 0x0B;
     return st.menu_result;
 }

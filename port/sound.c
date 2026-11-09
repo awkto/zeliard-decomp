@@ -45,14 +45,15 @@ const char *sound_name(uint8_t id) { return id < NNAMES ? NAMES[id] : NULL; }
 unsigned sound_count(uint8_t id) { return counts[id]; }
 void sound_set_log(int on) { log_on = on; }
 
-/* consume FF75 once per half-frame, like STICK's INT 8 does */
+/* consume FF75 once per half-frame, like STICK's INT 8 does.  The request is in the trace's list already: SFX_SET
+ * (audio.h) put it there when the game wrote FF75, which is where the oracle sees it (#133) */
 void sound_request(Game *g)
 {
     uint8_t id = g->sfx_request;
     if (!id) return;
     g->sfx_request = 0;
     counts[id]++;
-    audio_sfx_request(id);
+    audio_sfx_play(id);
     if (log_on) {
         const char *n = sound_name(id);
         fprintf(stderr, "[snd] frame %u: %02X %s\n", g->frame_no, id, n ? n : "(unnamed)");

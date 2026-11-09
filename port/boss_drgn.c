@@ -31,6 +31,7 @@
  * (11,11,11,11,10,11,10,11,11,11,11 for the poses, 15/12 body, ...).
  */
 #include "boss.h"
+#include "audio.h"
 #include <string.h>
 
 enum { S_BREATH, S_FLAMEFR, S_POSE, S_FRAME, S_WALK, S_HALF, S_RETREAT, S_RSTEPS,
@@ -129,14 +130,14 @@ static void windup_step(Game *g)
     if (ST(S_WCNT) >= 6) {
         ST(S_POSE) = (uint8_t)(ST(S_WBASE) + 1);
         ST(S_FLAMEFR) = 0; ST(S_FLAMECNT) = 0; ST(S_WIND) = 0; ST(S_BREATH) = 0xFF;
-        g->sfx_request = 0x36;
+        SFX_SET(g->sfx_request, 0x36);
     }
 }
 
 /* A4FC: frames 0,1,2,3,2,3,... for 10 frames, sound 0x36 every frame. */
 static void flame_step(Game *g)
 {
-    g->sfx_request = 0x36;
+    SFX_SET(g->sfx_request, 0x36);
     if (++ST(S_FLAMEFR) >= 4) ST(S_FLAMEFR) = 2;
     if (++ST(S_FLAMECNT) >= 10) ST(S_BREATH) = 0;
 }
@@ -150,7 +151,7 @@ static void drgn_death(Game *g)
     if (t + 1 < 0x1E) {                                             /* AA02: the counter was bumped first */
         ST(S_FRAME)++;
         ST(S_POSE) = (uint8_t)(2 + (ST(S_FRAME) & 1));
-        if (!(ST(S_FRAME) & 3)) g->sfx_request = 0x37;
+        if (!(ST(S_FRAME) & 3)) SFX_SET(g->sfx_request, 0x37);
     } else { ST(S_FRAME) = 1; ST(S_POSE) = 0x0A; }
     drgn_draw(g);
 }
@@ -167,8 +168,8 @@ void boss_drgn_entry(Game *g)
     if (hit) {                                                      /* A33E */
         unsigned d = (unsigned)damage_for_source(g, (uint8_t)(hit & 0x1F)) / 2;
         if ((hit & 0x1F) >= 2) d /= 4;                              /* magic and orbs */
-        if (hit & 0x80) { ST(S_HEADHIT) = 0xFF; g->sfx_request = 0x34; d *= 2; }
-        else            { ST(S_RETREAT) = 0xFF; g->sfx_request = 0x35; }
+        if (hit & 0x80) { ST(S_HEADHIT) = 0xFF; SFX_SET(g->sfx_request, 0x34); d *= 2; }
+        else            { ST(S_RETREAT) = 0xFF; SFX_SET(g->sfx_request, 0x35); }
         drgn_damage(g, d);
         if (ST(S_HEADHIT)) {                                        /* A384: rear up, back off 8 */
             ST(S_RTBL) = (uint8_t)(ST(S_POSE) < 6);

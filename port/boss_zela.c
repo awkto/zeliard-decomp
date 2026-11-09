@@ -25,6 +25,7 @@
  * A60F blocked latch.
  */
 #include "boss.h"
+#include "audio.h"
 #include <string.h>
 
 enum { S_ANIM, S_FIRING, S_HOPPING, S_HOPDIR, S_PAUSE, S_HOPSTEP, S_PAUSECNT, S_BLOCKED,
@@ -105,7 +106,7 @@ static void zela_death(Game *g)
     if (n > 0x28) return;                                                  /* A5E8 */
     if (n >= 0x15) ST(S_ANIM) = 2;                                         /* A5E1 */
     else {
-        if (!(n & 3)) g->sfx_request = 0x28;                               /* A5B1 */
+        if (!(n & 3)) SFX_SET(g->sfx_request, 0x28);                               /* A5B1 */
         ST(S_ANIM) = (uint8_t)((ST(S_ANIM) + 1) & 7);                      /* A5BD */
     }
     uint8_t frames[12], pose;
@@ -151,8 +152,8 @@ void boss_zela_entry(Game *g)
     if (hit) {                                                             /* A20F */
         uint8_t src = (uint8_t)(hit & 0x1F);
         unsigned d = (unsigned)(damage_for_source(g, src) >> 1);           /* A224 shr bl,1 */
-        if (!zel2 && src == 4) { d *= 4; g->sfx_request = 0x24; }          /* A228: magic 3 */
-        else g->sfx_request = (uint8_t)(zel2 ? 0x24 : 0x25);
+        if (!zel2 && src == 4) { d *= 4; SFX_SET(g->sfx_request, 0x24); }          /* A228: magic 3 */
+        else SFX_SET(g->sfx_request, (uint8_t)(zel2 ? 0x24 : 0x25));
         zela_damage(g, d);
         if (b->col < hero_col(g, 15)) { step_left(g); step_left(g); }     /* A23F */
         else                          { step_right(g); step_right(g); }

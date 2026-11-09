@@ -136,6 +136,10 @@ def compare_frame(sch, rules, od, pd, base, members, mode):
             if od.get(k) != pd.get(k):
                 diffs.append((k, od.get(k), pd.get(k)))
         return diffs
+    # #133: the sound-effect requests since the previous boundary ("05.05.1D"; absent = none), in order
+    if od.get("sfx", "") != pd.get("sfx", "") and not allowed(rules, "sfx", mode or "any") \
+            and not allowed(rules, "sfx@%s" % od.get("f"), "any"):          # a scenario's `# allow-sfx: FRAME -- reason`
+        diffs.append(("sfx", od.get("sfx", ""), pd.get("sfx", "")))
     if mode is None:
         return diffs
     for k in ("input", "rng_calls"):

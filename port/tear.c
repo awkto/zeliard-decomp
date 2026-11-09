@@ -303,7 +303,7 @@ int tear_cutscene(struct Shell *s)
 
     int frame = 0, bx = 0x0C;
     for (int n = 13; n; n--) {                                           /* A05F */
-        if ((n & 1) == 0) { g->sfx_request = 0x1A; sound_request(g); }
+        if ((n & 1) == 0) { SFX_SET(g->sfx_request, 0x1A); sound_request(g); }
         frame = (frame + 1) & 3;
         draw_hero(&T, frame, bx, 0x6E);
         wait_frame(&T);
@@ -327,7 +327,7 @@ int tear_cutscene(struct Shell *s)
         restore_rect(&T, bg_small, f.x >> 3, f.y, 3, 16);
     }
     save_rect(&T, bg_big, (f.x >> 3) - 6, f.y, 0x11, 16);                /* A13E */
-    g->sfx_request = 0x1B; sound_request(g);
+    SFX_SET(g->sfx_request, 0x1B); sound_request(g);
     for (int i = 0; i < 2; i++) {
         draw_spark(&T, i | 0x80, f.x - 0x18, f.y);
         wait_frame(&T); wait_frame(&T);
@@ -347,7 +347,7 @@ int tear_cutscene(struct Shell *s)
     do {
         if ((++aj & 1) == 0) {
             ai++;
-            if (++sfx_phase > 2) { sfx_phase = 0; g->sfx_request = 0x1C; sound_request(g); }
+            if (++sfx_phase > 2) { sfx_phase = 0; SFX_SET(g->sfx_request, 0x1C); sound_request(g); }
         }
         restore_rect(&T, bg_small, f.x >> 3, f.y, 3, 16);
         done = fly_step(&f);                                             /* A249 */
@@ -358,7 +358,7 @@ int tear_cutscene(struct Shell *s)
     restore_rect(&T, bg_small, f.x >> 3, f.y, 3, 16);
 
     save_rect(&T, bg_big, (f.x >> 3) - 6, f.y, 0x11, 16);                /* A297 */
-    g->sfx_request = 0x1B; sound_request(g);
+    SFX_SET(g->sfx_request, 0x1B); sound_request(g);
     for (int i = 0; i < 2; i++) {
         draw_spark(&T, i | 0x80, f.x - 0x18, f.y);
         wait_frame(&T); wait_frame(&T);
@@ -391,7 +391,7 @@ int tear_cutscene(struct Shell *s)
 
     bx = 0x26;                                                           /* A3C3 */
     for (int n = 13; n; n--) {                                           /* A3C9 */
-        if ((n & 1) == 0) { g->sfx_request = 0x1A; sound_request(g); }
+        if ((n & 1) == 0) { SFX_SET(g->sfx_request, 0x1A); sound_request(g); }
         frame = (frame + 1) & 3;
         draw_hero(&T, frame, bx, 0x6E);
         wait_frame(&T);

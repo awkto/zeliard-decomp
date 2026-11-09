@@ -896,10 +896,37 @@ int audio_sfx_enable(int on)
     return on;
 }
 
-void audio_sfx_request(int id)
+/* the effects the game handed to the sound driver since the last trace boundary, "05.05.1D" (#133): the
+ * oracle lists the ids of the writes to FF75 the same way, tracediff compares them as "sfx".  Kept with the
+ * device off too (headless --trace). */
+static char sfx_trace_ids[512];
+static size_t sfx_trace_n;
+const char *audio_sfx_take(void)
+{
+    static char out[512];
+    memcpy(out, sfx_trace_ids, sfx_trace_n); out[sfx_trace_n] = 0;
+    sfx_trace_n = 0;
+    return out;
+}
+
+/* a request the game has made: it goes in the trace's list now (the oracle's list is the writes to FF75) */
+void audio_sfx_note(int id)
+{
+    if (id > 0 && sfx_trace_n + 4 < sizeof sfx_trace_ids)
+        sfx_trace_n += (size_t)snprintf(sfx_trace_ids + sfx_trace_n, 4, "%s%02X", sfx_trace_n ? "." : "", id & 0xFF);
+}
+
+/* and the sound driver takes it at its next tick */
+void audio_sfx_play(int id)
 {
     if (!A.on || id <= 0) return;
     audio_lock(); A.sfx_request = id; audio_unlock();
+}
+
+void audio_sfx_request(int id)
+{
+    audio_sfx_note(id);
+    audio_sfx_play(id);
 }
 
 int audio_sfx_count(void) { return A.jr.drv ? (int)A.jr.neff : (int)A.sfx.neff; }

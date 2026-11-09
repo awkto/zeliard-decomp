@@ -10,6 +10,7 @@
  * boss_lega.c, boss_drgn.c, boss_akma.c, boss_mao1.c and boss_mao2.c hold the
  * behaviour that still has to be ported. */
 #include "boss.h"
+#include "audio.h"
 #include <string.h>
 
 /* docs/ENEMIES.md §3: {parts across, parts down, damage numerator, denominator} */
@@ -35,7 +36,7 @@ void boss_generic_entry(Game *g)
     if (!g->boss_cutscene && hit && num) {
         unsigned d = (unsigned)damage_for_source(g, (uint8_t)(hit & 0x1F)) * (unsigned)num / (unsigned)den;
         boss_damage(g, d ? d : 1);
-        g->sfx_request = 0x22;
+        SFX_SET(g->sfx_request, 0x22);
     }
     if (g->boss_cutscene) {
         if (boss_death_tick(g) >= 0x28) { boss_parts_begin(g); boss_parts_end(g); return; }

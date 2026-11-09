@@ -15,6 +15,7 @@
  *   docs/ENEMIES.md §3 / src/ai/boss_tori.c.)
  */
 #include "boss.h"
+#include "audio.h"
 #include <string.h>
 
 #define A64D 0xA64D                     /* u16[19] layer -> {type<<4|frame} bytes */
@@ -112,7 +113,7 @@ static void tori_death(Game *g, int prev_n)
     if (t < 0x14) {                                                        /* A622 */
         legs_tick(g);                                                      /* A626 */
         ST(S_HEAD) = (uint8_t)((ST(S_HEAD) + 1) & 3);
-        g->sfx_request = 0x2C;                                             /* A632 */
+        SFX_SET(g->sfx_request, 0x2C);                                             /* A632 */
     } else { ST(S_DEADPOSE) = 0xFF; ST(S_DIVEFR) = 1; }                    /* A63A */
     tori_draw(g);
 }
@@ -128,7 +129,7 @@ void boss_tori_entry(Game *g)
     if (hit) {                                                             /* A235 */
         unsigned d = (unsigned)damage_for_source(g, (uint8_t)(hit & 0x1F)) * 2u;
         if (hit & 0x80) d *= 4;                                            /* the head: x8 */
-        g->sfx_request = 0x29;
+        SFX_SET(g->sfx_request, 0x29);
         int alive = b->hp != 0;
         boss_damage(g, d);                                                 /* A5BA */
         if (alive && b->hp == 0) {                                         /* A5D4: the kill */
@@ -145,7 +146,7 @@ void boss_tori_entry(Game *g)
     if (ST(S_DIVING)) {                                                    /* A290 */
         if (b->row != 0x0E) b->row--;
         ST(S_DIVEFR) = (uint8_t)((ST(S_DIVEFR) + 1) & 3);
-        if (ST(S_DIVEFR) == 2) g->sfx_request = 0x2B;
+        if (ST(S_DIVEFR) == 2) SFX_SET(g->sfx_request, 0x2B);
         /* A2B7: a refused step ends the dive; so does the timer [A79B]
          * running out, or a hit -- the timer only counts while it moves */
         int done = step_left_11(g);
@@ -153,19 +154,19 @@ void boss_tori_entry(Game *g)
             if (ST(S_DIVETIMER) == 0) done = 1;
             else { ST(S_DIVETIMER)--; if (hit) done = 1; }
         }
-        if (done) { ST(S_DIVING) = 0; ST(S_DIVEFR) = 0; ST(S_RISING) = 0xFF; g->sfx_request = 0x2A; }
+        if (done) { ST(S_DIVING) = 0; ST(S_DIVEFR) = 0; ST(S_RISING) = 0xFF; SFX_SET(g->sfx_request, 0x2A); }
     } else if (ST(S_RISING)) {                                             /* A2E5 */
         if (ST(S_DIVEFR) == 1) ST(S_RISING) = 0;
         else { ST(S_DIVEFR) = 1; if (b->row != 0x12) { b->row++; ST(S_DIVEFR) = 0; step_left_0D(g); } }
     } else if (ST(S_FLAPPING)) {                                           /* A316 */
         ST(S_HEAD) = (uint8_t)((ST(S_HEAD) + 1) & 3);
         if (legs_tick(g)) {
-            if (ST(S_FLAPCNT) < 4) { ST(S_FLAPCNT)++; g->sfx_request = 0x2A; ST(S_FLINCH) = 4; }
+            if (ST(S_FLAPCNT) < 4) { ST(S_FLAPCNT)++; SFX_SET(g->sfx_request, 0x2A); ST(S_FLINCH) = 4; }
             else { ST(S_FLAPPING) = 0; ST(S_DIVEFR) = 0; ST(S_DIVING) = 0xFF; ST(S_DIVETIMER) = 15; }
         }
     } else if (ST(S_LAYING)) {                                             /* A35D */
         if (legs_tick(g)) {
-            if (ST(S_FLAPCNT) < 2) { ST(S_FLAPCNT)++; g->sfx_request = 0x2A; ST(S_FLINCH) = 2; }
+            if (ST(S_FLAPCNT) < 2) { ST(S_FLAPCNT)++; SFX_SET(g->sfx_request, 0x2A); ST(S_FLINCH) = 2; }
             else {
                 Shot egg;                                                  /* A766 */
                 boss_shot_template(g, 0xA766, &egg);

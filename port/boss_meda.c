@@ -21,6 +21,7 @@
  * it is the cruising ROW, 0x0C down to 7 mid-room and back up.)
  */
 #include "boss.h"
+#include "audio.h"
 #include <string.h>
 
 enum { S_TENT, S_ATTACK, S_VSTATE, S_DELAY, S_HDIR, S_PAUSE };
@@ -115,7 +116,7 @@ static void meda_death(Game *g)
 {
     uint8_t n = (uint8_t)(boss_death_tick(g) + 1);
     if (n > 0x28) return;                                               /* A5D6 */
-    if (n < 0x14) { ST(S_ATTACK) = 0; meda_tentacles(g); meda_draw(g); g->sfx_request = 0x23; }
+    if (n < 0x14) { ST(S_ATTACK) = 0; meda_tentacles(g); meda_draw(g); SFX_SET(g->sfx_request, 0x23); }
     else { ST(S_TENT) = 5; meda_draw(g); }                              /* A5CE */
 }
 
@@ -129,8 +130,8 @@ void boss_meda_entry(Game *g)
     if (hit & 0x1F) {                                                   /* A24B */
         uint8_t src = (uint8_t)(hit & 0x1F);
         unsigned d = (unsigned)(damage_for_source(g, src) >> 3);        /* A25B */
-        if (src == 1 && g->sword >= 4) { d <<= 5; g->sfx_request = 0x2D; }   /* A263 */
-        else g->sfx_request = 0x2E;
+        if (src == 1 && g->sword >= 4) { d <<= 5; SFX_SET(g->sfx_request, 0x2D); }   /* A263 */
+        else SFX_SET(g->sfx_request, 0x2E);
         int alive = !g->boss_cutscene;
         boss_damage(g, d);                                              /* A575 */
         if (alive && g->boss_cutscene) shots_clear(g);                  /* A5A1: vec 30, once */

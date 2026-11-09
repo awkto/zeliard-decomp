@@ -88,6 +88,13 @@ int  audio_music_enable(int on);
 int  audio_sfx_enable(int on);
 /* FF75: hand a sound-effect id to the sound driver */
 void audio_sfx_request(int id);
+/* #133: the trace lists the effect requests (FF75 writes) of each frame.  SFX_SET is a write by the game: the id
+ * goes in the list at once, as the oracle lists the writes, and waits in `field` for the frame's sound_request
+ * (or the town's town_sound) to hand it to the driver -- one slot, a later write replaces it, like the byte. */
+void audio_sfx_note(int id);          /* list a request now ... */
+void audio_sfx_play(int id);          /* ... and hand it to the driver, possibly later (audio_sfx_request = both) */
+#define SFX_SET(field, id) do { (field) = (uint8_t)(id); audio_sfx_note((field)); } while (0)
+const char *audio_sfx_take(void);     /* the ids listed since the last call, "05.05.1D": the trace's "sfx" */
 
 /* ---- introspection, used by test_audio.c ---- */
 typedef struct MusicRes { const char *name; int archive, index; } MusicRes;
