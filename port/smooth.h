@@ -85,4 +85,22 @@ void smooth_at(const Smooth *s, double t, SmoothOfs *out);
 /* do two offset sets draw identically? */
 int  smooth_same(const SmoothOfs *a, const SmoothOfs *b);
 
+/* ---- vsync-locked pacing (#131; the web build, where the page's display frames are the clock) ----
+ * A picture shown at display frame f is the one drawn in (or just before) frame f's requestAnimationFrame
+ * callback.  A step that begins at frame f0 and is due at `deadline` (the game's own schedule, unchanged) is
+ * really begun by the first frame whose time + eps reaches the deadline, so it lasts K whole frames, K known
+ * in advance; the slide is then spread over exactly K frames, so the K-1 pictures after the first are spaced
+ * evenly and the next step's first picture is the last position the slide was heading for.  No picture is
+ * drawn twice in one frame and none is timed off the sleep timer. */
+typedef struct SmoothVsync { double last, period, cand; int n, cn; } SmoothVsync;
+void   smooth_vsync_init(SmoothVsync *v);                       /* assumes 60 Hz until measured */
+/* a display frame began at `ts` ms: refines the period (frames the browser skipped count as several) */
+void   smooth_vsync_update(SmoothVsync *v, double ts);
+/* is a step due at the frame beginning at `ts`? (it begins by the first frame with ts + eps >= deadline) */
+int    smooth_frame_due(double deadline, double ts, double eps);
+/* how many frames from the one beginning at ts0 until the frame the deadline falls in (>= 1) */
+int    smooth_frames_to(double deadline, double ts0, double period, double eps);
+/* progress of a slide begun at frame ts0 and spread over `frames` frames, at the frame beginning at ts */
+double smooth_frame_progress(double ts, double ts0, int frames, double period);
+
 #endif
