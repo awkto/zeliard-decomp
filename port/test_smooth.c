@@ -413,20 +413,29 @@ static void t_wide(void)
 
     /* a smooth slide at the edge of a view that is the whole ring shows no wrapped cell from the next row */
     SmoothOfs o; memset(&o, 0, sizeof o); o.active = 1; o.wx = 8;
+    for (int c = 0; c < 100; c++) for (int r = 0; r < MAP_ROWS; r++) m.grid[c][r] = (uint8_t)(1 + (c % 7));   /* the map's own columns */
+    g->scroll_col = 5;
     render_frame_view(w, g, NULL, &rv);
     static uint8_t w0[RENDER_WIDE_MAX_W * FB_H];
     memcpy(w0, w, sizeof w0);
     render_set_smooth(&o); render_frame_view(w, g, NULL, &rv); render_set_smooth(NULL);
-    ok = 1; int dark = 1;
+    ok = 1; int rev = 1;
     for (int y = PF_Y; y < PF_Y + PF_H; y++) {
         for (int x = PF_X + 8; x < PF_X + 288; x++) if (w[y * W + x] != w0[y * W + x - 8]) ok = 0;
-        for (int x = PF_X; x < PF_X + 8; x++) if (w[y * W + x]) dark = 0;
+        for (int x = PF_X; x < PF_X + 8; x++) if (w[y * W + x] != t.cell[1 + (4 % 7)].px[0][x - PF_X]) rev = 0;   /* map col scroll_col - 1 = 4 */
     }
     ck(ok, "wx = +8 in the wide view: the picture moved 8 px right");
-    ck(dark, "...and the column beyond the ring (the neighbouring row's) is left dark, not drawn");
+    ck(rev, "...and the column beyond the ring is the map's own column (scroll_col - 1), not the neighbouring row's cell");
+    g->scroll_row = 0;
     leak = 0;
     for (int y = 0; y < FB_H; y++) for (int x = PF_X + 288; x < W; x++) leak |= w[y * W + x];
     ck(!leak, "...nothing spills past the right edge");
+    memset(&o, 0, sizeof o); o.active = 1; o.wx = -8;
+    render_set_smooth(&o); render_frame_view(w, g, NULL, &rv); render_set_smooth(NULL);
+    rev = 1;
+    for (int y = PF_Y; y < PF_Y + PF_H; y++) for (int x = PF_X + 280; x < PF_X + 288; x++)
+        if (w[y * W + x] != t.cell[1 + (41 % 7)].px[0][x - PF_X - 280]) rev = 0;                  /* map col scroll_col + 36 = 41 */
+    ck(rev, "wx = -8: the right edge shows the map's column scroll_col + 36");
 
     /* the message box is centred on the playfield: its rows are the only ones that change */
     render_frame_view(w0, g, NULL, &rv);

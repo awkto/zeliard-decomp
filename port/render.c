@@ -704,17 +704,24 @@ static void render_frame_impl(uint8_t *fb, const Game *g, const HeroGfx *h)
     int sr0 = wy > 0 ? -((wy + 7) / 8) : 0, sr1 = SCREEN_ROWS;
     for (int sr = sr0; sr < sr1; sr++) {
         for (int sc = sc0; sc < sc1; sc++) {
-            /* a slide in a view that already shows the whole ring would reveal the column beyond its
-             * edge, which the ring does not hold (it would be the neighbouring row's): leave it dark */
-            if (sc + 4 < 0 || sc + 4 >= RING_W) continue;
+            uint8_t v;
+            if (sc + 4 < 0 || sc + 4 >= RING_W) {
+                /* A slide in a view that already shows the whole ring reveals the column just beyond it.  The
+                 * ring does not hold it (a ring index there is the neighbouring row's), so it is read from the
+                 * map itself: the ring is the map's columns scroll_col.. wrapped, row for row. */
+                int mw = g->map->width, mc = ((g->scroll_col + sc + 4) % mw + mw) % mw;
+                v = g->map->grid[mc][(g->scroll_row + sr) & 0x3F];
+                if (v & 0x80) continue;
+            } else {
             int rp = (game_win(g) + sr * RING_W + sc + 4) % RING_SIZE;
             if (rp < 0) rp += RING_SIZE;
-            uint8_t v = g->bg_ring[rp];                 /* 3159: the cell before 315C animates it (game_bg_cell, wrapped both ways) */
+            v = g->bg_ring[rp];                         /* 3159: the cell before 315C animates it (game_bg_cell, wrapped both ways) */
             if (v & 0x80) {                             /* a sprite marker hides the tile it covers;
                                                          * the background buffer (E900) keeps it */
                 int i = v & 0x7F;
                 v = i < g->nobj ? g->under_sprite[i] : 0;
                 if (v & 0x80) continue;
+            }
             }
             if (!v || !g->tiles->present[v]) continue;
             blit8(fb, &g->tiles->cell[v], VX(sc) + wx, PF_Y + sr * 8 + wy);

@@ -39,6 +39,7 @@ typedef struct Config {
     char filter[CONFIG_STR_MAX];        /* --filter spelling; "" = unset */
     int  zoom;                          /* Z state: 0/1; -1 = unset */
     int  smooth;                        /* T state (smooth scrolling, #127): 0/1; -1 = unset */
+    int  wide;                          /* W state (the 16:10 cavern view, #126): 0/1; -1 = unset */
     char aspect[CONFIG_STR_MAX];        /* 4:3 / 1:1; "" = unset */
     int  music;                         /* F1 state; -1 = unset, 0 = off, 1 = on */
     int  sfx;                           /* F2 state; -1 = unset */
