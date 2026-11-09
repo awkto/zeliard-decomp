@@ -53,8 +53,8 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 16 test binaries
 make test            # physics (149) + combat/AI (232) + town (176) + boss (642) + shop (195)
-                     #   + status (87) + playthrough (176) + audio (404) + cutscene (52)
-                     #   + video (198) + config (60) + sync (144) + mapview (105) + smooth (69) = 2689 assertions.  Needs no game files:
+                     #   + status (87) + playthrough (176) + audio (409) + cutscene (52)
+                     #   + video (198) + config (60) + sync (144) + mapview (105) + smooth (69) = 2694 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 235 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -92,9 +92,12 @@ come round sooner and only one in three is drawn, so nothing in the game state, 
 or the scenarios can differ.  It is never active headless (`--trace`, `--script`).  A small
 yellow "double chevron" in the top right corner of the window shows it is on; like the
 save-state confirmations it is drawn by the presentation layer, never into the engine
-framebuffer.  **Audio is muted** while it is held: the music and effects are synthesised in
-real time by the audio device, not stepped by game frames, so at 6x they would only trail
-behind the action (the score carries on silently and is back in step on release).  It works
+framebuffer.  **Music and effects play fast** instead
+(#130): the audio clock that steps the drivers (INT 8, 236.7 Hz) runs `TURBO_MULT` times faster
+while the synthesiser's sample rate is untouched, so tempo goes up like a fast-forwarded tape and
+pitch stays put; effects are ticked by the same clock and so keep step with the 6x frames.  The
+flag is an `SDL_atomic_t` (`audio_set_turbo`), read once per audio callback chunk, so release
+returns to 1x with no gap, pop or desync (the sample stream is continuous).  It works
 in caverns, towns and cutscenes; it is off while the game is paused.  The constants are
 `TURBO_MULT` and `TURBO_SHOW` at the top of `main.c`.
 
@@ -1097,7 +1100,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     `tools/harness/state_roundtrip.sh`, which now also drives the in-game
     request path (`--state-inject save:N load:N`, the same queue the keys use)
     and requires the whole trace to stay byte-identical.
-* `test_audio.c` — 404 assertions over the sound back end:
+* `test_audio.c` — 409 assertions over the sound back end:
   * **the score parser against `tools/msd2mid.py`**: all 17 scores in all three
     blob-B arrangements (AdLib, Tandy, PC speaker) are run through `msd.c`, and the
     decoded event stream — note on/off with velocity and the legato flag, drum hits,

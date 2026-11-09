@@ -1070,6 +1070,46 @@ static void t_cave_entry(void)
     audio_music(0);
 }
 
+/* #130: fast-forward.  The INT 8 clock scales with audio_set_turbo(); the sample rate does not, so tempo moves and pitch cannot.
+ * Also renders an AdLib WAV (1x, 6x, 1x; $ZEL_FF_WAV overrides the path) for listening and spectrum checks. */
+static void t_turbo(void)
+{
+    audio_init(G_DIR, AUDIO_TANDY, 0);
+    CHECK(audio_turbo() == 1, "turbo starts at 1");
+    CHECK(audio_dump_open("/tmp/zel_ff_tick.wav") == 0, "WAV dump opens");
+    int c0 = audio_int8_count();
+    audio_advance_ms(1000);
+    int n1 = audio_int8_count() - c0;
+    audio_set_turbo(6);
+    CHECK(audio_turbo() == 6, "turbo reads back");
+    c0 = audio_int8_count();
+    audio_advance_ms(1000);
+    int n6 = audio_int8_count() - c0;
+    audio_set_turbo(1);
+    c0 = audio_int8_count();
+    audio_advance_ms(1000);
+    int nb = audio_int8_count() - c0;
+    audio_set_turbo(0);
+    CHECK(audio_turbo() == 1, "turbo clamps to >= 1");
+    audio_dump_close();
+    audio_shutdown();
+    CHECK(abs(n1 - 237) <= 1, "1x: 236.7 ticks a second (%d)", n1);
+    CHECK(abs(n6 - 6 * 237) <= 6, "6x: six times as many ticks (%d)", n6);
+    CHECK(abs(nb - 237) <= 1, "back at 1x after release (%d)", nb);
+
+    const char *wav = getenv("ZEL_FF_WAV") ? getenv("ZEL_FF_WAV") : "/tmp/zel_ff.wav";
+    audio_init(G_DIR, AUDIO_ADLIB, 0);
+    CHECK(audio_dump_open(wav) == 0, "AdLib WAV dump opens");
+    audio_music_force(4);
+    audio_advance_ms(4000);
+    audio_set_turbo(6);
+    audio_advance_ms(4000);
+    audio_set_turbo(1);
+    audio_advance_ms(4000);
+    audio_dump_close();
+    audio_shutdown();
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -1088,7 +1128,7 @@ int main(int argc, char **argv)
         {"silence/dump", t_silence}, {"intro silence", t_intro_silence},
         {"SN76496 core", t_tandy_chip}, {"MSCJR services", t_tandy_regs},
         {"Tandy pitch", t_tandy_pitch}, {"Tandy streams", t_tandy_streams},
-        {"Tandy backend", t_tandy_backend},
+        {"Tandy backend", t_tandy_backend}, {"turbo", t_turbo},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = fails;
