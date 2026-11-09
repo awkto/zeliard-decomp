@@ -54,6 +54,15 @@ static void t_parse(void)
     ck(!strcmp(c.aspect, "1:1"), "aspect");
     ck(c.music == 0 && c.sfx == 1 && c.speaker == 1, "music/sfx/speaker");
     ck(c.volume == 7, "volume");
+    /* zoom is a level (#126): 0 off / normal, 1 cropped, 2 and 3 the wide view's zoom-out levels; on / off still parse */
+    for (int l = 0; l <= 3; l++) {
+        char line[16]; snprintf(line, sizeof line, "zoom=%d\n", l);
+        Config z; config_init(&z); config_parse(&z, line);
+        ck(z.zoom == l, "zoom=%d is level %d", l, l);
+    }
+    { Config z; config_init(&z); config_parse(&z, "zoom=4\n"); ck(z.zoom == -1, "zoom=4 is not a level"); }
+    { Config z; config_init(&z); config_parse(&z, "zoom=off\n"); ck(z.zoom == 0, "zoom=off is 0"); }
+    { Config z; config_init(&z); config_parse(&z, "zoom=3\n"); char out[256]; config_render(&z, out, sizeof out); ck(strstr(out, "zoom=3\n") != NULL, "the level is written back as zoom=3"); }
 }
 
 /* ------------------------------------------------------- missing keys, junk */

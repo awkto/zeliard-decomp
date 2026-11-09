@@ -94,9 +94,13 @@ void present_zoom_rect(int sw, int sh, int *x, int *y, int *w, int *h)
         ry = PRESENT_ZOOM_Y * sh / PRESENT_ZOOM_REF_H;
         rh = (PRESENT_ZOOM_Y + PRESENT_ZOOM_H) * sh / PRESENT_ZOOM_REF_H - ry;
         if (sw > PRESENT_ZOOM_REF_W && sw < 2 * PRESENT_ZOOM_REF_W) {
-            /* a wide cavern frame (#126): the stone sides keep their 48 px, the playfield is what is wider */
+            /* a wide cavern frame (#126): the stone sides keep their 48 px, the playfield is what is wider, and
+             * a taller one (the zoom-out levels, whose rows are at the source's own scale) is cropped from the
+             * same 14 rows of strip to the same 4 blank rows under its HUD panel */
             rx = PRESENT_ZOOM_X;
             rw = sw - 2 * PRESENT_ZOOM_X;
+            ry = PRESENT_ZOOM_Y;
+            rh = sh - PRESENT_ZOOM_Y - (PRESENT_ZOOM_REF_H - PRESENT_ZOOM_Y - PRESENT_ZOOM_H);
         } else {
             rx = PRESENT_ZOOM_X * sw / PRESENT_ZOOM_REF_W;
             rw = (PRESENT_ZOOM_X + PRESENT_ZOOM_W) * sw / PRESENT_ZOOM_REF_W - rx;

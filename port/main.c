@@ -162,7 +162,7 @@ typedef struct {
     SDL_Texture *mv_tex;                /* the map raster, built when it opens */
     int      mv_ox, mv_oy, mv_center;   /* view origin in cells; mv_center: re-centre on the hero at the next draw */
     Uint32   mv_note_until;             /* "No map in town" shows until this SDL tick */
-    int      zoom;                      /* Z: crop the decorative border (present.h) */
+    int      zoom;                      /* Z: the zoom level (render.h ZOOM_*): 1 crops the decorative border (present.h); 2, 3 are the wide view's zoom-out levels (#126) */
     int      zoomable;                  /* the picture about to be presented has the stone frame (cavern, town, shops, status) */
     int      pf_zoom;                   /* ...and what the last present_frame did, for the viewer's redraw */
     int      pf_w, pf_h;                /* the last picture size present_frame drew, so the viewer can redraw under itself */
@@ -172,11 +172,12 @@ typedef struct {
      * keep presenting, sm_gap_ms the least time between two such presents (the display period) */
     int smooth, sm_live;
     /* #126 the wide (16:10) cavern view, opt-in, presentation only: `wide` is the setting (W), wfb the
-     * 384x200 screen it is composed in (render_frame_view + the HUD band of fb), tex_w/tex_h the size of
-     * `tex`, which follows the picture (320x200 for everything but a plain wide cavern frame) */
+     * 384x200 (up to 592x280 at the zoom-out levels) screen it is composed in (render_frame_view + the HUD
+     * band of fb), tex_w/tex_h the size of `tex`, which follows the picture (320x200 for everything but a
+     * plain wide cavern frame) */
     int wide, wide_dirty;
     int tex_w, tex_h;
-    uint8_t wfb[RENDER_WIDE_MAX_W * FB_H];
+    uint8_t wfb[RENDER_WIDE_MAX_W * RENDER_WIDE_MAX_H];
     Smooth sm;
     SmoothTown tsm;                     /* the town frame's history (scene 2) */
     SmoothOfs sm_ofs;
@@ -777,6 +778,37 @@ static int mv_key(App *a, const SDL_KeyboardEvent *k)
 #ifndef __EMSCRIPTEN__
 static void present_dump(App *a);
 #endif
+/* The cavern picture's shape: the view the wide setting and the zoom level give (render_zoom_view), or the stock
+ * 320x200.  The window logical size is that picture at the driver's pixel aspect. */
+static RenderView app_view(const App *a)
+{
+    RenderView none = {0, 0, 0, 0};
+    return (a->wide && a->video == VID_MCGA) ? render_zoom_view(a->zoom) : none;
+}
+
+static void window_logical(const App *a, int *lw, int *lh)
+{
+    int vw, vh;
+    video_size(a->video, &vw, &vh);
+    int w = vw, h = vh;
+    if (!a->square) video_display_size(a->video, &w, &h);
+    const RenderView v = app_view(a);
+    *lw = w * render_view_width(&v) / FB_W;
+    *lh = h * render_view_height(&v) / FB_H;
+}
+
+/* The window follows the picture's shape when it is a plain window (not fullscreen or maximised), so a wider or
+ * taller view is not just letterboxed away: the height stays, the width changes. */
+static void window_follow_view(App *a)
+{
+    if (a->win && !(SDL_GetWindowFlags(a->win) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_MAXIMIZED))) {
+        int ww = 0, wh = 0, lw, lh;
+        SDL_GetWindowSize(a->win, &ww, &wh);
+        window_logical(a, &lw, &lh);
+        if (ww > 0 && wh > 0 && lh > 0) SDL_SetWindowSize(a->win, wh * lw / lh, wh);
+    }
+}
+
 /* W: the wide cavern view on / off.  The window follows the picture's shape when it is a plain window
  * (not fullscreen or maximised), so the extra width is not just letterboxed away; the cavern itself
  * is redrawn on the next frame (at once while paused). */
@@ -792,13 +824,26 @@ static void wide_toggle(App *a)
     }
     fprintf(stderr, "[video] wide: %s\n", a->wide ? "on" : "off");
     statekeys_osd(&a->sk, "WIDE %s", a->wide ? "ON" : "OFF");
-    if (a->win && !(SDL_GetWindowFlags(a->win) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_MAXIMIZED))) {
-        int ww = 0, wh = 0;
-        SDL_GetWindowSize(a->win, &ww, &wh);
-        if (ww > 0 && wh > 0) {
-            int nw = a->wide ? ww * (FB_W + 64) / FB_W : ww * FB_W / (FB_W + 64);
-            SDL_SetWindowSize(a->win, nw, wh);
-        }
+    window_follow_view(a);
+    PREFS_CHANGED(a);
+}
+
+/* Z: outside the wide view the crop of the decorative border, on / off.  In it the zoom levels, cropped ->
+ * normal -> zoom-out 1 -> zoom-out 2 -> cropped (render.h): the level is the `zoom=` setting.  A level
+ * left over from wide mode (2, 3) shows as "off" outside it. */
+static void zoom_key(App *a)
+{
+    if (a->wide && a->video == VID_MCGA) {
+        static const int next[ZOOM_LEVELS] = { [ZOOM_NORMAL] = ZOOM_OUT1, [ZOOM_CROP] = ZOOM_NORMAL, [ZOOM_OUT1] = ZOOM_OUT2, [ZOOM_OUT2] = ZOOM_CROP };
+        a->zoom = next[a->zoom & 3];
+        a->wide_dirty = 1;
+        fprintf(stderr, "[video] zoom: %d (%s)\n", a->zoom, render_zoom_name(a->zoom, 1));
+        statekeys_osd(&a->sk, "ZOOM: %s", render_zoom_name(a->zoom, 1));
+        window_follow_view(a);
+    } else {
+        a->zoom = a->zoom == ZOOM_CROP ? ZOOM_NORMAL : ZOOM_CROP;
+        fprintf(stderr, "[video] zoom: %s\n", a->zoom ? "on" : "off");
+        statekeys_osd(&a->sk, "ZOOM %s", render_zoom_name(a->zoom, 0));
     }
     PREFS_CHANGED(a);
 }
@@ -807,13 +852,14 @@ static void present_frame(App *a, int sw, int sh)
 {
     a->pf_w = sw; a->pf_h = sh; a->pf_zoom = a->zoomable;
     int dw = sw, dh = sh;
-    int zoomed = a->zoom && a->zoomable;
+    int zoomed = a->zoom == ZOOM_CROP && a->zoomable;
     if (turbo_skip(a)) return;               /* fast-forward: most pictures are never drawn */
     if (!a->square) video_display_size(a->video, &dw, &dh);
-    {   /* the wide cavern frame (#126) is wider than its driver's screen: same pixel shape, more of them */
+    {   /* the wide cavern frame (#126) is wider (and at the zoom-out levels taller) than its driver's screen: same pixel shape, more of them */
         int vw0, vh0;
         video_size(a->video, &vw0, &vh0);
-        if (sw != vw0 && vw0 > 0) dw = dw * sw / vw0;
+        if (!a->square && sw != vw0 && vw0 > 0) dw = dw * sw / vw0;
+        if (!a->square && sh != vh0 && vh0 > 0) dh = dh * sh / vh0;
     }
     /* #54: where the picture goes decides where the controls can; in a portrait
      * window the picture rides at the top once the overlay is up (the layout is
@@ -956,12 +1002,7 @@ static void pump_events(App *a, Game *g)
                 PREFS_CHANGED(a);
             }
             else if (input_event_match(&a->in, ACT_ZOOM, &e.key)) {
-                if (!e.key.repeat) {
-                    a->zoom = !a->zoom;
-                    fprintf(stderr, "[video] zoom: %s\n", a->zoom ? "on" : "off");
-                    statekeys_osd(&a->sk, "ZOOM %s", a->zoom ? "ON" : "OFF");
-                    PREFS_CHANGED(a);
-                }
+                if (!e.key.repeat) zoom_key(a);
             }
             else if (input_event_match(&a->in, ACT_SMOOTH, &e.key)) {
                 if (!e.key.repeat) {
@@ -1417,7 +1458,8 @@ static void usage(void)
         "              hidden again by keyboard or controller use), on or off; size and opacity\n"
         "              are touch.size / touch.opacity in zeliard.ini\n"
         "  --fullscreen  start full-screen (F or F11, or Alt+Enter, toggles; Esc pauses, Q quits)\n"
-        "  --zoom        start with the decorative border cropped (Z toggles)\n"
+        "  --zoom[=N]    start with the decorative border cropped (Z toggles); =N picks a level: 0 off, 1 cropped, 2 and 3 the\n"
+        "                --wide view's zoom-out levels (more rows; more rows and columns), which Z then cycles\n"
         "  --wide        the 16:10 cavern view: all 36 live columns of the ring instead of 28, MCGA only; boss rooms, towns and\n"
         "                menus keep the original frame (W toggles; off by default; never with --trace)\n"
         "  --smooth      slide the cavern or town scroll, parallax layers, hero, NPCs, enemies and shots between game steps (T toggles)\n"
@@ -2273,6 +2315,23 @@ static int wide_now(const App *a, const Game *g)
            render_wide_ok(g);
 }
 
+/* The columns of a zoom-out 2 view that are past the ring are scenery only: nothing in them is simulated, so no
+ * enemy, shot or lift appears there.  They are drawn a quarter darker, so the edge of the live world can be seen. */
+#define SCENERY_SHADE_NUM 3     /* ...x 3/4 */
+static void shade_scenery(uint8_t *rgb, int w, const RenderView *rv)
+{
+    int x0, x1, y0, y1;
+    render_live_span(rv, &x0, &x1, &y0, &y1);
+    const int px0 = PF_X, px1 = w - PF_X;             /* the playfield, between the stone sides */
+    if (x0 <= px0 && x1 >= px1) return;
+    for (int y = y0; y < y1; y++)
+        for (int x = px0; x < px1; x++) {
+            if (x >= x0 && x < x1) { x = x1 - 1; continue; }
+            uint8_t *p = rgb + ((size_t)y * w + x) * 3;
+            p[0] = (uint8_t)(p[0] * SCENERY_SHADE_NUM / 4); p[1] = (uint8_t)(p[1] * SCENERY_SHADE_NUM / 4); p[2] = (uint8_t)(p[2] * SCENERY_SHADE_NUM / 4);
+        }
+}
+
 static void cavern_draw(App *a, Game *g, const SmoothOfs *so)
 {
     a->sm_drawn_ts = vs_slot(a);
@@ -2280,9 +2339,11 @@ static void cavern_draw(App *a, Game *g, const SmoothOfs *so)
         /* The playfield, with the 4 live ring columns beyond the screen on each side, is drawn straight into the
          * 384-wide screen (render_frame_view); the HUD, item slots and Tear icons are drawn by their own code in
          * the 320-wide screen and their band is copied across, centred (docs/WIDESCREEN.md 4.2). */
-        static uint8_t rgb[RENDER_WIDE_MAX_W * FB_H * 3];
-        const RenderView rv = RENDER_VIEW_WIDE;
-        const int w = render_view_width(&rv);
+        static uint8_t rgb[RENDER_WIDE_MAX_W * RENDER_WIDE_MAX_H * 3];
+        RenderView rv = render_zoom_view(a->zoom);
+        /* a map too narrow to show the zoom-out 2 columns without repeating itself is shown one level in */
+        if (rv.lo + rv.hi + SCREEN_COLS > g->map->width) rv = render_zoom_view(ZOOM_OUT1);
+        const int w = render_view_width(&rv), h = render_view_height(&rv);
         render_set_smooth(so);
         render_frame_view(a->wfb, g, &a->sh.hero, &rv);
         render_set_smooth(NULL);
@@ -2290,12 +2351,13 @@ static void cavern_draw(App *a, Game *g, const SmoothOfs *so)
         render_hud(a->fb, g, &a->sh.font, &a->sh.tfont, map_place_record(g->map));
         itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, g);
         tear_draw_slots(a->fb, g, &a->sh.tear_art);
-        render_wide_hud(a->wfb, w, a->fb);
-        video_mcga_n_to_rgb(a->wfb, w * FB_H, rgb);
-        tex_upload(a, rgb, w, FB_H);
+        render_wide_hud(a->wfb, w, h, a->fb);
+        video_mcga_n_to_rgb(a->wfb, w * h, rgb);
+        shade_scenery(rgb, w, &rv);
+        tex_upload(a, rgb, w, h);
         a->force_draw = 1;
         a->zoomable = 1;
-        present_frame(a, w, FB_H);
+        present_frame(a, w, h);
         a->zoomable = 0;
         a->wide_dirty = 0;
         return;
@@ -2619,7 +2681,7 @@ static void config_capture(Config *c, const App *a, const char *dir, int backend
     if (remember_dir && dir) snprintf(c->dir, sizeof c->dir, "%s", dir);
     c->scale = a->scale;
     c->fullscreen = a->fullscreen;
-    c->zoom = a->zoom;
+    c->zoom = a->zoom;                  /* the level: 0 off / normal, 1 cropped, 2 and 3 the zoom-out levels */
     c->smooth = a->smooth;
     c->wide = a->wide;
     snprintf(c->video, sizeof c->video, "%s", video_mode_name(a->video));
@@ -2729,7 +2791,8 @@ int main(int argc, char **argv)
             if (touch_mode < 0) { fprintf(stderr, "--touch: expected on, off or auto\n"); return 2; }
         }
         else if (!strcmp(argv[i], "--fullscreen")) { a.fullscreen = 1; have_fullscreen = 1; }
-        else if (!strcmp(argv[i], "--zoom")) { a.zoom = 1; have_zoom = 1; }       /* start zoomed (Z toggles) */
+        else if (!strcmp(argv[i], "--zoom")) { a.zoom = ZOOM_CROP; have_zoom = 1; }       /* start zoomed (Z toggles) */
+        else if (!strncmp(argv[i], "--zoom=", 7) && argv[i][7] >= '0' && argv[i][7] <= '3' && !argv[i][8]) { a.zoom = argv[i][7] - '0'; have_zoom = 1; }   /* start at a zoom level (0..3, render.h) */
         else if (!strcmp(argv[i], "--smooth")) { a.smooth = 1; have_smooth = 1; } /* smooth scrolling (T toggles, #127) */
         else if (!strcmp(argv[i], "--smooth-log")) { a.smlog = 1;
 #ifdef __EMSCRIPTEN__
@@ -3109,9 +3172,8 @@ int main(int argc, char **argv)
          * letterboxes the difference itself.  The framebuffer is untouched:
          * `make verify` renders headlessly through video_to_rgb and never
          * reaches this path. */
-        int lw = vw, lh = vh;
-        if (!a.square) video_display_size(a.video, &lw, &lh);
-        if (a.wide && a.video == VID_MCGA) lw = lw * (FB_W + 64) / FB_W;     /* #126: open at the wide view's shape */
+        int lw, lh;
+        window_logical(&a, &lw, &lh);                               /* #126: open at the wide view's shape */
         Uint32 wflags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
 #ifdef __EMSCRIPTEN__
         wflags &= ~(Uint32)SDL_WINDOW_RESIZABLE;     /* the page scales the canvas with CSS; SDL would resize its buffer to the browser window */

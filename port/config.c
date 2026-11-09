@@ -76,7 +76,7 @@ int config_set(Config *c, const char *key, const char *val)
     if (!strcmp(key, "dir"))            { copy_str(c->dir, sizeof c->dir, val); return 1; }
     if (!strcmp(key, "scale"))          { int v; if (!parse_int(val, &v)) return 0; c->scale = v; return 1; }
     if (!strcmp(key, "fullscreen"))     { int v; if (!parse_bool(val, &v)) return 0; c->fullscreen = v; return 1; }
-    if (!strcmp(key, "zoom"))           { int v; if (!parse_bool(val, &v)) return 0; c->zoom = v; return 1; }
+    if (!strcmp(key, "zoom"))           { int v; if (!parse_int(val, &v)) { if (!parse_bool(val, &v)) return 0; } else if (v < 0 || v > 3) return 0; c->zoom = v; return 1; }   /* a level 0..3 (render.h ZOOM_*), or on / off */
     if (!strcmp(key, "smooth"))         { int v; if (!parse_bool(val, &v)) return 0; c->smooth = v; return 1; }
     if (!strcmp(key, "wide"))           { int v; if (!parse_bool(val, &v)) return 0; c->wide = v; return 1; }
     if (!strcmp(key, "video"))          { copy_str(c->video, sizeof c->video, val); return 1; }

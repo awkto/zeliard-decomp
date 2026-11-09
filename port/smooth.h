@@ -34,6 +34,7 @@
 #include "render.h"
 
 #define SMOOTH_MAX_PX 24        /* a per-object move larger than this (3 cells) is a jump */
+#define SMOOTH_ROW_REACH 16     /* rows above / below the window that still slide: the zoom-out views (#126) show 12 more each way */
 
 typedef struct SmoothPos { int8_t ok; int8_t type; int16_t x, y; } SmoothPos;   /* screen cell */
 
