@@ -10,6 +10,7 @@
 #include "smooth.h"
 #include "physics.h"
 #include "town.h"
+#include "enemy.h"
 
 static int checks, failures;
 static void ck(int ok, const char *fmt, ...)
@@ -515,7 +516,7 @@ static void t_wide(void)
 {
     printf("wide view       ");
     static Map m; static Tileset t; Game *g = new_game(&m, &t);
-    static uint8_t a[FB_W * FB_H], w[RENDER_WIDE_MAX_W * FB_H];
+    static uint8_t a[FB_W * FB_H], w[RENDER_WIDE_MAX_W * RENDER_WIDE_MAX_H];
     const RenderView rv = RENDER_VIEW_WIDE;
     const int W = render_view_width(&rv);
     ck(W == 384 && render_view_width(NULL) == 320, "the full-ring view is 384 wide, the stock one 320");
@@ -545,11 +546,11 @@ static void t_wide(void)
     ck(!leak, "nothing leaks out of the playfield into the stone columns");
 
     /* a plain 0/0 view is the stock render */
-    const RenderView rs = { 0, 0 };
+    const RenderView rs = { 0, 0, 0, 0 };
     static uint8_t b[FB_W * FB_H];
     ck(render_frame_view(b, g, NULL, &rs) == 1 && !memcmp(a, b, sizeof a), "a 0/0 view is render_frame, byte for byte");
-    const RenderView bad = { 5, 0 };
-    ck(render_frame_view(b, g, NULL, &bad) == 0, "more than the 4 live columns a side is refused");
+    const RenderView bad = { RENDER_VIEW_MAX_COLS + 1, 0, 0, 0 };
+    ck(render_frame_view(b, g, NULL, &bad) == 0, "more columns than the view limit are refused");
 
     /* which frames are wide */
     ck(render_wide_ok(g), "a cavern frame is wide");
@@ -579,7 +580,7 @@ static void t_wide(void)
     for (int c = 0; c < 100; c++) for (int r = 0; r < MAP_ROWS; r++) m.grid[c][r] = (uint8_t)(1 + (c % 7));   /* the map's own columns */
     g->scroll_col = 5;
     render_frame_view(w, g, NULL, &rv);
-    static uint8_t w0[RENDER_WIDE_MAX_W * FB_H];
+    static uint8_t w0[RENDER_WIDE_MAX_W * RENDER_WIDE_MAX_H];
     memcpy(w0, w, sizeof w0);
     render_set_smooth(&o); render_frame_view(w, g, NULL, &rv); render_set_smooth(NULL);
     ok = 1; int rev = 1;
@@ -620,7 +621,7 @@ static void t_wide(void)
         if (on) { SF.on[y * FB_W + x] = 1; SF.px[y * FB_W + x] = (uint8_t)(1 + (x * 7 + y) % 60); }
     }
     const uint8_t *fp, *fo;
-    render_wide_frame(&SF, 384, &fp, &fo);
+    render_wide_frame(&SF, 384, FB_H, &fp, &fo);
     ok = 1;
     for (int y = 0; y < FB_H; y++) for (int x = 0; x < 48; x++)
         if (fo[y * 384 + x] != 1 || fp[y * 384 + x] != SF.px[y * FB_W + x]) ok = 0;
@@ -647,17 +648,223 @@ static void t_wide(void)
         if (!fo[y * 384 + x] || fp[y * 384 + x] != SF.px[y * FB_W + 48 + ((x - 48 - 32) % 224 + 224) % 224]) ok = 0;
     ck(ok, "the strip above is the 224 px strip tiled, in phase with the centred copy");
     ok = 1;
-    render_wide_frame(&SF, 320, &fp, &fo);                              /* a 320 layout is the original */
+    render_wide_frame(&SF, 320, FB_H, &fp, &fo);                              /* a 320 layout is the original */
     for (int i = 0; i < FB_W * FB_H; i++)
         if (fo[i] != SF.on[i] || (fo[i] && fp[i] != SF.px[i])) ok = 0;
     ck(ok, "width 320 reproduces the original furniture");
     /* the HUD band composition */
     static uint8_t h320[FB_W * FB_H]; memset(h320, 0x33, sizeof h320);
     memset(w, 0, sizeof w);
-    render_wide_hud(w, 384, h320);
+    render_wide_hud(w, 384, FB_H, h320);
     ck(w[160 * 384 + 80] == 0x33 && w[199 * 384 + 303] == 0x33 && w[160 * 384 + 79] == 0 && w[160 * 384 + 304] == 0 && w[157 * 384 + 100] == 0,
        "the 320-wide HUD band is copied to x 80..303, rows 158..199");
     ck(w[5 * 384 + 80] == 0x33 && w[12 * 384 + 303] == 0x33 && w[5 * 384 + 79] == 0 && w[14 * 384 + 100] == 0, "...and so is the strip above (rows 0..12, the Tear icons)");
+    free(g);
+}
+
+/* ------------------------------------------------------------- the zoom-out levels (#126) */
+static void t_zoomout(void)
+{
+    printf("zoom-out levels ");
+    static Map m; static Tileset t; Game *g = new_game(&m, &t);
+    static uint8_t w[RENDER_WIDE_MAX_W * RENDER_WIDE_MAX_H], a[RENDER_WIDE_MAX_W * RENDER_WIDE_MAX_H];
+    /* the layout table: columns x rows of cells, pixels, and that every shape fits the buffers and the 640 limit */
+    static const struct { int cols, rows, w, h; } want[ZOOM_LEVELS] = {
+        [ZOOM_NORMAL] = { 36, 18, 384, 200 }, [ZOOM_CROP] = { 36, 18, 384, 200 },
+        [ZOOM_OUT1] = { 36, 24, 384, 248 }, [ZOOM_OUT2] = { 62, 28, 592, 280 } };
+    int ok = 1;
+    for (int l = 0; l < ZOOM_LEVELS; l++) {
+        RenderView v = render_zoom_view(l);
+        int cols = SCREEN_COLS + v.lo + v.hi, rows = 18 + v.rt + v.rb;
+        if (cols != want[l].cols || rows != want[l].rows || render_view_width(&v) != want[l].w || render_view_height(&v) != want[l].h) ok = 0;
+        if (v.lo != v.hi || v.rt != v.rb || render_view_width(&v) > RENDER_WIDE_MAX_W || render_view_height(&v) > RENDER_WIDE_MAX_H) ok = 0;
+    }
+    ck(ok, "the four levels: 36x18, 36x18 cropped, 36x24 (384x248), 62x28 (592x280); symmetric, inside the buffers");
+    ck(!strcmp(render_zoom_name(ZOOM_OUT2, 1), "OUT 2") && !strcmp(render_zoom_name(ZOOM_CROP, 1), "CROPPED") &&
+       !strcmp(render_zoom_name(ZOOM_CROP, 0), "ON") && !strcmp(render_zoom_name(ZOOM_OUT1, 0), "OFF"), "OSD names: the level in the wide view, ON / OFF outside it");
+    {   /* aspect: the display shape is w : 1.2h, so OUT1 is near 4:3 and OUT2 near 16:9 */
+        RenderView v1 = render_zoom_view(ZOOM_OUT1), v2 = render_zoom_view(ZOOM_OUT2);
+        double a1 = render_view_width(&v1) / (1.2 * render_view_height(&v1)), a2 = render_view_width(&v2) / (1.2 * render_view_height(&v2));
+        ck(a1 > 1.25 && a1 < 1.35 && a2 > 1.7 && a2 < 1.85, "display aspects %.2f (OUT1) and %.2f (OUT2, about 16:9)", a1, a2);
+    }
+
+    for (int v = 1; v < 8; v++) {
+        t.present[v] = 1;
+        for (int r = 0; r < 8; r++) for (int c = 0; c < 8; c++) t.cell[v].px[r][c] = (uint8_t)(v * 16 + (c == 0 ? 1 : 2));
+    }
+    /* each ring row has its own tile (1 + row % 7), so a row's place shows in the picture; the map the same by column */
+    for (int c = 0; c < 100; c++) for (int r = 0; r < MAP_ROWS; r++) m.grid[c][r] = (uint8_t)(1 + (c % 7));
+    for (int r = 0; r < RING_H; r++) for (int c = 0; c < RING_W; c++) g->bg_ring[r * RING_W + c] = g->ring[r * RING_W + c] = (uint8_t)(1 + (r % 7));
+    g->scroll_col = 10;
+
+    /* zoom-out 1: the window's 18 rows sit 3 rows (24 px) down, and the 3 rows above and below are the ring's own rows */
+    RenderView v1 = render_zoom_view(ZOOM_OUT1);
+    const int W1 = render_view_width(&v1);
+    for (int sr0 = 0; sr0 < 2; sr0++) {
+        g->scroll_row = sr0 ? 62 : 20;       /* the second wraps: rows 59..61 above, then 62, 63, 0, 1 ... */
+        ck(render_frame_view(w, g, NULL, &v1) == 1, "zoom-out 1 draws a plain cavern frame");
+        ok = 1;
+        for (int sr = -3; sr < 21; sr++) {
+            int ringrow = (g->scroll_row + sr) & 0x3F;
+            int y = PF_Y + (sr + 3) * 8 + 3;
+            for (int c = 0; c < 36; c++)
+                if (w[y * W1 + PF_X + c * 8 + 3] != (uint8_t)((1 + ringrow % 7) * 16 + 2)) ok = 0;
+        }
+        ck(ok, "zoom-out 1 (scroll_row %d): rows -3..20 of the window are the ring's rows, wrapping at 64", g->scroll_row);
+    }
+    g->scroll_row = 20;
+    render_frame_view(w, g, NULL, &v1);
+    const RenderView v0 = RENDER_VIEW_WIDE;
+    render_frame_view(a, g, NULL, &v0);
+    ok = 1;
+    for (int y = 0; y < 18 * 8; y++) for (int x = 0; x < W1; x++)
+        if (w[(PF_Y + 24 + y) * W1 + x] != a[(PF_Y + y) * W1 + x]) ok = 0;
+    ck(ok, "...and the middle 18 rows are exactly the normal wide view");
+    int leak = 0;
+    for (int y = PF_Y + 24 * 8; y < 248; y++) for (int x = PF_X; x < W1 - PF_X; x++) leak |= w[y * W1 + x];
+    ck(!leak, "nothing is drawn in the HUD band's rows (the HUD is composed apart)");
+
+    /* a shot in an extra row, above and below the window, is drawn where it is */
+    memset(g->shots, 0, sizeof g->shots); g->shots[1].col = 0xFF;
+    t.present[9] = 1;
+    for (int r = 0; r < 8; r++) for (int c = 0; c < 8; c++) t.cell[9].px[r][c] = 0xEE;
+    g->shots[0].col = 12; g->shots[0].row = (uint8_t)((g->scroll_row - 2) & 0x3F); g->shots[0].cell = 9;
+    render_frame_view(w, g, NULL, &v1);
+    ck(w[(PF_Y + 1 * 8 + 2) * W1 + PF_X + 12 * 8 + 2] == 0xEE, "a shot two rows above the window is drawn in the top extra rows");
+    g->shots[0].row = (uint8_t)(g->scroll_row + 20);
+    render_frame_view(w, g, NULL, &v1);
+    ck(w[(PF_Y + 23 * 8 + 2) * W1 + PF_X + 12 * 8 + 2] == 0xEE, "...and one two rows under it in the bottom extra rows");
+    g->shots[0].row = (uint8_t)(g->scroll_row + 23);
+    render_frame_view(w, g, NULL, &v1);
+    int seen = 0;
+    for (int y = 0; y < 248; y++) for (int x = 0; x < W1; x++) seen |= w[y * W1 + x] == 0xEE;
+    ck(!seen, "...but not one beyond the view");
+    g->shots[0].row = (uint8_t)(g->scroll_row + 19 + 64 - 64);
+    memset(g->shots, 0, sizeof g->shots); g->shots[0].col = 0xFF;
+
+    /* an enemy in an extra row: a 2x2 sprite from a made-up overlay and bank */
+    {
+        static AiOverlay ai; static EnemyGfx eg; static uint8_t img[0x400];
+        ai.img = img; ai.len = sizeof img; ai.loaded = 1; ai.frame_l[0] = 0xA100;
+        img[0x100] = 0; img[0x101] = 1; img[0x102] = 2; img[0x103] = 3; img[0x104] = 4;
+        eg.ncells = 5;
+        for (int k = 1; k < 5; k++) for (int r = 0; r < 8; r++) for (int c = 0; c < 8; c++) { eg.cell[k].mask[r][c] = 1; eg.cell[k].idx[r][c] = 1; }
+        g->ai = &ai; g->egfx = &eg; g->nobj = 1;
+        MapObj *o = &g->obj[0];
+        o->col = 0; o->row = (uint8_t)((g->scroll_row - 3) & 0x3F); o->rcol = 20; o->type = 0; o->hit = 0; o->phase = 0;
+        g->ring[game_ring_index(g, o->row, o->rcol)] = 0x80;
+        memset(w, 0, sizeof w);
+        render_frame_view(w, g, NULL, &v1);
+        uint8_t px = w[(PF_Y + 1) * W1 + PF_X + 20 * 8 + 1];
+        ck(px != 0 && px != (uint8_t)(1 * 16 + 2), "an enemy in the top extra row (3 rows above the window) is drawn");
+        render_frame_view(a, g, NULL, &v0);
+        seen = 0;
+        for (int y = PF_Y; y < PF_Y + PF_H; y++) for (int x = PF_X; x < 384 - PF_X; x++) seen |= a[y * 384 + x] == px;
+        ck(!seen, "...and the normal wide view does not show it");
+        o->row = (uint8_t)((g->scroll_row + 19) & 0x3F);              /* the window's hidden row 18+1: inside the view now */
+        g->ring[game_ring_index(g, o->row, o->rcol)] = 0x80;
+        memset(w, 0, sizeof w);
+        render_frame_view(w, g, NULL, &v1);
+        ck(w[(PF_Y + 22 * 8 + 1) * W1 + PF_X + 20 * 8 + 1] == px && w[(PF_Y + 23 * 8 + 1) * W1 + PF_X + 20 * 8 + 1] == px,
+           "an enemy on row 19 of the window (hidden under the HUD when stock) is drawn whole");
+        o->row = (uint8_t)((g->scroll_row + 20) & 0x3F);              /* on the view's last row: its lower pair is cut by the view */
+        g->ring[game_ring_index(g, o->row, o->rcol)] = 0x80;
+        memset(w, 0, sizeof w);
+        render_frame_view(w, g, NULL, &v1);
+        seen = 0;
+        for (int y = PF_Y + 24 * 8; y < 248; y++) for (int x = PF_X; x < W1 - PF_X; x++) seen |= w[y * W1 + x];
+        ck(w[(PF_Y + 23 * 8 + 1) * W1 + PF_X + 20 * 8 + 1] == px && !seen, "...one on the view's last row draws its top pair and does not spill into the HUD rows");
+        g->nobj = 0; g->ai = NULL; g->egfx = NULL;
+        memset(g->ring, 0, sizeof g->ring);
+        for (int r = 0; r < RING_H; r++) for (int c = 0; c < RING_W; c++) g->bg_ring[r * RING_W + c] = g->ring[r * RING_W + c] = (uint8_t)(1 + (r % 7));
+    }
+
+    /* zoom-out 2: 62 columns.  The 36 ring columns are in the middle (x 48 + 13*8), the 13 each side are the map */
+    RenderView v2 = render_zoom_view(ZOOM_OUT2);
+    const int W2 = render_view_width(&v2);
+    ck(render_frame_view(w, g, NULL, &v2) == 1, "zoom-out 2 draws a plain cavern frame");
+    ok = 1;
+    for (int sr = -5; sr < 23; sr++) {
+        int y = PF_Y + (sr + 5) * 8 + 3, ringrow = (g->scroll_row + sr) & 0x3F;
+        for (int c = 0; c < 36; c++)
+            if (w[y * W2 + PF_X + (13 + c) * 8 + 3] != (uint8_t)((1 + ringrow % 7) * 16 + 2)) ok = 0;
+        for (int k = -13; k < 0; k++) {        /* scenery on the left: map column scroll_col + k */
+            int mc = ((g->scroll_col + k) % 100 + 100) % 100;
+            if (w[y * W2 + PF_X + (13 + k) * 8 + 3] != (uint8_t)((1 + mc % 7) * 16 + 2)) ok = 0;
+        }
+        for (int k = 36; k < 49; k++) {        /* ...and on the right */
+            int mc = (g->scroll_col + k) % 100;
+            if (w[y * W2 + PF_X + (13 + k) * 8 + 3] != (uint8_t)((1 + mc % 7) * 16 + 2)) ok = 0;
+        }
+    }
+    ck(ok, "zoom-out 2: ring columns in the middle, 13 map columns of scenery each side (from the map, row for row)");
+    render_frame_view(a, g, NULL, &v0);
+    ok = 1;
+    for (int y = 0; y < 18 * 8; y++) for (int x = 0; x < 288; x++)
+        if (w[(PF_Y + 40 + y) * W2 + PF_X + 13 * 8 + x] != a[(PF_Y + y) * 384 + PF_X + x]) ok = 0;
+    ck(ok, "...and the ring's 36 columns x the window's 18 rows are exactly the normal wide view");
+    leak = 0;
+    for (int y = 0; y < 280; y++) { for (int x = 0; x < PF_X; x++) leak |= w[y * W2 + x]; for (int x = W2 - PF_X; x < W2; x++) leak |= w[y * W2 + x]; }
+    ck(!leak, "nothing leaks into the stone columns");
+    {   /* the live span the shading uses */
+        int x0, x1, y0, y1;
+        render_live_span(&v2, &x0, &x1, &y0, &y1);
+        ck(x0 == PF_X + 13 * 8 && x1 == x0 + 288 && y0 == PF_Y && y1 == PF_Y + 28 * 8, "the live span is the 36 ring columns x all rows (x %d..%d)", x0, x1);
+        render_live_span(&v0, &x0, &x1, &y0, &y1);
+        ck(x0 == PF_X && x1 == PF_X + 288, "...and the whole playfield in the normal wide view");
+    }
+    {   /* a lift outside the ring is drawn as the map has it; one inside is the ring's */
+        for (int k = 0; k < 3; k++) { t.present[0x40 + k] = 1; for (int r = 0; r < 8; r++) for (int c = 0; c < 8; c++) t.cell[0x40 + k].px[r][c] = (uint8_t)(0xD0 + k); }
+        g->nfix = 1; g->fix[0].col = (uint16_t)(g->scroll_col + 40); g->fix[0].row = (uint8_t)(g->scroll_row + 5); g->fix[0].cell = 0x40;
+        render_frame_view(w, g, NULL, &v2);
+        int y = PF_Y + (5 + 5) * 8 + 3;
+        ck(w[y * W2 + PF_X + (13 + 40) * 8 + 3] == 0xD0 && w[y * W2 + PF_X + (13 + 42) * 8 + 3] == 0xD2, "a fixture at ring column 40 is drawn in the scenery columns");
+        g->fix[0].col = (uint16_t)(g->scroll_col + 34);        /* cells 34, 35 in the ring, 36 outside it */
+        render_frame_view(w, g, NULL, &v2);
+        ck(w[y * W2 + PF_X + (13 + 36) * 8 + 3] == 0xD2 && w[y * W2 + PF_X + (13 + 34) * 8 + 3] != 0xD0, "...only its cells past the ring (the ring's own are the ring's)");
+        render_frame_view(w, g, NULL, &v1);
+        ck(1, "...the zoom-out 1 view has no scenery columns");
+        g->nfix = 0;
+    }
+    /* a map too narrow for the view is refused */
+    m.width = 60;
+    ck(render_frame_view(w, g, NULL, &v2) == 0 && render_frame_view(w, g, NULL, &v1) == 1, "zoom-out 2 on a 60-column map is refused (it would repeat itself), zoom-out 1 is not");
+    m.width = 100;
+
+    /* the furniture at 592x280 and 384x248: stone sides, HUD at the bottom */
+    memset(&SF, 0, sizeof SF); SF.loaded = 1;
+    for (int y = 0; y < FB_H; y++) for (int x = 0; x < FB_W; x++) {
+        int on = x < 48 || x >= 272 || (x >= 48 && x < 272 && (y < 13 || y >= 158));
+        if (on) { SF.on[y * FB_W + x] = 1; SF.px[y * FB_W + x] = (uint8_t)(1 + (x * 7 + y) % 60); }
+    }
+    for (int k = 0; k < 2; k++) {
+        const int fw = k ? 592 : 384, fh = k ? 280 : 248, ex = fh - 200;
+        const uint8_t *fp, *fo;
+        render_wide_frame(&SF, fw, fh, &fp, &fo);
+        ok = 1;
+        for (int y = 0; y < fh; y++)
+            for (int x = 0; x < fw; x++) {
+                int in_play = x >= 48 && x < fw - 48 && y >= 13 && y < 158 + ex;
+                if (in_play && fo[y * fw + x]) ok = 0;
+                if (x < 48 && !fo[y * fw + x]) ok = 0;
+                if (x >= fw - 48 && !fo[y * fw + x]) ok = 0;
+            }
+        ck(ok, "%dx%d furniture: stone down both sides over the full height, nothing over the playfield", fw, fh);
+        ok = 1;
+        for (int y = 0; y < 60; y++) for (int x = 0; x < 48; x++) if (fp[y * fw + x] != SF.px[y * FB_W + x]) ok = 0;
+        for (int y = 140 + ex; y < fh; y++) for (int x = 0; x < 48; x++) if (fp[y * fw + x] != SF.px[(y - ex) * FB_W + x]) ok = 0;
+        ck(ok, "...its top 60 and bottom 60 rows are the original stone's, the extra rows repeat the middle");
+        ok = 1;
+        const int ho = (fw - FB_W) / 2;
+        for (int y = 158 + ex; y < fh; y++) for (int x = 0; x < 224; x++)
+            if (fp[y * fw + ho + 48 + x] != SF.px[(y - ex) * FB_W + 48 + x]) ok = 0;
+        ck(ok, "...the HUD panel keeps its size, centred, on the bottom 42 rows");
+        static uint8_t hb[RENDER_WIDE_MAX_W * RENDER_WIDE_MAX_H], h320[FB_W * FB_H];
+        memset(h320, 0x33, sizeof h320); memset(hb, 0, sizeof hb);
+        render_wide_hud(hb, fw, fh, h320);
+        ck(hb[(158 + ex) * fw + ho + 48] == 0x33 && hb[(fh - 1) * fw + ho + 48 + 223] == 0x33 && hb[(157 + ex) * fw + ho + 100] == 0 && hb[5 * fw + ho + 100] == 0x33 && hb[20 * fw + ho + 100] == 0,
+           "...and render_wide_hud copies the HUD band there and the strip above");
+    }
     free(g);
 }
 
@@ -669,6 +876,7 @@ int main(void)
     t_objects(); printf("ok\n");
     t_render();  printf("ok\n");
     t_wide();    printf("ok\n");
+    t_zoomout(); printf("ok\n");
     t_fixtures(); printf("ok\n");
     t_town_steps();  printf("ok\n");
     t_town_render(); printf("ok\n");

@@ -37,7 +37,7 @@ typedef struct Config {
     int  fullscreen;                    /* 0/1; -1 = unset */
     char video[CONFIG_STR_MAX];         /* --video spelling; "" = unset */
     char filter[CONFIG_STR_MAX];        /* --filter spelling; "" = unset */
-    int  zoom;                          /* Z state: 0/1; -1 = unset */
+    int  zoom;                          /* Z state: 0 off / normal, 1 cropped, 2 zoom-out 1, 3 zoom-out 2 (the last two in the wide view, #126); -1 = unset */
     int  smooth;                        /* T state (smooth scrolling, #127): 0/1; -1 = unset */
     int  wide;                          /* W state (the 16:10 cavern view, #126): 0/1; -1 = unset */
     char aspect[CONFIG_STR_MAX];        /* 4:3 / 1:1; "" = unset */

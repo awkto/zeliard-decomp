@@ -178,6 +178,19 @@ static void t_zoom(void)
     ck(x == 48 && w == 321 - 96, "any source between 320 and 640 wide keeps the 48 px sides");
     present_zoom_rect(640, 200, &x, &y, &w, &h);
     ck(x == 96 && w == 448, "640 wide is still the doubled mode");
+    /* the zoom-out cavern frames (#126): taller than 200 rows at the source's own scale, same 14 rows of strip off the top,
+     * same 4 blank rows off the bottom */
+    present_zoom_rect(384, 248, &x, &y, &w, &h);
+    ck(x == 48 && y == 14 && w == 288 && h == 248 - 18, "384x248 (zoom-out 1): the playfield and HUD (got %d,%d %dx%d)", x, y, w, h);
+    present_zoom_rect(592, 280, &x, &y, &w, &h);
+    ck(x == 48 && y == 14 && w == 592 - 96 && h == 280 - 18, "592x280 (zoom-out 2): the playfield and HUD (got %d,%d %dx%d)", x, y, w, h);
+    {   /* shown at the pixel shape (a row is 1.2 columns): 592x280 -> 592x336 in a 16:9 window, 384x248 -> 384x297.6 */
+        int cx, cy, cw, ch, vx, vy, vw, vh;
+        present_view(FILTER_SMOOTH, 1920, 1080, 592, 280, 592, 336, 0, 0, &vx, &vy, &vw, &vh, &cx, &cy, &cw, &ch);
+        ck(vh == 1080 && vw >= 1900 && vw <= 1920 && vy == 0, "zoom-out 2 in a 16:9 window: the whole picture, fills it (%dx%d)", vw, vh);
+        present_view(FILTER_SMOOTH, 1920, 1080, 384, 248, 384, 297, 0, 0, &vx, &vy, &vw, &vh, &cx, &cy, &cw, &ch);
+        ck(vh == 1080 && vw < 1440 && vw > 1380, "zoom-out 1 in a 16:9 window: height-bound, pillarboxed (%dx%d)", vw, vh);
+    }
     int ok = 1;
     static const int sizes[][2] = { {320, 200}, {640, 200}, {640, 350}, {720, 348}, {160, 100}, {1, 1}, {384, 200}, {352, 200} };
     for (unsigned i = 0; i < sizeof sizes / sizeof *sizes; i++) {

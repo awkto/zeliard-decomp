@@ -87,7 +87,7 @@ static SmoothPos pos_of(const Game *g, int rcol, int row, int type)
     int sc = rcol - 4, sr = (row - g->scroll_row) & 0x3F;
     if (sr > 40) sr -= 64;
     p.x = (int16_t)sc; p.y = (int16_t)sr;
-    p.ok = sc >= -4 && sc <= SCREEN_COLS + 3 && sr >= -4 && sr <= SCREEN_ROWS + 3;
+    p.ok = sc >= -4 && sc <= SCREEN_COLS + 3 && sr >= -SMOOTH_ROW_REACH && sr <= SCREEN_ROWS + SMOOTH_ROW_REACH;   /* the zoom-out views show rows well past the window (#126) */
     return p;
 }
 

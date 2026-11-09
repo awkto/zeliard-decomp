@@ -1,7 +1,7 @@
 # Widescreen mode: design study (issue #126)
 
 Status: steps 0-2 are implemented (section 8: the 16:10 view of the whole ring, `--wide` / `W` / `wide=`,
-presentation only); steps 3-9 (a wider ring, 16:9) are not.  The study's citations are to `main` at 7ecb412.
+presentation only, and 8.1: the two zoom-out levels of `Z`); steps 3-9 (a wider ring, 16:9) are not.  The study's citations are to `main` at 7ecb412.
 `port/x.c:N` is the port; four-digit hex addresses are fight.bin (`disasm/overlays/fight.asm`)
 unless a file is named (gfmcga = `disasm/overlays/gfmcga.asm`).
 
@@ -388,3 +388,65 @@ markers like any column, so the renderer needed no new data, only its clips wide
 Controls: `--wide`, `wide=` in zeliard.ini, the `W` key (action `wide`, rebindable via `key.wide`) with an OSD flash,
 and a checkbox in the web start screen's Display settings.  Tests: `test_smooth` (the layout and the render: 29 checks),
 `test_present` (the zoom crop and the wide frame through every filter), `test_config`.
+
+### 8.1 Zoom-out levels (Z in the wide view)
+
+Two more levels past the 36 x 18 picture, still presentation only.  In the wide view Z cycles
+**cropped -> normal -> zoom-out 1 -> zoom-out 2 -> cropped** (`ZOOM_*` in `render.h`; outside the wide view Z
+is the plain crop on / off it always was).  The level is the number in `zoom=` (0 normal / off, 1 cropped, 2 and
+3 the zoom-out levels; `on` / `off` still parse), the OSD names it (`ZOOM: CROPPED`, `NORMAL`, `OUT 1`, `OUT 2`),
+and the web start screen's Zoom select shows it (zeliard.ini stays the source of truth).  A level 2 or 3 left in
+the file with W off is shown as "off".
+
+| Level | `zoom=` | Cells (cols x rows) | Frame | Display shape (a row is 1.2 columns) | Live | Scenery only |
+|---|---|---|---|---|---|---|
+| normal | 0 | 36 x 18 | 384 x 200 | 1.60 (16:10) | all | none |
+| cropped | 1 | 36 x 18 | the same, stone frame cropped | | all | none |
+| zoom-out 1 | 2 | 36 x 24 | 384 x 248 | 1.29 | all 36 x 24 | none |
+| zoom-out 2 | 3 | 62 x 28 | 592 x 280 | 1.76 (about 16:9) | the 36 ring columns x 28 rows | 13 columns each side |
+
+Why these sizes.  The frame is `96 + 8 * cols` wide (48 px stone each side) and `56 + 8 * rows` high (14 px
+strip above, the 42 px HUD panel below), shown at a pixel shape of 1.2:1.  At 36 columns, 16:10 is exactly 18
+rows, so **zoom-out 1 cannot stay 16:10**: 24 rows (3 above the window's row 0, 3 below its row 17) is 6 more rows,
+a third more game, and the frame comes out 1.29:1, close to 4:3 (it is pillarboxed in a 16:10 window, filling 81% of
+its width; the stone sides are not stretched to fill).  Zoom-out 2 takes 28 rows (5 more each way) and the columns
+that make that 16:9: 62, i.e. 13 each side past the ring.
+
+**Rows are live.**  The ring holds all 64 rows and activity is by column (`ai_map_col_to_ring`, `enemies_update`),
+so an enemy, shot, spell, lift or the sparks in a row above or below the 19-row window is already simulated and
+already has its marker in the ring (`enemy.c:455-469`); nothing in the simulation had to change.  The only
+thing that was window-bound was the renderer: the E900 overlap array (`ff[]`) and its pre-scan row / last row rules
+are now counted from the view's top edge rather than the window's row 0 (the original has no such machinery
+outside its window, so the same rules are extended), the clips of shots, spells, the hero and the blade are the
+view's, and a row's offset from `scroll_row` is taken as a signed value mod 64, so the view wraps at the top and
+bottom of the 64-row ring exactly as the ring does (cavern 1's start, `scroll_row` 61, is such a case).  The
+hidden row 18 of the stock window is a visible row from zoom-out 1 on.  The message box keeps its place relative
+to the window, near the hero, not the top of the view.
+
+**Columns past 36 are scenery only.**  The simulation does not know them (the ring is 36 wide), so no enemy, shot,
+spell or moving fixture is drawn there.  They are the map's tiles, read row for row from `map->grid` the way the
+smooth slide's revealed column already was, and the lifts, gates and platforms whose cells fall there are drawn
+static where their record has them (they are written into the ring only, and a record out of the ring is not
+moved).  Doors, signs and the animated cells of caverns 5..8 are not drawn there (doors' arches and the 315C
+animation are ring state); the same is true of the water and lava in the extra rows of the zoom-out views (the
+animation pass covers the 18 window rows).  These columns are shaded by a quarter (x 3/4 in the RGB, `shade_scenery`
+in `main.c`): the unshaded picture invited the reading that an empty stretch of rock beside the hero is where
+enemies *could* be, and at 13 columns a side that is a third of the picture; the step in brightness shows where the live
+world ends, and it is slight enough not to spoil the scenery.  **Steps 3-5 (a wider ring) make these columns live**:
+the live span then follows the ring width, and `render_live_span` (the shaded band's edge) is the one place that
+changes.  A map narrower than the view (`lo + hi + 28 > width`, none of the cavern maps, only the 42-column MP90)
+falls back to zoom-out 1.
+
+**Frame.**  `render_wide_frame(sf, w, h)` lays the furniture out for a `w x h` framebuffer: the stone sides run the
+full height (the extra rows repeat rows 60..139 of the stone, forwards then backwards, which hold none of its marks),
+the strip above is tiled, and the HUD panel moves to the bottom 42 rows (`render_wide_hud` copies the HUD band
+there).  `present_zoom_rect` for a source 320..640 wide is x 48, y 14, w = sw - 96, h = sh - 18, so the crop works at
+any of the heights.  The window is resized to follow the picture's shape (height kept) on a level change when it is
+a plain window; in the web build the canvas follows and the page's `fit()` reruns on its width / height attributes,
+fullscreen included (the page owns fullscreen).  The smooth slide's `pos_of` accepts rows up to `SMOOTH_ROW_REACH`
+(16) from the window, so sprites in the extra rows slide like the rest.
+
+Tests: `test_smooth` `zoom-out levels` (the layout of each level, the ring's rows in the extra rows and their
+wrap at 64, an enemy, shots and a lift in the extra rows, the scenery columns from the map, the live span, the
+furniture and the HUD band at 592x280 and 384x248), `test_present` (the crop and the view of the taller sources),
+`test_config` (`zoom=0..3`).

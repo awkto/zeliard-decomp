@@ -21,23 +21,43 @@ void render_burst(uint8_t *fb, const Game *g, BurstWaitFn wait, void *user);
 int  render_sprite_cell(const Game *g, int sc, int sr);               /* an enemy sprite's 2x2 block covers the screen cell */
 void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h);     /* fb: FB_W*FB_H VGA indices */
 
-/* The wide cavern view (#126, docs/WIDESCREEN.md): `lo` / `hi` more ring columns shown on the left / right
- * of the 28-column window (0..4 each: the ring keeps 4 live beyond it) in a framebuffer 8*(lo+hi) pixels
- * wider.  lo = hi = 4 is the whole 36-column ring in 384x200.  Presentation only: it reads the ring and
- * the sprite records and changes none of them.  Returns 0, drawing nothing, when the frame is not a plain
- * cavern frame (a boss room, the walk-in, the encounter card, the death dissolve, the status screen, the
- * tear scene): those stay 320 wide, so the caller renders them with render_frame. */
-#define RENDER_WIDE_MAX_W (FB_W + 64)
-typedef struct RenderView { int lo, hi; } RenderView;
-#define RENDER_VIEW_WIDE { 4, 4 }
+/* The wide cavern view (#126, docs/WIDESCREEN.md): `lo` / `hi` more columns shown on the left / right of the
+ * 28-column window in a framebuffer 8*(lo+hi) pixels wider, and `rt` / `rb` more rows above the window's row 0
+ * and below its last visible row (17) in one 8*(rt+rb) pixels taller.  lo = hi = 4 is the whole 36-column
+ * ring in 384x200.  Columns past the ring's own 4 on each side are scenery drawn from the map (the
+ * simulation does not know them); the rows are all live, because the ring holds all 64 rows and activity is by
+ * column.  Presentation only: it reads the ring and the sprite records and changes none of them.  Returns 0,
+ * drawing nothing, when the frame is not a plain cavern frame (a boss room, the walk-in, the encounter card,
+ * the death dissolve, the status screen, the tear scene) or the map is too narrow for the view: those stay
+ * 320 wide, so the caller renders them with render_frame. */
+#define RENDER_VIEW_MAX_COLS 20     /* lo, hi at most */
+#define RENDER_VIEW_MAX_ROWS 12     /* rt, rb at most */
+#define RENDER_WIDE_MAX_W 600
+#define RENDER_WIDE_MAX_H 300
+typedef struct RenderView { int lo, hi, rt, rb; } RenderView;
+#define RENDER_VIEW_WIDE { 4, 4, 0, 0 }
 static inline int render_view_width(const RenderView *v) { return v ? FB_W + 8 * (v->lo + v->hi) : FB_W; }
+static inline int render_view_height(const RenderView *v) { return v ? FB_H + 8 * (v->rt + v->rb) : FB_H; }
 int  render_wide_ok(const Game *g);
 int  render_frame_view(uint8_t *fb, const Game *g, const HeroGfx *h, const RenderView *v);
+
+/* The zoom levels (Z; the `zoom=` config key holds the number).  Outside the wide view only 0 / 1 exist: the
+ * frame cropped or not.  In it Z cycles CROP -> NORMAL -> OUT1 -> OUT2 -> CROP:
+ *   ZOOM_NORMAL  0  36 x 18 cells, 384x200 (16:10)         the W view
+ *   ZOOM_CROP    1  the same, the stone frame cropped away by the presentation layer
+ *   ZOOM_OUT1    2  36 x 24 cells, 384x248 (1.29:1)        6 more rows, all live
+ *   ZOOM_OUT2    3  62 x 28 cells, 592x280 (1.76:1, ~16:9) 10 more rows, all live; the 26 extra columns are scenery */
+enum { ZOOM_NORMAL = 0, ZOOM_CROP = 1, ZOOM_OUT1 = 2, ZOOM_OUT2 = 3, ZOOM_LEVELS = 4 };
+RenderView render_zoom_view(int level);                 /* the view a wide cavern uses at `level` */
+const char *render_zoom_name(int level, int wide);      /* the OSD name */
+/* the dark band of columns that are scenery only (not in the ring), for the presentation layer to shade: x range
+ * [*x0, *x1) of the live columns in the wide framebuffer and the playfield's y range [*y0, *y1) */
+void render_live_span(const RenderView *v, int *x0, int *x1, int *y0, int *y1);
 struct ScreenFrame;
-/* the furniture (stone sides, tiled top strip, centred HUD panel) laid out for a w-wide framebuffer */
-void render_wide_frame(const struct ScreenFrame *sf, int w, const uint8_t **px, const uint8_t **on);
-/* copy the HUD band that render_hud / itemp_hud drew in a 320x200 screen into the wide framebuffer, centred */
-void render_wide_hud(uint8_t *wfb, int w, const uint8_t *fb320);
+/* the furniture (stone sides, tiled top strip, centred HUD panel) laid out for a w x h framebuffer */
+void render_wide_frame(const struct ScreenFrame *sf, int w, int h, const uint8_t **px, const uint8_t **on);
+/* copy the HUD band that render_hud / itemp_hud drew in a 320x200 screen into the wide framebuffer, centred and at its bottom */
+void render_wide_hud(uint8_t *wfb, int w, int h, const uint8_t *fb320);
 
 /* Smooth scrolling (#127, port/smooth.h): pixel offsets the presentation layer
  * hands render_frame so the 8 px cell steps can be drawn part-way through their
