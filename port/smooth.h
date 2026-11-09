@@ -19,7 +19,9 @@
  * the map seam and the 64-row ring), the hero (his own screen-cell delta, which
  * is nonzero where the camera does not follow him), and each enemy, shot and
  * spell sprite (its screen-cell delta since the previous step, matched by record
- * index).  An object with no usable history rides the world's slide, and a jump
+ * index), and each moving fixture (elevator, gate, platform: ring tiles that the map itself does not
+ * hold) by its own screen-cell delta, so a lift carrying the hero stays under him while the rock
+ * scrolls past.  An object with no usable history rides the world's slide, and a jump
  * of more than SMOOTH_MAX_PX is a teleport, not a slide, and is left alone.
  * The HUD and frame never move: only the playfield is redrawn.
  *
@@ -39,7 +41,7 @@ typedef struct Smooth {
     int           have;                     /* prev holds a step */
     const void   *map;
     int           scroll_col, scroll_row, hero_c, hero_r;
-    SmoothPos     obj[MAX_OBJS], shot[MAX_SHOTS + 1], mag[4];
+    SmoothPos     obj[MAX_OBJS], shot[MAX_SHOTS + 1], mag[4], fix[SMOOTH_FIXES];
     SmoothOfs     start;                    /* the offsets at t = 0 of the current step */
 } Smooth;
 
@@ -50,6 +52,8 @@ int  smooth_wrap_delta(int a, int b, int n);
 int  smooth_remaining(int px, double t);
 /* progress through a step that began `elapsed_ms` ago and lasts `period_ms` */
 double smooth_progress(double elapsed_ms, double period_ms);
+/* the ring column of a fixture's leftmost cell (physics.c 82F8), or -1 when it is not on the ring */
+int  smooth_fixture_rcol(int col, int scroll_col, int map_width);
 /* is a per-object move of (dx, dy) pixels a slide (else a jump)? */
 int  smooth_is_slide(int dx, int dy);
 
