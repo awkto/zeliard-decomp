@@ -2,6 +2,7 @@
  * the easing, the wrap arithmetic, the per-step offsets (world, hero, enemy, shot, spell) and
  * that the renderer draws a slide from the ring's spare cells while leaving the normal render
  * byte-identical.  SDL-free, needs no game files, part of `make test`. */
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,6 +51,58 @@ static void t_math(void)
     ck(smooth_is_slide(8, 0) && smooth_is_slide(-24, 24) && !smooth_is_slide(25, 0) && !smooth_is_slide(0, -32), "slide or jump");
 }
 
+/* vsync-locked pacing (#131) */
+static void t_vsync(void)
+{
+    printf("vsync pacing    ");
+    SmoothVsync v; smooth_vsync_init(&v);
+    ck(v.period > 16.6 && v.period < 16.7, "assumes 60 Hz until measured");
+    for (int i = 0; i < 40; i++) smooth_vsync_update(&v, 1000 + i * 8.3333);
+    ck(v.period > 8.2 && v.period < 8.5, "a 120 Hz display is learned (%.2f)", v.period);
+    smooth_vsync_init(&v);
+    for (int i = 0; i < 60; i++) smooth_vsync_update(&v, 500 + i * 16.667 + (i % 3 ? 0.4 : -0.3));
+    ck(v.period > 16.5 && v.period < 16.85, "60 Hz with a little jitter (%.3f)", v.period);
+    double p = v.period;
+    smooth_vsync_update(&v, v.last + 3 * 16.667);       /* two frames skipped: counts as 3 frames, not a 50 ms period */
+    ck(v.period > 16.4 && v.period < 16.9, "a skipped frame does not change the period (%.3f)", v.period);
+    smooth_vsync_update(&v, v.last + 700);               /* a stall (a tab hidden) is ignored */
+    ck(fabs(v.period - p) < 0.5, "a long stall is ignored");
+    smooth_vsync_update(&v, v.last - 5);                 /* time never goes back */
+    ck(fabs(v.period - p) < 0.5, "a frame time that goes back is ignored");
+
+    /* speed 6 is 67.6 ms a step: 4.056 frames.  The step is begun by the first frame at or past the deadline,
+     * so it lasts 4 frames, and one in about 18 lasts 5; never 3 or 6. */
+    const double V = 1000.0 / 60, P = 67.6, E = 2.0;
+    int hist[8] = {0}, agree = 1;
+    for (int ph = 0; ph < 100; ph++) {                    /* the deadline's phase against the frame grid, every 1/100 of a frame */
+        double ts0 = 100;                                 /* a step begun by frame ts0 ... */
+        double deadline = ts0 + E - V * ph / 100.0 + P;   /* ... whose own deadline fell up to a frame (less eps) before it */
+        int k = smooth_frames_to(deadline, ts0, V, E);
+        hist[k < 8 ? k : 7]++;
+        if (!smooth_frame_due(deadline, ts0 + k * V, E) || smooth_frame_due(deadline, ts0 + (k - 1) * V, E)) agree = 0;
+    }
+    ck(agree, "K frames: the step is due at the Kth frame and not the one before, at every phase");
+    ck(hist[4] + hist[5] == 100 && hist[5] >= 4 && hist[5] <= 8, "a 67.6 ms step is 4 frames, sometimes 5 (4:%d 5:%d)", hist[4], hist[5]);
+    ck(smooth_frames_to(0, 100, V, E) == 1 && smooth_frames_to(100, 100, V, E) == 1, "a step already due lasts one frame, never zero");
+    ck(smooth_frames_to(100 + V, 100, V, E) == 1 && smooth_frames_to(100 + V + 2.5, 100, V, E) == 2, "the deadline just past a frame waits for the next");
+    ck(smooth_frame_due(100, 98.5, E) && !smooth_frame_due(100, 97.5, E), "due 2 ms early counts");
+
+    /* the slide: even, and the last picture is one frame's worth from the target, so the next step's first picture
+     * (the previous target) is where the slide was going: no jump, no doubled picture */
+    double prev = 0; int even = 1, px[8];
+    for (int f = 0; f < 4; f++) {
+        double t = smooth_frame_progress(100 + f * V, 100, 4, V);
+        px[f] = smooth_remaining(8, t);
+        if (f && fabs((t - prev) - 0.25) > 1e-9) even = 0;
+        prev = t;
+    }
+    ck(even && px[0] == 8 && px[1] == 6 && px[2] == 4 && px[3] == 2, "4 frames: 8, 6, 4, 2 px to go, then the next step");
+    ck(smooth_frame_progress(100 + 4 * V, 100, 4, V) == 1 && smooth_frame_progress(100 + 9 * V, 100, 4, V) == 1, "the slide is done at frame K, and stays done");
+    ck(smooth_remaining(8, smooth_frame_progress(100 + 3 * V, 100, 5, V)) == 3 && smooth_remaining(8, smooth_frame_progress(100 + 4 * V, 100, 5, V)) == 2, "5 frames: ..., 3, 2");
+    ck(smooth_remaining(24, smooth_frame_progress(100 + 3 * V, 100, 4, V)) == 6, "a 3-cell camera move leaves 6 of 24 px at the last frame");
+    ck(smooth_frame_progress(90, 100, 4, V) == 0 && smooth_frame_progress(100, 100, 0, V) == 1 && smooth_frame_progress(100, 100, 4, 0) == 1, "before the start 0; no frames or period: settled");
+}
+
 static void t_step(void)
 {
     printf("steps           ");
@@ -88,9 +141,20 @@ static void t_step(void)
 
     g->scroll_col = 10; smooth_step(&s, g);
     g->scroll_col = 13; smooth_step(&s, g);
-    ck(!s.start.active, "a 3-cell scroll is a jump (door, teleport), not a slide");
-    g->scroll_col = 14; smooth_step(&s, g);
+    ck(s.start.active && s.start.wx == 24, "a 3-cell scroll (the camera re-centring on a turn) is a slide, not a jump (#131)");
+    g->scroll_col = 11; smooth_step(&s, g);
+    ck(s.start.wx == -16, "a 2-cell scroll back slides too");
+    g->scroll_col = 15; smooth_step(&s, g);
+    ck(!s.start.active && s.start.wx == 0, "a 4-cell scroll is a jump (door, teleport), not a slide");
+    g->scroll_col = 16; smooth_step(&s, g);
     ck(s.start.wx == 8, "and the next step slides again");
+    g->scroll_row = 10; smooth_step(&s, g);
+    g->scroll_row = 13; smooth_step(&s, g);
+    ck(s.start.wy == 24 && s.start.wx == 0, "a 3-row scroll (a fast fall) slides");
+    g->scroll_row = 18; smooth_step(&s, g);
+    ck(s.start.wy == 0, "a 5-row scroll is a jump");
+    g->scroll_row = 10; g->scroll_col = 16; smooth_step(&s, g);
+    g->scroll_col = 15;
     Map m2; memset(&m2, 0, sizeof m2); m2.width = 100;
     g->map = &m2; g->scroll_col = 15; smooth_step(&s, g);
     ck(!s.start.active, "a different map never slides from the old one");
@@ -600,6 +664,7 @@ static void t_wide(void)
 int main(void)
 {
     t_math();    printf("ok\n");
+    t_vsync();   printf("ok\n");
     t_step();    printf("ok\n");
     t_objects(); printf("ok\n");
     t_render();  printf("ok\n");

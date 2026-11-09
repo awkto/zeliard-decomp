@@ -2,6 +2,7 @@
 #include "smooth.h"
 #include "enemy.h"
 #include "town.h"
+#include <math.h>
 #include <string.h>
 
 int smooth_wrap_delta(int a, int b, int n)
@@ -30,6 +31,44 @@ double smooth_progress(double elapsed_ms, double period_ms)
 int smooth_is_slide(int dx, int dy)
 {
     return dx >= -SMOOTH_MAX_PX && dx <= SMOOTH_MAX_PX && dy >= -SMOOTH_MAX_PX && dy <= SMOOTH_MAX_PX;
+}
+
+void smooth_vsync_init(SmoothVsync *v) { v->last = 0; v->period = 1000.0 / 60; v->cand = 0; v->n = v->cn = 0; }
+
+void smooth_vsync_update(SmoothVsync *v, double ts)
+{
+    if (v->last > 0 && ts > v->last) {
+        double d = ts - v->last, k = (double)(int)(d / v->period + 0.5);
+        if (k >= 1 && k <= 6 && d > k * v->period * 0.8 && d < k * v->period * 1.2) {   /* a plain gap of k frames */
+            double w = v->n < 16 ? 1.0 / (v->n + 2) : 0.05;
+            v->period += (d / k - v->period) * w;
+            if (v->period < 4) v->period = 4;
+            if (v->period > 40) v->period = 40;
+            v->n++;
+            v->cn = 0;
+        } else if (d >= 3 && d < v->period * 0.8) {         /* shorter than a frame: a faster display, once three agree */
+            if (v->cn && fabs(d - v->cand) < 0.1 * d) v->cn++; else { v->cand = d; v->cn = 1; }
+            if (v->cn >= 3) { v->period = v->cand; v->n = 0; v->cn = 0; }
+        } else v->cn = 0;
+    }
+    v->last = ts;
+}
+
+int smooth_frame_due(double deadline, double ts, double eps) { return ts + eps >= deadline; }
+
+int smooth_frames_to(double deadline, double ts0, double period, double eps)
+{
+    if (period <= 0) return 1;
+    double x = (deadline - eps - ts0) / period;
+    int k = (int)x;
+    if ((double)k < x) k++;
+    return k < 1 ? 1 : k;
+}
+
+double smooth_frame_progress(double ts, double ts0, int frames, double period)
+{
+    if (frames < 1 || period <= 0) return 1;
+    return smooth_progress(ts - ts0, frames * period);
 }
 
 void smooth_reset(Smooth *s) { memset(s, 0, sizeof *s); }
@@ -102,7 +141,10 @@ void smooth_step(Smooth *s, const Game *g)
     if (s->have && s->map == cur.map) {
         int wc = smooth_wrap_delta(cur.scroll_col, s->scroll_col, g->map ? g->map->width : 0);
         int wr = smooth_wrap_delta(cur.scroll_row, s->scroll_row, 64);
-        if (wc >= -1 && wc <= 1 && wr >= -1 && wr <= 1) { o->wx = wc * 8; o->wy = wr * 8; }
+        /* the camera moves by one cell a step walking, but by up to three when it re-centres (a turn, a fall, a landing, a
+         * lift): that is still a slide.  Anything further is a teleport (a door, a map seam jump) and is left alone (#131). */
+        if (smooth_is_slide(wc * 8, 0)) o->wx = wc * 8;
+        if (smooth_is_slide(0, wr * 8)) o->wy = wr * 8;
         int hx = (s->hero_c - cur.hero_c) * 8, hy = (s->hero_r - cur.hero_r) * 8;
         if (smooth_is_slide(hx, hy)) { o->hx = hx; o->hy = hy; }
         for (int i = 0; i < MAX_OBJS; i++) obj_ofs(&s->obj[i], &cur.obj[i], o->wx, o->wy, &o->ox[i], &o->oy[i]);

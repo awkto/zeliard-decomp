@@ -183,6 +183,13 @@ typedef struct {
     Uint64 sm_last_pc;
     double sm_gap_ms;
     unsigned sm_presents;               /* extra (between-step) presents, for the web measurement */
+    int smlog;                          /* --smooth-log: one stderr line per present / step (#131 measurement) */
+    unsigned sm_step_no;
+    Uint64 sm_log_t0;
+    int sm_woke;                        /* web: what ended the last smooth wait: 1 requestAnimationFrame, 2 the timer */
+    SmoothVsync vs;                     /* web: the display frames' period, from the page's requestAnimationFrame times */
+    double sm_ts0, sm_drawn_ts;         /* the display frame the step's first picture went out with / the last picture's */
+    int sm_frames;                      /* display frames the step lasts (0 = not worked out yet) */
     int turbo, turbo_n, force_draw;     /* host fast-forward (hold ACT_TURBO): shorter frame wait, most presents skipped, music and effects ticked TURBO_MULT times faster */
     int yield_test;                     /* web only: --yield-test yields to the browser at every present, even headless (ASYNCIFY coverage under node) */
 } App;
@@ -1084,20 +1091,89 @@ static void web_push_join(void *h) { (void)h; web_push_run(); }
 #endif
 
 #ifdef __EMSCRIPTEN__
-/* Smooth mode in the web build: wait for the browser's next animation frame (but
- * never longer than `ms`, and rAF stops in a hidden tab, so a timer backs it up) so
- * the between-step presents land at the display's rate instead of the sleep timer's. */
-EM_ASYNC_JS(void, smooth_raf_wait, (int ms), {
-    await new Promise(function (resolve) {
-        var done = false, f = function () { if (!done) { done = true; resolve(); } };
+/* The display frames (requestAnimationFrame) as a clock (#131): one persistent callback keeps the time and count of the
+ * last frame in Module.zelVs, and wakes whatever smooth_vs_wait is parked on it. */
+EM_JS(void, smooth_vs_init, (void), {
+    if (Module.zelVs) return;
+    var v = Module.zelVs = { n: 0, ts: 0, w: null };
+    var f = function (t) {
+        v.n++; v.ts = t;
         requestAnimationFrame(f);
-        setTimeout(f, ms);
+        var w = v.w; if (w) { v.w = null; w(); }
+    };
+    requestAnimationFrame(f);
+});
+EM_JS(double, smooth_vs_ts, (void), { return Module.zelVs ? Module.zelVs.ts : 0; });
+/* Park until the next display frame begins (1) or `ms` pass (2: a hidden tab has no frames).  The wake is inside the
+ * frame's own callback, so a picture drawn right after it goes out with that frame. */
+EM_ASYNC_JS(int, smooth_vs_wait, (int ms), {
+    var v = Module.zelVs;
+    return await new Promise(function (resolve) {
+        var to = setTimeout(function () { v.w = null; resolve(2); }, ms);
+        v.w = function () { clearTimeout(to); resolve(1); };
     });
 });
 #endif
+static double smooth_now_ms(void)
+{
+#ifdef __EMSCRIPTEN__
+    return emscripten_get_now();
+#else
+    return (double)SDL_GetPerformanceCounter() * 1000.0 / (double)SDL_GetPerformanceFrequency();
+#endif
+}
+
 
 static void cavern_draw(App *a, Game *g, const SmoothOfs *so);
 static void town_draw(App *a, Town *t, const SmoothOfs *so);
+
+/* --smooth-log (#131): "SM <kind> <ms since the first> <step> ..." lines.  P = a present (t = the progress it
+ * showed, then wx wy hx hy, new-step flag, what woke the wait), S = a step, k = a between-step present
+ * that smooth_tick declined (g too soon after the last, s same picture, l past the deadline). */
+static double smlog_ms(App *a)
+{
+    (void)a;
+    return smooth_now_ms();
+}
+static double smlog_vs(void)
+{
+#ifdef __EMSCRIPTEN__
+    return smooth_vs_ts();
+#else
+    return 0;
+#endif
+}
+/* the clock of one display frame = the time its requestAnimationFrame callback began.  A picture drawn now goes out with the
+ * frame whose callback we are in (we woke from it), else with the next one; 0 when there is no frame clock (native, a hidden tab) */
+#define SM_EPS_MS 2.0                   /* a step due this soon after a frame began is begun by that frame */
+static double vs_slot(App *a)
+{
+#ifdef __EMSCRIPTEN__
+    if (!a->smooth || a->turbo) return 0;
+    smooth_vs_init();
+    double ts = smooth_vs_ts();
+    if (a->vs.period <= 0) smooth_vsync_init(&a->vs);
+    if (ts <= 0 || emscripten_get_now() - ts > 4 * a->vs.period + 20) return 0;
+    if (ts != a->vs.last) smooth_vsync_update(&a->vs, ts);
+    return a->sm_woke == 1 ? ts : ts + a->vs.period;
+#else
+    (void)a; return 0;
+#endif
+}
+/* an SDL_GetPerformanceCounter() deadline in the frame clock's milliseconds */
+static double deadline_ms(Uint64 c)
+{
+    return smooth_now_ms() + (double)(int64_t)(c - SDL_GetPerformanceCounter()) * 1000.0 / (double)SDL_GetPerformanceFrequency();
+}
+static void smlog_present(App *a, double t, const SmoothOfs *o, int newstep)
+{
+    if (!a->smlog || !a->smooth) return;
+    fprintf(stderr, "SM P %.3f %u %.4f %d %d %d %d %d %d %.3f\n", smlog_ms(a), a->sm_step_no, t, o->wx, o->wy, o->hx, o->hy, newstep, a->sm_woke, smlog_vs());
+}
+static void smlog_skip(App *a, char why, double t)
+{
+    if (a->smlog) fprintf(stderr, "SM k %.3f %u %.4f %c %d\n", smlog_ms(a), a->sm_step_no, t, why, a->sm_woke);
+}
 
 /* One between-step present of a sliding step (#127): where the step is in its interval
  * picks the offsets; nothing is drawn when they quantise to what is already shown, or
@@ -1106,15 +1182,37 @@ static int smooth_tick(App *a, Game *g, Uint64 next, double period_ms)
 {
     if (!a->smooth || !a->sm_live || a->turbo || a->paused || a->mv_open || a->headless) return 0;
     int town = a->scene == 2;
+    double slot = a->sm_ts0 > 0 ? vs_slot(a) : 0;
+    if (slot > 0) {
+        /* the display frames are the clock (#131): one picture per frame, drawn in that frame's callback, at the progress
+         * its frame time gives within the K frames the step will last; the last picture is the one before the next step's */
+        if (a->sm_woke != 1) return 0;
+        if (slot <= a->sm_drawn_ts) { smlog_skip(a, 'd', 0); return 0; }
+        if (!a->sm_frames) {
+            a->sm_frames = smooth_frames_to(deadline_ms(next), a->sm_ts0, a->vs.period, SM_EPS_MS);
+            if (a->smlog) fprintf(stderr, "SM K %.3f %u %d %.3f %.4f\n", smlog_ms(a), a->sm_step_no, a->sm_frames, a->sm_ts0, a->vs.period);
+        }
+        double p = smooth_frame_progress(slot, a->sm_ts0, a->sm_frames, a->vs.period);
+        SmoothOfs v;
+        smooth_ofs_at(town ? &a->tsm.start : &a->sm.start, p, &v);
+        if (smooth_same(&v, &a->sm_ofs)) { smlog_skip(a, 's', p); return 0; }
+        a->sm_ofs = v;
+        if (town) town_draw(a, &a->sh.town, &v); else cavern_draw(a, g, &v);
+        smlog_present(a, p, &v, 0);
+        a->sm_presents++;
+        return 1;
+    }
     Uint64 freq = SDL_GetPerformanceFrequency(), now = SDL_GetPerformanceCounter();
-    if (now >= next) return 0;
-    if ((double)(now - a->sm_last_pc) * 1000.0 / (double)freq < a->sm_gap_ms) return 0;
-    double left = (double)(next - now) * 1000.0 / (double)freq;
+    double left = (double)((int64_t)(next - now)) * 1000.0 / (double)freq;
+    double prog = smooth_progress(period_ms - left, period_ms);
+    if (now >= next) { smlog_skip(a, 'l', prog); return 0; }
+    if ((double)(now - a->sm_last_pc) * 1000.0 / (double)freq < a->sm_gap_ms) { smlog_skip(a, 'g', prog); return 0; }
     SmoothOfs o;
-    smooth_ofs_at(town ? &a->tsm.start : &a->sm.start, smooth_progress(period_ms - left, period_ms), &o);
-    if (smooth_same(&o, &a->sm_ofs)) return 0;
+    smooth_ofs_at(town ? &a->tsm.start : &a->sm.start, prog, &o);
+    if (smooth_same(&o, &a->sm_ofs)) { smlog_skip(a, 's', prog); return 0; }
     a->sm_ofs = o;
     if (town) town_draw(a, &a->sh.town, &o); else cavern_draw(a, g, &o);
+    smlog_present(a, prog, &o, 0);
     a->sm_last_pc = now;
     a->sm_presents++;
     return 1;
@@ -1153,15 +1251,26 @@ static void frame_wait_to(App *a, Game *g, Uint64 *next, Uint64 *stop)
             SDL_Delay(16); *next = *stop = SDL_GetPerformanceCounter(); continue;
         }
         now = SDL_GetPerformanceCounter();
-        if (now >= *stop) break;
+        int due = now >= *stop;
+        const int sm_scene = (a->scene == 1 || a->scene == 2) && g && a->smooth && !a->turbo;
+        if (sm_scene && a->sm_woke == 1) {
+            /* woken by a display frame: the step is begun by the first frame at or past its deadline, not by the timer in
+             * between, so it goes out with that frame and its length in frames is known (smooth.h) */
+            double slot = vs_slot(a);
+            if (slot > 0) due = smooth_frame_due(deadline_ms(*stop), slot, SM_EPS_MS);
+        }
+        if (due) break;
         Uint64 rem = (*stop - now) * 1000 / freq;
         if ((a->scene == 1 || a->scene == 2) && g) smooth_tick(a, g, *next, frame_period_ms(a, a->frame_ms));
 #ifdef __EMSCRIPTEN__
         slept = 1;
-        if ((a->scene == 1 || a->scene == 2) && a->smooth && a->sm_live && !a->turbo)
-            smooth_raf_wait((int)(rem ? rem : 1));      /* smooth: wake at the display's rate to present the slide */
-        else
-        emscripten_sleep((unsigned)(rem ? rem : 1));    /* ASYNCIFY: sleep to the frame deadline in the browser instead of spinning */
+        if (sm_scene) {
+            smooth_vs_init();           /* smooth: wake at the display's rate (in its callback), or after the deadline if frames have stopped */
+            a->sm_woke = smooth_vs_wait((int)(rem + 2 * (Uint64)a->vs.period + 1));
+        } else {
+            a->sm_woke = 0;
+            emscripten_sleep((unsigned)(rem ? rem : 1));    /* ASYNCIFY: sleep to the frame deadline in the browser instead of spinning */
+        }
 #else
         SDL_Delay(rem > 2 ? 1 : 0);
 #endif
@@ -2166,6 +2275,7 @@ static int wide_now(const App *a, const Game *g)
 
 static void cavern_draw(App *a, Game *g, const SmoothOfs *so)
 {
+    a->sm_drawn_ts = vs_slot(a);
     if (wide_now(a, g)) {
         /* The playfield, with the 4 live ring columns beyond the screen on each side, is drawn straight into the
          * 384-wide screen (render_frame_view); the HUD, item slots and Tear icons are drawn by their own code in
@@ -2212,6 +2322,7 @@ static void cavern_draw(App *a, Game *g, const SmoothOfs *so)
 /* The town picture: the frame, HUD and every layer, uploaded and presented (like cavern_draw). */
 static void town_draw(App *a, Town *t, const SmoothOfs *so)
 {
+    a->sm_drawn_ts = vs_slot(a);
     if (t->status) memcpy(a->fb, status_framebuffer(t->status), FB_W * FB_H);
     else if (t->shop) memcpy(a->fb, shop_framebuffer(t->shop), FB_W * FB_H);
     else {
@@ -2302,20 +2413,32 @@ static void present(Game *g)
 #ifdef HAVE_SDL
     /* #127 smooth scrolling: this step's slide, from where the previous step had everything.
      * Only a plain cavern frame slides; a menu, a cutscene, a dissolve or fast-forward forgets. */
-    SmoothOfs so;
+    SmoothOfs so = {0};
     int slide = 0;
     a->sm_live = 0;
     if (a->smooth && !a->turbo && !g->status && !g->tear && !g->dsv_pic && !g->walk_in && !g->encounter_frames &&
         !g->fade_card && !g->dissolve) {
         smooth_town_reset(&a->tsm);
+        int pscr = a->sm.scroll_col, prow = a->sm.scroll_row, phave = a->sm.have;
         smooth_step(&a->sm, g);
         smooth_at(&a->sm, 0, &so);
         slide = so.active;
+        a->sm_step_no++;
+        a->sm_ts0 = vs_slot(a); a->sm_frames = 0;
+        if (a->smlog)
+            fprintf(stderr, "SM S %.3f %u have=%d dscr=%d drow=%d dhero=%d,%d ofs=%d,%d,%d,%d active=%d period=%.2f\n", smlog_ms(a), a->sm_step_no,
+                    phave, phave ? smooth_wrap_delta(g->scroll_col, pscr, g->map ? g->map->width : 0) : 0,
+                    phave ? smooth_wrap_delta(g->scroll_row & 0x3F, prow, 64) : 0,
+                    a->sm.start.hx / 8, a->sm.start.hy / 8, a->sm.start.wx, a->sm.start.wy, a->sm.start.hx, a->sm.start.hy, slide,
+                    frame_period_ms(a, a->frame_ms));
         a->sm_live = slide;
         a->sm_ofs = so;
         a->sm_last_pc = SDL_GetPerformanceCounter();
         if (a->sm_gap_ms <= 0) a->sm_gap_ms = 1000.0 / 60 - 1;
-    } else smooth_reset(&a->sm);
+    } else {
+        if (a->smlog && a->smooth) fprintf(stderr, "SM R %.3f %u smooth-off-for-this-step status=%d tear=%d\n", smlog_ms(a), a->sm_step_no, g->status != NULL, g->tear != NULL);
+        smooth_reset(&a->sm);
+    }
     static Uint64 next = 0;
     a->scene = (!g->status && !g->tear && !g->dsv_pic) ? 1 : 0;
     if (mid_wanted(g) && !a->turbo && !a->paused && !turbo_skip(a)) {
@@ -2330,6 +2453,7 @@ static void present(Game *g)
     }
     if (!turbo_skip(a)) {
         cavern_draw(a, g, slide ? &so : NULL);
+        smlog_present(a, 0.0, &so, 1);
         char title[256];
         snprintf(title, sizeof title, "Zeliard - %s  (%d,%d)  LIFE %u/%u  EXP %u  GOLD %u  %s", g->map->name,
                  game_hero_map_col(g), game_hero_map_row(g), g->hp, g->max_hp, g->exp, (unsigned)g->gold, g->message);
@@ -2415,7 +2539,7 @@ static void town_present(Town *t)
     }
 #ifdef HAVE_SDL
     /* #127 smooth scrolling in a town: only the plain street frame slides */
-    SmoothOfs so;
+    SmoothOfs so = {0};
     int slide = 0;
     a->sm_live = 0;
     if (a->smooth && !a->turbo && !t->status && !t->shop && !t->dsv_pic && !t->dissolve) {
@@ -2423,6 +2547,9 @@ static void town_present(Town *t)
         smooth_town_step(&a->tsm, t);
         smooth_ofs_at(&a->tsm.start, 0, &so);
         slide = so.active;
+        a->sm_step_no++;
+        a->sm_ts0 = vs_slot(a); a->sm_frames = 0;
+        if (a->smlog) fprintf(stderr, "SM S %.3f %u town active=%d wx=%d period=%.2f\n", smlog_ms(a), a->sm_step_no, slide, so.wx, frame_period_ms(a, a->frame_ms));
         a->sm_live = slide;
         a->sm_ofs = so;
         a->sm_last_pc = SDL_GetPerformanceCounter();
@@ -2434,6 +2561,7 @@ static void town_present(Town *t)
     if (shop_rt) { a->scene = 0; shop_pace(a, t, t->shop->tick_n); }
     if (!turbo_skip(a)) {
         town_draw(a, t, slide ? &so : NULL);
+        smlog_present(a, 0.0, &so, 1);
         char title[768];
         snprintf(title, sizeof title, "Zeliard - %s  col %d  LIFE %u/%u  GOLD %u  %.400s", t->map->label,
                  town_hero_col(t), t->g->hp, t->g->max_hp, (unsigned)t->g->gold, t->message);
@@ -2603,6 +2731,11 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--fullscreen")) { a.fullscreen = 1; have_fullscreen = 1; }
         else if (!strcmp(argv[i], "--zoom")) { a.zoom = 1; have_zoom = 1; }       /* start zoomed (Z toggles) */
         else if (!strcmp(argv[i], "--smooth")) { a.smooth = 1; have_smooth = 1; } /* smooth scrolling (T toggles, #127) */
+        else if (!strcmp(argv[i], "--smooth-log")) { a.smlog = 1;
+#ifdef __EMSCRIPTEN__
+            smooth_vs_init();
+#endif
+        }                    /* test only: log every smooth present to stderr (#131) */
         else if (!strcmp(argv[i], "--wide")) { a.wide = 1; have_wide = 1; }       /* the 16:10 cavern view (W toggles, #126) */
         /* the drivers all drew for a 4:3 monitor, so their pixels are not
          * square; --aspect 1:1 turns the correction off for pixel-peeping
