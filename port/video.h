@@ -46,6 +46,7 @@ void video_to_rgb(int mode, const uint8_t *fb, uint8_t *rgb);
 
 /* the per-driver stages (one file each) */
 void video_mcga_to_rgb (const uint8_t *fb, uint8_t *rgb);              /* 320x200 */
+void video_mcga_n_to_rgb(const uint8_t *fb, int npix, uint8_t *rgb);   /* the same for npix pixels (the wide cavern view, #126) */
 void video_cga_to_rgb  (const uint8_t *fb, uint8_t *rgb);              /* 320x200, mode 5 */
 void video_cga2_to_rgb (const uint8_t *fb, uint8_t *rgb);              /* 640x200, mode 6 */
 void video_ega_to_rgb  (const uint8_t *fb, uint8_t *rgb);              /* 640x200 */

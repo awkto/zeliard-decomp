@@ -345,12 +345,157 @@ static void t_town_render(void)
     ck(ok, "a hero offset changes only the hero");
 }
 
+/* ------------------------------------------------------------- the wide view (#126) */
+static ScreenFrame SF;
+
+static void t_wide(void)
+{
+    printf("wide view       ");
+    static Map m; static Tileset t; Game *g = new_game(&m, &t);
+    static uint8_t a[FB_W * FB_H], w[RENDER_WIDE_MAX_W * FB_H];
+    const RenderView rv = RENDER_VIEW_WIDE;
+    const int W = render_view_width(&rv);
+    ck(W == 384 && render_view_width(NULL) == 320, "the full-ring view is 384 wide, the stock one 320");
+    for (int v = 1; v < 8; v++) {
+        t.present[v] = 1;
+        for (int r = 0; r < 8; r++) for (int c = 0; c < 8; c++) t.cell[v].px[r][c] = (uint8_t)(v * 16 + (c == 0 ? 1 : 2));
+    }
+    g->scroll_row = 0;
+    for (int r = 0; r < RING_H; r++) for (int c = 0; c < RING_W; c++) g->bg_ring[r * RING_W + c] = (uint8_t)(1 + (c % 7));
+
+    /* the playfield: ring column c is at x 48 + 8c of the wide screen; the stock 28 columns are 4..31 */
+    render_frame(a, g, NULL);
+    ck(render_frame_view(w, g, NULL, &rv) == 1, "a plain cavern frame is drawn wide");
+    int ok = 1;
+    for (int y = PF_Y; y < PF_Y + PF_H; y++)
+        for (int x = 0; x < 28 * 8; x++) if (w[y * W + PF_X + 32 + x] != a[y * FB_W + PF_X + x]) ok = 0;
+    ck(ok, "the stock 28 columns are the middle of the wide playfield, 32 px in");
+    int margins = 1;
+    for (int y = PF_Y; y < PF_Y + PF_H; y += 8)
+        for (int c = 0; c < 36; c++) {
+            int v = 1 + (c % 7);
+            if (w[y * W + PF_X + c * 8 + 3] != (uint8_t)(v * 16 + 2) || w[y * W + PF_X + c * 8] != (uint8_t)(v * 16 + 1)) margins = 0;
+        }
+    ck(margins, "all 36 ring columns are drawn, margins 0..3 and 32..35 included, each at its own cell");
+    int leak = 0;
+    for (int y = 0; y < FB_H; y++) { for (int x = 0; x < PF_X; x++) leak |= w[y * W + x]; for (int x = PF_X + 288; x < W; x++) leak |= w[y * W + x]; }
+    ck(!leak, "nothing leaks out of the playfield into the stone columns");
+
+    /* a plain 0/0 view is the stock render */
+    const RenderView rs = { 0, 0 };
+    static uint8_t b[FB_W * FB_H];
+    ck(render_frame_view(b, g, NULL, &rs) == 1 && !memcmp(a, b, sizeof a), "a 0/0 view is render_frame, byte for byte");
+    const RenderView bad = { 5, 0 };
+    ck(render_frame_view(b, g, NULL, &bad) == 0, "more than the 4 live columns a side is refused");
+
+    /* which frames are wide */
+    ck(render_wide_ok(g), "a cavern frame is wide");
+    g->boss_map = 1; ck(!render_wide_ok(g) && render_frame_view(w, g, NULL, &rv) == 0, "a boss room is not (stays 28 columns)"); g->boss_map = 0;
+    g->walk_in = 1; ck(!render_wide_ok(g), "nor the walk-in"); g->walk_in = 0;
+    g->encounter_frames = 3; ck(!render_wide_ok(g), "nor the encounter card"); g->encounter_frames = 0;
+    g->dissolve = 2; ck(!render_wide_ok(g), "nor the death dissolve"); g->dissolve = 0;
+
+    /* a shot in a margin column is drawn there (the stock view clips it) */
+    memset(g->shots, 0, sizeof g->shots);
+    g->shots[0].col = 1; g->shots[0].row = 3; g->shots[0].cell = 9; g->shots[1].col = 0xFF;
+    t.present[9] = 1;
+    for (int r = 0; r < 8; r++) for (int c = 0; c < 8; c++) t.cell[9].px[r][c] = 0xEE;
+    render_frame_view(w, g, NULL, &rv);
+    ck(w[(PF_Y + 3 * 8 + 2) * W + PF_X + 1 * 8 + 2] == 0xEE, "a shot at ring column 1 is drawn in the left margin");
+    render_frame(a, g, NULL);
+    int seen = 0;
+    for (int y = 0; y < FB_H; y++) for (int x = 0; x < FB_W; x++) seen |= a[y * FB_W + x] == 0xEE;
+    ck(!seen, "and the stock view does not draw it");
+    g->shots[0].col = 34;
+    render_frame_view(w, g, NULL, &rv);
+    ck(w[(PF_Y + 3 * 8 + 2) * W + PF_X + 34 * 8 + 2] == 0xEE, "a shot at ring column 34 in the right margin");
+    memset(g->shots, 0, sizeof g->shots); g->shots[0].col = 0xFF;
+
+    /* a smooth slide at the edge of a view that is the whole ring shows no wrapped cell from the next row */
+    SmoothOfs o; memset(&o, 0, sizeof o); o.active = 1; o.wx = 8;
+    render_frame_view(w, g, NULL, &rv);
+    static uint8_t w0[RENDER_WIDE_MAX_W * FB_H];
+    memcpy(w0, w, sizeof w0);
+    render_set_smooth(&o); render_frame_view(w, g, NULL, &rv); render_set_smooth(NULL);
+    ok = 1; int dark = 1;
+    for (int y = PF_Y; y < PF_Y + PF_H; y++) {
+        for (int x = PF_X + 8; x < PF_X + 288; x++) if (w[y * W + x] != w0[y * W + x - 8]) ok = 0;
+        for (int x = PF_X; x < PF_X + 8; x++) if (w[y * W + x]) dark = 0;
+    }
+    ck(ok, "wx = +8 in the wide view: the picture moved 8 px right");
+    ck(dark, "...and the column beyond the ring (the neighbouring row's) is left dark, not drawn");
+    leak = 0;
+    for (int y = 0; y < FB_H; y++) for (int x = PF_X + 288; x < W; x++) leak |= w[y * W + x];
+    ck(!leak, "...nothing spills past the right edge");
+
+    /* the message box is centred on the playfield: its rows are the only ones that change */
+    render_frame_view(w0, g, NULL, &rv);
+    g->msg_box = 1; snprintf(g->message, sizeof g->message, "HELLO");
+    render_frame_view(w, g, NULL, &rv);
+    int inside = 1, changed = 0;
+    for (int y = 0; y < FB_H; y++) for (int x = 0; x < W; x++)
+        if (w[y * W + x] != w0[y * W + x]) {
+            changed++;
+            if (y < 30 || y >= 46 || x < 56 + 32 || x >= 56 + 32 + 208) inside = 0;
+        }
+    ck(changed > 100 && inside, "the 208x16 message box is centred on the wide playfield (x 88..295), nothing else changes");
+    g->msg_box = 0;
+
+    /* the furniture: stone sides at the edges, the strip above tiled, the HUD panel centred */
+    memset(&SF, 0, sizeof SF); SF.loaded = 1;
+    for (int y = 0; y < FB_H; y++) for (int x = 0; x < FB_W; x++) {
+        int on = x < 48 || x >= 272 || (x >= 48 && x < 272 && (y < 13 || y >= 158));
+        if (on) { SF.on[y * FB_W + x] = 1; SF.px[y * FB_W + x] = (uint8_t)(1 + (x * 7 + y) % 60); }
+    }
+    const uint8_t *fp, *fo;
+    render_wide_frame(&SF, 384, &fp, &fo);
+    ok = 1;
+    for (int y = 0; y < FB_H; y++) for (int x = 0; x < 48; x++)
+        if (fo[y * 384 + x] != 1 || fp[y * 384 + x] != SF.px[y * FB_W + x]) ok = 0;
+    ck(ok, "the left stone is the original 48 px, unchanged");
+    ok = 1;
+    for (int y = 0; y < FB_H; y++) for (int x = 0; x < 48; x++)
+        if (fo[y * 384 + 336 + x] != 1 || fp[y * 384 + 336 + x] != SF.px[y * FB_W + 272 + x]) ok = 0;
+    ck(ok, "the right stone is the original 48 px at the new right edge");
+    ok = 1;
+    for (int y = PF_Y; y < 158; y++) for (int x = 48; x < 336; x++) if (fo[y * 384 + x]) ok = 0;
+    ck(ok, "the playfield rows carry no furniture");
+    ok = 1;
+    for (int y = 158; y < FB_H; y++) for (int x = 0; x < 224; x++)
+        if (fp[y * 384 + 80 + x] != SF.px[y * FB_W + 48 + x]) ok = 0;
+    ck(ok, "the HUD panel keeps its size, centred (x 80..303)");
+    ok = 1;
+    for (int y = 158; y < FB_H; y++) for (int x = 48; x < 80; x++)
+        if (!fo[y * 384 + x] || fp[y * 384 + x] != SF.px[y * FB_W + 48]) ok = 0;
+    for (int y = 158; y < FB_H; y++) for (int x = 304; x < 336; x++)
+        if (!fo[y * 384 + x] || fp[y * 384 + x] != SF.px[y * FB_W + 271]) ok = 0;
+    ck(ok, "...its edge columns repeated out to the stone");
+    ok = 1;
+    for (int y = 0; y < 13; y++) for (int x = 48; x < 336; x++)
+        if (!fo[y * 384 + x] || fp[y * 384 + x] != SF.px[y * FB_W + 48 + ((x - 48 - 32) % 224 + 224) % 224]) ok = 0;
+    ck(ok, "the strip above is the 224 px strip tiled, in phase with the centred copy");
+    ok = 1;
+    render_wide_frame(&SF, 320, &fp, &fo);                              /* a 320 layout is the original */
+    for (int i = 0; i < FB_W * FB_H; i++)
+        if (fo[i] != SF.on[i] || (fo[i] && fp[i] != SF.px[i])) ok = 0;
+    ck(ok, "width 320 reproduces the original furniture");
+    /* the HUD band composition */
+    static uint8_t h320[FB_W * FB_H]; memset(h320, 0x33, sizeof h320);
+    memset(w, 0, sizeof w);
+    render_wide_hud(w, 384, h320);
+    ck(w[160 * 384 + 80] == 0x33 && w[199 * 384 + 303] == 0x33 && w[160 * 384 + 79] == 0 && w[160 * 384 + 304] == 0 && w[157 * 384 + 100] == 0,
+       "the 320-wide HUD band is copied to x 80..303, rows 158..199");
+    ck(w[5 * 384 + 80] == 0x33 && w[12 * 384 + 303] == 0x33 && w[5 * 384 + 79] == 0 && w[14 * 384 + 100] == 0, "...and so is the strip above (rows 0..12, the Tear icons)");
+    free(g);
+}
+
 int main(void)
 {
     t_math();    printf("ok\n");
     t_step();    printf("ok\n");
     t_objects(); printf("ok\n");
     t_render();  printf("ok\n");
+    t_wide();    printf("ok\n");
     t_town_steps();  printf("ok\n");
     t_town_render(); printf("ok\n");
     printf("%d checks, %d failures\n", checks, failures);

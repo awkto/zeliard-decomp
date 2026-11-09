@@ -20,6 +20,24 @@ typedef void (*BurstWaitFn)(void *user);
 void render_burst(uint8_t *fb, const Game *g, BurstWaitFn wait, void *user);
 void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h);     /* fb: FB_W*FB_H VGA indices */
 
+/* The wide cavern view (#126, docs/WIDESCREEN.md): `lo` / `hi` more ring columns shown on the left / right
+ * of the 28-column window (0..4 each: the ring keeps 4 live beyond it) in a framebuffer 8*(lo+hi) pixels
+ * wider.  lo = hi = 4 is the whole 36-column ring in 384x200.  Presentation only: it reads the ring and
+ * the sprite records and changes none of them.  Returns 0, drawing nothing, when the frame is not a plain
+ * cavern frame (a boss room, the walk-in, the encounter card, the death dissolve, the status screen, the
+ * tear scene): those stay 320 wide, so the caller renders them with render_frame. */
+#define RENDER_WIDE_MAX_W (FB_W + 64)
+typedef struct RenderView { int lo, hi; } RenderView;
+#define RENDER_VIEW_WIDE { 4, 4 }
+static inline int render_view_width(const RenderView *v) { return v ? FB_W + 8 * (v->lo + v->hi) : FB_W; }
+int  render_wide_ok(const Game *g);
+int  render_frame_view(uint8_t *fb, const Game *g, const HeroGfx *h, const RenderView *v);
+struct ScreenFrame;
+/* the furniture (stone sides, tiled top strip, centred HUD panel) laid out for a w-wide framebuffer */
+void render_wide_frame(const struct ScreenFrame *sf, int w, const uint8_t **px, const uint8_t **on);
+/* copy the HUD band that render_hud / itemp_hud drew in a 320x200 screen into the wide framebuffer, centred */
+void render_wide_hud(uint8_t *wfb, int w, const uint8_t *fb320);
+
 /* Smooth scrolling (#127, port/smooth.h): pixel offsets the presentation layer
  * hands render_frame so the 8 px cell steps can be drawn part-way through their
  * slide.  All in framebuffer pixels, applied on top of the cell grid; never set

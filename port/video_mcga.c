@@ -8,10 +8,13 @@
 #include "gfx.h"
 #include "render.h"
 
-void video_mcga_to_rgb(const uint8_t *fb, uint8_t *rgb)
+void video_mcga_to_rgb(const uint8_t *fb, uint8_t *rgb) { video_mcga_n_to_rgb(fb, FB_W * FB_H, rgb); }
+
+/* the same for a framebuffer of any width: the wide cavern view (#126) is 8*(lo+hi) px wider than 320 */
+void video_mcga_n_to_rgb(const uint8_t *fb, int npix, uint8_t *rgb)
 {
     gfx_pal_init();
-    for (int i = 0; i < FB_W * FB_H; i++) {
+    for (int i = 0; i < npix; i++) {
         const uint8_t *p = PAL_RGB[fb[i] & 63];
         rgb[i * 3] = p[0]; rgb[i * 3 + 1] = p[1]; rgb[i * 3 + 2] = p[2];
     }
