@@ -357,7 +357,7 @@ static void draw_enemies(uint8_t *fb, const Game *g)
                 ff[sc] = 1; ff[sc + 1] = 1;
             }
         } else if (u >= 0 && u < VR) {
-            uint8_t *t = &ff[u * FFW + sc];
+            uint8_t *t = &ff[u * FFW + (sc > 0 ? sc : 0)];   /* only used for sc >= 0 (33E3 re-points it): a sprite left of the view on row 0 must not form ff[-k] (UBSan, #126 step 4) */
             if (sc >= 0 && sc <= cols - 2) {                           /* 3468 */
                 skip[0] = t[0]; skip[1] = t[1]; skip[2] = t[FFW]; skip[3] = t[FFW + 1];
                 t[0] = 0; t[1] = 1; t[FFW] = 1; t[FFW + 1] = 1;

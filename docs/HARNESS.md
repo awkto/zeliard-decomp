@@ -970,7 +970,7 @@ slots, their files and the on-screen confirmation (see 9.4).
 All integers little-endian, written field by field (no struct dumps, no padding):
 
     offset 0    8    magic "ZELSTATE"
-    offset 8    4    version (1)
+    offset 8    4    version (1; 2 for a state with a wider ring, #126)
     offset 12   4    payload length N
     offset 16   N    payload
     offset 16+N 4    CRC-32 (IEEE) of the payload
@@ -986,6 +986,13 @@ RNG, deaths, the message box and the map-transition walk-in); then the town `Tow
 and the town map's mutable bytes (the `grid` and the `NPC` records).  Resource
 pointers (map, tileset, AI overlay, fonts, art) are **not** stored: the loader calls
 the shell's own entry points to rebuild them and then overwrites the dynamic fields.
+
+Version 2 (`SAVESTATE_VERSION_WIDE`, issue #126 step 4) is written only when the cavern ran with a
+ring wider than the original's (`Game.wide` = E > 0, the debug-only `ZEL_RING_EXTRA`): one byte E
+comes before the two rings, which are then `36 + 2E` columns x 64 rows each.  The loaded state keeps
+the E it was saved with, whatever the loading run asks for (every ring column in it is in that
+geometry); the next map entry derives E from the request again.  With E = 0 the file is version 1,
+byte for byte as before, and `--trace` refuses a version-2 state.
 
 A state is only written at a **plain `717F` / `68ED` frame boundary**, after that
 frame's post-boundary tail has run, so a fresh `game_step` / `town_step` resumes from

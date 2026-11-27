@@ -3091,6 +3091,19 @@ int main(int argc, char **argv)
     if (shell_init(sh, gdir, map_idx)) return 1;
     Game *g = &sh->g;
     if (a.trace_f) g->harness_rng = 1;                                  /* HARNESS §3: no +20 stir */
+    {   /* #126 step 4, debug only (not a player setting, not in --help): ZEL_RING_EXTRA=E runs every cavern map
+         * that is wide enough with a ring of 36 + 2E columns (game_wide_for_map).  The trace is the original's
+         * 36-column E000, so --trace forces 0 (ZEL_RING_EXTRA=0 with --trace is the "forced, E = 0" check of
+         * docs/WIDESCREEN.md §5). */
+        const char *re = getenv("ZEL_RING_EXTRA");
+        if (re && *re) {
+            char *end; long e = strtol(re, &end, 10);
+            if (*end || e < 0 || e > WIDE_E_MAX) { fprintf(stderr, "ZEL_RING_EXTRA: 0..%d\n", WIDE_E_MAX); return 2; }
+            if (e && a.trace_f) { fprintf(stderr, "[debug] ZEL_RING_EXTRA=%ld ignored: --trace runs the original 36-column ring\n", e); e = 0; }
+            g->wide_req = (uint8_t)e;
+            if (e) fprintf(stderr, "[debug] ZEL_RING_EXTRA=%ld: a %ld-column ring in the caverns wide enough for it\n", e, (long)RING_W_OF(e));
+        }
+    }
 
     snprintf(g->player_name, sizeof g->player_name, "%s", save_name);    /* FF6C..FF73 */
     if (load_name && player_load_usr(g, sh->dir, load_name) == 0) {      /* town.bin 7592 restore_game */
@@ -3356,6 +3369,7 @@ int main(int argc, char **argv)
         if (!a.trace_f) { fprintf(stderr, "--state-load needs --trace (it continues the trace numbering)\n"); return 2; }
         SavestateMeta meta;
         if (savestate_load(sh, a.state_load, &meta)) return 1;
+        if (sh->g.wide) { fprintf(stderr, "--state-load: %s has a %d-column ring; --trace needs the original 36\n", a.state_load, ring_w(&sh->g)); return 2; }
         a.trace_n = meta.frame + 1;
         a.rng_mark = meta.rng_calls;
         fprintf(stderr, "[state] loaded %s: continues at frame %u\n", a.state_load, a.trace_n);

@@ -17,6 +17,11 @@
 
 #define SAVESTATE_MAGIC   "ZELSTATE"
 #define SAVESTATE_VERSION 1u
+/* #126 step 4: a state saved with a wider ring (Game.wide = E > 0) is version 2:
+ * the payload gains one byte, E, before the two rings, which are then
+ * RING_W_OF(E) x 64 bytes each.  A state with E = 0 is still written as
+ * version 1, byte for byte the format it always was; both load. */
+#define SAVESTATE_VERSION_WIDE 2u
 
 /* what the loader hands back to the harness: the trace frame this state is the
  * boundary of, and the kernel RNG call counter at that boundary (so the

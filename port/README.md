@@ -52,9 +52,9 @@ keyboard: once for the fight, once for the reward the map hands back afterwards
 ```
 cd port
 make                 # port/zeliard (SDL2 if pkg-config/sdl2-config finds it, else headless) + 16 test binaries
-make test            # physics (149) + combat/AI (232) + town (176) + boss (642) + shop (200)
-                     #   + status (87) + playthrough (176) + audio (412) + cutscene (52)
-                     #   + video (198) + config (68) + sync (144) + mapview (105) + smooth (170) = 2811 assertions.  Needs no game files:
+make test            # physics (178) + combat/AI (232) + town (176) + boss (642) + shop (200)
+                     #   + status (87) + playthrough (187) + audio (412) + cutscene (52)
+                     #   + video (198) + config (68) + sync (144) + mapview (105) + smooth (170) = 2851 assertions.  Needs no game files:
                      #   every binary skips its data half when zeliard/ is not there.
 make verify          # 235 headless renders diffed against the DOSBox captures in docs/screenshots/,
                      #   plus the gd decoders vs tools/grp2png.py over all 31 intro/ending resources
@@ -955,14 +955,17 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   not scripted at all.  Shops are answered frame by frame: the driver pages the text
   with the select button and walks the cursor to the row the route names, using the
   `in_menu` / `menu_row` that `menu_select` now publishes.
-* `test_physics.c` — 149 assertions (idle, walk, walls, jumps, ceilings, gaps, edge
+* `test_physics.c` — 178 assertions (idle, walk, walls, jumps, ceilings, gaps, edge
   fall, ladders, conveyor, hazard, currents/updraft (2 per frame, and the frame still
   renders: #60), MP10 door/platform, elevators and the fixture-C
   patrol, locked doors + keys + the message-box lifetime, the C00C patch list, the
   26-frame walk-in, **and the ring/`[80]` alignment after scrolling both ways** —
   the last one walks MP10's entrance shelf 40 columns east and back and checks that
   ring column *i* is still map column `scroll_col + i` on every step, which is the
-  regression guard for the `scroll_right` bug below).
+  regression guard for the `scroll_right` bug below; and #126 step 4's wider ring:
+  the per-map E rule over all 31 system maps, and MP10 with a corridor carved through it
+  walked all 240 columns east and back at E 0, 4 and 13, the ring equal to the map's
+  `ring_fill` columns after every step, the hero on his pin 12 + E).
 * `test_combat.c` — 232 assertions: the eai1 tables, the damage formulas, contact (751F's
   4-column scan, the feet row under the middle two), the 63-frame death (98FC) and
   knockback, sword kills, EXP, drops, the bat wake window, the frog hop, **the eight
@@ -1037,7 +1040,7 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
   `menu_result = 8`; selecting a spell into `[9D]` and wearing an item into
   `[9E]` through the real cursor; the row change; the Enter debounce; and the
   window frames and header colours in the rendered framebuffer.
-* `test_playthrough.c` — 176 assertions over two autopilot runs, two fixture
+* `test_playthrough.c` — 187 assertions over two autopilot runs, two fixture
   crossings and a survey of cavern 1's topology (`make playthrough` prints the
   routes step by step):
   * **route 1, the opening**, played end to end with nobody at the keyboard: the
@@ -1095,7 +1098,10 @@ scroll_row 61).  The map header's own start (26,16) is a different entry; use
     now that the executor waits for it instead of walking off its front).
   * **the realtime save states (#52)**: `state_roundtrip_unit` round-trips a
     state blob in-process (the player record and the ring survive; a garbage,
-    truncated or bit-flipped blob is refused), and `statekeys_unit` pins the
+    truncated or bit-flipped blob is refused; an E = 0 state is still version 1),
+    `state_wide_unit` saves MP10 with a ring of E 4 (#126 step 4: version 2, E in
+    the payload) and loads it into runs asking for E 0 and 4 (the saved geometry
+    comes back, and 75 frames after it replay the saved run), and `statekeys_unit` pins the
     player-facing layer — the quick/slot file names, the request queue, and that
     a shop refuses a save and says so on screen.  The cross-run trace proof is
     `tools/harness/state_roundtrip.sh`, which now also drives the in-game

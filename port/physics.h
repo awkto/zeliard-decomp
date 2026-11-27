@@ -4,34 +4,43 @@
 #ifndef ZEL_PHYSICS_H
 #define ZEL_PHYSICS_H
 #include <stdint.h>
+#include <stddef.h>
 #include "map.h"
 #include "gfx.h"
 
 /* The ring's geometry is a function of one per-map value, E = the columns
- * added on each side (issue #126, docs/WIDESCREEN.md §5).  Nothing reads a
- * width literal: the sim goes through ring_w(g), hero_rcol(g), edge_hi(g, k)
- * etc. below, which give the original's constants back while E is 0.  E is 0
- * everywhere for now (step 3, the no-op refactor); step 4 makes ring_extra()
- * return a per-map value and has nothing else to change. */
+ * added on each side (issue #126, docs/WIDESCREEN.md §5, §8.2, §8.3).  Nothing
+ * reads a width literal: the sim goes through ring_w(g), hero_rcol(g),
+ * edge_hi(g, k) etc. below, which give the original's constants back while E
+ * is 0.  E is Game.wide, set at every map entry (game_place) from the
+ * requested Game.wide_req by game_wide_for_map(): 0 unless a debug run asks
+ * for more (step 4: the mode is not exposed to players yet). */
 #define RING_H    64
 #define RING_W_OF(e)       (36 + 2 * (e))         /* the ring stride: 0x24 */
 #define VIEW_COLS_OF(e)    (28 + 2 * (e))         /* screen columns: 0x1C */
 #define HERO_COL_OF(e)     (12 + (e))             /* the hero's pinned screen column [83]: 0x0C */
 #define HERO_RCOL_OF(e)    (HERO_COL_OF(e) + 5)   /* his body's ring column: 0x11 */
 #define RING_W_ORIG        RING_W_OF(0)
-/* E000 as the original lays it out: 2304 bytes of stride 36.  The trace and
- * the savestate keep this layout (they never see a wide ring, §5). */
+/* E000 as the original lays it out: 2304 bytes of stride 36.  The trace keeps
+ * this layout (it never sees a wide ring, §5); the savestate writes it for E 0. */
 #define RING_SIZE_ORIG     (RING_W_ORIG * RING_H)
-/* the widest stride the storage holds; the live part is ring_size(g).  Kept at
- * the original's 36 while E is always 0, so the bytes after the ring are the
- * same struct fields as before (a shot in ring row 63 past column 35 reads
- * past E000+0x8FF, into the E900 shadow in the original): step 4 raises it. */
-#define RING_STRIDE_MAX    36
+/* The widest E: 13 columns each side, the 62-column ring that makes the wide
+ * view's zoom-out 2 (62 columns, §8.1) live to its edges. */
+#define WIDE_E_MAX         13
+/* A map takes E only if it is at least this wide; otherwise (and in boss maps
+ * and rooms) it falls back to E = 0.  The `+ 5` keeps the door arches'
+ * "off the ring" test (78DD/7981: ring column > ring_w + 3) unambiguous: a
+ * column one left of the ring must not wrap round to look like one on its
+ * right, the same margin the original has on its narrowest map (MP90, 42 = 36 + 6). */
+#define WIDE_MIN_MAP_W(e)  (RING_W_OF(e) + 5)
+/* the widest stride the storage holds; the live part is ring_size(g) */
+#define RING_STRIDE_MAX    RING_W_OF(WIDE_E_MAX)
 #define RING_CAP           (RING_STRIDE_MAX * RING_H)
 #define SCREEN_COLS 28
 _Static_assert(RING_W_OF(0) == 36 && RING_SIZE_ORIG == 2304 && VIEW_COLS_OF(0) == 28 && VIEW_COLS_OF(0) == SCREEN_COLS &&
                HERO_COL_OF(0) == 0x0C && HERO_RCOL_OF(0) == 0x11 && RING_W_OF(0) - 1 == 0x23 &&
-               VIEW_COLS_OF(0) + 4 == 0x20 && RING_W_OF(0) <= RING_STRIDE_MAX,
+               VIEW_COLS_OF(0) + 4 == 0x20 && RING_W_OF(0) <= RING_STRIDE_MAX && RING_STRIDE_MAX == 62 &&
+               WIDE_MIN_MAP_W(0) <= 42,
                "#126: the default (E = 0) ring geometry is the original's");
 #define SCREEN_ROWS 19
 
@@ -152,7 +161,9 @@ typedef int (*PostBossFn)(Game *g, int post_ai, int post_enemies);
 struct Game {
     const Map     *map;
     const Tileset *tiles;
-    uint8_t  ring[RING_CAP];        /* E000: row-major, stride ring_w(g) (36); ring row == map row */
+    uint8_t  ring[RING_CAP];        /* E000: row-major, stride ring_w(g) (36 + 2E); ring row == map row; the live part is the first ring_size(g) bytes.
+                                     * Nothing may be declared between ring[] and bg_ring[] but the four render fields below: a ring read
+                                     * past the live ring sees them (ring_peek, the `ring tail`, §8.3). */
     uint8_t  hero_drawn_ok; int hero_drawn_row, hero_drawn_col;   /* [4FED]: where 70D4 last drew the hero */
     uint8_t  sword_blk_ok;  int sword_blk_row,  sword_blk_col;    /* [4FED] as 7047's 3E34 saw it (previous frame's) */
     uint8_t  bg_ring[RING_CAP];    /* the ring as 710F [3000] (gfmcga 302C) draws the background at 3159, i.e. before 315C animates each cell: render.c draws the background from this, so it lags only this frame's 315C step.  Refreshed from ring at the top of frame_7094 (after 6F9B's simulation, before the draw). */
@@ -342,6 +353,8 @@ struct Game {
     int      walk_in_dir;           /* +8 / -8 px per frame */
 
     /* port side */
+    uint8_t  wide;                  /* #126 E: the columns the ring has on each side beyond the original's, for this map (ring_extra) */
+    uint8_t  wide_req;              /* the E asked for (a debug run: ZEL_RING_EXTRA); game_place derives `wide` from it per map */
     uint8_t  dirs;                  /* INT 61h AL: current direction bits */
     unsigned frame_no;              /* rendered frames */
     unsigned hazard_frames;         /* frames spent on hazard tiles (damage is stubbed) */
@@ -407,13 +420,14 @@ enum { MSG_GOLD50, MSG_GOLD100, MSG_GOLD500, MSG_GOLD1000, MSG_KEY, MSG_RECOVERE
 void game_run_walk_in(Game *g);            /* play out a started walk-in now (a door into a town) */
 void game_start_walk_in(Game *g, int face_left);
 
-/* ---------------------------------------------- ring geometry (#126 step 3)
- * E = ring_extra(g) is 0 until step 4 makes it settable, so each helper is the
- * original's constant.  Edges are counted from the right on the live stride:
- * edge_hi(g, 1) = 0x23 (the last column), 2 = 0x22, 3 = 0x21, 4 = 0x20.  The
- * left edges (1, 2, 3) do not move.  Ring deltas are ring_delta(g, dr, dc),
- * so a column -1 still lands in the previous row as the original's pointers do. */
-static inline int ring_extra(const Game *g) { (void)g; return 0; }
+/* ---------------------------------------------- ring geometry (#126 steps 3, 4)
+ * E = ring_extra(g) = Game.wide, 0 unless a debug run asks for more, so each
+ * helper is the original's constant by default.  Edges are counted from the
+ * right on the live stride: edge_hi(g, 1) = 0x23 (the last column), 2 = 0x22,
+ * 3 = 0x21, 4 = 0x20.  The left edges (1, 2, 3) do not move.  Ring deltas are
+ * ring_delta(g, dr, dc), so a column -1 still lands in the previous row as the
+ * original's pointers do. */
+static inline int ring_extra(const Game *g) { return g->wide; }
 static inline int ring_w(const Game *g)      { return RING_W_OF(ring_extra(g)); }
 static inline int ring_size(const Game *g)   { return ring_w(g) * RING_H; }
 static inline int ring_last(const Game *g)   { return ring_w(g) - 1; }
@@ -422,5 +436,28 @@ static inline int view_cols(const Game *g)   { return VIEW_COLS_OF(ring_extra(g)
 static inline int hero_col(const Game *g)    { return HERO_COL_OF(ring_extra(g)); }
 static inline int hero_rcol(const Game *g)   { return HERO_RCOL_OF(ring_extra(g)); }
 static inline int ring_delta(const Game *g, int dr, int dc) { return dr * ring_w(g) + dc; }
+
+/* The byte a ring read at an unwrapped index sees.  game_ring_index() is not
+ * wrapped (6D6E), so a shot in ring row 63 past the last column reads past the
+ * live ring: in the original E000 + 0x900.. is the E900 screen shadow, in the
+ * port it has always been the Game fields that follow the 2304-byte ring[]
+ * (the four render fields, then bg_ring[]).  That stays so for every E: an
+ * index past ring_size(g) reads the same struct bytes after the ring storage,
+ * the `ring tail`, whatever the storage's size -- so E = 0 sees exactly the
+ * bytes it saw when the storage was 2304 bytes (§8.3).  The furthest such read
+ * is 255 - ring_w bytes in (a uint8_t column), well inside the struct. */
+_Static_assert(offsetof(Game, hero_drawn_ok) == offsetof(Game, ring) + RING_CAP &&
+               offsetof(Game, bg_ring) - offsetof(Game, hero_drawn_ok) == 24 &&
+               sizeof(uint8_t[RING_CAP]) % 4 == 0,
+               "#126: the bytes after ring[] (the ring tail) are the ones the 2304-byte ring had");
+static inline uint8_t ring_peek(const Game *g, int p)
+{
+    int n = ring_size(g);
+    if (p < n) return g->ring[p];
+    return ((const uint8_t *)g)[offsetof(Game, ring) + RING_CAP + (size_t)(p - n)];
+}
+/* the E this map runs with: the request, or 0 in a boss map / boss room or a
+ * map narrower than WIDE_MIN_MAP_W(E) (§2.9, §7 risk 4) */
+int  game_wide_for_map(const Game *g, const Map *m);
 
 #endif

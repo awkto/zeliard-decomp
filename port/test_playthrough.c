@@ -575,6 +575,12 @@ static void state_roundtrip_unit(const char *dir)
        "state: the player record round-trips (hp %u gold %u level %u dirs %u)",
        g->hp, (unsigned)g->gold, g->level, g->dirs);
     ck(g->ring[100] == 0xAB, "state: the ring round-trips (%02X)", g->ring[100]);
+    {   /* #126: a state with the original ring (E = 0) is still the version-1 format */
+        uint8_t h[16] = {0};
+        FILE *hf = fopen(good, "rb");
+        if (hf) { if (fread(h, 1, 16, hf) != 16) memset(h, 0, 16); fclose(hf); }
+        ck(h[8] == 1 && !h[9] && !h[10] && !h[11] && g->wide == 0, "state: an E = 0 state is version 1 (%u)", h[8]);
+    }
 
     /* a garbage file, a truncated copy and a flipped byte must all be refused */
     FILE *f = fopen("/tmp/zel_state_bad.bin", "wb");
@@ -593,6 +599,59 @@ static void state_roundtrip_unit(const char *dir)
     if (f) { fwrite(blob, 1, n, f); fclose(f); }
     ck(savestate_load(&ss, "/tmp/zel_state_flip.bin", &meta) != 0, "state: a bit-flipped blob is refused");
 
+    shell_free(&ss);
+}
+
+/* #126 step 4: a state saved with a wider ring (E > 0) is version 2, carries E,
+ * and loads back into that geometry even when the loading run asks for another
+ * E: the same ring, camera and records, and the same frames after it. */
+static unsigned wide_fingerprint(const Game *g)
+{
+    unsigned h = 2166136261u;
+    for (int i = 0; i < ring_size(g); i++) h = (h ^ g->ring[i]) * 16777619u;
+    h = (h ^ (unsigned)g->scroll_col) * 16777619u; h = (h ^ g->hero_scr_col) * 16777619u;
+    h = (h ^ g->scroll_row) * 16777619u; h = (h ^ g->rng) * 16777619u; h = (h ^ g->rng_calls) * 16777619u;
+    for (int i = 0; i < g->nobj; i++) h = (h ^ g->obj[i].rcol ^ (unsigned)g->obj[i].col << 8 ^ (unsigned)g->obj[i].row << 24) * 16777619u;
+    return h;
+}
+static void state_wide_unit(const char *dir)
+{
+    static Shell ss;
+    shell_free(&ss); memset(&ss, 0, sizeof ss);
+    ss.quiet = 1;
+    if (shell_init(&ss, dir, 0)) { ck(0, "wide state: shell_init"); return; }
+    Game *g = &ss.g;
+    g->wide_req = 4;
+    if (!shell_enter_cavern(&ss, 0, 61, 7, 0, 0)) { ck(0, "wide state: entering MP10"); shell_free(&ss); return; }
+    g->hp = g->max_hp = 9999;
+    ck(g->wide == 4 && ring_w(g) == 44 && g->hero_scr_col == 16 && game_hero_map_col(g) == 61,
+       "wide state: MP10 entered with E 4 (stride %d, pin %d, hero col %d)", ring_w(g), g->hero_scr_col, game_hero_map_col(g));
+    for (int f = 0; f < 40; f++) { g->dirs = f < 20 ? DIR_RIGHT : DIR_LEFT; game_step(g); }
+    const char *path = "/tmp/zel_state_wide.bin";
+    unsigned fp0 = wide_fingerprint(g);
+    ck(savestate_save(&ss, path, 9, g->rng_calls) == 0, "wide state: a blob is written");
+    uint8_t h[16] = {0};
+    FILE *f = fopen(path, "rb");
+    if (f) { if (fread(h, 1, 16, f) != 16) memset(h, 0, 16); fclose(f); }
+    ck(h[8] == 2 && !h[9], "wide state: an E > 0 state is version 2 (%u)", h[8]);
+    unsigned fp_run[3];
+    for (int k = 0; k < 3; k++) { for (int i = 0; i < 25; i++) { g->dirs = (k & 1) ? DIR_LEFT : DIR_RIGHT; game_step(g); } fp_run[k] = wide_fingerprint(g); }
+    /* load it into a run that asks for the original ring, and into one that asks for E 4 */
+    for (int want = 0; want < 2; want++) {
+        g->wide_req = want ? 4 : 0;
+        SavestateMeta meta;
+        ck(savestate_load(&ss, path, &meta) == 0, "wide state: loads (request E %d)", g->wide_req);
+        ck(g->wide == 4 && ring_w(g) == 44 && wide_fingerprint(g) == fp0,
+           "wide state: E %d, the ring, camera and records as saved (request E %d)", g->wide, g->wide_req);
+        int same = 1;
+        for (int k = 0; k < 3; k++) { for (int i = 0; i < 25; i++) { g->dirs = (k & 1) ? DIR_LEFT : DIR_RIGHT; game_step(g); } same &= wide_fingerprint(g) == fp_run[k]; }
+        ck(same, "wide state: the 75 frames after the load replay the saved run (request E %d)", g->wide_req);
+    }
+    /* a corrupt E is refused: patch the byte and re-checksum would be needed, so check the bound
+     * the other way -- the next map entry derives E from the request again */
+    g->wide_req = 0;
+    if (shell_enter_cavern(&ss, 0, 61, 7, 0, 0)) ck(g->wide == 0 && ring_w(g) == 36 && g->hero_scr_col == 12, "wide state: the next entry takes the requested E again (%d)", g->wide);
+    else ck(0, "wide state: re-entering MP10");
     shell_free(&ss);
 }
 
@@ -874,6 +933,7 @@ int main(int argc, char **argv)
     cavern_routes(dir, verbose);
     cavern_progression(dir, verbose);
     state_roundtrip_unit(dir);
+    state_wide_unit(dir);
     statekeys_unit();
     restore_unit(dir);
     speed_unit(dir);

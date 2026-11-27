@@ -1,8 +1,9 @@
 # Widescreen mode: design study (issue #126)
 
-Status: steps 0-3 are implemented (section 8: the 16:10 view of the whole ring, `--wide` / `W` / `wide=`,
-presentation only, 8.1: the two zoom-out levels of `Z`, and 8.2: the ring's width as a runtime value, still
-always 36); steps 4-9 (a wider ring, 16:9) are not.  The study's citations are to `main` at 7ecb412.
+Status: steps 0-4 are implemented (section 8: the 16:10 view of the whole ring, `--wide` / `W` / `wide=`,
+presentation only, 8.1: the two zoom-out levels of `Z`, 8.2: the ring's width as a runtime value, and 8.3: that
+value settable per map, up to 62 columns, behind a debug-only switch); steps 5-9 (the wide sim exposed and drawn,
+16:9) are not.  The study's citations are to `main` at 7ecb412.
 `port/x.c:N` is the port; four-digit hex addresses are fight.bin (`disasm/overlays/fight.asm`)
 unless a file is named (gfmcga = `disasm/overlays/gfmcga.asm`).
 
@@ -493,3 +494,86 @@ scenarios (caverns 1 and 4-7, lifts, gates, respawns: 10944 pictures) byte-ident
 14 binaries, all pass, counts agree with the docs; `make verify` 235 comparisons green.  No oracle run: the
 traces are those of `main` byte for byte.
 
+### 8.3 Step 4: the ring width settable (debug only)
+
+`ring_extra(g)` now returns `Game.wide`, E, and the ring storage is the widest stride: `WIDE_E_MAX` = 13,
+`RING_STRIDE_MAX` = `RING_W_OF(13)` = 62 columns (3968 bytes; `bg_ring` likewise).  13 is the zoom-out 2 view of
+8.1: 62 columns, the 36 of the ring plus 13 each side, so at E = 13 that whole picture is ring, i.e. live.  The live
+part of the storage is `ring_size(g)` = (36 + 2E) x 64; `ring_fill`, `scroll_left` / `scroll_right` (the `memmove`
+and the refill of column `ring_last`), `remark_column`, the pin (`hero_scr_col = hero_col(g)` = 12 + E at
+`game_init`, `game_place`, 6FF9 and the walk-in's 7D28) and `game_place`'s `scroll_col = col - (12 + E) - 4`
+already went through the helpers in step 3, so they needed nothing more.
+
+**Who sets E.**  `game_place` (every map entry: a door, a cave record, a death restart, a state load's re-entry)
+sets `g->wide = game_wide_for_map(g, map)` before it places the camera, fills the ring and loads the fixtures and
+records, so E is fixed for the stay on that map.  The rule: the requested `Game.wide_req` (capped at 13), or 0
+when the map is a boss map or a boss room (`lvl_flags` bit 7 / bit 6: section 3; the post-boss refill keeps
+the 0 it entered with) or narrower than `WIDE_MIN_MAP_W(E)` = 36 + 2E + 5.  The `+ 5` keeps the door arch's "off
+the ring" test (7981: ring column > `ring_w + 3`) unambiguous, so a column just left of the ring never wraps
+round to look like one past its right end; the original has that margin on its narrowest map (MP90, 42 = 36 + 6).
+There is no clamp to a smaller E: a map that cannot take the requested E takes 0 (section 2.9).  `map_widths`
+now prints each map's largest E.  At E = 13 every cavern map keeps 13 except **MP84** (64 columns; it would take
+up to 11), which falls back to 0; the boss maps (MP1D, MP2D, MP3D, MP4D, MP5D, MP6D, MP73, MP7D, MP8D, MPA0) and
+the boss room MP90 are 0 by rule.  At E = 4 only the boss maps and MP90 are 0.
+
+**The debug switch.**  `ZEL_RING_EXTRA=E` (0..13) in the environment sets `wide_req` after `shell_init`; it is not
+in `--help`, not a config key and not on any key.  `--trace` forces it to 0 (with a note on stderr), so `E000` in
+a trace is always 2304 bytes of stride 36; `ZEL_RING_EXTRA=0 --trace` is the "forced, E = 0" run of section 5.  The
+picture is still the 28-column window at ring columns 4..31 (below), so it is for tests and for looking, not for
+playing.
+
+**The ring tail (the row-63 read).**  `game_ring_index` is not wrapped (6D6E), so a shot in ring row 63 past the
+last column (`shots.c` 846F's wall test) reads past the live ring: in the original E000 + 0x900.. is the E900
+screen shadow, in the port it has always been the `Game` fields after the 2304-byte `ring[]` (the four render
+fields `hero_drawn_*` / `sword_blk_*`, 24 bytes with padding, then `bg_ring[]`).  Choice: keep that, for every E,
+rather than model E900.  The read goes through `ring_peek(g, p)`: below `ring_size(g)` it is `ring[p]`, past it
+the struct bytes that follow the storage at the same offset past the live end, `((uint8_t *)g)[offsetof(ring) +
+RING_CAP + (p - ring_size)]`.  With E = 0 those are exactly the bytes the old 2304-byte array overran into
+(the fields after `ring[]` are unchanged and a `_Static_assert` pins the layout: `hero_drawn_ok` right after the
+storage, `bg_ring` 24 bytes on), so the trace cannot move; it is also now a defined read of the object rather
+than an out-of-bounds index.  Modelling E900 would be more faithful but would change E = 0 wherever such a shot
+exists, which this step must not.  Every other ring index was checked to be wrapped (`game_ring_add`,
+`wrap_down`) or a record's own column (< `ring_w`).
+
+**Savestate.**  A state saved with E > 0 is version 2 (`SAVESTATE_VERSION_WIDE`): one byte E before the two rings,
+which are then `RING_W_OF(E)` x 64 each.  E = 0 still writes version 1, byte for byte as before; both load.  A
+loaded state keeps the E it was saved with whatever the loading run asks for, since every ring column in it
+(`scroll_col`, `hero_scr_col`, the records' `rcol`, the shots) is in that geometry; the next map entry derives E
+from the request again.  `--state-load` under `--trace` refuses a version-2 state.  (docs/HARNESS.md 9.1.)
+
+**Tests.**  `test_physics`: `wide rule` (the per-map rule, its fallbacks, and the table over all 31 system maps
+at E 4 and 13) and `wide walk 0 / 4 / max`: MP10 with a corridor carved through rows 4..9 over a floor at row 10
+(no doors, records or fixtures), walked 252 columns east and back west at E 0, 4 and 13; after every step all
+`ring_w` columns of both `ring` and `bg_ring` are `ring_fill`'s (map columns `scroll_col ..`), the hero is on the
+corridor one map column further and on his pin 12 + E, and `ring_peek` past the live ring reads the tail.
+`test_playthrough`: `state_wide_unit` saves MP10 at E 4 (version 2), loads it into runs asking for E 0 and E 4,
+and checks the ring, camera and records and the 75 frames after it against the saved run; an E = 0 state is
+version 1.  `make test` 2851 assertions (physics 178, playthrough 187).
+
+**Verified** on a droplet against `main` (41fc69b): the port's `--trace` of all 85 scenarios with PNGs (every frame
+or the scenario's `png-every`: 50680 pictures) and, on 14 cavern scenarios, the wide view (`render_frame_view` at
+all four zoom levels plus `render_live_span`, 12268 dumps) byte-identical to `main`'s, for the default run and for
+`ZEL_RING_EXTRA=0` (`cmp` and `trace_eq.py` over every trace); `make test` and `make verify` (235) green.  All 85
+scenarios were also played at E = 4 and E = 13 (a test build that lets `--trace` take E, ASan + UBSan): no
+sanitizer report after the one fix below (they diverge from the oracle from the first extra enemy, as expected).
+One latent UB surfaced there and is fixed without changing any output: `render.c`'s E900 overlap array formed
+`&ff[u * cols + sc]` for a sprite left of the view (`sc` -2..-4) on the view's top row before testing `sc`.
+
+**What E > 0 still gets wrong (step 5 and on).**  Nothing below is reachable without the debug switch.
+1. The picture: the renderer still draws the 28-column window at ring columns 4..31 (`sc + 4`, `SCREEN_COLS`), and
+   the wide view's `lo` / `hi` are still counted from that window, so the hero, pinned at screen column 12 + E, is
+   drawn E columns right of centre (at E 13 at the right edge, column 25) and the right part of the live ring is
+   never shown.  Rendering at `view_cols(g)` around the pin is step 5; `render_live_span`, the zoom-out
+   scenery columns, `smooth.c`'s `pos_of` range and the sprite / shot clips go with it.
+2. The walk-in (7C6E) still slides the hero in pixel space to the old position (x 40 / 256) and then he snaps to
+   the new pin, E columns away.
+3. What falls out of step 3's helpers already moves with the stride: the spawn band (ring columns 1, 2 and
+   `view_cols + 4` .. `ring_w - 2`), `ai_step`'s edges, the EAI4 / EAI5 muzzle guards, `magic_hit`, the door arches,
+   the fixture edges, `shots_draw_pass`'s kill column and `cell_anim`'s column range.  They are expressed for the
+   full `view_cols` view that step 5 will draw, so with today's 28-column picture enemies can spawn and water stops
+   animating in plain sight; step 5's per-AI tests (an enemy in the extra columns moves, turns and shoots) and
+   step 6 must check them for real.
+4. MP84 falls back to the original ring at E 13 (a level change of view on the way into it); clamping it to E 11
+   instead is a choice for step 7's map-load rule, as is the transition into and out of boss rooms.
+5. Aggro ranges are unchanged (2.1 row 5): enemies newly live in the extra columns patrol but attack only from
+   their old reach.
