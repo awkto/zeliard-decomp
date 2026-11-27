@@ -35,9 +35,9 @@
 #include "sync.h"
 #include "synclife.h"
 #include "syncdlg.h"
+#include "autoatk.h"                   /* SDL-free (the pulse state lives in App) */
 #ifdef HAVE_SDL
 #include "input.h"
-#include "autoatk.h"
 #endif
 #include "touch.h"
 #ifdef __EMSCRIPTEN__
@@ -82,7 +82,7 @@ typedef struct {
     int      rest_q[16], rest_qn;       /* SDL keys the dialog has not consumed yet */
     int      sync_dlg;                  /* the ask-before-link dialog (#55) owns the keyboard */
     double   frame_ms;                  /* SPEED_FRAME_MS(speed): follows FF33 live (F9, --speed) */
-    Uint64   sp_b;                      /* #133: a shop's real-time clock: the performance counter at shop tick sp_n */
+    uint64_t   sp_b;                      /* #133: a shop's real-time clock: the performance counter at shop tick sp_n */
     unsigned sp_n;
     int      speed;                     /* FF33: 1 fastest .. 10 slowest, loader default 5 */
     SpeedDlg spd;                       /* F9 "Speed change" (#116) */
@@ -162,11 +162,11 @@ typedef struct {
     SDL_Texture *mv_tex;                /* the map raster, built when it opens */
     int      mv_ox, mv_oy, mv_center;   /* view origin in cells; mv_center: re-centre on the hero at the next draw */
     Uint32   mv_note_until;             /* "No map in town" shows until this SDL tick */
-    int      zoom;                      /* Z: the zoom level (render.h ZOOM_*): 1 crops the decorative border (present.h); 2, 3 are the wide view's zoom-out levels (#126) */
-    int      zoomable;                  /* the picture about to be presented has the stone frame (cavern, town, shops, status) */
     int      pf_zoom;                   /* ...and what the last present_frame did, for the viewer's redraw */
     int      pf_w, pf_h;                /* the last picture size present_frame drew, so the viewer can redraw under itself */
 #endif
+    int      zoom;                      /* Z: the zoom level (render.h ZOOM_*): 1 crops the decorative border (present.h); 2, 3 are the wide view's zoom-out levels (#126) */
+    int      zoomable;                  /* the picture about to be presented has the stone frame (cavern, town, shops, status) */
     /* #127 smooth scrolling (opt-in, presentation only): sm is the step history, sm_ofs the offsets
      * on screen now, sm_live is set while the current step is still sliding and frame_wait should
      * keep presenting, sm_gap_ms the least time between two such presents (the display period) */
@@ -182,12 +182,12 @@ typedef struct {
     Smooth sm;
     SmoothTown tsm;                     /* the town frame's history (scene 2) */
     SmoothOfs sm_ofs;
-    Uint64 sm_last_pc;
+    uint64_t sm_last_pc;
     double sm_gap_ms;
     unsigned sm_presents;               /* extra (between-step) presents, for the web measurement */
     int smlog;                          /* --smooth-log: one stderr line per present / step (#131 measurement) */
     unsigned sm_step_no;
-    Uint64 sm_log_t0;
+    uint64_t sm_log_t0;
     int sm_woke;                        /* web: what ended the last smooth wait: 1 requestAnimationFrame, 2 the timer */
     SmoothVsync vs;                     /* web: the display frames' period, from the page's requestAnimationFrame times */
     double sm_ts0, sm_drawn_ts;         /* the display frame the step's first picture went out with / the last picture's */
@@ -220,6 +220,13 @@ static void prefs_save(const App *a);
 #else
 #define PREFS_CHANGED(a) ((void)(a))
 #endif
+
+/* #126 step 5: the ring extra the wide simulation asks for (comment above its old place, W toggle) */
+static int wide_sim_e(const App *a)
+{
+    if (a->ring_dbg >= 0) return a->ring_dbg;
+    return (a->wide && a->video == VID_MCGA && !a->headless && !a->trace_f) ? WIDE_E_MAX : 0;
+}
 
 #ifdef HAVE_SDL
 static int f1_was, f2_was;
@@ -832,11 +839,6 @@ static void window_follow_view(App *a)
  * records, the shots, the fixtures -- is in that geometry), so a W press takes effect at the next map entry: a door,
  * a cave mouth, a death's restart or a state load's re-entry.  The zoom level is presentation only and never
  * changes it. */
-static int wide_sim_e(const App *a)
-{
-    if (a->ring_dbg >= 0) return a->ring_dbg;
-    return (a->wide && a->video == VID_MCGA && !a->headless && !a->trace_f) ? WIDE_E_MAX : 0;
-}
 
 /* W: the wide cavern view on / off.  The window follows the picture's shape when it is a plain window
  * (not fullscreen or maximised), so the extra width is not just letterboxed away; the cavern itself
@@ -2344,6 +2346,7 @@ static void side_town(Town *t, int kind, unsigned arg, unsigned ticks)
     if (kind == SIDE_WAIT) { snprintf(tag, sizeof tag, "w%04X", arg); side_show(a, tag, ticks * 1000 / 237); }
 }
 
+#ifdef HAVE_SDL
 /* The cavern picture: the frame, HUD and every layer, uploaded and presented.  Called once per
  * game step, and, in smooth mode, again between steps with `so` set to the slide still to go. */
 /* Is this cavern frame drawn in the wide view?  Only a plain cavern frame in the MCGA driver, and never on
@@ -2454,6 +2457,7 @@ static void town_draw(App *a, Town *t, const SmoothOfs *so)
     present_frame(a, vw, vh);
     a->zoomable = 0;
 }
+#endif
 
 /* The swing's first-step picture (sword-frame): gfmcga 3E34 runs twice a frame, at 7047 and, after the half-way wait
  * (712D, 2*speed ticks), at 7147, with 7136 erasing the blade in between.  So while the blade is out the screen shows
