@@ -607,6 +607,118 @@ static void t_scroll_ring(const char *dir)
     map_free(&m);
 }
 
+/* ===================================================== #126 step 4: a wider ring
+ * Game.wide = E columns more each side: a 36 + 2E stride, the hero pinned at
+ * screen column 12 + E (ring column 17 + E), scroll_col placed so his map
+ * column is the same as with E = 0.  game_wide_for_map is the per-map rule. */
+static void t_wide_rule(const char *dir)
+{
+    static Map m;
+    Game g; memset(&g, 0, sizeof g);
+    memset(&m, 0, sizeof m);
+    m.width = WIDE_MIN_MAP_W(WIDE_E_MAX); m.lvl_flags = 0;
+    CHECK(game_wide_for_map(&g, &m) == 0, "no request, no extra columns");
+    g.wide_req = WIDE_E_MAX;
+    CHECK(game_wide_for_map(&g, &m) == WIDE_E_MAX, "E %d on a %d-wide map", WIDE_E_MAX, m.width);
+    m.width--;
+    CHECK(game_wide_for_map(&g, &m) == 0, "a map one column too narrow for E %d (%d) falls back to 0, no clamp", WIDE_E_MAX, m.width);
+    m.width = 240; g.wide_req = 200;
+    CHECK(game_wide_for_map(&g, &m) == WIDE_E_MAX, "a request past the widest is the widest (%d)", game_wide_for_map(&g, &m));
+    g.wide_req = 4; m.lvl_flags = 0x80;
+    CHECK(game_wide_for_map(&g, &m) == 0, "a boss map (lvl_flags bit 7) keeps the original ring");
+    m.lvl_flags = 0x40;
+    CHECK(game_wide_for_map(&g, &m) == 0, "a boss room ([E6], lvl_flags bit 6) keeps the original ring");
+    CHECK(RING_W_OF(WIDE_E_MAX) == 62 && RING_CAP == 62 * 64 && VIEW_COLS_OF(WIDE_E_MAX) + 8 == 62,
+          "the widest ring is the 62 columns of the zoom-out 2 view");
+    /* every system map at E = 4 and at the widest: only boss maps / rooms and maps narrower than
+     * WIDE_MIN_MAP_W fall back (the list is docs/WIDESCREEN.md §8.3) */
+    int loaded = 0, bad = 0;
+    for (int i = 0; i < 0x1F; i++) {
+        static Map sm;
+        if (map_load_system(&sm, dir, i)) continue;
+        loaded++;
+        for (int k = 0; k < 2; k++) {
+            g.wide_req = k ? WIDE_E_MAX : 4;
+            int want = (sm.lvl_flags & 0xC0) || sm.width < WIDE_MIN_MAP_W(g.wide_req) ? 0 : g.wide_req;
+            int got = game_wide_for_map(&g, &sm);
+            if (got != want) bad++;
+            if (k && !(sm.lvl_flags & 0xC0) && !got)
+                fprintf(stderr, "  (map %02X %s, %d columns: E %d falls back to 0)\n", i, sm.name, sm.width, WIDE_E_MAX);
+        }
+        map_free(&sm);
+    }
+    if (!loaded) { fprintf(stderr, "  (no game files: skipping the per-map table)\n"); return; }
+    CHECK(loaded == 0x1F && bad == 0, "the per-map rule over the %d system maps (%d wrong)", loaded, bad);
+}
+
+/* every ring cell is the map's: the corridor walk below has no enemies,
+ * fixtures or doors, so nothing else writes into the ring */
+static int ring_vs_map(const Game *g, const Map *m)
+{
+    int bad = 0;
+    for (int c = 0; c < ring_w(g); c++) {
+        int mc = (g->scroll_col + c) % m->width;
+        for (int r = 0; r < RING_H; r++)
+            if (g->ring[r * ring_w(g) + c] != m->grid[mc][r] || g->bg_ring[r * ring_w(g) + c] != m->grid[mc][r]) { bad++; break; }
+    }
+    return bad;
+}
+
+/* walk the first cavern end to end with a ring E columns wider each side: MP10
+ * with a corridor carved through rows 4..9 and a floor at row 10, so the hero
+ * walks all 240 columns (and over the seam) east and then back west.  After
+ * every step the ring must be ring_fill's: map columns scroll_col ..
+ * scroll_col + ring_w - 1, the hero's map column one further, his pin 12 + E. */
+static void wide_walk(const char *dir, int e)
+{
+    static Map m; static Tileset t;
+    memset(&m, 0, sizeof m); memset(&t, 0, sizeof t);
+    if (map_load_system(&m, dir, 0) || gfx_load_tileset(&t, dir, m.tileset)) { fprintf(stderr, "  (skipped: no game files in %s)\n", dir); return; }
+    uint8_t floor = m.grid[60][10];
+    for (int c = 0; c < m.width; c++) { for (int r = 4; r <= 9; r++) m.grid[c][r] = 0; m.grid[c][10] = floor; }
+    m.ndoors = 0;                       /* no arches painted over the ring (78DD) */
+    game_init(&G, &m, &t);
+    G.present = NULL;
+    G.wide_req = (uint8_t)e;
+    game_place(&G, 61, 7, 0);
+    G.nobj = 0; G.nfix = 0;             /* no markers, no fixture cells */
+    CHECK(G.wide == e && ring_w(&G) == 36 + 2 * e && hero_col(&G) == 12 + e && hero_rcol(&G) == 17 + e && view_cols(&G) == 28 + 2 * e,
+          "E %d: the geometry (wide %d, stride %d, pin %d)", e, G.wide, ring_w(&G), hero_col(&G));
+    CHECK(G.hero_scr_col == 12 + e && game_hero_map_col(&G) == 61 && G.scroll_col == (61 - (12 + e) - 4 + m.width) % m.width,
+          "E %d: the entry places the same map column (scroll_col %d, pin %d, hero col %d)", e, G.scroll_col, G.hero_scr_col, game_hero_map_col(&G));
+    CHECK(ring_vs_map(&G, &m) == 0, "E %d: the entry's ring is ring_fill's", e);
+    game_first_frame(&G);
+    int bad = 0, lost = 0, pin = 0, n = m.width + 12;
+    for (int i = 1; i <= n; i++) {
+        step(DIR_RIGHT);
+        bad += ring_vs_map(&G, &m) ? 1 : 0;
+        if (game_hero_map_col(&G) != (61 + i) % m.width || game_hero_map_row(&G) != 7 || G.vstate != V_GROUND) lost++;
+        if (G.hero_scr_col != hero_col(&G)) pin++;
+    }
+    CHECK(bad == 0 && lost == 0 && pin == 0, "E %d: east %d columns, over the seam: ring = ring_fill at every step (%d bad steps, %d off the corridor, %d off the pin)", e, n, bad, lost, pin);
+    bad = lost = pin = 0;
+    step(DIR_LEFT);                     /* the turn (6A2A): he faces left first */
+    bad += ring_vs_map(&G, &m) ? 1 : 0;
+    int c0 = game_hero_map_col(&G);
+    for (int i = 1; i <= n; i++) {
+        step(DIR_LEFT);
+        bad += ring_vs_map(&G, &m) ? 1 : 0;
+        if (game_hero_map_col(&G) != (c0 - i + 2 * m.width) % m.width || game_hero_map_row(&G) != 7) lost++;
+        if (G.hero_scr_col != hero_col(&G)) pin++;
+    }
+    CHECK(bad == 0 && lost == 0 && pin == 0, "E %d: and back west: ring = ring_fill at every step (%d bad steps, %d off the corridor, %d off the pin)", e, bad, lost, pin);
+    /* a read past the live ring (a shot in row 63 beyond the last column) sees the ring tail: the
+     * Game fields after ring[], as the 2304-byte ring had them, for every E */
+    G.hero_drawn_ok = 0x5A;
+    CHECK(ring_peek(&G, ring_size(&G)) == 0x5A && ring_peek(&G, ring_size(&G) - 1) == G.ring[ring_size(&G) - 1],
+          "E %d: the ring tail starts right after the live ring", e);
+    CHECK(ring_peek(&G, ring_size(&G) + 24) == G.bg_ring[0], "E %d: 24 bytes on, the tail is bg_ring[]", e);
+    map_free(&m);
+}
+static void t_wide_walk0(const char *dir) { wide_walk(dir, 0); }
+static void t_wide_walk4(const char *dir) { wide_walk(dir, 4); }
+static void t_wide_walkmax(const char *dir) { wide_walk(dir, WIDE_E_MAX); }
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
@@ -624,6 +736,7 @@ int main(int argc, char **argv)
     struct { const char *name; void (*fn)(const char *); } mtests[] = {
         {"mp10", t_mp10}, {"fixtures", t_fixtures}, {"keys", t_keys},
         {"patches", t_patches}, {"walk-in", t_walk_in}, {"scroll ring", t_scroll_ring},
+        {"wide rule", t_wide_rule}, {"wide walk 0", t_wide_walk0}, {"wide walk 4", t_wide_walk4}, {"wide walk max", t_wide_walkmax},
     };
     for (size_t i = 0; i < sizeof mtests / sizeof mtests[0]; i++) {
         int before = fails;

@@ -87,7 +87,7 @@ static void shot_move_and_hit(Game *g, Shot *s)
     shot_step(s);                                                       /* 85A5 */
     if (!(s->flags & 8)) {
         if (!s->col) return;
-        if (!passable_shot(g, g->ring[game_ring_index(g, s->row, s->col)])) { s->col = 0; return; }
+        if (!passable_shot(g, ring_peek(g, game_ring_index(g, s->row, s->col)))) { s->col = 0; return; }   /* row 63 past the last column: the ring tail */
     }
     uint8_t r = (uint8_t)((g->scroll_row + g->hero_scr_row) & 0x3F);
     int hit_row = 0;

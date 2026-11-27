@@ -1216,9 +1216,23 @@ void game_init(Game *g, const Map *m, const Tileset *t)
     for (int i = 0; i < 4; i++) g->orbs[i].phase = 0xFF;                /* 7A04 */
 }
 
+int game_wide_for_map(const Game *g, const Map *m)
+{
+    int e = g->wide_req;
+    if (e <= 0 || !m) return 0;
+    if (e > WIDE_E_MAX) e = WIDE_E_MAX;
+    if (m->lvl_flags & 0xC0) return 0;                                  /* a boss map (FF34) or a boss room ([E6]): the original ring (§3) */
+    if (m->width < WIDE_MIN_MAP_W(e)) return 0;                         /* too narrow: no clamp, the original ring (§2.9) */
+    return e;
+}
+
 void game_place(Game *g, int col, int row, int face_left)
 {
     const Map *m = g->map;
+    /* #126: the ring's geometry is the map's, fixed from here until the next
+     * map entry (scroll_col, hero_scr_col, the ring and every record's ring
+     * column below follow it) */
+    g->wide = (uint8_t)game_wide_for_map(g, m);
     g->scroll_col = col - hero_col(g) - 4; while (g->scroll_col < 0) g->scroll_col += m->width;
     g->scroll_col %= m->width;
     g->hero_home_row = m->row_bias; g->hero_scr_row = m->row_bias; g->hero_scr_col = (uint8_t)hero_col(g);

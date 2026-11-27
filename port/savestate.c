@@ -3,7 +3,7 @@
  * Layout (all integers little-endian, no struct dumps, no padding):
  *
  *   offset 0   8   magic "ZELSTATE"
- *   offset 8   4   version (SAVESTATE_VERSION)
+ *   offset 8   4   version (SAVESTATE_VERSION, or SAVESTATE_VERSION_WIDE for a ring wider than 36)
  *   offset 12  4   payload length in bytes
  *   offset 16  N   payload
  *   offset 16+N 4  CRC-32 (IEEE) of the payload
@@ -90,7 +90,7 @@ static int     script_pool_next;
 #define IOU(v)   do { if (w) w32(w, (uint32_t)(v));  else (v) = (unsigned)r32(r); } while (0)
 #define IOM(p, n) do { if (w) wmem(w, (p), (n));     else rmem(r, (p), (n)); } while (0)
 
-static int state_io(Shell *s, Wr *w, Rd *r, SavestateMeta *meta)
+static int state_io(Shell *s, Wr *w, Rd *r, SavestateMeta *meta, unsigned ver)
 {
     Game *g = &s->g;
     Town *t = &s->town;
@@ -164,10 +164,23 @@ static int state_io(Shell *s, Wr *w, Rd *r, SavestateMeta *meta)
     IO8(g->hero_drawn_ok); IOI(g->hero_drawn_row); IOI(g->hero_drawn_col);
     IO8(g->sword_blk_ok);  IOI(g->sword_blk_row);  IOI(g->sword_blk_col);
 
-    /* ---- Game: the two rings (the original's 36-stride layout: a wide ring is
-     * step 4's to version, docs/WIDESCREEN.md §5) ---- */
-    IOM(g->ring, RING_SIZE_ORIG);
-    IOM(g->bg_ring, RING_SIZE_ORIG);
+    /* ---- Game: the two rings.  Version 1 is the original's 36-stride layout
+     * (E = 0); version 2 carries E and its RING_W_OF(E)-stride rings (#126).
+     * The loaded state keeps the E it was saved with, whatever this run asks
+     * for: every field below (scroll_col, hero_scr_col, the records' ring
+     * columns, the shots) is in that geometry.  The next map entry derives E
+     * from the request again (game_place). ---- */
+    {
+        uint8_t e = 0;
+        if (ver == SAVESTATE_VERSION_WIDE) {
+            if (w) e = g->wide;
+            IO8(e);
+            if (loading && (e == 0 || e > WIDE_E_MAX)) return -1;
+        }
+        if (loading) g->wide = e;
+        IOM(g->ring, (size_t)RING_W_OF(e) * RING_H);
+        IOM(g->bg_ring, (size_t)RING_W_OF(e) * RING_H);
+    }
 
     /* ---- Game: camera and the hero record ---- */
     IOI(g->scroll_col);
@@ -350,13 +363,14 @@ int savestate_save(Shell *s, const char *path, unsigned frame, unsigned rng_call
     }
     Wr w = {0, 0, 0, 0};
     SavestateMeta meta = { frame, rng_calls };
-    if (state_io(s, &w, NULL, &meta) || w.err) { free(w.p); return -1; }
+    unsigned ver = s->g.wide ? SAVESTATE_VERSION_WIDE : SAVESTATE_VERSION;
+    if (state_io(s, &w, NULL, &meta, ver) || w.err) { free(w.p); return -1; }
 
     FILE *f = fopen(path, "wb");
     if (!f) { fprintf(stderr, "[state] cannot write %s\n", path); free(w.p); return -1; }
     uint8_t hdr[16];
     memcpy(hdr, SAVESTATE_MAGIC, 8);
-    put32le(hdr + 8, SAVESTATE_VERSION);
+    put32le(hdr + 8, ver);
     put32le(hdr + 12, (uint32_t)w.n);
     int ok = fwrite(hdr, 1, 16, f) == 16 && fwrite(w.p, 1, w.n, f) == w.n;
     uint8_t c4[4];
@@ -393,8 +407,8 @@ int savestate_load(Shell *s, const char *path, SavestateMeta *meta)
         free(buf); fprintf(stderr, "[state] %s: not a state file\n", path); return -1;
     }
     uint32_t ver = get32le(buf + 8);
-    if (ver != SAVESTATE_VERSION) {
-        free(buf); fprintf(stderr, "[state] %s: version %u unsupported (want %u)\n", path, ver, SAVESTATE_VERSION); return -1;
+    if (ver != SAVESTATE_VERSION && ver != SAVESTATE_VERSION_WIDE) {
+        free(buf); fprintf(stderr, "[state] %s: version %u unsupported (want %u or %u)\n", path, ver, SAVESTATE_VERSION, SAVESTATE_VERSION_WIDE); return -1;
     }
     uint32_t plen = get32le(buf + 12);
     if ((size_t)plen + 20 != n) {
@@ -406,7 +420,7 @@ int savestate_load(Shell *s, const char *path, SavestateMeta *meta)
 
     script_pool_next = 0;
     Rd r = { buf + 16, plen, 0, 0 };
-    int rc = state_io(s, NULL, &r, meta);
+    int rc = state_io(s, NULL, &r, meta, ver);
     if (rc || r.err) { free(buf); fprintf(stderr, "[state] %s: corrupt payload\n", path); return -1; }
     free(buf);
     return 0;
