@@ -32,7 +32,7 @@ enum {
     ACT_COMBO,                                   /* A (held): Up+Down and a pulsing sword (autoatk.h) */
     ACT_AUTOFIRE,                                /* S (held): a pulsing sword; with Down, a held one */
     ACT_ZOOM,                                    /* Z: crop the decorative border (present.h) */
-    ACT_SMOOTH,                                  /* T: smooth scrolling on/off (smooth.h, #127) */
+    ACT_SMOOTH,                                  /* T: cycle the smooth scrolling modes off / camera / full / soft (smooth.h, #127, #138) */
     ACT_WIDE,                                    /* W: the wide (16:10) cavern view on/off (#126) */
     ACT_SAVE1,                                   /* Ctrl+1 .. Ctrl+9 */
     ACT_LOAD1 = ACT_SAVE1 + 9,                   /* Alt+1 .. Alt+9 */

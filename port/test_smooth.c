@@ -220,6 +220,134 @@ static void t_objects(void)
     free(g);
 }
 
+/* #138: the modes T cycles, FULL's per-object glides at their own pace, SOFT's curve */
+static void t_modes(void)
+{
+    printf("modes           ");
+    ck(smooth_mode_next(SMOOTH_OFF) == SMOOTH_CAMERA && smooth_mode_next(SMOOTH_CAMERA) == SMOOTH_FULL &&
+       smooth_mode_next(SMOOTH_FULL) == SMOOTH_SOFT && smooth_mode_next(SMOOTH_SOFT) == SMOOTH_OFF && smooth_mode_next(9) == SMOOTH_OFF,
+       "T cycles off -> camera -> full -> soft -> off");
+    ck(!strcmp(smooth_mode_name(0), "OFF") && !strcmp(smooth_mode_name(1), "CAMERA") && !strcmp(smooth_mode_name(2), "FULL") &&
+       !strcmp(smooth_mode_name(3), "SOFT") && !strcmp(smooth_mode_name(7), "OFF"), "the OSD names");
+
+    /* SOFT's curve: 0 at the step, 1 from SMOOTH_SOFT_SPAN on, rising all the way */
+    ck(smooth_soft_curve(0) == 0 && smooth_soft_curve(-1) == 0, "soft: starts at 0");
+    ck(smooth_soft_curve(SMOOTH_SOFT_SPAN) == 1 && smooth_soft_curve(0.8) == 1 && smooth_soft_curve(1) == 1 && smooth_soft_curve(5) == 1,
+       "soft: lands at the span and holds");
+    ck(fabs(smooth_soft_curve(SMOOTH_SOFT_SPAN / 2) - 0.75) < 1e-9, "soft: an ease-out, 3/4 of the way at half the span");
+    int mono = 1; double pv = -1;
+    for (int i = 0; i <= 100; i++) { double c = smooth_soft_curve(i / 100.0); if (c < pv) mono = 0; pv = c; }
+    ck(mono, "soft: never goes back");
+    SmoothOfs st, en, o; memset(&st, 0, sizeof st); memset(&en, 0, sizeof en);
+    st.wx = 8; st.ox[3] = 8; st.active = 1;
+    smooth_eval(SMOOTH_SOFT, &st, &en, 0, &o);
+    ck(o.active && o.wx == 8 && o.ox[3] == 8, "soft at t = 0: the previous position");
+    smooth_eval(SMOOTH_SOFT, &st, &en, 0.25, &o);
+    ck(o.wx == 3 && o.ox[3] == 3, "soft at a quarter step (frame 1 of 4 at speed 6): 5 of 8 px gone (%d)", o.wx);
+    smooth_eval(SMOOTH_SOFT, &st, &en, SMOOTH_SOFT_SPAN, &o);
+    ck(!o.active && o.wx == 0 && o.ox[3] == 0, "soft at the span: settled, the plain picture");
+    smooth_eval(SMOOTH_CAMERA, &st, &en, 0.25, &o);
+    ck(o.wx == 6, "camera at a quarter step: linear, 6 px to go");
+
+    /* FULL's glide on its own: a cell every 4th step glides 2 px a step, never back */
+    SmoothGlide gl; int sx, sy, ex, ey;
+    smooth_glide_step(&gl, 0, 0, 0, &sx, &sy, &ex, &ey);
+    ck(gl.since == 0xFF && !gl.live && !sx && !ex, "no history: no glide, the pace unknown");
+    smooth_glide_step(&gl, 1, 8, 0, &sx, &sy, &ex, &ey);
+    ck(sx == 8 && ex == 0, "the first move has no pace: it slides over its own step (%d -> %d)", sx, ex);
+    int seq[16], n = 0, back = 0, prevend = 0;
+    for (int step = 1; step <= 12; step++) {
+        smooth_glide_step(&gl, 1, step % 4 == 0 ? 8 : 0, 0, &sx, &sy, &ex, &ey);
+        if (step % 4 == 0) { if (sx != prevend + 8) back = 1; } else if (sx != prevend) back = 1;
+        if (ex > sx) back = 1;
+        seq[n++] = sx; prevend = ex;
+    }
+    ck(seq[3] == 8 && seq[4] == 6 && seq[5] == 4 && seq[6] == 2 && seq[7] == 8 && gl.k == 4,
+       "a cell every 4th step: 8, 6, 4, 2 px at the steps, then the next move (%d %d %d %d %d)", seq[3], seq[4], seq[5], seq[6], seq[7]);
+    ck(!back, "every step starts where the last one ended (plus the new move): nothing snaps back");
+    smooth_glide_step(&gl, 1, 0, 0, &sx, &sy, &ex, &ey);     /* step 13, 14, 15: the glide runs out; then it stands */
+    smooth_glide_step(&gl, 1, 0, 0, &sx, &sy, &ex, &ey);
+    smooth_glide_step(&gl, 1, 0, 0, &sx, &sy, &ex, &ey);
+    ck(sx == 2 && ex == 0, "the last step of the glide lands (%d -> %d)", sx, ex);
+    smooth_glide_step(&gl, 1, 0, 0, &sx, &sy, &ex, &ey);
+    ck(!gl.live && sx == 0 && ex == 0, "a stopped object stands on its cell");
+    for (int i = 0; i < 6; i++) smooth_glide_step(&gl, 1, 0, 0, &sx, &sy, &ex, &ey);
+    smooth_glide_step(&gl, 1, -8, 0, &sx, &sy, &ex, &ey);
+    ck(sx == -8 && ex == 0, "a move after a long stand has no pace: one step, as camera");
+    smooth_glide_step(&gl, 1, -8, 8, &sx, &sy, &ex, &ey);
+    ck(sx == -8 && sy == 8 && ex == 0 && ey == 0, "a cell a step (and diagonally): one step each, as camera");
+    /* an early move during a glide: it goes on from where it is shown */
+    smooth_glide_step(&gl, 0, 0, 0, &sx, &sy, &ex, &ey);
+    smooth_glide_step(&gl, 1, 8, 0, &sx, &sy, &ex, &ey);
+    smooth_glide_step(&gl, 1, 0, 0, &sx, &sy, &ex, &ey); smooth_glide_step(&gl, 1, 0, 0, &sx, &sy, &ex, &ey);
+    smooth_glide_step(&gl, 1, 8, 0, &sx, &sy, &ex, &ey);      /* pace 3: 8 px over 3 steps */
+    ck(sx == 8 && ex == 5 && gl.k == 3, "pace 3: 8 -> 5 (%d -> %d)", sx, ex);
+    smooth_glide_step(&gl, 1, -8, 0, &sx, &sy, &ex, &ey);     /* it turns after one step */
+    ck(sx == 5 - 8 && ex == 0, "a turn mid-glide starts from the shown place (5 - 8 = %d), no snap", sx);
+    /* jumps snap */
+    smooth_glide_step(&gl, 1, 32, 0, &sx, &sy, &ex, &ey);
+    ck(!gl.live && sx == 0 && ex == 0, "a jump of 4 cells snaps");
+    smooth_glide_step(&gl, 1, 8, 0, &sx, &sy, &ex, &ey); smooth_glide_step(&gl, 1, 0, 0, &sx, &sy, &ex, &ey);
+    smooth_glide_step(&gl, 1, 0, 0, &sx, &sy, &ex, &ey); smooth_glide_step(&gl, 1, 8, 0, &sx, &sy, &ex, &ey);   /* pace 3: 5 px left at its end */
+    smooth_glide_step(&gl, 1, 24, 0, &sx, &sy, &ex, &ey);
+    ck(!gl.live && sx == 0, "a 3-cell move on top of a glide that would leave it more than 3 cells off snaps");
+
+    /* FULL in the cavern: the camera's slide plus each object's own glide */
+    static Map m; static Tileset t; Game *g = new_game(&m, &t);
+    Smooth s; smooth_reset(&s);
+    g->scroll_col = 50; g->scroll_row = 0; g->hero_scr_col = 12; g->hero_scr_row = 6;
+    int rc0 = 20;
+    memset(g->ring, 0, sizeof g->ring); put_obj(g, 0, rc0, 5, 0x02); put_obj(g, 1, 24, 8, 0x01);
+    smooth_step_mode(&s, g, SMOOTH_FULL);
+    ck(!s.start.active && s.mode == SMOOTH_FULL, "full: no history, nothing slides");
+    int okp = 1, st1[12], en1[12];
+    for (int step = 1; step <= 8; step++) {      /* object 0 walks left a cell every 4th step; object 1 stands */
+        if (step % 4 == 0) rc0--;
+        memset(g->ring, 0, sizeof g->ring); put_obj(g, 0, rc0, 5, step == 6 ? 0x62 : 0x02); put_obj(g, 1, 24, 8, 0x01);
+        smooth_step_mode(&s, g, SMOOTH_FULL);
+        st1[step] = s.start.ox[0]; en1[step] = s.end.ox[0];
+        if (s.start.ox[1] || s.end.ox[1]) okp = 0;
+    }
+    ck(okp, "full: a still object does not move");
+    ck(st1[4] == 8 && en1[4] == 0 && st1[5] == 0 && en1[5] == 0, "full: the first move (no pace) is one step, as camera (%d %d %d %d)", st1[4], en1[4], st1[5], en1[5]);
+    ck(st1[8] == 8 && en1[8] == 6, "full: the next one, 4 steps later, spreads over 4 (%d -> %d)", st1[8], en1[8]);
+    ck(st1[6] == 0 && en1[6] == 0, "full: a state-bit change (0x02 -> 0x62) is the same object (its glide had ended)");
+    SmoothOfs v;
+    smooth_at(&s, 0.5, &v);
+    ck(v.ox[0] == 7 && v.active, "full: half way through the step, between 8 and 6 (%d)", v.ox[0]);
+    smooth_at(&s, 1, &v);
+    ck(v.ox[0] == 6 && v.active, "full: t = 1 is the step's end, still 6 px off, still drawn as a slide");
+    /* the camera scrolls a cell while object 0 glides on and object 1 stands */
+    g->scroll_col = 51; rc0--;                    /* the scroll moves everything a ring column left; object 0 stands this step */
+    memset(g->ring, 0, sizeof g->ring); put_obj(g, 0, rc0, 5, 0x02); put_obj(g, 1, 23, 8, 0x01);
+    smooth_step_mode(&s, g, SMOOTH_FULL);
+    ck(s.start.wx == 8 && s.start.ox[1] == 8 && s.end.ox[1] == 0, "full: a still object rides the camera's slide (8 -> 0)");
+    ck(s.start.ox[0] == 8 + 6 && s.end.ox[0] == 4, "full: a gliding one rides it on top of its own glide (%d -> %d)", s.start.ox[0], s.end.ox[0]);
+    /* identity changes, spawns, jumps */
+    memset(g->ring, 0, sizeof g->ring); put_obj(g, 0, rc0 - 1, 5, 0x05); put_obj(g, 1, 23, 8, 0x01); put_obj(g, 2, 26, 8, 0x01);
+    smooth_step_mode(&s, g, SMOOTH_FULL);
+    ck(s.start.ox[0] == 0 && s.end.ox[0] == 0 && !s.gobj[0].live, "full: a slot that became another object does not glide");
+    ck(s.start.ox[2] == 0 && s.end.ox[2] == 0, "full: a spawn does not glide (the camera is still)");
+    memset(g->ring, 0, sizeof g->ring); put_obj(g, 0, rc0 - 6, 5, 0x05);
+    smooth_step_mode(&s, g, SMOOTH_FULL);
+    ck(s.start.ox[0] == 0 && s.end.ox[0] == 0, "full: a 5-cell leap snaps");
+    g->scroll_col = 60;
+    smooth_step_mode(&s, g, SMOOTH_FULL);
+    ck(s.start.wx == 0 && s.start.ox[0] == 0 && !s.start.active, "full: a camera jump (a door) snaps everything");
+    /* CAMERA is #127's: the state-bit change is a new object there */
+    smooth_reset(&s);
+    memset(g->ring, 0, sizeof g->ring); put_obj(g, 0, 20, 5, 0x02); smooth_step(&s, g);
+    memset(g->ring, 0, sizeof g->ring); put_obj(g, 0, 19, 5, 0x62); smooth_step(&s, g);
+    ck(s.mode == SMOOTH_CAMERA && s.start.ox[0] == 0, "camera: a state-bit change does not slide (unchanged)");
+    smooth_reset(&s);
+    memset(g->ring, 0, sizeof g->ring); put_obj(g, 0, 20, 5, 0x02); smooth_step_mode(&s, g, SMOOTH_SOFT);
+    memset(g->ring, 0, sizeof g->ring); put_obj(g, 0, 19, 5, 0x62); smooth_step_mode(&s, g, SMOOTH_SOFT);
+    ck(s.start.ox[0] == 8 && s.end.ox[0] == 0, "soft: per step, with full's object match");
+    smooth_at(&s, SMOOTH_SOFT_SPAN, &v);
+    ck(!v.active, "soft: settled at the span");
+    free(g);
+}
+
 static void t_render(void)
 {
     printf("render          ");
@@ -454,6 +582,23 @@ static void t_town_steps(void)
     ck(h.active && h.wx == 4 && h.fx[0] == 2 && h.fx[1] == 4 && h.fx[2] == 8, "halfway: every layer half way, each by its own amount");
     smooth_ofs_at(&s.start, 1, &h);
     ck(!h.active && h.fx[2] == 0, "settled at t = 1");
+
+    /* FULL (#138): an NPC that walks a cell every 2nd step glides at that pace; the map still slides per step */
+    town_setup();
+    smooth_town_reset(&s);
+    int col = 20, st[8], en[8];
+    for (int step = 0; step < 6; step++) {
+        if (step == 2 || step == 4) { TM.grid[col][TOWN_NPC_ROW] = 1; col++; TM.npcs[0].col = (uint16_t)col; TM.grid[col][TOWN_NPC_ROW] = TOWN_MARK; }
+        smooth_town_step_mode(&s, &TW, SMOOTH_FULL);
+        st[step] = s.start.nx[0]; en[step] = s.end.nx[0];
+    }
+    ck(s.mode == SMOOTH_FULL && st[2] == -8 && en[2] == 0, "full town: the first walk step has no pace, one step (%d -> %d)", st[2], en[2]);
+    ck(st[4] == -8 && en[4] == -4 && st[5] == -4 && en[5] == 0, "full town: the next, 2 steps later, glides over 2 (%d %d %d %d)", st[4], en[4], st[5], en[5]);
+    smooth_eval(SMOOTH_FULL, &s.start, &s.end, 0.5, &h);
+    ck(h.active && h.nx[0] == -2, "full town: half way through the second step (%d)", h.nx[0]);
+    TW.scroll_col = 11; TW.back_steps = 4;
+    smooth_town_step_mode(&s, &TW, SMOOTH_FULL);
+    ck(s.start.wx == 8 && s.start.nx[0] == 8 && s.end.nx[0] == 0 && s.start.fx[2] == 16, "full town: a scroll step slides the map, the layers and a still NPC as camera does");
 }
 
 static int strip_phase(const uint8_t *fb, int y)       /* the value at the left edge of the window: x + 1 shifted */
@@ -958,6 +1103,7 @@ int main(void)
     t_vsync();   printf("ok\n");
     t_step();    printf("ok\n");
     t_objects(); printf("ok\n");
+    t_modes();   printf("ok\n");
     t_render();  printf("ok\n");
     t_wide();    printf("ok\n");
     t_zoomout(); printf("ok\n");

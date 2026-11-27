@@ -63,6 +63,16 @@ static void t_parse(void)
     { Config z; config_init(&z); config_parse(&z, "zoom=4\n"); ck(z.zoom == -1, "zoom=4 is not a level"); }
     { Config z; config_init(&z); config_parse(&z, "zoom=off\n"); ck(z.zoom == 0, "zoom=off is 0"); }
     { Config z; config_init(&z); config_parse(&z, "zoom=3\n"); char out[256]; config_render(&z, out, sizeof out); ck(strstr(out, "zoom=3\n") != NULL, "the level is written back as zoom=3"); }
+    /* smooth is a mode (#138): 0 off, 1 camera, 2 full, 3 soft; the old 0 / 1 and on / off keep their meaning */
+    for (int l = 0; l <= 3; l++) {
+        char line[16]; snprintf(line, sizeof line, "smooth=%d\n", l);
+        Config z; config_init(&z); config_parse(&z, line);
+        ck(z.smooth == l, "smooth=%d is mode %d", l, l);
+    }
+    { Config z; config_init(&z); config_parse(&z, "smooth=on\n"); ck(z.smooth == 1, "smooth=on is camera (1)"); }
+    { Config z; config_init(&z); config_parse(&z, "smooth=off\n"); ck(z.smooth == 0, "smooth=off is 0"); }
+    { Config z; config_init(&z); config_parse(&z, "smooth=4\n"); ck(z.smooth == -1, "smooth=4 is not a mode"); }
+    { Config z; config_init(&z); config_parse(&z, "smooth=2\n"); char out[256]; config_render(&z, out, sizeof out); ck(strstr(out, "smooth=2\n") != NULL, "the mode is written back as smooth=2"); }
 }
 
 /* ------------------------------------------------------- missing keys, junk */

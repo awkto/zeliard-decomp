@@ -193,6 +193,7 @@ typedef struct {
     double sm_ts0, sm_drawn_ts;         /* the display frame the step's first picture went out with / the last picture's */
     int sm_frames;                      /* display frames the step lasts (0 = not worked out yet) */
     int turbo, turbo_n, force_draw;     /* host fast-forward (hold ACT_TURBO): shorter frame wait, most presents skipped, music and effects ticked TURBO_MULT times faster */
+    int live_script;                    /* ZEL_LIVE_SCRIPT (test hook, #138): a->script feeds a windowed cavern run */
     int yield_test;                     /* web only: --yield-test yields to the browser at every present, even headless (ASYNCIFY coverage under node) */
 } App;
 
@@ -1046,10 +1047,10 @@ static void pump_events(App *a, Game *g)
             }
             else if (input_event_match(&a->in, ACT_SMOOTH, &e.key)) {
                 if (!e.key.repeat) {
-                    a->smooth = !a->smooth;
+                    a->smooth = smooth_mode_next(a->smooth);      /* off -> camera -> full -> soft -> off (#138) */
                     a->sm_live = 0; smooth_reset(&a->sm); smooth_town_reset(&a->tsm);
-                    fprintf(stderr, "[video] smooth scrolling: %s\n", a->smooth ? "on" : "off");
-                    statekeys_osd(&a->sk, "SMOOTH %s", a->smooth ? "ON" : "OFF");
+                    fprintf(stderr, "[video] smooth scrolling: %s\n", smooth_mode_name(a->smooth));
+                    statekeys_osd(&a->sk, "SMOOTH: %s", smooth_mode_name(a->smooth));
                     PREFS_CHANGED(a);
                 }
             }
@@ -1250,6 +1251,11 @@ static void smlog_present(App *a, double t, const SmoothOfs *o, int newstep)
 {
     if (!a->smlog || !a->smooth) return;
     fprintf(stderr, "SM P %.3f %u %.4f %d %d %d %d %d %d %.3f\n", smlog_ms(a), a->sm_step_no, t, o->wx, o->wy, o->hx, o->hy, newstep, a->sm_woke, smlog_vs());
+    if (a->scene == 1)                  /* #138: where each enemy is drawn (screen px of its cell + its offset), for measuring the glides */
+        for (int i = 0; i < MAX_OBJS; i++)
+            if (a->sm.obj[i].ok)
+                fprintf(stderr, "SM O %u %d %d %d %d %d\n", a->sm_step_no, i, a->sm.obj[i].type & 0xFF,
+                        a->sm.obj[i].x * 8 + o->ox[i], a->sm.obj[i].y * 8 + o->oy[i], a->sm.mode);
 }
 static void smlog_skip(App *a, char why, double t)
 {
@@ -1259,6 +1265,13 @@ static void smlog_skip(App *a, char why, double t)
 /* One between-step present of a sliding step (#127): where the step is in its interval
  * picks the offsets; nothing is drawn when they quantise to what is already shown, or
  * sooner than the display period after the last one.  Returns 1 if it drew. */
+/* the step's offsets at progress t, in the mode the step was taken in (#138) */
+static void smooth_tick_eval(App *a, int town, double t, SmoothOfs *o)
+{
+    if (town) smooth_eval(a->tsm.mode, &a->tsm.start, &a->tsm.end, t, o);
+    else smooth_at(&a->sm, t, o);
+}
+
 static int smooth_tick(App *a, Game *g, Uint64 next, double period_ms)
 {
     if (!a->smooth || !a->sm_live || a->turbo || a->paused || a->mv_open || a->headless) return 0;
@@ -1275,7 +1288,7 @@ static int smooth_tick(App *a, Game *g, Uint64 next, double period_ms)
         }
         double p = smooth_frame_progress(slot, a->sm_ts0, a->sm_frames, a->vs.period);
         SmoothOfs v;
-        smooth_ofs_at(town ? &a->tsm.start : &a->sm.start, p, &v);
+        smooth_tick_eval(a, town, p, &v);
         if (smooth_same(&v, &a->sm_ofs)) { smlog_skip(a, 's', p); return 0; }
         a->sm_ofs = v;
         if (town) town_draw(a, &a->sh.town, &v); else cavern_draw(a, g, &v);
@@ -1289,7 +1302,7 @@ static int smooth_tick(App *a, Game *g, Uint64 next, double period_ms)
     if (now >= next) { smlog_skip(a, 'l', prog); return 0; }
     if ((double)(now - a->sm_last_pc) * 1000.0 / (double)freq < a->sm_gap_ms) { smlog_skip(a, 'g', prog); return 0; }
     SmoothOfs o;
-    smooth_ofs_at(town ? &a->tsm.start : &a->sm.start, prog, &o);
+    smooth_tick_eval(a, town, prog, &o);
     if (smooth_same(&o, &a->sm_ofs)) { smlog_skip(a, 's', prog); return 0; }
     a->sm_ofs = o;
     if (town) town_draw(a, &a->sh.town, &o); else cavern_draw(a, g, &o);
@@ -1503,7 +1516,9 @@ static void usage(void)
         "  --wide        the wide cavern view, MCGA only: a 16:10 picture (36 columns instead of 28) and Z's zoom-out levels, up to\n"
         "                62 x 28 cells, all live: the caverns run a 70-column ring (gameplay changes: off by default; W toggles, the\n"
         "                ring follows at the next map entry); boss rooms, towns and menus keep the original (never with --trace)\n"
-        "  --smooth      slide the cavern or town scroll, parallax layers, hero, NPCs, enemies and shots between game steps (T toggles)\n"
+        "  --smooth      slide the cavern or town scroll, parallax layers, hero, NPCs, enemies and shots between game steps (= --smooth=1)\n"
+        "  --smooth=N    smooth scrolling mode: 0 off, 1 camera (each move slides over its own step), 2 full (enemies, shots and NPCs\n"
+        "                also glide at their own pace), 3 soft (everything eases onto its cell early in the step); T cycles them\n"
         "  --video M   render through one of the five original drivers:\n"
         "              mcga (default) cga cga2 ega hgc tandy — the RESOURCE.CFG\n"
         "              `videoDrv` set, at each driver's own screen size\n"
@@ -2537,7 +2552,7 @@ static void present(Game *g)
         !g->fade_card && !g->dissolve) {
         smooth_town_reset(&a->tsm);
         int pscr = a->sm.scroll_col, prow = a->sm.scroll_row, phave = a->sm.have;
-        smooth_step(&a->sm, g);
+        smooth_step_mode(&a->sm, g, a->smooth);
         smooth_at(&a->sm, 0, &so);
         slide = so.active;
         a->sm_step_no++;
@@ -2599,6 +2614,14 @@ static void present(Game *g)
                  input_key_down(&a->in, ACT_AUTOFIRE, 0, k, combo), &g->dirs, &b);
     set_buttons(g, b);
     g->menu_key = (uint8_t)(key_menu(a, k, 0) || pad_menu(a));   /* FF18 bit0 */
+    /* test hook (#138): ZEL_LIVE_SCRIPT=TOKENS adds --script-style input to a windowed cavern run, one token-frame a
+     * step, so a present dump (ZEL_PRESENT_DUMP) can record a repeatable walk at real speed */
+    if (a->live_script) {
+        if (script_next(a)) {
+            g->dirs |= a->script_dirs;
+            set_buttons(g, (uint8_t)(b | (a->script_btns & 3) | (a->script_btns & 8 ? 4 : 0)));
+        } else if (getenv("ZEL_LIVE_SCRIPT_QUIT")) a->quit = 1;
+    }
 #endif
 }
 
@@ -2661,8 +2684,8 @@ static void town_present(Town *t)
     a->sm_live = 0;
     if (a->smooth && !a->turbo && !t->status && !t->shop && !t->dsv_pic && !t->dissolve) {
         smooth_reset(&a->sm);
-        smooth_town_step(&a->tsm, t);
-        smooth_ofs_at(&a->tsm.start, 0, &so);
+        smooth_town_step_mode(&a->tsm, t, a->smooth);
+        smooth_eval(a->tsm.mode, &a->tsm.start, &a->tsm.end, 0, &so);
         slide = so.active;
         a->sm_step_no++;
         a->sm_ts0 = vs_slot(a); a->sm_frames = 0;
@@ -2705,6 +2728,10 @@ static void town_present(Town *t)
         uint8_t td = d;
         autoatk_step(&a->atk, touch_combo_held(&a->touch), 0, &td, &b);
         t->dirs = td;
+    }
+    if (a->live_script) {               /* ZEL_LIVE_SCRIPT (test hook, #138), as in the cavern */
+        if (script_next(a)) { t->dirs |= a->script_dirs; b |= (uint8_t)(a->script_btns & 3); }
+        else if (getenv("ZEL_LIVE_SCRIPT_QUIT")) a->quit = 1;
     }
     if ((b & 1) && !(t->buttons & 1)) t->btn1_edge = 0xFF;
     if ((b & 2) && !(t->buttons & 2)) t->btn2_edge = 0xFF;
@@ -2848,7 +2875,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--fullscreen")) { a.fullscreen = 1; have_fullscreen = 1; }
         else if (!strcmp(argv[i], "--zoom")) { a.zoom = ZOOM_CROP; have_zoom = 1; }       /* start zoomed (Z toggles) */
         else if (!strncmp(argv[i], "--zoom=", 7) && argv[i][7] >= '0' && argv[i][7] <= '3' && !argv[i][8]) { a.zoom = argv[i][7] - '0'; have_zoom = 1; }   /* start at a zoom level (0..3, render.h) */
-        else if (!strcmp(argv[i], "--smooth")) { a.smooth = 1; have_smooth = 1; } /* smooth scrolling (T toggles, #127) */
+        else if (!strcmp(argv[i], "--smooth")) { a.smooth = SMOOTH_CAMERA; have_smooth = 1; } /* smooth scrolling (T cycles the modes, #127, #138) */
+        else if (!strncmp(argv[i], "--smooth=", 9)) {
+            char *e; long v = strtol(argv[i] + 9, &e, 10);
+            if (e == argv[i] + 9 || *e || v < 0 || v >= SMOOTH_MODES) { fprintf(stderr, "--smooth=N: expected 0 (off), 1 (camera), 2 (full) or 3 (soft)\n"); return 2; }
+            a.smooth = (int)v; have_smooth = 1;
+        }
         else if (!strcmp(argv[i], "--smooth-log")) { a.smlog = 1;
 #ifdef __EMSCRIPTEN__
             smooth_vs_init();
@@ -2959,6 +2991,9 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--emit-script") && i + 1 < argc) emit_path = argv[++i];
         else { usage(); return 2; }
     }
+#ifdef HAVE_SDL
+    if (!a.headless && !a.script && getenv("ZEL_LIVE_SCRIPT") && *getenv("ZEL_LIVE_SCRIPT")) { a.script = getenv("ZEL_LIVE_SCRIPT"); a.live_script = 1; }
+#endif
     /* #42: the config fills in whatever the command line did not name.  It is a
      * player's window/audio preference, so a headless run (--screenshot,
      * --script, --trace: the harness) ignores it -- there only the game folder
@@ -2968,7 +3003,7 @@ int main(int argc, char **argv)
         if (!have_scale && cfg.scale > 0) a.scale = cfg.scale;
         if (!have_fullscreen && cfg.fullscreen >= 0) a.fullscreen = cfg.fullscreen;
         if (!have_zoom && cfg.zoom >= 0) a.zoom = cfg.zoom;
-        if (!have_smooth && cfg.smooth >= 0) a.smooth = cfg.smooth;
+        if (!have_smooth && cfg.smooth >= 0) a.smooth = cfg.smooth < SMOOTH_MODES ? cfg.smooth : SMOOTH_CAMERA;
         if (!have_wide && cfg.wide >= 0) a.wide = cfg.wide;
         if (!have_video && cfg.video[0])   { int m = video_mode_by_name(cfg.video); if (m >= 0) a.video = m; }
         if (!have_filter && cfg.filter[0]) { int f = present_filter_by_name(cfg.filter); if (f >= 0) a.filter = f; }
