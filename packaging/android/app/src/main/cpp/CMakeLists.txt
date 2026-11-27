@@ -18,8 +18,8 @@ set(SRCS main trace
     boss boss_crab boss_tako boss_tori boss_zela boss_meda boss_lega
     boss_drgn boss_akma boss_mao1 boss_mao2 boss_generic
     text player shop status shell savestate nav playthrough opl2 sn76496 sndjr msd audio
-    config statekeys restore gd cutscene tear
-    video video_mcga video_cga video_ega video_hgc video_tandy
+    config autoatk statekeys restore speed mapview smooth gd cutscene tear
+    video video_mcga video_cga video_ega video_hgc video_tandy video_gd
     present touch input sync synclife syncdlg net_stub)
 set(SRC_FILES "")
 foreach(s ${SRCS})
