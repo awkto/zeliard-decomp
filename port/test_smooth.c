@@ -231,7 +231,7 @@ static void t_render(void)
     }
     g->scroll_row = 0;
     /* ring window columns -1 .. 28 carry tile ids 1..7 repeating by column */
-    for (int r = 0; r < RING_H; r++) for (int c = 0; c < RING_W; c++) g->bg_ring[r * RING_W + c] = (uint8_t)(1 + (c % 7));
+    for (int r = 0; r < RING_H; r++) for (int c = 0; c < ring_w(g); c++) g->bg_ring[r * ring_w(g) + c] = (uint8_t)(1 + (c % 7));
     render_frame(a, g, NULL);
     SmoothOfs z; memset(&z, 0, sizeof z);
     render_set_smooth(&z);                               /* inactive offsets are the engine path */
@@ -291,8 +291,8 @@ static void t_fixtures(void)
 {
     printf("fixtures        ");
     static Map m; static Tileset t; Game *g = new_game(&m, &t);
-    ck(smooth_fixture_rcol(60, 50, 100) == 10 && smooth_fixture_rcol(5, 90, 100) == 15 && smooth_fixture_rcol(84, 50, 100) == -1 &&
-       smooth_fixture_rcol(83, 50, 100) == 33 && smooth_fixture_rcol(49, 50, 100) == -1, "the ring column of a fixture, over the seam, and off the ring");
+    ck(smooth_fixture_rcol(60, 50, 100, RING_W_ORIG) == 10 && smooth_fixture_rcol(5, 90, 100, RING_W_ORIG) == 15 && smooth_fixture_rcol(84, 50, 100, RING_W_ORIG) == -1 &&
+       smooth_fixture_rcol(83, 50, 100, RING_W_ORIG) == 33 && smooth_fixture_rcol(49, 50, 100, RING_W_ORIG) == -1, "the ring column of a fixture, over the seam, and off the ring");
 
     /* an elevator the hero rides: it and the scroll both move a row, so it stays put on screen */
     Smooth s; smooth_reset(&s);
@@ -336,10 +336,10 @@ static void t_fixtures(void)
     }
     g->scroll_col = 50; g->scroll_row = 5;
     memset(g->ring, 0, sizeof g->ring);
-    for (int i = 0; i < RING_SIZE; i++) g->bg_ring[i] = (i / RING_W) % 2 ? 1 : 0;   /* striped rows: every second tile row */
+    for (int i = 0; i < ring_size(g); i++) g->bg_ring[i] = (i / ring_w(g)) % 2 ? 1 : 0;   /* striped rows: every second tile row */
     g->nfix = 0;
     put_fix(g, 0, 60, 10, 0x40, 0);                                   /* ring col 10..12, screen cell 6..8, row 5 */
-    for (int k = 0; k < 3; k++) g->bg_ring[10 * RING_W + 10 + k] = (uint8_t)(0x40 + k);
+    for (int k = 0; k < 3; k++) g->bg_ring[10 * ring_w(g) + 10 + k] = (uint8_t)(0x40 + k);
     static uint8_t a[FB_W * FB_H], b[FB_W * FB_H];
     render_frame(a, g, NULL);
     int fy = PF_Y + 5 * 8, fx = PF_X + 6 * 8;
@@ -367,7 +367,7 @@ static void t_fixtures(void)
     for (int y = 0; y < 8; y++) for (int x = 0; x < 24; x++) if (b[(fy + y) * FB_W + fx + x] != a[(fy + y) * FB_W + fx + x]) ok = 0;
     ck(ok, "a platform keeping its screen column while the world slides sideways");
     /* a lift half hidden under a sprite marker still draws */
-    g->bg_ring[10 * RING_W + 11] = 0x80 | 3; g->nobj = 4; g->under_sprite[3] = 0x41;
+    g->bg_ring[10 * ring_w(g) + 11] = 0x80 | 3; g->nobj = 4; g->under_sprite[3] = 0x41;
     render_frame(a, g, NULL);
     memset(&w, 0, sizeof w); w.active = 1; w.wy = 8;
     render_set_smooth(&w); render_frame(b, g, NULL); render_set_smooth(NULL);
@@ -525,7 +525,7 @@ static void t_wide(void)
         for (int r = 0; r < 8; r++) for (int c = 0; c < 8; c++) t.cell[v].px[r][c] = (uint8_t)(v * 16 + (c == 0 ? 1 : 2));
     }
     g->scroll_row = 0;
-    for (int r = 0; r < RING_H; r++) for (int c = 0; c < RING_W; c++) g->bg_ring[r * RING_W + c] = (uint8_t)(1 + (c % 7));
+    for (int r = 0; r < RING_H; r++) for (int c = 0; c < ring_w(g); c++) g->bg_ring[r * ring_w(g) + c] = (uint8_t)(1 + (c % 7));
 
     /* the playfield: ring column c is at x 48 + 8c of the wide screen; the stock 28 columns are 4..31 */
     render_frame(a, g, NULL);
@@ -694,7 +694,7 @@ static void t_zoomout(void)
     }
     /* each ring row has its own tile (1 + row % 7), so a row's place shows in the picture; the map the same by column */
     for (int c = 0; c < 100; c++) for (int r = 0; r < MAP_ROWS; r++) m.grid[c][r] = (uint8_t)(1 + (c % 7));
-    for (int r = 0; r < RING_H; r++) for (int c = 0; c < RING_W; c++) g->bg_ring[r * RING_W + c] = g->ring[r * RING_W + c] = (uint8_t)(1 + (r % 7));
+    for (int r = 0; r < RING_H; r++) for (int c = 0; c < ring_w(g); c++) g->bg_ring[r * ring_w(g) + c] = g->ring[r * ring_w(g) + c] = (uint8_t)(1 + (r % 7));
     g->scroll_col = 10;
 
     /* zoom-out 1: the window's 18 rows sit 3 rows (24 px) down, and the 3 rows above and below are the ring's own rows */
@@ -776,7 +776,7 @@ static void t_zoomout(void)
         ck(w[(PF_Y + 23 * 8 + 1) * W1 + PF_X + 20 * 8 + 1] == px && !seen, "...one on the view's last row draws its top pair and does not spill into the HUD rows");
         g->nobj = 0; g->ai = NULL; g->egfx = NULL;
         memset(g->ring, 0, sizeof g->ring);
-        for (int r = 0; r < RING_H; r++) for (int c = 0; c < RING_W; c++) g->bg_ring[r * RING_W + c] = g->ring[r * RING_W + c] = (uint8_t)(1 + (r % 7));
+        for (int r = 0; r < RING_H; r++) for (int c = 0; c < ring_w(g); c++) g->bg_ring[r * ring_w(g) + c] = g->ring[r * ring_w(g) + c] = (uint8_t)(1 + (r % 7));
     }
 
     /* zoom-out 2: 62 columns.  The 36 ring columns are in the middle (x 48 + 13*8), the 13 each side are the map */
@@ -808,9 +808,9 @@ static void t_zoomout(void)
     ck(!leak, "nothing leaks into the stone columns");
     {   /* the live span the shading uses */
         int x0, x1, y0, y1;
-        render_live_span(&v2, &x0, &x1, &y0, &y1);
+        render_live_span(g, &v2, &x0, &x1, &y0, &y1);
         ck(x0 == PF_X + 13 * 8 && x1 == x0 + 288 && y0 == PF_Y && y1 == PF_Y + 28 * 8, "the live span is the 36 ring columns x all rows (x %d..%d)", x0, x1);
-        render_live_span(&v0, &x0, &x1, &y0, &y1);
+        render_live_span(g, &v0, &x0, &x1, &y0, &y1);
         ck(x0 == PF_X && x1 == PF_X + 288, "...and the whole playfield in the normal wide view");
     }
     {   /* a lift outside the ring is drawn as the map has it; one inside is the ring's */

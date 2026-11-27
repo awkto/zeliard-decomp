@@ -71,15 +71,15 @@ static void plant_update(Game *g, MapObj *e)
         ai_tall_sync(g, e); return;
     }
     e->hit &= (uint8_t)~FACING_RIGHT;                                   /* A3F0 */
-    if (e->rcol <= 0x11) e->hit |= FACING_RIGHT;
+    if (e->rcol <= hero_rcol(g)) e->hit |= FACING_RIGHT;
     int at_range = 0, cornered = 0;
     if (e->hit & FACING_RIGHT) {
-        uint8_t dist = (uint8_t)(0x11 - e->rcol);                       /* A405 */
+        uint8_t dist = (uint8_t)(hero_rcol(g) - e->rcol);                       /* A405 */
         if (dist == dist_r) at_range = 1;
         else if (dist < dist_r) { if (TALL(e, 4)) cornered = 1; else e->phase = (uint8_t)((e->phase - 1) & 3); }
         else                    { if (TALL(e, 0)) at_range = 1; else e->phase = (uint8_t)((e->phase + 1) & 3); }
     } else {
-        uint8_t dist = (uint8_t)(e->rcol - 0x11);                       /* A42E */
+        uint8_t dist = (uint8_t)(e->rcol - hero_rcol(g));                       /* A42E */
         if (dist == dist_l) at_range = 1;
         else if (dist < dist_l) { if (TALL(e, 0)) cornered = 1; else e->phase = (uint8_t)((e->phase - 1) & 3); }
         else                    { if (TALL(e, 4)) at_range = 1; else e->phase = (uint8_t)((e->phase + 1) & 3); }
@@ -117,10 +117,10 @@ static void slime_update(Game *g, MapObj *e)
         e->next |= 2;
         int p = game_ring_index(g, e->row, e->rcol);
         if (!(krn_random(g) & 0x80)) {                                  /* A730 */
-            uint8_t v = g->ring[game_ring_add(p, 2 * RING_W + 2)];      /* (row+2, rcol+2) */
+            uint8_t v = g->ring[game_ring_add(g, p, 2 * ring_w(g) + 2)];      /* (row+2, rcol+2) */
             if (ai_cell_passable(g, v)) STEP(e, 4); else STEP(e, 0);
         } else {
-            uint8_t v = g->ring[game_ring_add(p, 2 * RING_W - 1)];      /* (row+2, rcol-1) */
+            uint8_t v = g->ring[game_ring_add(g, p, 2 * ring_w(g) - 1)];      /* (row+2, rcol-1) */
             if (ai_cell_passable(g, v)) STEP(e, 0); else STEP(e, 4);
         }
         return;

@@ -73,11 +73,11 @@ double smooth_frame_progress(double ts, double ts0, int frames, double period)
 
 void smooth_reset(Smooth *s) { memset(s, 0, sizeof *s); }
 
-int smooth_fixture_rcol(int col, int scroll_col, int map_width)
+int smooth_fixture_rcol(int col, int scroll_col, int map_width, int ring_w)
 {
     int d = col - scroll_col;
     if (d < 0) d += map_width;
-    return (d < 0 || d > 0x21) ? -1 : d;
+    return (d < 0 || d > ring_w - 3) ? -1 : d;                         /* 82F8: 0x21 */
 }
 
 /* a screen cell (x, y) as 302C/3336/8366 would place it; ok = within the ring's reach */
@@ -132,7 +132,7 @@ void smooth_step(Smooth *s, const Game *g)
 
     for (int i = 0; i < g->nfix && i < SMOOTH_FIXES && g->map; i++) {
         const Fixture *f = &g->fix[i];
-        int rc = smooth_fixture_rcol(f->col, g->scroll_col, g->map->width);
+        int rc = smooth_fixture_rcol(f->col, g->scroll_col, g->map->width, ring_w(g));
         if (rc >= 0) cur.fix[i] = pos_of(g, rc, f->row, f->kind);
     }
 

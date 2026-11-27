@@ -35,7 +35,7 @@ void eai1_bat_idle(Game *g, MapObj *e)
 {
     (void)g;
     if (e->phase) { e->phase = (uint8_t)(e->phase - 0x10); return; }
-    if ((uint8_t)(e->rcol - 0x11) < 10 || (uint8_t)(0x11 - e->rcol) < 7) e->next = 0x40;
+    if ((uint8_t)(e->rcol - hero_rcol(g)) < 10 || (uint8_t)(hero_rcol(g) - e->rcol) < 7) e->next = 0x40;
     e->phase = 0;
 }
 
@@ -63,14 +63,14 @@ void eai1_bat_chase(Game *g, MapObj *e)
     if (g->hero_hit_flash) { e->next = 0xC0; return; }                  /* A2E6 */
     uint8_t d = (uint8_t)((g->hero_map_row - e->row + 0x15) & 0x3F);    /* A2F2 */
     int go_right = 0, go_left = 0;
-    if (e->rcol == 0x11 || e->rcol == 0x10) goto drop;                  /* over/under the hero */
+    if (e->rcol == hero_rcol(g) || e->rcol == hero_rcol(g) - 1) goto drop;                  /* over/under the hero */
     if (d < 0x12) {                                                     /* hero above */
-        if (e->rcol < 0x10) { if (!STEP_RU(e)) { e->hit |= FACING_RIGHT;  return; } go_right = 1; }   /* A35E */
+        if (e->rcol < hero_rcol(g) - 1) { if (!STEP_RU(e)) { e->hit |= FACING_RIGHT;  return; } go_right = 1; }   /* A35E */
         else                { if (!STEP_LU(e)) { e->hit &= (uint8_t)~FACING_RIGHT; return; } go_left = 1; }  /* A36A */
     } else if (d >= 0x18) {                                             /* hero below */
-        if (e->rcol < 0x10) { if (!STEP_RD(e)) { e->hit |= FACING_RIGHT;  return; } go_right = 1; }   /* A312 */
+        if (e->rcol < hero_rcol(g) - 1) { if (!STEP_RD(e)) { e->hit |= FACING_RIGHT;  return; } go_right = 1; }   /* A312 */
         else                { if (!STEP_LD(e)) { e->hit &= (uint8_t)~FACING_RIGHT; return; } go_left = 1; }  /* A31E */
-    } else if (e->rcol < 0x10) go_right = 1; else go_left = 1;          /* A32A: level */
+    } else if (e->rcol < hero_rcol(g) - 1) go_right = 1; else go_left = 1;          /* A32A: level */
     if (go_right) { if (!STEP_R(e)) { e->hit |= FACING_RIGHT; return; } }               /* A338 */
     else if (go_left) { if (!STEP_L(e)) { e->hit &= (uint8_t)~FACING_RIGHT; return; } } /* A344 */
 drop:
@@ -121,7 +121,7 @@ static void snail_update(Game *g, MapObj *e)
     e->phase = (uint8_t)((e->phase + 0x41) & 0xC3);                     /* A410 */
     if (e->phase & 0xF0) return;                                        /* A418 */
     /* A425/A432: jnc -- the facing follows a step that was TAKEN (ai_step returns 1 when refused) */
-    if (e->rcol < 0x11) { if (!STEP_R(e)) e->hit |= FACING_RIGHT; }     /* A41F */
+    if (e->rcol < hero_rcol(g)) { if (!STEP_R(e)) e->hit |= FACING_RIGHT; }     /* A41F */
     else                { if (!STEP_L(e)) e->hit &= (uint8_t)~FACING_RIGHT; }  /* A432 */
 }
 
@@ -242,7 +242,7 @@ static void hog_update(Game *g, MapObj *e)
 
     /* A5C5: an open cell under the leading foot -> jump the gap */
     int p = game_ring_index(g, e->row, e->rcol);
-    p = game_ring_add(p, 2 * RING_W + ((e->hit & FACING_RIGHT) ? 1 : 0));
+    p = game_ring_add(g, p, 2 * ring_w(g) + ((e->hit & FACING_RIGHT) ? 1 : 0));
     if (ai_cell_passable(g, g->ring[p])) { e->phase = 0; e->next |= 8; return; }   /* A5EB */
     e->phase = (uint8_t)((e->phase + 1) & 3);                           /* A5F4 */
     if (!(e->next & 2)) {                                               /* A5FB: 16 wander steps, then rest */

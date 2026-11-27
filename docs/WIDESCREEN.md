@@ -1,7 +1,8 @@
 # Widescreen mode: design study (issue #126)
 
-Status: steps 0-2 are implemented (section 8: the 16:10 view of the whole ring, `--wide` / `W` / `wide=`,
-presentation only, and 8.1: the two zoom-out levels of `Z`); steps 3-9 (a wider ring, 16:9) are not.  The study's citations are to `main` at 7ecb412.
+Status: steps 0-3 are implemented (section 8: the 16:10 view of the whole ring, `--wide` / `W` / `wide=`,
+presentation only, 8.1: the two zoom-out levels of `Z`, and 8.2: the ring's width as a runtime value, still
+always 36); steps 4-9 (a wider ring, 16:9) are not.  The study's citations are to `main` at 7ecb412.
 `port/x.c:N` is the port; four-digit hex addresses are fight.bin (`disasm/overlays/fight.asm`)
 unless a file is named (gfmcga = `disasm/overlays/gfmcga.asm`).
 
@@ -450,3 +451,45 @@ Tests: `test_smooth` `zoom-out levels` (the layout of each level, the ring's row
 wrap at 64, an enemy, shots and a lift in the extra rows, the scenery columns from the map, the live span, the
 furniture and the HUD band at 592x280 and 384x248), `test_present` (the crop and the view of the taller sources),
 `test_config` (`zoom=0..3`).
+
+### 8.2 Step 3: the runtime ring width (a no-op)
+
+`RING_W` / `RING_SIZE` are gone.  `physics.h` defines the geometry as functions of one value, E (columns added each
+side): `RING_W_OF(e)` 36+2E, `VIEW_COLS_OF(e)` 28+2E, `HERO_COL_OF(e)` 12+E, `HERO_RCOL_OF(e)` 17+E, and the inline
+helpers every site uses read E from `ring_extra(g)`, which returns 0: `ring_w(g)`, `ring_size(g)`, `ring_last(g)`
+(0x23), `edge_hi(g, k)` (`ring_w - k`: 0x22, 0x21, 0x20), `view_cols(g)`, `hero_col(g)` (the pin 0x0C),
+`hero_rcol(g)` (0x11) and `ring_delta(g, dr, dc)`.  `game_ring_add` takes `g`.  Step 4 only has to make
+`ring_extra` return a per-map value (and raise `RING_STRIDE_MAX`, below).  A `_Static_assert` in `physics.h` pins
+`E = 0` to the old constants (36, 2304, 28, 0x0C, 0x11, 0x23, 0x20); it is compile-time so the `make test` count is
+unchanged.
+
+What moved where:
+* stride: every `RING_W` and every stride-encoded delta the macros did not cover (physics.c `+0x6D` row+3/col+1,
+  `+0x49` row+2/col+1, `-0x23` row-1/col+1, `-0x25` row-1/col-1; the AI probe tables, now (row, col) pairs);
+* the last column and the right edges: `scroll_right`'s 0x23 refill, `ai_step` / `ai_tall_step` 0x22 / 0x23,
+  `enemy_spawn` 0x23, the EAI4 / EAI5 muzzle guards (0x21, 0x20), `magic_hit` 8C11 and the spell-3 fall (0x20,
+  0x21), `fixture_rcol` / `hero_on_fixture` 0x21 (with `hc` = HC+4 the latter is HB-relative by itself, as 2.3
+  row 15 asks), the C erase 0x25 / 0x22, the door arches 0x27 / 40 (`ring_w + 3` / `+ 4`), `boss_ring_col` 0x23;
+* hero-relative: 0x11 and its encodings 0x10, 0x0F, 0x12..0x14, 8..0x12 in `ai_hero_dirx` and EAI1..7, written
+  `hero_rcol(g) +/- k`; the aggro widths themselves (10, 7, `dx < 10`, `dx < 15`) are unchanged (2.1 row 5);
+  the pin `0x0C` at its four places and `game_place`'s `col - 16` (`hero_col + 4`);
+* view-relative: the spawn band 0x20 and `cell_anim`'s 4..0x1F (`view_cols + 4`), and `shots_draw_pass`'s
+  0x1C (`view_cols`);
+* presentation: `render_live_span` takes `g`, `smooth_fixture_rcol` takes the stride, and the zoom-out scenery
+  columns start past `ring_last(g)`;
+* `trace.c` and `savestate.c` keep the 36 layout (`RING_SIZE_ORIG`); boss-room literals (camera 0x29 / col 5,
+  the bosses' own columns) are untouched (section 3).
+
+Kept as they were, on purpose: column -1 of a row is still the previous row's last cell and a delta still wraps
+only through `game_ring_add`'s single wrap.  `game_ring_index(g, row, col)` is still unwrapped, so a shot in ring row
+63 at column 36 or more reads past the ring: in the original that is E000+0x900 = the E900 screen shadow, in the port
+the struct fields after `ring[]`.  That is why the storage is still `RING_STRIDE_MAX` = 36 columns: a larger
+array would change what that read sees.  Step 4 raises it and decides what the overflow reads.
+
+Verified on a droplet against `main` (649c61e): the port's `--trace` of all 85 `tests/scenarios/*.zs`, byte-identical
+(`cmp` and `trace_eq.py`), and their 50680 trace PNGs (every frame, or the scenario's `png-every`) identical; the wide view
+(`render_frame_view` at all four zoom levels, plus `render_live_span`) of every traced cavern frame of 12 cavern
+scenarios (caverns 1 and 4-7, lifts, gates, respawns: 10944 pictures) byte-identical to `main`'s; `make test` 2811 assertions in
+14 binaries, all pass, counts agree with the docs; `make verify` 235 comparisons green.  No oracle run: the
+traces are those of `main` byte for byte.
+

@@ -164,9 +164,10 @@ static int state_io(Shell *s, Wr *w, Rd *r, SavestateMeta *meta)
     IO8(g->hero_drawn_ok); IOI(g->hero_drawn_row); IOI(g->hero_drawn_col);
     IO8(g->sword_blk_ok);  IOI(g->sword_blk_row);  IOI(g->sword_blk_col);
 
-    /* ---- Game: the two rings ---- */
-    IOM(g->ring, RING_SIZE);
-    IOM(g->bg_ring, RING_SIZE);
+    /* ---- Game: the two rings (the original's 36-stride layout: a wide ring is
+     * step 4's to version, docs/WIDESCREEN.md §5) ---- */
+    IOM(g->ring, RING_SIZE_ORIG);
+    IOM(g->bg_ring, RING_SIZE_ORIG);
 
     /* ---- Game: camera and the hero record ---- */
     IOI(g->scroll_col);

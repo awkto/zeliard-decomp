@@ -436,7 +436,7 @@ static void draw_shots_mid(uint8_t *fb, const Game *g)
 {
     for (int i = 0; i < g->shot_pics; i++) {
         int sc = g->shot_pic[i].sc, sr = g->shot_pic[i].sr;
-        int rp = (game_win(g) + sr * RING_W + sc + 4) % RING_SIZE; if (rp < 0) rp += RING_SIZE;
+        int rp = (game_win(g) + sr * ring_w(g) + sc + 4) % ring_size(g); if (rp < 0) rp += ring_size(g);
         uint8_t v = g->bg_ring[rp];
         if (v != g->shot_pic[i].bgv || (v & 0x80) || g->shot_pic[i].spr || render_sprite_cell(g, sc, sr)) continue;
         if (ghost_in_block(sc, sr, g->hero_scr_col, g->hero_scr_row, 3, 3)) continue;
@@ -561,7 +561,7 @@ void render_fadein_pass(uint8_t *fb, const Game *g, int c)
     for (int sr = 0; sr < 18; sr++)                     /* 41B3: 0x12 cell rows */
         for (int sc = 0; sc < SCREEN_COLS; sc++) {
             if (sc >= g->hero_scr_col && sc < g->hero_scr_col + 3 && sr >= g->hero_scr_row && sr < g->hero_scr_row + 3) continue;
-            uint8_t v = g->ring[game_ring_add(game_win(g), sr * RING_W + sc + 4)];   /* the ring as 4192 reads it (the frame's bg_ring is the last frame's) */
+            uint8_t v = g->ring[game_ring_add(g, game_win(g), sr * ring_w(g) + sc + 4)];   /* the ring as 4192 reads it (the frame's bg_ring is the last frame's) */
             if (v & 0x80) continue;
             const Cell8 *cell = (v && g->tiles->present[v]) ? &g->tiles->cell[v] : NULL;
             for (int half = 0; half < 2; half++) {
@@ -721,8 +721,8 @@ static void draw_scenery_fixtures(uint8_t *fb, const Game *g, int wx, int wy)
         if (sr < -v_rt - 1 || sr > SCREEN_ROWS + v_rb) continue;
         for (int k = 0; k < 3; k++) {
             int d = (((int)f->col + k - g->scroll_col) % mw + mw) % mw;         /* ring column of the cell, if it were in the ring */
-            if (d > 35 + (v_hi - 4)) d -= mw;
-            if (d >= 0 && d < RING_W) continue;
+            if (d > ring_last(g) + (v_hi - 4)) d -= mw;
+            if (d >= 0 && d < ring_w(g)) continue;
             int sc = d - 4;
             if (sc < -v_lo || sc >= SCREEN_COLS + v_hi) continue;
             uint8_t v = (uint8_t)(f->cell + k);
@@ -796,14 +796,14 @@ static void render_frame_impl(uint8_t *fb, const Game *g, const HeroGfx *h)
     /* the moving fixtures' cells are ring tiles, but their own slide differs from the world's (a lift
      * the hero rides keeps its screen place while the rock scrolls past), so the tile pass leaves them
      * out and they are drawn on top at their own offset.  fix_at[ring index] = record + 1 */
-    static uint16_t fix_at[RING_SIZE];
+    static uint16_t fix_at[RING_CAP];
     int use_fix = s_sm && g->nfix > 0 && g->map;
     if (use_fix) {
         memset(fix_at, 0, sizeof fix_at);
         for (int i = 0; i < g->nfix && i < SMOOTH_FIXES; i++) {
             const Fixture *f = &g->fix[i];
-            int rc = smooth_fixture_rcol(f->col, g->scroll_col, g->map->width);
-            for (int k = 0; rc >= 0 && k < 3 && rc + k < RING_W; k++)
+            int rc = smooth_fixture_rcol(f->col, g->scroll_col, g->map->width, ring_w(g));
+            for (int k = 0; rc >= 0 && k < 3 && rc + k < ring_w(g); k++)
                 fix_at[game_ring_index(g, f->row, (uint8_t)(rc + k))] = (uint16_t)(i + 1);
         }
     }
@@ -812,7 +812,7 @@ static void render_frame_impl(uint8_t *fb, const Game *g, const HeroGfx *h)
     for (int sr = sr0; sr < sr1; sr++) {
         for (int sc = sc0; sc < sc1; sc++) {
             uint8_t v;
-            if (sc + 4 < 0 || sc + 4 >= RING_W) {
+            if (sc + 4 < 0 || sc + 4 >= ring_w(g)) {
                 /* A slide in a view that already shows the whole ring reveals the column just beyond it.  The
                  * ring does not hold it (a ring index there is the neighbouring row's), so it is read from the
                  * map itself: the ring is the map's columns scroll_col.. wrapped, row for row. */
@@ -820,8 +820,8 @@ static void render_frame_impl(uint8_t *fb, const Game *g, const HeroGfx *h)
                 v = g->map->grid[mc][(g->scroll_row + sr) & 0x3F];
                 if (v & 0x80) continue;
             } else {
-            int rp = (game_win(g) + sr * RING_W + sc + 4) % RING_SIZE;
-            if (rp < 0) rp += RING_SIZE;
+            int rp = (game_win(g) + sr * ring_w(g) + sc + 4) % ring_size(g);
+            if (rp < 0) rp += ring_size(g);
             v = g->bg_ring[rp];                         /* 3159: the cell before 315C animates it (game_bg_cell, wrapped both ways) */
             if (v & 0x80) {                             /* a sprite marker hides the tile it covers;
                                                          * the background buffer (E900) keeps it */
@@ -831,11 +831,11 @@ static void render_frame_impl(uint8_t *fb, const Game *g, const HeroGfx *h)
             }
             }
             if (!v || !g->tiles->present[v]) continue;
-            if (use_fix && sc + 4 >= 0 && sc + 4 < RING_W) {
-                int rp = (game_win(g) + sr * RING_W + sc + 4) % RING_SIZE;
-                if (rp < 0) rp += RING_SIZE;
+            if (use_fix && sc + 4 >= 0 && sc + 4 < ring_w(g)) {
+                int rp = (game_win(g) + sr * ring_w(g) + sc + 4) % ring_size(g);
+                if (rp < 0) rp += ring_size(g);
                 int fi = fix_at[rp] - 1;
-                if (fi >= 0 && v == g->fix[fi].cell + ((rp % RING_W) - smooth_fixture_rcol(g->fix[fi].col, g->scroll_col, g->map->width))) continue;
+                if (fi >= 0 && v == g->fix[fi].cell + ((rp % ring_w(g)) - smooth_fixture_rcol(g->fix[fi].col, g->scroll_col, g->map->width, ring_w(g)))) continue;
             }
             blit8(fb, &g->tiles->cell[v], VX(sc) + wx, VY(sr) + wy);
         }
@@ -843,11 +843,11 @@ static void render_frame_impl(uint8_t *fb, const Game *g, const HeroGfx *h)
     draw_scenery_fixtures(fb, g, wx, wy);
     for (int i = 0; use_fix && i < g->nfix && i < SMOOTH_FIXES; i++) {
         const Fixture *f = &g->fix[i];
-        int rc = smooth_fixture_rcol(f->col, g->scroll_col, g->map->width);
+        int rc = smooth_fixture_rcol(f->col, g->scroll_col, g->map->width, ring_w(g));
         if (rc < 0) continue;
         int sr = ((f->row - g->scroll_row) & 0x3F);
         if (sr > 40) sr -= 64;
-        for (int k = 0; k < 3 && rc + k < RING_W; k++) {
+        for (int k = 0; k < 3 && rc + k < ring_w(g); k++) {
             int rp = game_ring_index(g, f->row, (uint8_t)(rc + k));
             uint8_t v = g->bg_ring[rp];
             if (v & 0x80) { int oi = v & 0x7F; v = oi < g->nobj ? g->under_sprite[oi] : 0; }
@@ -962,12 +962,12 @@ const char *render_zoom_name(int level, int wide)
     }
 }
 
-void render_live_span(const RenderView *v, int *x0, int *x1, int *y0, int *y1)
+void render_live_span(const Game *g, const RenderView *v, int *x0, int *x1, int *y0, int *y1)
 {
     int lo = v ? v->lo : 0, hi = v ? v->hi : 0, rt = v ? v->rt : 0, rb = v ? v->rb : 0;
     int a = PF_X + (lo > 4 ? lo - 4 : 0) * 8;                 /* ring column 0 */
     if (x0) *x0 = a;
-    if (x1) *x1 = a + RING_W * 8 - (lo < 4 ? (4 - lo) * 8 : 0) - (hi < 4 ? (4 - hi) * 8 : 0);
+    if (x1) *x1 = a + ring_w(g) * 8 - (lo < 4 ? (4 - lo) * 8 : 0) - (hi < 4 ? (4 - hi) * 8 : 0);
     if (y0) *y0 = PF_Y;
     if (y1) *y1 = PF_Y + (18 + rt + rb) * 8;
 }

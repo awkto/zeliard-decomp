@@ -171,12 +171,12 @@ static int magic_hit(Game *g, Magic *m)
     if (g->boss_map && g->boss_cutscene) return 0;                      /* 8BF7 */
     uint8_t rcol;
     if (ai_map_col_to_ring(g, m->col, &rcol)) return 0;
-    if ((uint8_t)(rcol - 2) >= 0x20) return 0;                          /* 8C11: ring col 2..0x21 */
-    int p = game_ring_add(game_ring_index(g, m->row, rcol), -(RING_W + 1));
+    if ((uint8_t)(rcol - 2) >= edge_hi(g, 4)) return 0;                 /* 8C11: ring col 2..0x21 */
+    int p = game_ring_add(g, game_ring_index(g, m->row, rcol), -(ring_w(g) + 1));
     g->magic_hit_any = 0;
     for (int r = 0; r < 3; r++) {
-        for (int c = 0; c < 3; c++) magic_hit_cell(g, game_ring_add(p, c));
-        p = game_ring_add(p, RING_W);
+        for (int c = 0; c < 3; c++) magic_hit_cell(g, game_ring_add(g, p, c));
+        p = game_ring_add(g, p, ring_w(g));
     }
     return g->magic_hit_any != 0;
 }
@@ -248,10 +248,10 @@ static void spell_screen_wide(Game *g)
     }
     g->msg_timer = 0xFF;                                                /* 8918 ([9EEE] = 0xFF too: the second box's timer, untraced) */
     if (!(g->boss_map && g->boss_cutscene)) {
-        int p = game_ring_add(game_win(g), -RING_W);
+        int p = game_ring_add(g, game_win(g), -ring_w(g));
         for (int r = 0; r < 0x13; r++) {
-            for (int c = 0; c < RING_W; c++) magic_hit_cell(g, game_ring_add(p, c));
-            p = game_ring_add(p, RING_W);
+            for (int c = 0; c < ring_w(g); c++) magic_hit_cell(g, game_ring_add(g, p, c));
+            p = game_ring_add(g, p, ring_w(g));
         }
     }
     g->magic_active = 0;                                                /* 8954 */
@@ -310,9 +310,9 @@ void magic_update(Game *g)
         m->anim = (uint8_t)((m->anim & 3) + 1);
         if (m->age != 3) {
             uint8_t rcol;
-            if (!ai_map_col_to_ring(g, m->col, &rcol) && rcol < 0x21) {
-                int p = game_ring_add(game_ring_index(g, m->row, rcol), 2 * RING_W);
-                if (game_passable_wall(g, g->ring[p]) && game_passable_wall(g, g->ring[game_ring_add(p, 1)]))
+            if (!ai_map_col_to_ring(g, m->col, &rcol) && rcol < edge_hi(g, 3)) {   /* 0x21 */
+                int p = game_ring_add(g, game_ring_index(g, m->row, rcol), 2 * ring_w(g));
+                if (game_passable_wall(g, g->ring[p]) && game_passable_wall(g, g->ring[game_ring_add(g, p, 1)]))
                     m->row = (uint8_t)((m->row + 1) & 0x3F);            /* 8B5A */
             }
         }
@@ -404,11 +404,11 @@ void orbs_update(Game *g)
         if (g->boss_map && g->boss_defeated) continue;                  /* 8741 */
         int col = g->hero_scr_col + ORBIT[o->phase][0];
         int row = g->hero_scr_row + ORBIT[o->phase][1] + g->scroll_row;
-        int p = game_ring_add(game_ring_index(g, (uint8_t)row, (uint8_t)(col & 0xFF)), -(RING_W + 1));
+        int p = game_ring_add(g, game_ring_index(g, (uint8_t)row, (uint8_t)(col & 0xFF)), -(ring_w(g) + 1));
         orb_hit_cell(g, o, p);
-        orb_hit_cell(g, o, game_ring_add(p, 1));
-        orb_hit_cell(g, o, game_ring_add(p, RING_W));
-        orb_hit_cell(g, o, game_ring_add(p, RING_W + 1));
+        orb_hit_cell(g, o, game_ring_add(g, p, 1));
+        orb_hit_cell(g, o, game_ring_add(g, p, ring_w(g)));
+        orb_hit_cell(g, o, game_ring_add(g, p, ring_w(g) + 1));
     }
 }
 
@@ -438,7 +438,7 @@ void shots_draw_pass(Game *g)
         Shot *s = &g->shots[i];
         if (s->col == 0xFF) break;                                      /* 8369 */
         s->last_col = s->col;                                           /* 8376 */
-        if ((uint8_t)(s->col - 4) >= 0x1C) { s->col = 0; continue; }    /* 8379 / 83D2 */
+        if ((uint8_t)(s->col - 4) >= view_cols(g)) { s->col = 0; continue; }   /* 8379 / 83D2: 0x1C */
         uint8_t r = (uint8_t)((s->row - g->scroll_row) & 0x3F);         /* 837F */
         if (r >= 0x12) { s->col = 0; continue; }                        /* 8388 */
         s->last_row = r;                                                /* 838C */
@@ -451,8 +451,8 @@ void shots_draw_pass(Game *g)
         if (s->col == 0xFF) break;
         if (!s->col) continue;
         int sc = (int)s->col - 4, sr = (int)((s->row - g->scroll_row) & 0x3F);
-        if (sc < 0 || sc >= SCREEN_COLS || sr >= SCREEN_ROWS) continue;
-        int rp = (game_win(g) + sr * RING_W + sc + 4) % RING_SIZE; if (rp < 0) rp += RING_SIZE;
+        if (sc < 0 || sc >= view_cols(g) || sr >= SCREEN_ROWS) continue;
+        int rp = (game_win(g) + sr * ring_w(g) + sc + 4) % ring_size(g); if (rp < 0) rp += ring_size(g);
         g->shot_pic[g->shot_pics].sc = (int8_t)sc; g->shot_pic[g->shot_pics].sr = (int8_t)sr;
         g->shot_pic[g->shot_pics].spr = (uint8_t)render_sprite_cell(g, sc, sr);   /* a sprite held the cell: its shadow is FE */
         g->shot_pic[g->shot_pics].bgv = g->bg_ring[rp];                 /* the cell under it, as 302C's shadow (E900) holds it */

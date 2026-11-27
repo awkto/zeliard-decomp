@@ -544,12 +544,12 @@ static int under_arch(const Map *m, int col, int row)
 static int ring_mismatch(const Game *g, const Map *m)
 {
     int bad = 0;
-    for (int c = 0; c < 36; c++) {
+    for (int c = 0; c < ring_w(g); c++) {
         int mc = (g->scroll_col + c) % m->width;
         for (int r = 0; r < MAP_ROWS; r++) {
             if (under_arch(m, mc, r)) continue;
-            if (g->ring[r * 36 + c] >= 0x40) continue;   /* DCHR: arch / fixture */
-            if (g->ring[r * 36 + c] != m->grid[mc][r]) { bad++; break; }
+            if (g->ring[r * ring_w(g) + c] >= 0x40) continue;   /* DCHR: arch / fixture */
+            if (g->ring[r * ring_w(g) + c] != m->grid[mc][r]) { bad++; break; }
         }
     }
     return bad;

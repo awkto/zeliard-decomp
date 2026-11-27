@@ -2311,17 +2311,17 @@ static void side_town(Town *t, int kind, unsigned arg, unsigned ticks)
  * the engine's own paths (trace, headless: cavern_draw is not reached from them at all). */
 static int wide_now(const App *a, const Game *g)
 {
-    return a->wide && a->video == VID_MCGA && !a->headless && !a->trace_f && g->map && g->map->width >= RING_W &&
+    return a->wide && a->video == VID_MCGA && !a->headless && !a->trace_f && g->map && g->map->width >= ring_w(g) &&
            render_wide_ok(g);
 }
 
 /* The columns of a zoom-out 2 view that are past the ring are scenery only: nothing in them is simulated, so no
  * enemy, shot or lift appears there.  They are drawn a quarter darker, so the edge of the live world can be seen. */
 #define SCENERY_SHADE_NUM 3     /* ...x 3/4 */
-static void shade_scenery(uint8_t *rgb, int w, const RenderView *rv)
+static void shade_scenery(const Game *g, uint8_t *rgb, int w, const RenderView *rv)
 {
     int x0, x1, y0, y1;
-    render_live_span(rv, &x0, &x1, &y0, &y1);
+    render_live_span(g, rv, &x0, &x1, &y0, &y1);
     const int px0 = PF_X, px1 = w - PF_X;             /* the playfield, between the stone sides */
     if (x0 <= px0 && x1 >= px1) return;
     for (int y = y0; y < y1; y++)
@@ -2353,7 +2353,7 @@ static void cavern_draw(App *a, Game *g, const SmoothOfs *so)
         tear_draw_slots(a->fb, g, &a->sh.tear_art);
         render_wide_hud(a->wfb, w, h, a->fb);
         video_mcga_n_to_rgb(a->wfb, w * h, rgb);
-        shade_scenery(rgb, w, &rv);
+        shade_scenery(g, rgb, w, &rv);
         tex_upload(a, rgb, w, h);
         a->force_draw = 1;
         a->zoomable = 1;

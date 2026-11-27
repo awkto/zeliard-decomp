@@ -52,7 +52,7 @@ RenderView render_zoom_view(int level);                 /* the view a wide caver
 const char *render_zoom_name(int level, int wide);      /* the OSD name */
 /* the dark band of columns that are scenery only (not in the ring), for the presentation layer to shade: x range
  * [*x0, *x1) of the live columns in the wide framebuffer and the playfield's y range [*y0, *y1) */
-void render_live_span(const RenderView *v, int *x0, int *x1, int *y0, int *y1);
+void render_live_span(const Game *g, const RenderView *v, int *x0, int *x1, int *y0, int *y1);
 struct ScreenFrame;
 /* the furniture (stone sides, tiled top strip, centred HUD panel) laid out for a w x h framebuffer */
 void render_wide_frame(const struct ScreenFrame *sf, int w, int h, const uint8_t **px, const uint8_t **on);
