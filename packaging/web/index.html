@@ -449,18 +449,25 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => { if (started && !$('help').hidden && e.key !== 'Tab') e.stopImmediatePropagation(); }, true);
 
 // ---- running -------------------------------------------------------------
-// The canvas keeps SDL's backing size (the port never resizes it for fullscreen); this only picks the CSS
-// size that fits the stage (the fixed full-window element, which is also what goes fullscreen) at the
-// canvas's aspect.  It runs on every route that can change either: window resize, fullscreenchange (F, F11,
-// Alt+Enter, the browser's own Esc), a size change of the stage itself, and the canvas's width / height
-// attributes (W changes the window shape).  present.c letterboxes the picture inside the canvas.
+// This picks the CSS size that fits the stage (the fixed full-window element, which is also what goes
+// fullscreen) at the picture's shape, which the port publishes (Module.zelAspect, main.c web_view_aspect; it
+// calls zelFit when W / Z change it).  #137: the canvas's backing size then follows that CSS size x
+// devicePixelRatio (Module.zelBack; the port applies it with SDL_SetWindowSize), so present.c's scanline and
+// grille masks are drawn at the screen's own pixels instead of being resampled by the browser.  The shape is
+// never read back from the canvas's width / height, which the port now sets from this.  It runs on every
+// route that can change either: window resize, fullscreenchange (F, F11, Alt+Enter, the browser's own Esc)
+// and a size change of the stage itself.  present.c letterboxes the picture inside the canvas.
 function fit() {
   const c = $('canvas'), st = $('stage');
-  const W = st.clientWidth || innerWidth, H = st.clientHeight || innerHeight, r = c.width / c.height || 1.6;
+  const W = st.clientWidth || innerWidth, H = st.clientHeight || innerHeight, r = Module.zelAspect || c.width / c.height || 1.6;
   let w = W, h = W / r;
   if (h > H) { h = H; w = h * r; }
-  c.style.width = Math.floor(w) + 'px'; c.style.height = Math.floor(h) + 'px';
+  w = Math.floor(w); h = Math.floor(h);
+  c.style.width = w + 'px'; c.style.height = h + 'px';
+  const dpr = devicePixelRatio || 1;
+  Module.zelBack = [Math.max(1, Math.round(w * dpr)), Math.max(1, Math.round(h * dpr))];
 }
+Module.zelFit = fit;
 function fitSoon() { fit(); requestAnimationFrame(() => { fit(); requestAnimationFrame(fit); }); }   // browsers settle the new size a frame or two late
 document.addEventListener('fullscreenchange', () => {
   Module.zelFs = document.fullscreenElement ? 1 : 0;      // read by the port (main.c web_fs_state)
@@ -474,7 +481,6 @@ function start() {
   $('stage').style.display = 'flex';
   fit(); addEventListener('resize', fitSoon);
   if (window.ResizeObserver) new ResizeObserver(fit).observe($('stage'));
-  new MutationObserver(fit).observe($('canvas'), { attributes: true, attributeFilter: ['width', 'height'] });
   audioUnlock();
   persistLoop();
   if ($('s-fullscreen').checked && window.zelToggleFullscreen) zelToggleFullscreen();   // best effort: needs the Play gesture to be fresh

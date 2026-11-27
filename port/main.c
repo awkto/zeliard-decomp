@@ -261,10 +261,19 @@ static double frame_period_ms(const App *a, double ms) { return a->turbo ? ms / 
 /* Web: the PAGE owns fullscreen (packaging/web/keys.js requests it on the stage element, in the key
  * event so the browser grants it).  SDL's own Emscripten fullscreen resizes the canvas to the screen
  * and restores a stale size and CSS when the browser (Esc) leaves it, which left the game cut off.
- * The SDL window and the canvas backing never change; the page fits the canvas to the stage and
- * present.c letterboxes inside it.  Module.zelFs is the DOM's state (-1 until the first change). */
+ * The SDL window never goes fullscreen; the page fits the canvas to the stage (the backing size
+ * follows, #137 below) and present.c letterboxes inside it.  Module.zelFs is the DOM's state (-1 until the first change). */
 EM_JS(int, web_fs_state, (void), { return Module.zelFs === undefined ? -1 : Module.zelFs; });
 EM_JS(void, web_fs_toggle, (void), { if (Module.zelToggleFullscreen) Module.zelToggleFullscreen(); });
+/* #137: the canvas backing store is the canvas's displayed size (its CSS size x devicePixelRatio, which the
+ * page's fit() publishes as Module.zelBack), not the window size --scale gives.  present.c draws the scanline
+ * and grille masks at the output size; a backing store the browser then resamples to the screen (pixelated)
+ * bands them unevenly, worst in the wide zoom-out 2 view (280 lines in a 720-px canvas, under the 3 px a line
+ * the masks need).  So the port only publishes the picture's shape (Module.zelAspect, which fit() sizes the
+ * canvas by, never from the canvas's own width / height) and takes the backing size the page asks for. */
+EM_JS(void, web_view_aspect, (double r), { Module.zelAspect = r; if (Module.zelFit) Module.zelFit(); });
+EM_JS(int, web_backing_w, (void), { return Module.zelBack ? Module.zelBack[0] | 0 : 0; });
+EM_JS(int, web_backing_h, (void), { return Module.zelBack ? Module.zelBack[1] | 0 : 0; });
 #endif
 static void toggle_fullscreen(App *a)
 {
@@ -801,12 +810,18 @@ static void window_logical(const App *a, int *lw, int *lh)
  * taller view is not just letterboxed away: the height stays, the width changes. */
 static void window_follow_view(App *a)
 {
+#ifdef __EMSCRIPTEN__
+    int lw, lh;                 /* #137: the page shapes the canvas; the backing size follows it (pump_events) */
+    window_logical(a, &lw, &lh);
+    if (lh > 0) web_view_aspect((double)lw / lh);
+#else
     if (a->win && !(SDL_GetWindowFlags(a->win) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_MAXIMIZED))) {
         int ww = 0, wh = 0, lw, lh;
         SDL_GetWindowSize(a->win, &ww, &wh);
         window_logical(a, &lw, &lh);
         if (ww > 0 && wh > 0 && lh > 0) SDL_SetWindowSize(a->win, wh * lw / lh, wh);
     }
+#endif
 }
 
 /* W: the wide cavern view on / off.  The window follows the picture's shape when it is a plain window
@@ -932,6 +947,11 @@ static void pump_events(App *a, Game *g)
 #ifdef __EMSCRIPTEN__
     {   int fs = web_fs_state();            /* the page entered / left fullscreen (any route: F, F11, Esc) */
         if (fs >= 0 && fs != a->fullscreen) { a->fullscreen = fs; PREFS_CHANGED(a); }
+    }
+    if (a->win) {                           /* #137: the backing store follows the canvas's displayed size */
+        int bw = web_backing_w(), bh = web_backing_h(), ww = 0, wh = 0;
+        SDL_GetWindowSize(a->win, &ww, &wh);
+        if (bw > 0 && bh > 0 && (bw != ww || bh != wh)) SDL_SetWindowSize(a->win, bw, bh);
     }
 #endif
     while (SDL_PollEvent(&e)) {
@@ -3193,6 +3213,9 @@ int main(int argc, char **argv)
          * itself so the integer and sharp-bilinear filters can differ (#53) */
         a.tex = SDL_CreateTexture(a.ren, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, vw, vh);
         a.tex_w = vw; a.tex_h = vh;
+#ifdef __EMSCRIPTEN__
+        window_follow_view(&a);                     /* #137: tell the page the picture's shape */
+#endif
     }
 #else
     if (!a.headless) { fprintf(stderr, "built without SDL2: running headless (use --screenshot / --script)\n"); a.headless = 1; }
