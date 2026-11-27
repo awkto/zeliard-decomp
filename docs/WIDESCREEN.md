@@ -241,7 +241,9 @@ treatment later.  The issue is about the cavern; don't start there.
   is **no** margin, so smooth scrolling reads ring col -1 (the previous row's last column) at the edge:
   clamp, or draw the edge column only (cosmetic).  With zoom on, the crop cuts the
   frame, so any smooth slide at the playfield edge is clipped by the playfield clip (`render.c:16,34,49`)
-  exactly as now.
+  exactly as now.  The smooth modes of #138 (camera / full / soft) only change the offsets `smooth.c` hands
+  `render_frame` (full: a per-object glide that can outlast the step, as a `start` and `end` pair; soft: an
+  eased progress), so they compose with every zoom level and the wide view the same way.
 * Pixel snapping: with Z on and a window that is not a multiple of the source, the existing integer
   prescale path (`present_prescale`) keeps working; it takes `(cw, ch)`.
 

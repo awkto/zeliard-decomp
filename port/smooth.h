@@ -34,16 +34,50 @@
 #include "render.h"
 
 #define SMOOTH_MAX_PX 24        /* a per-object move larger than this (3 cells) is a jump */
+
+/* The modes T cycles through (#138), the config's smooth=0..3 (old smooth=0/1 = off / camera):
+ *   CAMERA  the slide described above, as #127/#131 built it: every offset (world, hero, enemies, shots,
+ *           spells, fixtures) is spread over the one step it happened in, linearly.  An enemy that moves a
+ *           cell every 4th step glides for one step and then stands for three.
+ *   FULL    the same camera, and each enemy, shot and spell's own (world-relative) move is spread over that
+ *           object's own pace: the steps since its previous move, up to SMOOTH_CADENCE_MAX, so one that steps
+ *           a cell every 4th step glides on at a constant 2 px a step instead of hop-and-wait.  A move that
+ *           comes while a glide is still under way starts from where the object is shown (no snap back); a
+ *           spawn, a slot that changed identity, a jump of more than SMOOTH_MAX_PX or a camera jump snaps.
+ *           The hero and the moving fixtures keep the per-step slide, so a lift or platform stays locked
+ *           under the hero.  Objects are shown up to (pace - 1) / pace of a cell behind the sim (never ahead).
+ *   SOFT    every offset of the CAMERA slide eases out over the first SMOOTH_SOFT_SPAN of the step and holds
+ *           the rest: the world and the sprites land on the original's cells together, every step, so the
+ *           original's step rhythm stays visible but nothing jumps 8 px between two pictures. */
+enum { SMOOTH_OFF = 0, SMOOTH_CAMERA, SMOOTH_FULL, SMOOTH_SOFT, SMOOTH_MODES };
+#define SMOOTH_CADENCE_MAX 4    /* FULL: the longest pace (steps per move) a glide is spread over */
+#define SMOOTH_SOFT_SPAN 0.6    /* SOFT: the share of the step the ease takes */
+/* the OSD name of a mode ("OFF", "CAMERA", "FULL", "SOFT"); anything else is "OFF" */
+const char *smooth_mode_name(int mode);
+/* the next mode T selects: off -> camera -> full -> soft -> off */
+int  smooth_mode_next(int mode);
+/* SOFT's progress curve: 0 at t <= 0, 1 at t >= SMOOTH_SOFT_SPAN, an ease-out (1 - (1 - u)^2) between */
+double smooth_soft_curve(double t);
+
+/* FULL: one object's own glide.  `g0` px is its offset (from where it is to where it is shown) at the step it
+ * moved, spread over `k` steps; `j` steps of it have gone.  `since` counts the steps since its last move. */
+typedef struct SmoothGlide { int16_t g0x, g0y; uint8_t k, j, since, live; } SmoothGlide;
+/* one step of a glide: `hist` = the object was matched to the previous step's, (dx, dy) its own move in px
+ * (where it was less where it is, world-relative).  Writes the own offset at the start and the end of this step. */
+void smooth_glide_step(SmoothGlide *gl, int hist, int dx, int dy, int *sx, int *sy, int *ex, int *ey);
 #define SMOOTH_ROW_REACH 16     /* rows above / below the window that still slide: the zoom-out views (#126) show 12 more each way */
 
 typedef struct SmoothPos { int8_t ok; int8_t type; int16_t x, y; } SmoothPos;   /* screen cell */
 
 typedef struct Smooth {
     int           have;                     /* prev holds a step */
+    int           mode;                     /* SMOOTH_CAMERA / FULL / SOFT: what the last smooth_step_mode was given */
     const void   *map;
     int           scroll_col, scroll_row, hero_c, hero_r;
     SmoothPos     obj[MAX_OBJS], shot[MAX_SHOTS + 1], mag[4], fix[SMOOTH_FIXES];
     SmoothOfs     start;                    /* the offsets at t = 0 of the current step */
+    SmoothOfs     end;                      /* ...and at t = 1 (all 0 but in FULL, where a glide can outlast the step) */
+    SmoothGlide   gobj[MAX_OBJS], gshot[MAX_SHOTS + 1], gmag[4];   /* FULL: each object's own glide */
 } Smooth;
 
 /* wrapped signed difference a - b on a ring of n (n = 64 for rows, the map width for columns) */
@@ -65,23 +99,30 @@ int  smooth_is_slide(int dx, int dy);
 struct Town;
 typedef struct SmoothTown {
     int       have;
+    int       mode;                     /* as Smooth.mode */
     const void *map;                    /* the TownMap and its index: a new town forgets */
     int       index, scroll_col, back_steps, hero_c;
     int8_t    npc_ok[SMOOTH_NPCS], npc_type[SMOOTH_NPCS];
     int16_t   npc_x[SMOOTH_NPCS];       /* screen cell */
-    SmoothOfs start;
+    SmoothOfs start, end;
+    SmoothGlide gnpc[SMOOTH_NPCS];      /* FULL: each NPC's own glide */
 } SmoothTown;
-void smooth_town_step(SmoothTown *s, const struct Town *t);
+void smooth_town_step(SmoothTown *s, const struct Town *t);                 /* CAMERA */
+void smooth_town_step_mode(SmoothTown *s, const struct Town *t, int mode);
 void smooth_town_reset(SmoothTown *s);
 
 /* the offsets `start` leaves at progress t (what smooth_at does for a cavern Smooth) */
 void smooth_ofs_at(const SmoothOfs *start, double t, SmoothOfs *out);
+/* the offsets of a step of mode `mode` at progress t: CAMERA is smooth_ofs_at, SOFT the same on
+ * smooth_soft_curve(t), FULL runs each from `start` to `end` (which need not be 0) */
+void smooth_eval(int mode, const SmoothOfs *start, const SmoothOfs *end, double t, SmoothOfs *out);
 
 void smooth_reset(Smooth *s);               /* forget history: a map change, a menu, fast-forward */
 /* Call once per game step, after the step: derives s->start from the previous step's
  * snapshot, then keeps this step as the next one's history. */
-void smooth_step(Smooth *s, const Game *g);
-/* s->start scaled to progress t. */
+void smooth_step(Smooth *s, const Game *g);                         /* CAMERA */
+void smooth_step_mode(Smooth *s, const Game *g, int mode);
+/* this step's offsets at progress t, in the mode its smooth_step had (smooth_eval) */
 void smooth_at(const Smooth *s, double t, SmoothOfs *out);
 /* do two offset sets draw identically? */
 int  smooth_same(const SmoothOfs *a, const SmoothOfs *b);
