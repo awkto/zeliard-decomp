@@ -367,8 +367,8 @@ void enemy_spawn(Game *g, MapObj *o)
     uint8_t r;
     if (ai_map_col_to_ring(g, o->home_col, &r)) return;
     if (r == 0 || r == ring_last(g)) return;                          /* 0x23 */
-    uint8_t dy = (uint8_t)((o->home_row - (g->scroll_row - 2)) & 0x3F);
-    if (dy < 0x18 && r >= 3 && r < view_cols(g) + 4) return;           /* 953B: would pop up on screen (0x20) */
+    uint8_t dy = (uint8_t)((o->home_row - (g->scroll_row + view_row0(g) - 2)) & 0x3F);
+    if (dy < view_rows(g) + 6 && r >= 3 && r < view_cols(g) + 4) return;   /* 953B: would pop up on screen (0x18, 0x20; a wide ring's view is wider and taller) */
     int tall = (o->flags & 0x10) && idx + 1 < g->nobj;
     if (tall && (o->home_type & 1)) return;                             /* 95B6 */
     o->rcol = r;                                                        /* 9550 / 95BD */
@@ -558,7 +558,7 @@ void cell_anim(Game *g)
     int anim = cav >= 5 && cav <= 8;                                    /* 315C..3168 */
     int sparks = g->boss_map && g->boss_dying;
     if (!anim && !sparks) return;
-    for (int r = 0; r < 0x12; r++) {
+    for (int r = view_row0(g); r < view_row0(g) + view_rows(g); r++) {   /* 0..0x11 (a wide ring: the zoom-out 2 rows) */
         uint8_t row = (uint8_t)((g->scroll_row + r) & 0x3F);
         for (int c = 4; c < view_cols(g) + 4; c++) {                   /* ring cols 4..0x1F */
             uint8_t *p = &g->ring[game_ring_index(g, row, (uint8_t)c)];

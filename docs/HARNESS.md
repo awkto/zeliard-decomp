@@ -988,7 +988,8 @@ pointers (map, tileset, AI overlay, fonts, art) are **not** stored: the loader c
 the shell's own entry points to rebuild them and then overwrites the dynamic fields.
 
 Version 2 (`SAVESTATE_VERSION_WIDE`, issue #126 step 4) is written only when the cavern ran with a
-ring wider than the original's (`Game.wide` = E > 0, the debug-only `ZEL_RING_EXTRA`): one byte E
+ring wider than the original's (`Game.wide` = E > 0: the wide view's simulation, #126 step 5, or the debug-only
+`ZEL_RING_EXTRA`): one byte E
 comes before the two rings, which are then `36 + 2E` columns x 64 rows each.  The loaded state keeps
 the E it was saved with, whatever the loading run asks for (every ring column in it is in that
 geometry); the next map entry derives E from the request again.  With E = 0 the file is version 1,

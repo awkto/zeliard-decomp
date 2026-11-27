@@ -22,6 +22,13 @@ static int v_h = FB_H;          /* framebuffer height */
 static int v_x = PF_X;          /* x of the playfield's left edge */
 static int v_lo, v_hi;          /* extra columns shown on the left / right (beyond the window: the ring's 4 live margin columns, then scenery from the map) */
 static int v_rt, v_rb;          /* extra rows shown above the window's row 0 / below its last visible row 17 (the zoom-out levels, #126) */
+/* The ring's E (#126 step 5): the renderer's screen cell 0 is ring column RC0 = 4 + E, so the 28 columns its "window"
+ * means are the middle 28 of the ring's view_cols(g), centred on the hero's pin as the original's are (the sim's
+ * pin is hero_col(g) = 12 + E, i.e. the renderer's 12), and every view (lo / hi) is laid out around that the same
+ * way at any E.  Set from the game at the top of every frame; 0 (so every expression is the stock one) unless the
+ * ring is wide. */
+static int v_e;
+#define RC0 (4 + v_e)                       /* ring column of screen cell 0 */
 #define V_COLS (SCREEN_COLS + v_lo + v_hi)
 #define V_PW (V_COLS * 8)       /* playfield width in pixels */
 #define V_ROWS (18 + v_rt + v_rb)           /* visible cell rows */
@@ -195,7 +202,7 @@ static void draw_hero_at(uint8_t *fb, const Game *g, const HeroGfx *h, int hx, i
 
 static void draw_hero(uint8_t *fb, const Game *g, const HeroGfx *h)
 {
-    draw_hero_at(fb, g, h, VX(g->hero_scr_col) + (s_sm ? s_sm->hx : 0),
+    draw_hero_at(fb, g, h, VX(g->hero_scr_col - v_e) + (s_sm ? s_sm->hx : 0),
                  VY(g->hero_scr_row) + (s_sm ? s_sm->hy : 0), g->hero_entering);
 }
 
@@ -273,7 +280,7 @@ static void draw_sword_at(uint8_t *fb, const Game *g, const HeroGfx *h, int f, i
  * the second half of the frame, at the hero's current cell. */
 static void draw_sword(uint8_t *fb, const Game *g, const HeroGfx *h)
 {
-    draw_sword_at(fb, g, h, g->attack_var, g->hero_scr_row, g->hero_scr_col);
+    draw_sword_at(fb, g, h, g->attack_var, g->hero_scr_row, g->hero_scr_col - v_e);
 }
 
 /* gfmcga 3336/33AB: every live object is a 2x2-cell sprite at its ring
@@ -327,7 +334,7 @@ static void draw_enemies(uint8_t *fb, const Game *g)
          * record left by TORI's A647 death pass) is not on screen. */
         int hp = game_ring_index(g, o->row, o->rcol);
         if (g->ring[hp] != (uint8_t)(0x80 | i)) continue;
-        int sc = (int)o->rcol - 4 + v_lo;
+        int sc = (int)o->rcol - RC0 + v_lo;
         int sr = (int)((o->row - g->scroll_row) & 0x3F);
         if (sr > 40) sr -= 64;                  /* a sprite hanging above the window's top row */
         if (sr + v_rt < -1 || sr + v_rt >= VR + 2) continue;
@@ -345,7 +352,7 @@ static void draw_enemies(uint8_t *fb, const Game *g)
         int pal = fr[0];
         if ((o->hit & 0x20) && !g->boss_map) pal += 3;                  /* hit flash */
         if (pal < 0 || pal > 4) pal %= 5;
-        int sc = (int)o->rcol - 4 + v_lo;
+        int sc = (int)o->rcol - RC0 + v_lo;
         int sr = (int)((o->row - g->scroll_row) & 0x3F);
         if (sr > 40) sr -= 64;
         const int u = sr + v_rt;
@@ -392,7 +399,7 @@ static void draw_shots(uint8_t *fb, const Game *g)
         const Shot *s = &g->shots[i];
         if (s->col == 0xFF) break;
         if (!s->col) continue;
-        int sc = (int)s->col - 4 + v_lo;         /* screen cell from the view's left edge */
+        int sc = (int)s->col - RC0 + v_lo;       /* screen cell from the view's left edge */
         int sr = (int)((s->row - g->scroll_row) & 0x3F);
         if (sr > 40) sr -= 64;                   /* the ring's rows wrap: a row above the window's top */
         if (s_sm) {                              /* a slide reveals the ring column / row just outside the window */
@@ -443,7 +450,7 @@ static void draw_shots_mid(uint8_t *fb, const Game *g)
         if (g->hero_drawn_ok && ghost_in_block(sc, sr, g->hero_drawn_col, g->hero_drawn_row, 3, 3)) continue;
         uint8_t cell = g->shot_pic[i].cell;
         if (!cell || !g->tiles->present[cell]) continue;
-        blit8t(fb, &g->tiles->cell[cell], v_x + sc * 8, VY(sr));
+        blit8t(fb, &g->tiles->cell[cell], VX(sc - v_e), VY(sr));     /* shot_pic is in the sim's screen cells (ring col - 4) */
     }
 }
 
@@ -458,7 +465,7 @@ static void draw_magic(uint8_t *fb, const Game *g)
         if (!magic_sprite_cells(g, m, cells)) continue;
         uint8_t rcol;
         if (ai_map_col_to_ring(g, m->col, &rcol)) continue;
-        int sc = (int)rcol - 4 + v_lo, sr = (int)((m->row - g->scroll_row) & 0x3F);
+        int sc = (int)rcol - RC0 + v_lo, sr = (int)((m->row - g->scroll_row) & 0x3F);
         if (sr > 40) sr -= 64;
         for (int k = 0; k < 4; k++) {
             int cx = sc + OFS[k][0], cy = sr + OFS[k][1];
@@ -557,11 +564,11 @@ static void draw_message_box(uint8_t *fb, const Game *g)
  * encounter card) goes away pass by pass.  Eight passes make every pixel exactly once. */
 void render_fadein_pass(uint8_t *fb, const Game *g, int c)
 {
-    int r1 = 3 - (c & 3), r2 = c & 3, par = (c - 1) < 4 ? 1 : 0;
+    int r1 = 3 - (c & 3), r2 = c & 3, par = (c - 1) < 4 ? 1 : 0, e = ring_extra(g);
     for (int sr = 0; sr < 18; sr++)                     /* 41B3: 0x12 cell rows */
         for (int sc = 0; sc < SCREEN_COLS; sc++) {
-            if (sc >= g->hero_scr_col && sc < g->hero_scr_col + 3 && sr >= g->hero_scr_row && sr < g->hero_scr_row + 3) continue;
-            uint8_t v = g->ring[game_ring_add(g, game_win(g), sr * ring_w(g) + sc + 4)];   /* the ring as 4192 reads it (the frame's bg_ring is the last frame's) */
+            if (sc >= g->hero_scr_col - e && sc < g->hero_scr_col - e + 3 && sr >= g->hero_scr_row && sr < g->hero_scr_row + 3) continue;
+            uint8_t v = g->ring[game_ring_add(g, game_win(g), sr * ring_w(g) + sc + 4 + e)];   /* the ring as 4192 reads it (the frame's bg_ring is the last frame's) */
             if (v & 0x80) continue;
             const Cell8 *cell = (v && g->tiles->present[v]) ? &g->tiles->cell[v] : NULL;
             for (int half = 0; half < 2; half++) {
@@ -632,7 +639,7 @@ static void burst_set(uint8_t *fb, uint8_t hx, uint8_t hy, int back, uint8_t col
 
 void render_burst(uint8_t *fb, const Game *g, BurstWaitFn wait, void *user)
 {
-    uint8_t hx = (uint8_t)(g->hero_scr_col * 8), hy = (uint8_t)(g->hero_scr_row * 8);   /* 42F7: [83] * 8, [84] * 8 */
+    uint8_t hx = (uint8_t)((g->hero_scr_col - ring_extra(g)) * 8), hy = (uint8_t)(g->hero_scr_row * 8);   /* 42F7: [83] * 8, [84] * 8 (the 320 picture is the middle 28 of a wide ring's view, #126) */
     burst_flash(fb);                                    /* 4311 */
     for (int c = 0; c < 2; c++) {                       /* 4314: colour 0x36, then 0 (431C) */
         uint8_t col = c ? 0 : 0x36;
@@ -712,7 +719,7 @@ void render_wide_hud(uint8_t *wfb, int w, int h, const uint8_t *fb320)
  * the ring's own. */
 static void draw_scenery_fixtures(uint8_t *fb, const Game *g, int wx, int wy)
 {
-    if (!g->map || (v_lo <= 4 && v_hi <= 4)) return;
+    if (!g->map || (v_lo <= RC0 && v_hi <= ring_w(g) - RC0 - SCREEN_COLS)) return;     /* the view is all ring */
     const int mw = g->map->width;
     for (int i = 0; i < g->nfix; i++) {
         const Fixture *f = &g->fix[i];
@@ -721,9 +728,9 @@ static void draw_scenery_fixtures(uint8_t *fb, const Game *g, int wx, int wy)
         if (sr < -v_rt - 1 || sr > SCREEN_ROWS + v_rb) continue;
         for (int k = 0; k < 3; k++) {
             int d = (((int)f->col + k - g->scroll_col) % mw + mw) % mw;         /* ring column of the cell, if it were in the ring */
-            if (d > ring_last(g) + (v_hi - 4)) d -= mw;
+            if (d > SCREEN_COLS + v_hi - 1 + RC0) d -= mw;               /* past the view's right edge: left of the ring */
             if (d >= 0 && d < ring_w(g)) continue;
-            int sc = d - 4;
+            int sc = d - RC0;
             if (sc < -v_lo || sc >= SCREEN_COLS + v_hi) continue;
             uint8_t v = (uint8_t)(f->cell + k);
             if (!g->tiles->present[v]) continue;
@@ -734,6 +741,7 @@ static void draw_scenery_fixtures(uint8_t *fb, const Game *g, int wx, int wy)
 
 static void render_frame_impl(uint8_t *fb, const Game *g, const HeroGfx *h)
 {
+    v_e = ring_extra(g);
     /* mole.bin's furniture is painted once at boot and never redrawn (gfx.h);
      * the original's VGA keeps it, so a draw on it (select.bin's stray magic
      * name, #103) survives into later frames.  The port keeps it in the
@@ -812,15 +820,15 @@ static void render_frame_impl(uint8_t *fb, const Game *g, const HeroGfx *h)
     for (int sr = sr0; sr < sr1; sr++) {
         for (int sc = sc0; sc < sc1; sc++) {
             uint8_t v;
-            if (sc + 4 < 0 || sc + 4 >= ring_w(g)) {
+            if (sc + RC0 < 0 || sc + RC0 >= ring_w(g)) {
                 /* A slide in a view that already shows the whole ring reveals the column just beyond it.  The
                  * ring does not hold it (a ring index there is the neighbouring row's), so it is read from the
                  * map itself: the ring is the map's columns scroll_col.. wrapped, row for row. */
-                int mw = g->map->width, mc = ((g->scroll_col + sc + 4) % mw + mw) % mw;
+                int mw = g->map->width, mc = ((g->scroll_col + sc + RC0) % mw + mw) % mw;
                 v = g->map->grid[mc][(g->scroll_row + sr) & 0x3F];
                 if (v & 0x80) continue;
             } else {
-            int rp = (game_win(g) + sr * ring_w(g) + sc + 4) % ring_size(g);
+            int rp = (game_win(g) + sr * ring_w(g) + sc + RC0) % ring_size(g);
             if (rp < 0) rp += ring_size(g);
             v = g->bg_ring[rp];                         /* 3159: the cell before 315C animates it (game_bg_cell, wrapped both ways) */
             if (v & 0x80) {                             /* a sprite marker hides the tile it covers;
@@ -831,8 +839,8 @@ static void render_frame_impl(uint8_t *fb, const Game *g, const HeroGfx *h)
             }
             }
             if (!v || !g->tiles->present[v]) continue;
-            if (use_fix && sc + 4 >= 0 && sc + 4 < ring_w(g)) {
-                int rp = (game_win(g) + sr * ring_w(g) + sc + 4) % ring_size(g);
+            if (use_fix && sc + RC0 >= 0 && sc + RC0 < ring_w(g)) {
+                int rp = (game_win(g) + sr * ring_w(g) + sc + RC0) % ring_size(g);
                 if (rp < 0) rp += ring_size(g);
                 int fi = fix_at[rp] - 1;
                 if (fi >= 0 && v == g->fix[fi].cell + ((rp % ring_w(g)) - smooth_fixture_rcol(g->fix[fi].col, g->scroll_col, g->map->width, ring_w(g)))) continue;
@@ -851,7 +859,7 @@ static void render_frame_impl(uint8_t *fb, const Game *g, const HeroGfx *h)
             int rp = game_ring_index(g, f->row, (uint8_t)(rc + k));
             uint8_t v = g->bg_ring[rp];
             if (v & 0x80) { int oi = v & 0x7F; v = oi < g->nobj ? g->under_sprite[oi] : 0; }
-            int scc = rc + k - 4;
+            int scc = rc + k - RC0;
             if (scc < -v_lo - 1 || scc > SCREEN_COLS + v_hi || v != f->cell + k || !g->tiles->present[v]) continue;
             blit8(fb, &g->tiles->cell[v], VX(scc) + s_sm->kx[i], VY(sr) + s_sm->ky[i]);
         }
@@ -879,7 +887,7 @@ static void render_frame_impl(uint8_t *fb, const Game *g, const HeroGfx *h)
      * previous frame's hero position, while the 7147 blade uses the current
      * one.  (vista_fight f99/f102 differ by exactly this cell.) */
     int shr = g->sword_blk_ok ? g->sword_blk_row : g->hero_scr_row;
-    int shc = g->sword_blk_ok ? g->sword_blk_col : g->hero_scr_col;
+    int shc = (g->sword_blk_ok ? g->sword_blk_col : g->hero_scr_col) - v_e;
     if (g->mid_pic) {
         /* The picture at 712D, the half-way wait (sword-frame): 7047 drew the swing's first step, frame [FF46]-1 at the
          * hero's previous cell, and 302C's row pass (710F) drew it again with the hero; the sparks (711B) lie over it,
@@ -947,7 +955,7 @@ RenderView render_zoom_view(int level)
 {
     RenderView v = RENDER_VIEW_WIDE;
     if (level == ZOOM_OUT1) { v.rt = v.rb = 3; }
-    else if (level == ZOOM_OUT2) { v.lo = v.hi = 17; v.rt = v.rb = 5; }
+    else if (level == ZOOM_OUT2) { v.lo = v.hi = 17; v.rt = WIDE_VIEW_RT; v.rb = WIDE_VIEW_RB; }   /* 62 = VIEW_COLS_OF(WIDE_E_MAX) columns */
     return v;
 }
 
@@ -965,9 +973,13 @@ const char *render_zoom_name(int level, int wide)
 void render_live_span(const Game *g, const RenderView *v, int *x0, int *x1, int *y0, int *y1)
 {
     int lo = v ? v->lo : 0, hi = v ? v->hi : 0, rt = v ? v->rt : 0, rb = v ? v->rb : 0;
-    int a = PF_X + (lo > 4 ? lo - 4 : 0) * 8;                 /* ring column 0 */
-    if (x0) *x0 = a;
-    if (x1) *x1 = a + ring_w(g) * 8 - (lo < 4 ? (4 - lo) * 8 : 0) - (hi < 4 ? (4 - hi) * 8 : 0);
+    /* view cell u (0 at the view's left edge) is ring column u - lo + 4 + E: the live cells are those in 0..ring_w-1 */
+    const int rc0 = 4 + ring_extra(g), cols = SCREEN_COLS + lo + hi;
+    int u0 = lo - rc0, u1 = ring_w(g) - rc0 + lo;
+    if (u0 < 0) u0 = 0;
+    if (u1 > cols) u1 = cols;
+    if (x0) *x0 = PF_X + u0 * 8;
+    if (x1) *x1 = PF_X + u1 * 8;
     if (y0) *y0 = PF_Y;
     if (y1) *y1 = PF_Y + (18 + rt + rb) * 8;
 }

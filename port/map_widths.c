@@ -9,7 +9,7 @@ int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "../zeliard";
     int narrow = 0;
-    printf("idx name  width kind  ring36  maxE (a cavern map wide enough for E; boss maps/rooms keep 0)\n");
+    printf("idx name  width kind  ring36  maxE (the E a wide run gives it: the largest its width takes; boss maps/rooms keep 0)\n");
     for (int i = 0; i < 0x1F; i++) {
         static Map m;
         if (map_load_system(&m, dir, i) != 0) { printf("%3d  (load failed)\n", i); continue; }
@@ -18,7 +18,7 @@ int main(int argc, char **argv)
         while (e > 0 && m.width < WIDE_MIN_MAP_W(e)) e--;
         if (m.lvl_flags & 0xC0) e = 0;
         printf("%3d  %-5s %5d %-6s %-6s  %2d%s\n", i, m.name, m.width, boss ? "boss" : (m.lvl_flags & 0x40) ? "room" : "cavern",
-               m.width < 36 ? "NARROW" : "ok", e, e < WIDE_E_MAX && !(m.lvl_flags & 0xC0) ? "  (E 13 falls back to 0)" : "");
+               m.width < 36 ? "NARROW" : "ok", e, e < WIDE_E_MAX && !(m.lvl_flags & 0xC0) ? "  (clamped below the widest)" : "");
         if (!boss && m.width < 36) narrow++;
         map_free(&m);
     }

@@ -80,14 +80,14 @@ int smooth_fixture_rcol(int col, int scroll_col, int map_width, int ring_w)
     return (d < 0 || d > ring_w - 3) ? -1 : d;                         /* 82F8: 0x21 */
 }
 
-/* a screen cell (x, y) as 302C/3336/8366 would place it; ok = within the ring's reach */
+/* a screen cell (x, y) as 302C/3336/8366 would place it; ok = within the ring's reach (ring cols 0 .. ring_w - 1 at any E, #126) */
 static SmoothPos pos_of(const Game *g, int rcol, int row, int type)
 {
     SmoothPos p = {0, (int8_t)type, 0, 0};
     int sc = rcol - 4, sr = (row - g->scroll_row) & 0x3F;
     if (sr > 40) sr -= 64;
     p.x = (int16_t)sc; p.y = (int16_t)sr;
-    p.ok = sc >= -4 && sc <= SCREEN_COLS + 3 && sr >= -SMOOTH_ROW_REACH && sr <= SCREEN_ROWS + SMOOTH_ROW_REACH;   /* the zoom-out views show rows well past the window (#126) */
+    p.ok = sc >= -4 && sc <= view_cols(g) + 3 && sr >= -SMOOTH_ROW_REACH && sr <= SCREEN_ROWS + SMOOTH_ROW_REACH;   /* the zoom-out views show rows well past the window (#126) */
     return p;
 }
 

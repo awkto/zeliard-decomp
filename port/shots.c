@@ -440,7 +440,7 @@ void shots_draw_pass(Game *g)
         s->last_col = s->col;                                           /* 8376 */
         if ((uint8_t)(s->col - 4) >= view_cols(g)) { s->col = 0; continue; }   /* 8379 / 83D2: 0x1C */
         uint8_t r = (uint8_t)((s->row - g->scroll_row) & 0x3F);         /* 837F */
-        if (r >= 0x12) { s->col = 0; continue; }                        /* 8388 */
+        if ((uint8_t)((r - view_row0(g)) & 0x3F) >= view_rows(g)) { s->col = 0; continue; }   /* 8388: r >= 0x12 (a wide ring: outside its view's rows) */
         s->last_row = r;                                                /* 838C */
     }
     /* what 8366 now leaves on the screen, until the next frame's 8366 erases it (83F3): the half-way picture
@@ -451,7 +451,8 @@ void shots_draw_pass(Game *g)
         if (s->col == 0xFF) break;
         if (!s->col) continue;
         int sc = (int)s->col - 4, sr = (int)((s->row - g->scroll_row) & 0x3F);
-        if (sc < 0 || sc >= view_cols(g) || sr >= SCREEN_ROWS) continue;
+        if (ring_extra(g) && sr > 40) sr -= 64;                          /* a wide ring's view has rows above the window */
+        if (sc < 0 || sc >= view_cols(g) || sr < view_row0(g) || sr >= SCREEN_ROWS + (ring_extra(g) ? WIDE_VIEW_RB : 0)) continue;
         int rp = (game_win(g) + sr * ring_w(g) + sc + 4) % ring_size(g); if (rp < 0) rp += ring_size(g);
         g->shot_pic[g->shot_pics].sc = (int8_t)sc; g->shot_pic[g->shot_pics].sr = (int8_t)sr;
         g->shot_pic[g->shot_pics].spr = (uint8_t)render_sprite_cell(g, sc, sr);   /* a sprite held the cell: its shadow is FE */

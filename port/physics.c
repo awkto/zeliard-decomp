@@ -1222,7 +1222,7 @@ int game_wide_for_map(const Game *g, const Map *m)
     if (e <= 0 || !m) return 0;
     if (e > WIDE_E_MAX) e = WIDE_E_MAX;
     if (m->lvl_flags & 0xC0) return 0;                                  /* a boss map (FF34) or a boss room ([E6]): the original ring (§3) */
-    if (m->width < WIDE_MIN_MAP_W(e)) return 0;                         /* too narrow: no clamp, the original ring (§2.9) */
+    if (e > WIDE_E_FOR_W(m->width)) e = WIDE_E_FOR_W(m->width);       /* narrower than WIDE_MIN_MAP_W(e): the largest E it takes (§2.9, §8.4) */
     return e;
 }
 

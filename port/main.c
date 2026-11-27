@@ -176,6 +176,7 @@ typedef struct {
      * band of fb), tex_w/tex_h the size of `tex`, which follows the picture (320x200 for everything but a
      * plain wide cavern frame) */
     int wide, wide_dirty;
+    int ring_dbg;                       /* ZEL_RING_EXTRA (debug, #126 step 4), -1 when not set: overrides the E wide mode asks for */
     int tex_w, tex_h;
     uint8_t wfb[RENDER_WIDE_MAX_W * RENDER_WIDE_MAX_H];
     Smooth sm;
@@ -824,9 +825,23 @@ static void window_follow_view(App *a)
 #endif
 }
 
+/* #126 step 5: the wide view runs the wide simulation.  The E the game asks for at its next map entry (game_place
+ * -> game_wide_for_map, which clamps it to the map and gives boss maps and rooms 0): WIDE_E_MAX while the wide view
+ * is on, 0 otherwise -- and always 0 on the engine's own paths (trace, headless), whose wide is forced off.  The
+ * ring of the map the hero is on keeps the E it was entered with (every ring column in the game -- the camera, the
+ * records, the shots, the fixtures -- is in that geometry), so a W press takes effect at the next map entry: a door,
+ * a cave mouth, a death's restart or a state load's re-entry.  The zoom level is presentation only and never
+ * changes it. */
+static int wide_sim_e(const App *a)
+{
+    if (a->ring_dbg >= 0) return a->ring_dbg;
+    return (a->wide && a->video == VID_MCGA && !a->headless && !a->trace_f) ? WIDE_E_MAX : 0;
+}
+
 /* W: the wide cavern view on / off.  The window follows the picture's shape when it is a plain window
  * (not fullscreen or maximised), so the extra width is not just letterboxed away; the cavern itself
- * is redrawn on the next frame (at once while paused). */
+ * is redrawn on the next frame (at once while paused).  The wide simulation follows at the next map
+ * entry (wide_sim_e): in a cavern whose ring is not yet the one asked for, the OSD says so. */
 static void wide_toggle(App *a)
 {
     a->wide = !a->wide;
@@ -837,8 +852,11 @@ static void wide_toggle(App *a)
         a->wide = 0;
         return;
     }
-    fprintf(stderr, "[video] wide: %s\n", a->wide ? "on" : "off");
-    statekeys_osd(&a->sk, "WIDE %s", a->wide ? "ON" : "OFF");
+    Game *g = &a->sh.g;
+    g->wide_req = (uint8_t)wide_sim_e(a);
+    int pending = !a->sh.in_town && g->map && g->wide != game_wide_for_map(g, g->map);   /* this map's ring is the other one */
+    fprintf(stderr, "[video] wide: %s%s\n", a->wide ? "on" : "off", pending ? " (the wide simulation follows at the next map entry)" : "");
+    statekeys_osd(&a->sk, "WIDE %s%s", a->wide ? "ON" : "OFF", pending ? " - FULL WIDTH: NEXT AREA" : "");
     window_follow_view(a);
     PREFS_CHANGED(a);
 }
@@ -1480,8 +1498,9 @@ static void usage(void)
         "  --fullscreen  start full-screen (F or F11, or Alt+Enter, toggles; Esc pauses, Q quits)\n"
         "  --zoom[=N]    start with the decorative border cropped (Z toggles); =N picks a level: 0 off, 1 cropped, 2 and 3 the\n"
         "                --wide view's zoom-out levels (more rows; more rows and columns), which Z then cycles\n"
-        "  --wide        the 16:10 cavern view: all 36 live columns of the ring instead of 28, MCGA only; boss rooms, towns and\n"
-        "                menus keep the original frame (W toggles; off by default; never with --trace)\n"
+        "  --wide        the wide cavern view, MCGA only: a 16:10 picture (36 columns instead of 28) and Z's zoom-out levels, up to\n"
+        "                62 x 28 cells, all live: the caverns run a 70-column ring (gameplay changes: off by default; W toggles, the\n"
+        "                ring follows at the next map entry); boss rooms, towns and menus keep the original (never with --trace)\n"
         "  --smooth      slide the cavern or town scroll, parallax layers, hero, NPCs, enemies and shots between game steps (T toggles)\n"
         "  --video M   render through one of the five original drivers:\n"
         "              mcga (default) cga cga2 ega hgc tandy — the RESOURCE.CFG\n"
@@ -2335,8 +2354,10 @@ static int wide_now(const App *a, const Game *g)
            render_wide_ok(g);
 }
 
-/* The columns of a zoom-out 2 view that are past the ring are scenery only: nothing in them is simulated, so no
- * enemy, shot or lift appears there.  They are drawn a quarter darker, so the edge of the live world can be seen. */
+/* The columns of a wide view that are past the ring are scenery only: nothing in them is simulated, so no enemy,
+ * shot or lift appears there.  They are drawn a quarter darker, so the edge of the live world can be seen.  With
+ * the wide simulation (#126 step 5) the ring covers the whole view and nothing is shaded; only a map that takes a
+ * smaller E (MP84, MP62), or a cavern entered before W was pressed (E 0 until the next map entry), still has some. */
 #define SCENERY_SHADE_NUM 3     /* ...x 3/4 */
 static void shade_scenery(const Game *g, uint8_t *rgb, int w, const RenderView *rv)
 {
@@ -2352,28 +2373,38 @@ static void shade_scenery(const Game *g, uint8_t *rgb, int w, const RenderView *
         }
 }
 
+/* The wide cavern picture at zoom level `zoom`, as RGB: the playfield (render_frame_view) with the HUD band
+ * copied in and the scenery columns shaded.  Returns the RGB buffer (static) and its size. */
+static const uint8_t *wide_compose(App *a, Game *g, const SmoothOfs *so, int zoom, int *pw, int *ph)
+{
+    /* The playfield, with the live ring columns beyond the screen on each side, is drawn straight into the
+     * wide screen (render_frame_view); the HUD, item slots and Tear icons are drawn by their own code in
+     * the 320-wide screen and their band is copied across, centred (docs/WIDESCREEN.md 4.2). */
+    static uint8_t rgb[RENDER_WIDE_MAX_W * RENDER_WIDE_MAX_H * 3];
+    RenderView rv = render_zoom_view(zoom);
+    /* a map too narrow to show the zoom-out 2 columns without repeating itself is shown one level in */
+    if (rv.lo + rv.hi + SCREEN_COLS > g->map->width) rv = render_zoom_view(ZOOM_OUT1);
+    const int w = render_view_width(&rv), h = render_view_height(&rv);
+    render_set_smooth(so);
+    render_frame_view(a->wfb, g, &a->sh.hero, &rv);
+    render_set_smooth(NULL);
+    render_screen_frame(a->fb, g->screen, 0, PF_Y);                 /* the Tear row sits on the strip above the playfield */
+    render_hud(a->fb, g, &a->sh.font, &a->sh.tfont, map_place_record(g->map));
+    itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, g);
+    tear_draw_slots(a->fb, g, &a->sh.tear_art);
+    render_wide_hud(a->wfb, w, h, a->fb);
+    video_mcga_n_to_rgb(a->wfb, w * h, rgb);
+    shade_scenery(g, rgb, w, &rv);
+    *pw = w; *ph = h;
+    return rgb;
+}
+
 static void cavern_draw(App *a, Game *g, const SmoothOfs *so)
 {
     a->sm_drawn_ts = vs_slot(a);
     if (wide_now(a, g)) {
-        /* The playfield, with the 4 live ring columns beyond the screen on each side, is drawn straight into the
-         * 384-wide screen (render_frame_view); the HUD, item slots and Tear icons are drawn by their own code in
-         * the 320-wide screen and their band is copied across, centred (docs/WIDESCREEN.md 4.2). */
-        static uint8_t rgb[RENDER_WIDE_MAX_W * RENDER_WIDE_MAX_H * 3];
-        RenderView rv = render_zoom_view(a->zoom);
-        /* a map too narrow to show the zoom-out 2 columns without repeating itself is shown one level in */
-        if (rv.lo + rv.hi + SCREEN_COLS > g->map->width) rv = render_zoom_view(ZOOM_OUT1);
-        const int w = render_view_width(&rv), h = render_view_height(&rv);
-        render_set_smooth(so);
-        render_frame_view(a->wfb, g, &a->sh.hero, &rv);
-        render_set_smooth(NULL);
-        render_screen_frame(a->fb, g->screen, 0, PF_Y);                 /* the Tear row sits on the strip above the playfield */
-        render_hud(a->fb, g, &a->sh.font, &a->sh.tfont, map_place_record(g->map));
-        itemp_hud(a->fb, &a->sh.pics, &a->sh.tfont, g);
-        tear_draw_slots(a->fb, g, &a->sh.tear_art);
-        render_wide_hud(a->wfb, w, h, a->fb);
-        video_mcga_n_to_rgb(a->wfb, w * h, rgb);
-        shade_scenery(g, rgb, w, &rv);
+        int w, h;
+        const uint8_t *rgb = wide_compose(a, g, so, a->zoom, &w, &h);
         tex_upload(a, rgb, w, h);
         a->force_draw = 1;
         a->zoomable = 1;
@@ -2758,7 +2789,7 @@ static void no_game_files(const char *cfgpath, const char *datadir, int headless
 int main(int argc, char **argv)
 {
     static App a; memset(&a, 0, sizeof a);
-    a.frame_ms = FRAME_MS_DEFAULT; a.speed = SPEED_DEFAULT; a.scale = 3; a.video = VID_MCGA;
+    a.frame_ms = FRAME_MS_DEFAULT; a.speed = SPEED_DEFAULT; a.scale = 3; a.video = VID_MCGA; a.ring_dbg = -1;
     a.filter = FILTER_SHARP;                    /* #53: the fidelity-first default */
     Config cfg; char cfgpath[CONFIG_PATH_MAX];
     config_resolve_path(cfgpath, sizeof cfgpath, argv[0]);
@@ -3096,13 +3127,15 @@ int main(int argc, char **argv)
          * 36-column E000, so --trace forces 0 (ZEL_RING_EXTRA=0 with --trace is the "forced, E = 0" check of
          * docs/WIDESCREEN.md §5). */
         const char *re = getenv("ZEL_RING_EXTRA");
+        a.ring_dbg = -1;
         if (re && *re) {
             char *end; long e = strtol(re, &end, 10);
             if (*end || e < 0 || e > WIDE_E_MAX) { fprintf(stderr, "ZEL_RING_EXTRA: 0..%d\n", WIDE_E_MAX); return 2; }
             if (e && a.trace_f) { fprintf(stderr, "[debug] ZEL_RING_EXTRA=%ld ignored: --trace runs the original 36-column ring\n", e); e = 0; }
-            g->wide_req = (uint8_t)e;
+            a.ring_dbg = (int)e;
             if (e) fprintf(stderr, "[debug] ZEL_RING_EXTRA=%ld: a %ld-column ring in the caverns wide enough for it\n", e, (long)RING_W_OF(e));
         }
+        g->wide_req = (uint8_t)wide_sim_e(&a);                          /* #126 step 5: --wide / wide= run the wide simulation */
     }
 
     snprintf(g->player_name, sizeof g->player_name, "%s", save_name);    /* FF6C..FF73 */

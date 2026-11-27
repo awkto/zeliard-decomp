@@ -23,10 +23,11 @@ void render_frame(uint8_t *fb, const Game *g, const HeroGfx *h);     /* fb: FB_W
 
 /* The wide cavern view (#126, docs/WIDESCREEN.md): `lo` / `hi` more columns shown on the left / right of the
  * 28-column window in a framebuffer 8*(lo+hi) pixels wider, and `rt` / `rb` more rows above the window's row 0
- * and below its last visible row (17) in one 8*(rt+rb) pixels taller.  lo = hi = 4 is the whole 36-column
- * ring in 384x200.  Columns past the ring's own 4 on each side are scenery drawn from the map (the
- * simulation does not know them); the rows are all live, because the ring holds all 64 rows and activity is by
- * column.  Presentation only: it reads the ring and the sprite records and changes none of them.  Returns 0,
+ * and below its last visible row (17) in one 8*(rt+rb) pixels taller.  The 28 columns are the middle of the
+ * ring's view (ring cols 4 + E .. 31 + E, E = ring_extra(g), #126 step 5), so lo = hi = 4 is the whole 36-column
+ * ring in 384x200 at E 0, and at E 17 (the wide simulation) even lo = hi = 17 is all ring.  Columns past the
+ * ring are scenery drawn from the map (the simulation does not know them); the rows are all live, because the
+ * ring holds all 64 rows and activity is by column.  Presentation only: it reads the ring and the sprite records and changes none of them.  Returns 0,
  * drawing nothing, when the frame is not a plain cavern frame (a boss room, the walk-in, the encounter card,
  * the death dissolve, the status screen, the tear scene) or the map is too narrow for the view: those stay
  * 320 wide, so the caller renders them with render_frame. */
@@ -46,7 +47,8 @@ int  render_frame_view(uint8_t *fb, const Game *g, const HeroGfx *h, const Rende
  *   ZOOM_NORMAL  0  36 x 18 cells, 384x200 (16:10)         the W view
  *   ZOOM_CROP    1  the same, the stone frame cropped away by the presentation layer
  *   ZOOM_OUT1    2  36 x 24 cells, 384x248 (1.29:1)        6 more rows, all live
- *   ZOOM_OUT2    3  62 x 28 cells, 592x280 (1.76:1, ~16:9) 10 more rows, all live; the 26 extra columns are scenery */
+ *   ZOOM_OUT2    3  62 x 28 cells, 592x280 (1.76:1, ~16:9) 10 more rows; the 26 extra columns are live with the
+ *                   wide simulation (E 17: the ring's view is these 62 columns), scenery with the original ring */
 enum { ZOOM_NORMAL = 0, ZOOM_CROP = 1, ZOOM_OUT1 = 2, ZOOM_OUT2 = 3, ZOOM_LEVELS = 4 };
 RenderView render_zoom_view(int level);                 /* the view a wide cavern uses at `level` */
 const char *render_zoom_name(int level, int wide);      /* the OSD name */
