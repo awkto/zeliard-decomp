@@ -50,15 +50,15 @@ static void tallwalker_update(Game *g, MapObj *e)
         ai_tall_sync(g, e); return;
     }
     e->hit &= (uint8_t)~FACING_RIGHT;
-    if (e->rcol <= 0x11) e->hit |= FACING_RIGHT;
+    if (e->rcol <= hero_rcol(g)) e->hit |= FACING_RIGHT;
     int at_range = 0, cornered = 0;
     if (e->hit & FACING_RIGHT) {
-        uint8_t d = (uint8_t)(0x11 - e->rcol);
+        uint8_t d = (uint8_t)(hero_rcol(g) - e->rcol);
         if (d == dist_r) at_range = 1;
         else if (d < dist_r) { if (TALL(e, 4)) cornered = 1; else e->phase = (uint8_t)((e->phase - 1) & 3); }
         else                 { if (TALL(e, 0)) at_range = 1; else e->phase = (uint8_t)((e->phase + 1) & 3); }
     } else {
-        uint8_t d = (uint8_t)(e->rcol - 0x11);
+        uint8_t d = (uint8_t)(e->rcol - hero_rcol(g));
         if (d == dist_l) at_range = 1;
         else if (d < dist_l) { if (TALL(e, 0)) cornered = 1; else e->phase = (uint8_t)((e->phase - 1) & 3); }
         else                 { if (TALL(e, 4)) at_range = 1; else e->phase = (uint8_t)((e->phase + 1) & 3); }
@@ -111,7 +111,7 @@ static void tallspit_update(Game *g, MapObj *e)
     if (!(t & 0x100)) { ai_tall_sync(g, e); return; }
     e->phase = (uint8_t)((e->phase + 1) & 3);                           /* A66A */
     if (!(e->phase & 1)) {
-        if (e->rcol <= 0x10) { if (!TALL(e, 0)) e->hit |= FACING_RIGHT; }
+        if (e->rcol <= hero_rcol(g) - 1) { if (!TALL(e, 0)) e->hit |= FACING_RIGHT; }
         else                 { if (!TALL(e, 4)) e->hit &= (uint8_t)~FACING_RIGHT; }
     }
     ai_tall_sync(g, e);
@@ -152,7 +152,7 @@ static void runner_update(Game *g, MapObj *e)
         if (!facing && f != 0xFF) { e->hit = (uint8_t)((e->hit & 0x7F) | f); e->next |= 2; return; }
     }
     int p = game_ring_index(g, e->row, e->rcol);
-    p = game_ring_add(p, 2 * RING_W + ((e->hit & FACING_RIGHT) ? 1 : 0));   /* A796 */
+    p = game_ring_add(g, p, 2 * ring_w(g) + ((e->hit & FACING_RIGHT) ? 1 : 0));   /* A796 */
     if (ai_cell_passable(g, g->ring[p])) { e->phase = 0; e->next |= 8; return; }
     e->phase = (uint8_t)((e->phase + 1) & 3);
     if (!(e->next & 2)) {

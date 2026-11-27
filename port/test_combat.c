@@ -169,7 +169,7 @@ static void t_contact_scan(void)
     flat_map(); start(30, 10, 0);
     MapObj *o = put_enemy(31, 12, 2, 0);                 /* a frog: contact 15 */
     int hc = game_hero_cell(&G);
-    int feet_mid = game_ring_add(hc, 2 * RING_W + 1), feet_out = game_ring_add(hc, 2 * RING_W - 1);
+    int feet_mid = game_ring_add(&G, hc, 2 * ring_w(&G) + 1), feet_out = game_ring_add(&G, hc, 2 * ring_w(&G) - 1);
     unsigned hp0 = G.hp;
     G.ring[feet_mid] = 0x80;
     hero_enemy_contact(&G);
@@ -182,8 +182,8 @@ static void t_contact_scan(void)
     G.ring[feet_out] = 0;
     /* two sprites in one column: one damage (the scan stops at the first) */
     G.obj[1] = *o; G.nobj = 2;
-    G.ring[game_ring_add(hc, -RING_W + 2)] = 0x80;
-    G.ring[game_ring_add(hc, 2)] = 0x81;
+    G.ring[game_ring_add(&G, hc, -ring_w(&G) + 2)] = 0x80;
+    G.ring[game_ring_add(&G, hc, 2)] = 0x81;
     hero_enemy_contact(&G);
     CHECK(G.contact_damage == 15 && G.hit_side[3] == 0xFF, "two frogs in one column cost 15, not 30 (got %u)", G.contact_damage);
 }
@@ -240,12 +240,12 @@ static void t_sword(void)
      * not (oracle, tests/scenarios/frogs_left.zs f74). */
     flat_map(); start(30, 10, 1);
     o = put_enemy(0, 0, 2, 0); o->hp = 1;
-    G.ring[game_ring_add(game_hero_cell(&G), -RING_W + 3)] = 0x80;
+    G.ring[game_ring_add(&G, game_hero_cell(&G), -ring_w(&G) + 3)] = 0x80;
     G.attacking = 0xFF; G.attack_type = 1; G.attack_var = 1;
     sword_apply(&G);
     CHECK(!(o->hit & 0x40), "facing left, upward slash frame 0 does not reach row -1 col +3");
-    G.ring[game_ring_add(game_hero_cell(&G), -RING_W + 3)] = 0;
-    G.ring[game_ring_add(game_hero_cell(&G), -RING_W + 2)] = 0x80;
+    G.ring[game_ring_add(&G, game_hero_cell(&G), -ring_w(&G) + 3)] = 0;
+    G.ring[game_ring_add(&G, game_hero_cell(&G), -ring_w(&G) + 2)] = 0x80;
     sword_apply(&G);
     CHECK(o->hit & 0x40, "but it does reach row -1 col +2 (hit %02x)", o->hit);
 }
@@ -847,7 +847,7 @@ static void t_tall_spawn(void)
           "the lower half spawned 2 rows below with class+1 (row %u type %02x)", o[1].row, o[1].type);
     CHECK(o[1].rcol == o->rcol, "both halves share the ring column");
     int p = game_ring_index(&G, o->row, o->rcol);
-    CHECK(G.ring[p] == 0x80 && G.ring[game_ring_add(p, 2 * RING_W)] == 0x81, "both markers are in the ring");
+    CHECK(G.ring[p] == 0x80 && G.ring[game_ring_add(&G, p, 2 * ring_w(&G))] == 0x81, "both markers are in the ring");
 }
 
 /* The HUD strip (render.c): the four [2004] gauge troughs, the [200E] labels

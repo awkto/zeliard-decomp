@@ -6,10 +6,13 @@
 #include "enemy.h"
 #include <string.h>
 
-/* ring deltas from the sprite's top-left cell (row*0x24 + col) */
-#define D(dr, dc) ((dr) * RING_W + (dc))
+/* ring deltas from the sprite's top-left cell (row*0x24 + col, on the live
+ * stride: ring_delta) */
+#define D(dr, dc) ring_delta(g, (dr), (dc))
+/* the probe tables hold (row, col) pairs, turned into deltas on the stride */
+typedef struct { int8_t r, c; } RD;
 
-static inline uint8_t rcell(const Game *g, int p, int d) { return g->ring[game_ring_add(p, d)]; }
+static inline uint8_t rcell(const Game *g, int p, int d) { return g->ring[game_ring_add(g, p, d)]; }
 
 /* 0x94E1  vec 23.  cell < 0x49: passable only if it is in the tileset's
  * 24-entry list; 0x49..0x7F (DCHR items/doors): passable; >= 0x80 (a sprite
@@ -37,7 +40,7 @@ int ai_map_col_to_ring(const Game *g, uint16_t col, uint8_t *rcol)
 {
     int d = (int)col - g->scroll_col;
     if (d < 0) d += g->map->width;
-    if (d >= RING_W) return 1;
+    if (d >= ring_w(g)) return 1;
     *rcol = (uint8_t)d;
     return 0;
 }
@@ -57,11 +60,11 @@ uint16_t krn_random(Game *g)
 /* ------------------------------------------------------------------ probes */
 /* vec 12..19 (92B4..949A).  "P" cells must be ai-passable, "S" cells only need
  * to be free of sprite markers.  The cell lists are ai_common.h §3. */
-static int probe_cells(const Game *g, const MapObj *o, const int *P, int np, const int *S, int ns)
+static int probe_cells(const Game *g, const MapObj *o, const RD *P, int np, const RD *S, int ns)
 {
     int p = game_ring_index(g, o->row, o->rcol);
-    for (int i = 0; i < np; i++) if (!ai_cell_passable(g, rcell(g, p, P[i]))) return 1;
-    for (int i = 0; i < ns; i++) if (rcell(g, p, S[i]) & 0x80) return 1;
+    for (int i = 0; i < np; i++) if (!ai_cell_passable(g, rcell(g, p, D(P[i].r, P[i].c)))) return 1;
+    for (int i = 0; i < ns; i++) if (rcell(g, p, D(S[i].r, S[i].c)) & 0x80) return 1;
     return 0;
 }
 
@@ -69,29 +72,29 @@ int ai_probe(Game *g, MapObj *o, int dir)
 {
     switch (dir) {
     case 0: {   /* 92B4 right */
-        static const int P[] = {D(0,2), D(1,2)}, S[] = {D(-1,2)};
+        static const RD P[] = {{0,2}, {1,2}}, S[] = {{-1,2}};
         return probe_cells(g, o, P, 2, S, 1); }
     case 4: {   /* 930A left */
-        static const int P[] = {D(0,-1), D(1,-1)}, S[] = {D(-1,-2), D(0,-2), D(1,-2)};
+        static const RD P[] = {{0,-1}, {1,-1}}, S[] = {{-1,-2}, {0,-2}, {1,-2}};
         return probe_cells(g, o, P, 2, S, 3); }
     case 2: {   /* 9362 up */
-        static const int P[] = {D(-1,0), D(-1,1)}, S[] = {D(-2,-1), D(-2,0), D(-2,1)};
+        static const RD P[] = {{-1,0}, {-1,1}}, S[] = {{-2,-1}, {-2,0}, {-2,1}};
         return probe_cells(g, o, P, 2, S, 3); }
     case 6: {   /* 939A down */
-        static const int P[] = {D(2,0), D(2,1)}, S[] = {D(2,-1)};
+        static const RD P[] = {{2,0}, {2,1}}, S[] = {{2,-1}};
         return probe_cells(g, o, P, 2, S, 1); }
     case 1: {   /* 93C5 right-up */
-        static const int P[] = {D(0,2), D(-1,2), D(-1,1)}, S[] = {D(-2,0), D(-2,1), D(-2,2)};
+        static const RD P[] = {{0,2}, {-1,2}, {-1,1}}, S[] = {{-2,0}, {-2,1}, {-2,2}};
         return probe_cells(g, o, P, 3, S, 3); }
     case 7: {   /* 940C right-down */
-        static const int P[] = {D(1,2), D(2,2), D(2,1)}, S[] = {D(0,2), D(2,0)};
+        static const RD P[] = {{1,2}, {2,2}, {2,1}}, S[] = {{0,2}, {2,0}};
         return probe_cells(g, o, P, 3, S, 2); }
     case 3: {   /* 9452 left-up */
-        static const int P[] = {D(0,-1), D(-1,-1), D(-1,0)},
-                         S[] = {D(0,-2), D(-1,-2), D(-2,-2), D(-2,-1), D(-2,0)};
+        static const RD P[] = {{0,-1}, {-1,-1}, {-1,0}},
+                         S[] = {{0,-2}, {-1,-2}, {-2,-2}, {-2,-1}, {-2,0}};
         return probe_cells(g, o, P, 3, S, 5); }
     default: {  /* 5: 949A left-down */
-        static const int P[] = {D(1,-1), D(2,-1), D(2,0)}, S[] = {D(0,-2), D(1,-2), D(2,-2)};
+        static const RD P[] = {{1,-1}, {2,-1}, {2,0}}, S[] = {{0,-2}, {1,-2}, {2,-2}};
         return probe_cells(g, o, P, 3, S, 3); }
     }
 }
@@ -118,9 +121,9 @@ int ai_step(Game *g, MapObj *o, int dir)
 {
     int right = (dir == 0 || dir == 1 || dir == 7);
     int left  = (dir == 3 || dir == 4 || dir == 5);
-    if (right && o->rcol >= 0x22) return 1;
+    if (right && o->rcol >= edge_hi(g, 2)) return 1;                  /* 0x22 */
     if (left  && o->rcol < 2) return 1;
-    if (!right && !left && (o->rcol == 0 || o->rcol == 0x23)) return 1;
+    if (!right && !left && (o->rcol == 0 || o->rcol == ring_last(g))) return 1;   /* 0x23 */
     if (ai_probe(g, o, dir)) return 1;
     if (right) { o->col++; if (o->col >= g->map->width) o->col = 0; o->rcol++; }
     if (left)  { o->col = (uint16_t)(o->col ? o->col - 1 : g->map->width - 1); o->rcol--; }
@@ -183,10 +186,10 @@ uint8_t ai_hero_dirx(const Game *g, const MapObj *e, int range, int *facing_hero
 {
     int d = (int)(int8_t)(uint8_t)(g->hero_map_row - e->row);
     if (d < 0) d = -d;
-    if (dx) *dx = (uint8_t)(e->rcol < 0x11 ? 0x11 - e->rcol : e->rcol - 0x11);
+    if (dx) *dx = (uint8_t)(e->rcol < hero_rcol(g) ? hero_rcol(g) - e->rcol : e->rcol - hero_rcol(g));   /* 0x11 */
     *facing_hero = 0;
     if (d >= range) return 0xFF;
-    if (e->rcol < 0x11) { *facing_hero = (e->hit & 0x80) != 0; return 0x80; }
+    if (e->rcol < hero_rcol(g)) { *facing_hero = (e->hit & 0x80) != 0; return 0x80; }
     *facing_hero = (e->hit & 0x80) == 0;
     return 0;
 }
@@ -203,7 +206,7 @@ int ai_tall_step(Game *g, MapObj *e, int dir)
     MapObj *lo = e + 1;
     int p = game_ring_index(g, e->row, e->rcol);
     if (dir == 6) {                                                     /* A653 down */
-        if (e->rcol < 1 || e->rcol > 0x22) return 1;
+        if (e->rcol < 1 || e->rcol > edge_hi(g, 2)) return 1;           /* 0x22 */
         for (int c = 0; c < 2; c++)
             if (!ai_cell_passable(g, rcell(g, p, D(4, c)))) return 1;   /* A679 */
         e->row = (uint8_t)((e->row + 1) & 0x3F);
@@ -211,7 +214,7 @@ int ai_tall_step(Game *g, MapObj *e, int dir)
         return 0;
     }
     int right = (dir == 0);
-    if (right) { if (e->rcol >= 0x22) return 1; } else { if (e->rcol < 2) return 1; }
+    if (right) { if (e->rcol >= edge_hi(g, 2)) return 1; } else { if (e->rcol < 2) return 1; }
     int dc = right ? 2 : -1;
     for (int r = 0; r < 4; r++)                                         /* A56F / A5F4 */
         if (!ai_cell_passable(g, rcell(g, p, D(r, dc)))) return 1;

@@ -505,7 +505,7 @@ static void run_overlay(int ai_index, int sysmap, const char *name)
         if (G.nobj) drew++;
         if (G.nobj > maxparts) maxparts = G.nobj;
         for (int i = 0; i < G.nobj; i++) {
-            if (G.obj[i].rcol >= RING_W) bad_rcol++;
+            if (G.obj[i].rcol >= ring_w(&G)) bad_rcol++;
             if (G.ring[game_ring_index(&G, G.obj[i].row, G.obj[i].rcol)] != (0x80 | i)) bad_marker++;
         }
     }

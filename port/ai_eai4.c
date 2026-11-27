@@ -84,7 +84,7 @@ static void shell_update(Game *g, MapObj *e)
     int right;
     if (level) {
         if (!(krn_random(g) & 3)) e->next = 5;                          /* A2EF */
-        right = e->rcol < 0x11;
+        right = e->rcol < hero_rcol(g);
     } else right = (e->hit & FACING_RIGHT) != 0;
     if (right) { e->hit |= FACING_RIGHT;  if (STEP(e, 0)) e->next = 9; }   /* A313 */
     else       { e->hit &= (uint8_t)~FACING_RIGHT; if (STEP(e, 4)) e->next = 9; }   /* A302 */
@@ -95,7 +95,7 @@ static int block3x3_free(Game *g, int p)
 {
     for (int r = 0; r < 3; r++)
         for (int c = 0; c < 3; c++)
-            if (!ai_cell_passable(g, g->ring[game_ring_add(p, r * RING_W + c)])) return 0;
+            if (!ai_cell_passable(g, g->ring[game_ring_add(g, p, r * ring_w(g) + c)])) return 0;
     return 1;
 }
 
@@ -112,16 +112,16 @@ static int slime_split(Game *g, MapObj *e)
     int dst;
     if (!(e->hit & FACING_RIGHT)) {
         if (e->rcol & 0x80) return 0;                                   /* A5AA jns */
-        if (e->rcol >= 0x21) return 0;                                  /* A5AF */
-        if (!block3x3_free(g, game_ring_add(p, -RING_W + 1))) return 0; /* A5B6: si - 0x23 */
-        dst = game_ring_add(p, 2);                                      /* A5C1 */
+        if (e->rcol >= edge_hi(g, 3)) return 0;                        /* A5AF: 0x21 */
+        if (!block3x3_free(g, game_ring_add(g, p, -ring_w(g) + 1))) return 0; /* A5B6: si - 0x23 */
+        dst = game_ring_add(g, p, 2);                                      /* A5C1 */
         s->col = (uint16_t)((e->col + 2) % g->map->width); s->rcol = (uint8_t)(e->rcol + 2);   /* A5D6 / A5EA */
         e->phase = 0x16; s->phase = 0x17;                               /* A5F2 */
     } else {
         if (e->rcol & 0x80) return 0;                                   /* A601 jns */
         if (e->rcol < 3) return 0;                                      /* A606 */
-        if (!block3x3_free(g, game_ring_add(p, -RING_W - 3))) return 0; /* A60D: si - 0x27 */
-        dst = game_ring_add(p, -2);                                     /* A618 */
+        if (!block3x3_free(g, game_ring_add(g, p, -ring_w(g) - 3))) return 0; /* A60D: si - 0x27 */
+        dst = game_ring_add(g, p, -2);                                     /* A618 */
         s->col = (uint16_t)((e->col + g->map->width - 2) % g->map->width); s->rcol = (uint8_t)(e->rcol - 2);   /* A62D / A63C */
         e->phase = 0x17; s->phase = 0x16;                               /* A644 */
     }
@@ -168,7 +168,7 @@ static void slime_update(Game *g, MapObj *e)
     if (e->phase & 0xF0) return;                                        /* A51C */
     e->phase |= 0x40;
     int level = (g->hero_map_row == e->row) || (((g->hero_map_row + 1) & 0x3F) == e->row);   /* A52B */
-    if (level ? (e->rcol > 0x10) : !(e->hit & FACING_RIGHT)) {
+    if (level ? (e->rcol > hero_rcol(g) - 1) : !(e->hit & FACING_RIGHT)) {
         e->hit &= (uint8_t)~FACING_RIGHT;
         if (!STEP(e, 4)) return;                                        /* A54B */
     }
@@ -182,7 +182,7 @@ static void icicle_update(Game *g, MapObj *e)
 {
     e->type |= 0x20;
     if (!(e->next & 1)) {
-        if (e->rcol < 8 || e->rcol >= 0x13) return;                     /* A6BB */
+        if (e->rcol < hero_rcol(g) - 9 || e->rcol >= hero_rcol(g) + 2) return;   /* A6BB: 8..0x12 */
         if (krn_random(g) & 3) return;                                  /* A6C8 */
         e->phase = 1; e->next |= 1; return;
     }
@@ -237,7 +237,7 @@ static void blade_update(Game *g, MapObj *e)
 {
     if (!e->hp) e->hp = 2;
     if (e->hit & HIT_STUN) { enemy_take_damage(g, e); return; }         /* A6FA */
-    if (e->rcol < 3 || e->rcol >= 0x21) return;                         /* A705 */
+    if (e->rcol < 3 || e->rcol >= edge_hi(g, 3)) return;               /* A705: 3..0x20 */
     if (blade_step(g, e) == 2) blade_step(g, e);                        /* A713 */
 }
 

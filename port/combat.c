@@ -250,11 +250,11 @@ void sword_input(Game *g)
     if (!g->btn1_edge || g->attacking || g->casting) return;            /* 6E81..6E96: [FF3C] too */
     g->attack_type = 0; g->attack_var = 0;
     if (!g->boss_map) {                                                 /* 6EA0: hittable sprite overhead? */
-        int base = game_ring_add(game_hero_cell(g), -(4 * RING_W + 3)); /* rows -4..-1, cols -3..+4 */
+        int base = game_ring_add(g, game_hero_cell(g), -(4 * ring_w(g) + 3)); /* rows -4..-1, cols -3..+4 */
         int found = 0;
         for (int r = 0; r < 4; r++) {
             for (int c = 0; c < 8; c++) {
-                uint8_t v = g->ring[game_ring_add(base, r * RING_W + c)];
+                uint8_t v = g->ring[game_ring_add(g, base, r * ring_w(g) + c)];
                 if (!(v & 0x80)) continue;
                 int i = v & 0x7F;                                       /* 6EB9 / 6EBD: not immune/harmless, */
                 if (i < g->nobj && !(g->obj[i].type & 0x60) && !(g->obj[i].flags & 0x10)) found = 1;   /* not a tall body's 2nd record; items count */
@@ -276,9 +276,9 @@ void sword_apply(Game *g)
     if (g->boss_map && g->boss_cutscene) return;
     const Cellofs *sh = sword_shape(g);
     if (!sh) return;
-    int base = game_hero_cell(g) + (g->crouching ? RING_W : 0);         /* 6F21: origin one row lower when crouched */
+    int base = game_hero_cell(g) + (g->crouching ? ring_w(g) : 0);         /* 6F21: origin one row lower when crouched */
     for (int i = 0; sh[i].dr != 127; i++) {                             /* 6F72: FF ends the list */
-        uint8_t v = g->ring[game_ring_add(base, sh[i].dr * RING_W + sh[i].dc)];
+        uint8_t v = g->ring[game_ring_add(g, base, sh[i].dr * ring_w(g) + sh[i].dc)];
         if (!(v & 0x80)) continue;
         int oi = v & 0x7F;
         if (oi >= g->nobj) continue;
@@ -301,7 +301,7 @@ void sword_apply(Game *g)
 static int contact_scan(Game *g, int *p, int rows)
 {
     for (int r = 0; r < rows; r++) {
-        if (r) *p = game_ring_add(*p, RING_W);                          /* 764B / 765E: add si,24 + 6D82 wrap */
+        if (r) *p = game_ring_add(g, *p, ring_w(g));                          /* 764B / 765E: add si,24 + 6D82 wrap */
         uint8_t v = g->ring[*p];
         if (!(v & 0x80)) continue;                                      /* 6DCB: CF=1, plain cell */
         int i = v & 0x7F;
@@ -327,12 +327,12 @@ void hero_enemy_contact(Game *g)
     g->contact_damage = 0;
     int rows = 3;
     int s = game_hero_cell(g) - 1;
-    if (g->crouching) rows = 2; else s = game_ring_add(s, -RING_W);     /* 7545 */
+    if (g->crouching) rows = 2; else s = game_ring_add(g, s, -ring_w(g));     /* 7545 */
     for (int i = 0; i < 4; i++) {
-        int p = game_ring_add(s, i);
+        int p = game_ring_add(g, s, i);
         int hit = contact_scan(g, &p, rows);
         if (!hit && (i == 1 || i == 2)) {                               /* 7568 / 7580: call 765E */
-            p = game_ring_add(p, RING_W);
+            p = game_ring_add(g, p, ring_w(g));
             hit = contact_scan(g, &p, 1);
         }
         g->hit_side[i] = (uint8_t)(hit ? 0xFF : 0);

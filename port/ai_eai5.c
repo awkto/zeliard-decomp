@@ -45,7 +45,7 @@ static void tallspit_update(Game *g, MapObj *e)
     }
     e->phase = (uint8_t)((e->phase + 1) & 7);                           /* A381 */
     if (!(e->phase & 3)) {
-        if (e->rcol <= 0x10) { if (!TALL(e, 0)) e->hit |= FACING_RIGHT; }   /* A391 */
+        if (e->rcol <= hero_rcol(g) - 1) { if (!TALL(e, 0)) e->hit |= FACING_RIGHT; }   /* A391 */
         else                 { if (!TALL(e, 4)) e->hit &= (uint8_t)~FACING_RIGHT; }
     }
     ai_tall_sync(g, e);
@@ -66,19 +66,19 @@ static int slime_split(Game *g, MapObj *e)
     int dst;
     if (!(e->hit & FACING_RIGHT)) {
         if (e->rcol & 0x80) return 0;                                   /* A662 jns */
-        if (e->rcol >= 0x20) return 0;                                  /* A667 */
+        if (e->rcol >= edge_hi(g, 4)) return 0;                        /* A667: 0x20 */
         for (int r = -1; r <= 1; r++)                                   /* A66E: rows -1..1, cols +2/+3 */
             for (int c = 2; c <= 3; c++)
-                if (!ai_cell_passable(g, g->ring[game_ring_add(p, r * RING_W + c)])) return 0;
-        dst = game_ring_add(p, 2);                                      /* A6A5 */
+                if (!ai_cell_passable(g, g->ring[game_ring_add(g, p, r * ring_w(g) + c)])) return 0;
+        dst = game_ring_add(g, p, 2);                                      /* A6A5 */
         s->col = (uint16_t)((e->col + 2) % g->map->width); s->rcol = (uint8_t)(e->rcol + 2);   /* A6BE / A6CF */
     } else {
         if (e->rcol & 0x80) return 0;                                   /* A6DE jns */
         if (e->rcol < 4) return 0;                                      /* A6E3 */
         for (int r = -1; r <= 1; r++)                                   /* A6EA: si = cell-2-0x25: cols -3/-2 */
             for (int c = -3; c <= -2; c++)
-                if (!ai_cell_passable(g, g->ring[game_ring_add(p, r * RING_W + c)])) return 0;
-        dst = game_ring_add(p, -2);                                     /* A71B */
+                if (!ai_cell_passable(g, g->ring[game_ring_add(g, p, r * ring_w(g) + c)])) return 0;
+        dst = game_ring_add(g, p, -2);                                     /* A71B */
         s->col = (uint16_t)((e->col + g->map->width - 2) % g->map->width); s->rcol = (uint8_t)(e->rcol - 2);   /* A734 / A741 */
     }
     g->under_sprite[idx] = g->ring[dst];                                /* A6B3 / A6B8 */
@@ -117,7 +117,7 @@ static void slime_update(Game *g, MapObj *e)
     if (e->phase & 0xF0) return;                                        /* A7A9 */
     e->phase |= 0x40;
     int level = (g->hero_map_row == e->row) || (((g->hero_map_row + 1) & 0x3F) == e->row);
-    if (level ? (e->rcol > 0x11) : !(e->hit & FACING_RIGHT)) {
+    if (level ? (e->rcol > hero_rcol(g)) : !(e->hit & FACING_RIGHT)) {
         e->hit &= (uint8_t)~FACING_RIGHT;
         if (!STEP(e, 4)) return;
     }
@@ -185,16 +185,16 @@ static void diver_update(Game *g, MapObj *e)
     }
     if (e->next & 2) {                                                  /* A9BC */
         STEP(e, 2);
-        if (!((e->rcol <= 0x10) ? STEP(e, 1) : STEP(e, 3))) return;
+        if (!((e->rcol <= hero_rcol(g) - 1) ? STEP(e, 1) : STEP(e, 3))) return;
         if (!STEP(e, 2)) return;
         e->next &= (uint8_t)~2; return;
     }
-    if (e->rcol > 0xF && e->rcol <= 0x12) { e->next |= 1; e->phase = 4; }   /* A940 */
+    if (e->rcol > hero_rcol(g) - 2 && e->rcol <= hero_rcol(g) + 1) { e->next |= 1; e->phase = 4; }   /* A940 */
     else e->phase = (uint8_t)((e->phase & 0xF0) | ((e->phase + 1) & 3));    /* A958 */
     STEP(e, 2);                                                         /* A966 */
     unsigned t = (unsigned)e->phase + 0x80; e->phase = (uint8_t)t;
     if (!(t & 0x100)) return;
-    if (e->rcol <= 0x10) { if (STEP(e, 0)) STEP(e, 4); }                /* A972 */
+    if (e->rcol <= hero_rcol(g) - 1) { if (STEP(e, 0)) STEP(e, 4); }                /* A972 */
     else                 { if (STEP(e, 4)) STEP(e, 0); }
 }
 

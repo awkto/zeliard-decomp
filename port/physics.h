@@ -7,10 +7,32 @@
 #include "map.h"
 #include "gfx.h"
 
-#define RING_W    36
+/* The ring's geometry is a function of one per-map value, E = the columns
+ * added on each side (issue #126, docs/WIDESCREEN.md §5).  Nothing reads a
+ * width literal: the sim goes through ring_w(g), hero_rcol(g), edge_hi(g, k)
+ * etc. below, which give the original's constants back while E is 0.  E is 0
+ * everywhere for now (step 3, the no-op refactor); step 4 makes ring_extra()
+ * return a per-map value and has nothing else to change. */
 #define RING_H    64
-#define RING_SIZE (RING_W * RING_H)
+#define RING_W_OF(e)       (36 + 2 * (e))         /* the ring stride: 0x24 */
+#define VIEW_COLS_OF(e)    (28 + 2 * (e))         /* screen columns: 0x1C */
+#define HERO_COL_OF(e)     (12 + (e))             /* the hero's pinned screen column [83]: 0x0C */
+#define HERO_RCOL_OF(e)    (HERO_COL_OF(e) + 5)   /* his body's ring column: 0x11 */
+#define RING_W_ORIG        RING_W_OF(0)
+/* E000 as the original lays it out: 2304 bytes of stride 36.  The trace and
+ * the savestate keep this layout (they never see a wide ring, §5). */
+#define RING_SIZE_ORIG     (RING_W_ORIG * RING_H)
+/* the widest stride the storage holds; the live part is ring_size(g).  Kept at
+ * the original's 36 while E is always 0, so the bytes after the ring are the
+ * same struct fields as before (a shot in ring row 63 past column 35 reads
+ * past E000+0x8FF, into the E900 shadow in the original): step 4 raises it. */
+#define RING_STRIDE_MAX    36
+#define RING_CAP           (RING_STRIDE_MAX * RING_H)
 #define SCREEN_COLS 28
+_Static_assert(RING_W_OF(0) == 36 && RING_SIZE_ORIG == 2304 && VIEW_COLS_OF(0) == 28 && VIEW_COLS_OF(0) == SCREEN_COLS &&
+               HERO_COL_OF(0) == 0x0C && HERO_RCOL_OF(0) == 0x11 && RING_W_OF(0) - 1 == 0x23 &&
+               VIEW_COLS_OF(0) + 4 == 0x20 && RING_W_OF(0) <= RING_STRIDE_MAX,
+               "#126: the default (E = 0) ring geometry is the original's");
 #define SCREEN_ROWS 19
 
 #define DIR_UP 1
@@ -130,10 +152,10 @@ typedef int (*PostBossFn)(Game *g, int post_ai, int post_enemies);
 struct Game {
     const Map     *map;
     const Tileset *tiles;
-    uint8_t  ring[RING_SIZE];       /* E000: row-major, stride 36; ring row == map row */
+    uint8_t  ring[RING_CAP];        /* E000: row-major, stride ring_w(g) (36); ring row == map row */
     uint8_t  hero_drawn_ok; int hero_drawn_row, hero_drawn_col;   /* [4FED]: where 70D4 last drew the hero */
     uint8_t  sword_blk_ok;  int sword_blk_row,  sword_blk_col;    /* [4FED] as 7047's 3E34 saw it (previous frame's) */
-    uint8_t  bg_ring[RING_SIZE];    /* the ring as 710F [3000] (gfmcga 302C) draws the background at 3159, i.e. before 315C animates each cell: render.c draws the background from this, so it lags only this frame's 315C step.  Refreshed from ring at the top of frame_7094 (after 6F9B's simulation, before the draw). */
+    uint8_t  bg_ring[RING_CAP];    /* the ring as 710F [3000] (gfmcga 302C) draws the background at 3159, i.e. before 315C animates each cell: render.c draws the background from this, so it lags only this frame's 315C step.  Refreshed from ring at the top of frame_7094 (after 6F9B's simulation, before the draw). */
 
     /* player record 0049-00E8 */
     int      scroll_col;            /* [80] map column in ring column 0 */
@@ -369,7 +391,7 @@ int  game_passable_body(const Game *g, uint8_t v);
 int  game_cell_hazard(const Game *g, uint8_t v);  /* 73C0: one of the tileset's 4 hazard cells */
 int  game_ring_index(const Game *g, uint8_t row, uint8_t col);     /* 6D6E ring_addr */
 void game_message_tick(Game *g);                                   /* 7210: the message box's close timer */
-int  game_ring_add(int p, int delta);                              /* 6D82/6D8E wrap */
+int  game_ring_add(const Game *g, int p, int delta);              /* 6D82/6D8E wrap */
 int  game_push_hero(Game *g, int left);      /* 66A5 / 684C try_move; 1 = blocked */
 void game_knock_fall(Game *g);               /* 64A2: one row of fall after a knockback */
 void game_message(Game *g, const char *text, int x);   /* 73E0: show a message box for 32 frames */
@@ -384,5 +406,21 @@ enum { MSG_GOLD50, MSG_GOLD100, MSG_GOLD500, MSG_GOLD1000, MSG_KEY, MSG_RECOVERE
 /* 7C6E: start the 26-frame walk-in (face_left = enter from the right) */
 void game_run_walk_in(Game *g);            /* play out a started walk-in now (a door into a town) */
 void game_start_walk_in(Game *g, int face_left);
+
+/* ---------------------------------------------- ring geometry (#126 step 3)
+ * E = ring_extra(g) is 0 until step 4 makes it settable, so each helper is the
+ * original's constant.  Edges are counted from the right on the live stride:
+ * edge_hi(g, 1) = 0x23 (the last column), 2 = 0x22, 3 = 0x21, 4 = 0x20.  The
+ * left edges (1, 2, 3) do not move.  Ring deltas are ring_delta(g, dr, dc),
+ * so a column -1 still lands in the previous row as the original's pointers do. */
+static inline int ring_extra(const Game *g) { (void)g; return 0; }
+static inline int ring_w(const Game *g)      { return RING_W_OF(ring_extra(g)); }
+static inline int ring_size(const Game *g)   { return ring_w(g) * RING_H; }
+static inline int ring_last(const Game *g)   { return ring_w(g) - 1; }
+static inline int edge_hi(const Game *g, int k) { return ring_w(g) - k; }
+static inline int view_cols(const Game *g)   { return VIEW_COLS_OF(ring_extra(g)); }
+static inline int hero_col(const Game *g)    { return HERO_COL_OF(ring_extra(g)); }
+static inline int hero_rcol(const Game *g)   { return HERO_RCOL_OF(ring_extra(g)); }
+static inline int ring_delta(const Game *g, int dr, int dc) { return dr * ring_w(g) + dc; }
 
 #endif

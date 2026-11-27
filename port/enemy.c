@@ -366,9 +366,9 @@ void enemy_spawn(Game *g, MapObj *o)
     if (o->home_col == 0xFFFF) return;
     uint8_t r;
     if (ai_map_col_to_ring(g, o->home_col, &r)) return;
-    if (r == 0 || r == 0x23) return;
+    if (r == 0 || r == ring_last(g)) return;                          /* 0x23 */
     uint8_t dy = (uint8_t)((o->home_row - (g->scroll_row - 2)) & 0x3F);
-    if (dy < 0x18 && r >= 3 && r < 0x20) return;                        /* 953B: would pop up on screen */
+    if (dy < 0x18 && r >= 3 && r < view_cols(g) + 4) return;           /* 953B: would pop up on screen (0x20) */
     int tall = (o->flags & 0x10) && idx + 1 < g->nobj;
     if (tall && (o->home_type & 1)) return;                             /* 95B6 */
     o->rcol = r;                                                        /* 9550 / 95BD */
@@ -377,7 +377,7 @@ void enemy_spawn(Game *g, MapObj *o)
     int rows = tall ? 5 : 3;                                            /* 9566 / 95D6: cx */
     for (int dr = -1; dr < rows - 1; dr++)
         for (int dc = -1; dc <= 1; dc++)
-            if (g->ring[game_ring_add(p, dr * RING_W + dc)] & 0x80) return;
+            if (g->ring[game_ring_add(g, p, dr * ring_w(g) + dc)] & 0x80) return;
     o->col = o->home_col; o->row = o->home_row; o->type = o->home_type;
     o->phase = 0x10; o->hit = 0; o->next = 0; o->link = 0; o->hp = 0;
     g->under_sprite[idx] = 0;
@@ -389,7 +389,7 @@ void enemy_spawn(Game *g, MapObj *o)
         lo->type = (uint8_t)(o->home_type + 1);
         lo->phase = 0x10; lo->hit = 0; lo->next = 0; lo->link = 0; lo->hp = 0;
         lo->flags &= 0xF0;                                              /* 9648 */
-        int q = game_ring_add(p, 2 * RING_W);
+        int q = game_ring_add(g, p, 2 * ring_w(g));
         g->under_sprite[idx + 1] = 0;
         g->ring[q] = (uint8_t)(0x80 | (idx + 1));
     }
@@ -436,7 +436,7 @@ static void enemy_step(Game *g, MapObj *o)
     o->hit = h;
     g->ring[p] = g->under_sprite[idx];                                  /* 8DCA */
     if (!(o->type & 0x11) && (o->flags & 0x10) && idx + 1 < g->nobj)
-        g->ring[game_ring_add(p, 2 * RING_W)] = g->under_sprite[idx + 1];
+        g->ring[game_ring_add(g, p, 2 * ring_w(g))] = g->under_sprite[idx + 1];
     if (!(o->type & 0x18)) { ai_entry(g, o); return; }                  /* 8DF7 */
     if ((o->type & 0x1F) < 0x10) { enemy_dying(g, o); return; }         /* 8E0B */
     item_update(g, o);                                                  /* 8E10 */
@@ -460,7 +460,7 @@ void enemies_update(Game *g)
                     g->under_sprite[i] = g->ring[p];
                     g->ring[p] = (uint8_t)(0x80 | i);
                     if (!(o->type & 0x11) && (o->flags & 0x10) && i + 1 < g->nobj) {
-                        int q = game_ring_add(p, 2 * RING_W);
+                        int q = game_ring_add(g, p, 2 * ring_w(g));
                         g->under_sprite[i + 1] = g->ring[q];
                         g->ring[q] = (uint8_t)(0x80 | (i + 1));
                     }
@@ -560,7 +560,7 @@ void cell_anim(Game *g)
     if (!anim && !sparks) return;
     for (int r = 0; r < 0x12; r++) {
         uint8_t row = (uint8_t)((g->scroll_row + r) & 0x3F);
-        for (int c = 4; c < 0x20; c++) {
+        for (int c = 4; c < view_cols(g) + 4; c++) {                   /* ring cols 4..0x1F */
             uint8_t *p = &g->ring[game_ring_index(g, row, (uint8_t)c)];
             if (*p & 0x80) { boss_spark_cell(g, c - 4, r); continue; }  /* 3127 / 30FF: a sprite marker -> 3468 / 34E3 */
             if (anim) cell_anim_one(g, p);

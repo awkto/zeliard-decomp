@@ -184,7 +184,7 @@ static void rock_update(Game *g, MapObj *e)
         if ((uint8_t)((e->row - (g->scroll_row - 1)) & 0x3F) < 0x13) SFX_SET(g->sfx_request, 0x21);   /* A99C */
         return;
     }
-    if (e->rcol < 8 || e->rcol >= 0x13) return;                         /* A96F */
+    if (e->rcol < hero_rcol(g) - 9 || e->rcol >= hero_rcol(g) + 2) return;   /* A96F: 8..0x12 */
     if (!(krn_random(g) & 3)) e->next |= 1;                             /* A97D */
 }
 

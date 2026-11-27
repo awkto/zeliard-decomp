@@ -54,7 +54,7 @@ int  smooth_remaining(int px, double t);
 /* progress through a step that began `elapsed_ms` ago and lasts `period_ms` */
 double smooth_progress(double elapsed_ms, double period_ms);
 /* the ring column of a fixture's leftmost cell (physics.c 82F8), or -1 when it is not on the ring */
-int  smooth_fixture_rcol(int col, int scroll_col, int map_width);
+int  smooth_fixture_rcol(int col, int scroll_col, int map_width, int ring_w);   /* fixture_rcol (82F8) on a stride */
 /* is a per-object move of (dx, dy) pixels a slide (else a jump)? */
 int  smooth_is_slide(int dx, int dy);
 

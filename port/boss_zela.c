@@ -34,7 +34,7 @@ enum { S_ANIM, S_FIRING, S_HOPPING, S_HOPDIR, S_PAUSE, S_HOPSTEP, S_PAUSECNT, S_
 
 /* A23F / A2A3 / A350 / A38F / A403: the hero's map column, scroll + n
  * wrapped once by the map width [C002] (`sub ax,[C002]` / `xchg`). */
-static uint16_t hero_col(const Game *g, unsigned n)
+static uint16_t zela_hero_col(const Game *g, unsigned n)
 {
     unsigned c = (unsigned)g->scroll_col + n;
     if (g->map && c >= (unsigned)g->map->width) c -= (unsigned)g->map->width;
@@ -119,7 +119,7 @@ static void zela_death(Game *g)
 static void hop_check(Game *g)
 {
     if (ST(S_BLOCKED)) return;
-    if (g->boss.col == hero_col(g, 12)) return;                            /* A350 */
+    if (g->boss.col == zela_hero_col(g, 12)) return;                            /* A350 */
     if (ST(S_HOPDIR)) { if (step_left(g)) ST(S_BLOCKED) = 0xFF; }          /* A3AB */
     else              { if (step_right(g)) ST(S_BLOCKED) = 0xFF; }         /* A3BE */
 }
@@ -155,7 +155,7 @@ void boss_zela_entry(Game *g)
         if (!zel2 && src == 4) { d *= 4; SFX_SET(g->sfx_request, 0x24); }          /* A228: magic 3 */
         else SFX_SET(g->sfx_request, (uint8_t)(zel2 ? 0x24 : 0x25));
         zela_damage(g, d);
-        if (b->col < hero_col(g, 15)) { step_left(g); step_left(g); }     /* A23F */
+        if (b->col < zela_hero_col(g, 15)) { step_left(g); step_left(g); }     /* A23F */
         else                          { step_right(g); step_right(g); }
     }
 
@@ -165,7 +165,7 @@ void boss_zela_entry(Game *g)
         else if (!(krn_random(g) & 0xF) && !g->boss_cutscene) {            /* A274 / A280 */
             ST(S_HOPPING) = ST(S_PAUSE) = ST(S_HOPDIR) = 0xFF;             /* A28A */
             ST(S_HOPSTEP) = ST(S_PAUSECNT) = 0;
-            if (b->col < hero_col(g, 14)) ST(S_HOPDIR) = 0;                /* A2A3 */
+            if (b->col < zela_hero_col(g, 14)) ST(S_HOPDIR) = 0;                /* A2A3 */
             walk = 0;
         }
     }
@@ -173,7 +173,7 @@ void boss_zela_entry(Game *g)
     if (walk) {                                                            /* A371 */
         if (g->boss_cutscene) { zela_death(g); return; }                   /* A378 */
         if (--ST(S_DIV) == 0) { ST(S_DIV) = 2; ST(S_ANIM) = (uint8_t)((ST(S_ANIM) + 1) & 7); }
-        if (hero_col(g, 18) < b->col) {                                    /* A38F..A3A2 */
+        if (zela_hero_col(g, 18) < b->col) {                                    /* A38F..A3A2 */
             if (ST(S_ANIM) == 0 && step_left(g)) ST(S_BLOCKED) = 0xFF;     /* A3A4 */
         } else if (ST(S_ANIM) == 4 && step_right(g)) ST(S_BLOCKED) = 0xFF; /* A3B7 */
     } else {                                                               /* A2BE */
@@ -189,7 +189,7 @@ void boss_zela_entry(Game *g)
     if (!ST(S_HOPPING)) {                                                  /* A3E3 */
         int f = ST(S_FIRING);
         if (!f && !(krn_random(g) & 1)) {                                  /* A3FA */
-            uint16_t hc = hero_col(g, 18);                                 /* A403 */
+            uint16_t hc = zela_hero_col(g, 18);                                 /* A403 */
             if (b->col >= hc) { if (ST(S_ANIM) == 2) f = ST(S_FIRING) = 1; }          /* A447 */
             else if (b->col + 7 < (uint16_t)(hc - 2) && ST(S_ANIM) == 6) f = ST(S_FIRING) = 2;   /* A419 */
         }

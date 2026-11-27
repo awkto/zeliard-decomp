@@ -138,7 +138,7 @@ static const TField FIELDS[] = {
     G("magic_hit_any",     0x9F2A, 1, magic_hit_any),
     G("cast_timer",        0x9F2B, 1, cast_timer),
     /* ---- work areas */
-    G("ring",              0xE000, RING_SIZE, ring),
+    G("ring",              0xE000, RING_SIZE_ORIG, ring),       /* always 2304 bytes of stride 36 (#126) */
     G("boss_state",        0xEDA0, 1, boss_state),
     /* ---- town.bin locals */
     T("town_was_idle",     0x7C4B, 1, was_idle),
@@ -241,7 +241,7 @@ static void emit_hex(Out *o, const char *name, const uint8_t *p, size_t n)
 static void emit_bytes(Out *o, const char *name, const uint8_t *p, size_t n, unsigned size)
 {
     if (size > 2) {
-        uint8_t buf[RING_SIZE];
+        uint8_t buf[RING_SIZE_ORIG];
         size_t k = size < sizeof buf ? size : sizeof buf;
         memset(buf, 0, k);
         memcpy(buf, p, n < k ? n : k);

@@ -768,7 +768,7 @@ void nav_trace(Nav *n, const Game *g, int col, int row, int mi)
         {int tl = game_hero_cell(p);
          fprintf(stderr, " [%d,%d v%02x f%02x rr%u L:%02x/%02x/%02x]", game_hero_map_col(p), game_hero_map_row(p),
                  p->vstate, p->hero_flags, p->rise_rows,
-                 p->ring[tl], p->ring[game_ring_add(tl, RING_W)], p->ring[game_ring_add(tl, 2 * RING_W)]);}
+                 p->ring[tl], p->ring[game_ring_add(p, tl, ring_w(p))], p->ring[game_ring_add(p, tl, 2 * ring_w(p))]);}
     }
     for (int k = 0; k < SETTLE && !settled(p); k++) {
         p->dirs = 0; set_btn(p, 0); game_step(p);

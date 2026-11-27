@@ -133,10 +133,10 @@ int boss_ring_col(const Game *g, uint16_t col, uint8_t *bl)
 {
     uint16_t scroll = (uint16_t)g->scroll_col, d;
     if (col >= scroll) d = (uint16_t)(col - scroll);                      /* 96A3 */
-    else if (col > 0x23) { *bl = (uint8_t)col; return 1; }                /* 96A9..96B0 */
+    else if (col > ring_last(g)) { *bl = (uint8_t)col; return 1; }        /* 96A9..96B0: 0x23 */
     else d = (uint16_t)((g->map ? g->map->width : 0) - scroll + col);     /* 96B1 */
     *bl = (uint8_t)d;                                                       /* 96BA */
-    return d > 0x23;                                                        /* 96BB */
+    return d > ring_last(g);                                                /* 96BB: 0x23 */
 }
 
 void boss_shot_template(const Game *g, unsigned addr, Shot *out)
@@ -348,7 +348,7 @@ int post_boss_transition(Game *g)
     /* 7365: the exit door appears where the hero is standing (+9 when the
      * ring cell 5 columns to his left is not empty). */
     unsigned col = (unsigned)g->scroll_col + g->hero_scr_col;
-    if (g->ring[game_ring_add(game_hero_cell(g), -5)]) col += 9;    /* 7373 */
+    if (g->ring[game_ring_add(g, game_hero_cell(g), -5)]) col += 9;    /* 7373 */
     if ((int)col >= m->width) col -= (unsigned)m->width;
     size_t dl = (size_t)((m->raw[0xA] | m->raw[0xB] << 8) - 0xC000);
     if (dl + 1 < m->rawlen) { m->raw[dl] = (uint8_t)col; m->raw[dl + 1] = (uint8_t)(col >> 8); }

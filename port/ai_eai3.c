@@ -21,7 +21,7 @@ static void spider_crawl(Game *g, MapObj *e)
      * frame on the ring with [5] unturned (#75, pulpo_fight f69 obj[4].hit) */
     if (!PROBE(e, 2)) drop = 1;
     else if (e->phase & 1) {
-        if (e->rcol >= 0x12 && e->rcol < 0x15) drop = 1;                /* A30E */
+        if (e->rcol >= hero_rcol(g) + 1 && e->rcol < hero_rcol(g) + 4) drop = 1;   /* A30E: 0x12..0x14 */
         else if ((e->hit & FACING_RIGHT) ? STEP(e, 0) : STEP(e, 4)) {   /* A31F */
             uint8_t n = e->link; e->link = 0; e->hit ^= FACING_RIGHT;   /* A327 */
             if (!(n & 1)) drop = 1;
@@ -99,7 +99,7 @@ static void crab_update(Game *g, MapObj *e)
     if (e->next & 8) { crab_hop(g, e); return; }                        /* A462 */
     if (!(e->next & 4)) {                                               /* A46E */
         e->hit |= FACING_RIGHT;
-        if (e->rcol >= 0x11) e->hit ^= FACING_RIGHT;
+        if (e->rcol >= hero_rcol(g)) e->hit ^= FACING_RIGHT;
     }
     if (!STEP(e, 6)) return;                                             /* A47C */
     e->phase &= 0xF0;
@@ -124,10 +124,10 @@ static void snake_update(Game *g, MapObj *e)
         if (e->phase) return;
         if (++e->link >= 7) { e->next = 1; e->phase = 2; }              /* A536 */
         if (e->hit & FACING_RIGHT) {                                    /* A547 */
-            if (ai_cell_passable(g, g->ring[game_ring_add(p, 2 * RING_W + 2)])) { e->hit &= (uint8_t)~FACING_RIGHT; STEP(e, 4); }
+            if (ai_cell_passable(g, g->ring[game_ring_add(g, p, 2 * ring_w(g) + 2)])) { e->hit &= (uint8_t)~FACING_RIGHT; STEP(e, 4); }
             else STEP(e, 0);
         } else {
-            if (ai_cell_passable(g, g->ring[game_ring_add(p, 2 * RING_W - 1)])) { e->hit |= FACING_RIGHT; STEP(e, 0); }
+            if (ai_cell_passable(g, g->ring[game_ring_add(g, p, 2 * ring_w(g) - 1)])) { e->hit |= FACING_RIGHT; STEP(e, 0); }
             else STEP(e, 4);
         }
         return; }
