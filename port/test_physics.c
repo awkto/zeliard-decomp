@@ -621,17 +621,22 @@ static void t_wide_rule(const char *dir)
     g.wide_req = WIDE_E_MAX;
     CHECK(game_wide_for_map(&g, &m) == WIDE_E_MAX, "E %d on a %d-wide map", WIDE_E_MAX, m.width);
     m.width--;
-    CHECK(game_wide_for_map(&g, &m) == 0, "a map one column too narrow for E %d (%d) falls back to 0, no clamp", WIDE_E_MAX, m.width);
+    CHECK(game_wide_for_map(&g, &m) == WIDE_E_MAX - 1, "a map one column too narrow for E %d (%d) takes E %d (#126 step 5: the clamp)", WIDE_E_MAX, m.width, WIDE_E_MAX - 1);
+    m.width = 64;
+    CHECK(game_wide_for_map(&g, &m) == 11, "MP84's 64 columns take E 11");
+    m.width = WIDE_MIN_MAP_W(0);
+    CHECK(game_wide_for_map(&g, &m) == 0 && WIDE_E_FOR_W(WIDE_MIN_MAP_W(1)) == 1 && WIDE_E_FOR_W(WIDE_MIN_MAP_W(1) - 1) == 0,
+          "a %d-column map takes E 0", m.width);
     m.width = 240; g.wide_req = 200;
     CHECK(game_wide_for_map(&g, &m) == WIDE_E_MAX, "a request past the widest is the widest (%d)", game_wide_for_map(&g, &m));
     g.wide_req = 4; m.lvl_flags = 0x80;
     CHECK(game_wide_for_map(&g, &m) == 0, "a boss map (lvl_flags bit 7) keeps the original ring");
     m.lvl_flags = 0x40;
     CHECK(game_wide_for_map(&g, &m) == 0, "a boss room ([E6], lvl_flags bit 6) keeps the original ring");
-    CHECK(RING_W_OF(WIDE_E_MAX) == 62 && RING_CAP == 62 * 64 && VIEW_COLS_OF(WIDE_E_MAX) + 8 == 62,
-          "the widest ring is the 62 columns of the zoom-out 2 view");
-    /* every system map at E = 4 and at the widest: only boss maps / rooms and maps narrower than
-     * WIDE_MIN_MAP_W fall back (the list is docs/WIDESCREEN.md §8.3) */
+    CHECK(RING_W_OF(WIDE_E_MAX) == 70 && RING_CAP == 70 * 64 && VIEW_COLS_OF(WIDE_E_MAX) == 62,
+          "the widest ring's view is the 62 columns of the zoom-out 2 view (and 4 hidden columns each side)");
+    /* every system map at E = 4 and at the widest: boss maps / rooms take 0, a map narrower than
+     * WIDE_MIN_MAP_W(E) the largest E it takes (the list is docs/WIDESCREEN.md §8.3, §8.4) */
     int loaded = 0, bad = 0;
     for (int i = 0; i < 0x1F; i++) {
         static Map sm;
@@ -639,11 +644,13 @@ static void t_wide_rule(const char *dir)
         loaded++;
         for (int k = 0; k < 2; k++) {
             g.wide_req = k ? WIDE_E_MAX : 4;
-            int want = (sm.lvl_flags & 0xC0) || sm.width < WIDE_MIN_MAP_W(g.wide_req) ? 0 : g.wide_req;
+            int want = g.wide_req;
+            while (want > 0 && sm.width < WIDE_MIN_MAP_W(want)) want--;
+            if (sm.lvl_flags & 0xC0) want = 0;
             int got = game_wide_for_map(&g, &sm);
             if (got != want) bad++;
-            if (k && !(sm.lvl_flags & 0xC0) && !got)
-                fprintf(stderr, "  (map %02X %s, %d columns: E %d falls back to 0)\n", i, sm.name, sm.width, WIDE_E_MAX);
+            if (k && !(sm.lvl_flags & 0xC0) && got != WIDE_E_MAX)
+                fprintf(stderr, "  (map %02X %s, %d columns: E %d)\n", i, sm.name, sm.width, got);
         }
         map_free(&sm);
     }
@@ -715,6 +722,132 @@ static void wide_walk(const char *dir, int e)
     CHECK(ring_peek(&G, ring_size(&G) + 24) == G.bg_ring[0], "E %d: 24 bytes on, the tail is bg_ring[]", e);
     map_free(&m);
 }
+/* #126 step 5: doors and moving platforms at the edges of a wide ring.  MP10 with its records removed (no
+ * sprite markers).  A door's 5x4 arch (78DD) is copied from E 0 with the arch well inside the ring; with the
+ * widest ring it is placed so its column (`vc`, the ring column of door col + 3) is 2 and 4 (the left edge,
+ * partly and fully in), and ring_w - 1, ring_w + 1, ring_w + 3 (the right edge): every arch cell that falls in
+ * the ring is the template's, and nothing wraps into the other edge.  Then every C platform that moves is
+ * placed at ring column 1 and ring_w - 4 and run 40 frames: it moves, its three cells are where its record is
+ * whenever it is on the ring (82F8), and it leaves no copy of itself behind in its row (the 81BE erase at
+ * the edges).  The same at E 0 is the control. */
+static void t_wide_edges(const char *dir)
+{
+    static Map m; static Tileset t;
+    memset(&m, 0, sizeof m); memset(&t, 0, sizeof t);
+    if (map_load_system(&m, dir, 0) || gfx_load_tileset(&t, dir, m.tileset)) { fprintf(stderr, "  (skipped: no game files in %s)\n", dir); return; }
+    m.nobj = 0;
+    const int w = m.width;
+    static const int ES[2] = { 0, WIDE_E_MAX };
+    int doors_tested = 0;
+    for (int di = 0; di < m.ndoors && doors_tested < 3; di++) {
+        const Door *d = &m.doors[di];
+        if (d->col < 45 || d->col > w - 45) continue;                    /* away from the map seam */
+        doors_tested++;
+        for (int k = 0; k < 2; k++) {
+            const int e = ES[k];
+            uint8_t T[4][5];
+            game_init(&G, &m, &t); G.present = NULL; G.wide_req = (uint8_t)e;
+            int V = 12;
+            game_place(&G, (d->col + 3 - V + hero_col(&G) + 4 + w) % w, d->row, 0);
+            game_signs_draw(&G);
+            for (int r = 0; r < 4; r++) for (int c = 0; c < 5; c++) T[r][c] = G.ring[game_ring_index(&G, (uint8_t)((d->row + r) & 0x3F), (uint8_t)(V - 4 + c))];
+            int bad = 0, wrap = 0, cells = 0;
+            const int VS[5] = { 2, 4, ring_w(&G) - 1, ring_w(&G) + 1, ring_w(&G) + 3 };
+            for (int j = 0; j < 5; j++) {
+                V = VS[j];
+                game_init(&G, &m, &t); G.present = NULL; G.wide_req = (uint8_t)e;
+                game_place(&G, (d->col + 3 - V + hero_col(&G) + 4 + w) % w, d->row, 0);
+                game_signs_draw(&G);
+                for (int r = 0; r < 4; r++) {
+                    const uint8_t row = (uint8_t)((d->row + r) & 0x3F);
+                    for (int c = 0; c < 5; c++) {
+                        int rc = V - 4 + c;
+                        if (rc < 0 || rc >= ring_w(&G)) continue;
+                        cells++;
+                        if (G.ring[game_ring_index(&G, row, (uint8_t)rc)] != T[r][c]) bad++;
+                    }
+                    /* the far edge holds the map (ring_fill), not a wrapped piece of the arch */
+                    int far = V < 8 ? ring_last(&G) : 0;
+                    int mc = (G.scroll_col + far) % w;
+                    if (G.ring[game_ring_index(&G, row, (uint8_t)far)] != m.grid[mc][row]) wrap++;
+                }
+            }
+            CHECK(bad == 0 && wrap == 0 && cells == 4 * (3 + 5 + 5 + 3 + 1),
+                  "E %d: door %d's arch at ring columns 2, 4, %d, %d, %d: every cell in the ring is the arch's (%d of %d wrong), none wraps (%d)",
+                  e, di, ring_w(&G) - 1, ring_w(&G) + 1, ring_w(&G) + 3, bad, cells, wrap);
+        }
+    }
+    CHECK(doors_tested > 0, "MP10 has doors to test (%d)", doors_tested);
+    int plats = 0;
+    for (int fi = 0; fi < m.nfix && plats < 3; fi++) {
+        const Fixture *mf = &m.fix[fi];
+        if (mf->kind != 2 || !mf->var || mf->col < 45 || mf->col > w - 45) continue;
+        plats++;
+        for (int k = 0; k < 2; k++) {
+            const int e = ES[k];
+            for (int side = 0; side < 2; side++) {
+                game_init(&G, &m, &t); G.present = NULL; G.wide_req = (uint8_t)e;
+                G.wide = (uint8_t)game_wide_for_map(&G, &m);                 /* the E game_place will give it, for ring_w below */
+                const int want = side ? ring_w(&G) - 4 : 1;
+                game_place(&G, (mf->col - want + hero_col(&G) + 4 + w) % w, mf->row, 0);
+                G.nobj = 0;
+                game_first_frame(&G);
+                const Fixture *f = &G.fix[fi];
+                const uint16_t c_start = f->col;
+                int on = 0, bad = 0, ghost = 0, moved = 0;
+                for (int n = 0; n < 40; n++) {
+                    step(0);
+                    if (f->col != c_start) moved = 1;
+                    int rc = ((int)f->col - G.scroll_col + w) % w;
+                    if (rc <= ring_w(&G) - 3) {
+                        on++;
+                        for (int q = 0; q < 3; q++) if (G.ring[game_ring_index(&G, f->row, (uint8_t)(rc + q))] != (uint8_t)(f->cell + q)) bad++;
+                    }
+                    for (int c = 0; c < ring_w(&G); c++) {
+                        uint8_t v = G.ring[game_ring_index(&G, f->row, (uint8_t)c)];
+                        if ((uint8_t)(v - f->cell) >= 3) continue;
+                        if (rc <= ring_w(&G) - 3 && c >= rc && c < rc + 3) continue;
+                        if (m.grid[(G.scroll_col + c) % w][f->row & 0x3F] == v) continue;
+                        ghost++;
+                    }
+                }
+                CHECK(moved && on > 0 && bad == 0 && ghost == 0,
+                      "E %d: platform %d from ring column %d: moves (%d), on the ring %d frames with its cells in place (%d wrong), no copy left behind (%d)",
+                      e, fi, want, moved, on, bad, ghost);
+            }
+        }
+    }
+    CHECK(plats > 0, "MP10 has moving platforms to test (%d)", plats);
+    map_free(&m);
+}
+/* #126 step 5: the 315C cell animation covers what the wide ring's view shows.  Cavern 5's water (1B <-> 1C on
+ * an odd [4FFF]) fills the whole ring; one pass changes exactly the original window's 28 x 18 cells at E 0
+ * (ring cols 4..0x1F, rows 0..0x11 from scroll_row) and the zoom-out 2 picture's 62 x 28 at the widest (ring
+ * cols 4..65, rows -5..22), wrapping at the ring's row 63. */
+static void t_wide_anim(const char *dir)
+{
+    (void)dir;
+    static Map m;
+    memset(&m, 0, sizeof m); m.width = 200; m.cavern = 5;
+    static const int ES[2] = { 0, WIDE_E_MAX };
+    for (int k = 0; k < 2; k++) {
+        memset(&G, 0, sizeof G);
+        G.map = &m; G.wide = (uint8_t)ES[k]; G.scroll_row = 60; G.gf_frame = 0;   /* ++ makes it odd */
+        memset(G.ring, 0x1B, sizeof G.ring);
+        cell_anim(&G);
+        int changed = 0, wrong = 0;
+        for (int r = 0; r < RING_H; r++)
+            for (int c = 0; c < ring_w(&G); c++) {
+                int sr = (r - G.scroll_row) & 0x3F; if (sr > 40) sr -= 64;
+                int want = c >= 4 && c < view_cols(&G) + 4 && sr >= view_row0(&G) && sr < view_row0(&G) + view_rows(&G);
+                int got = G.ring[r * ring_w(&G) + c] == 0x1C;
+                changed += got; if (got != want) wrong++;
+            }
+        int n = ES[k] ? 62 * 28 : 28 * 18;
+        CHECK(changed == n && wrong == 0, "E %d: one water step changes the %d cells of the view (%d changed, %d wrong)", ES[k], n, changed, wrong);
+    }
+}
+
 static void t_wide_walk0(const char *dir) { wide_walk(dir, 0); }
 static void t_wide_walk4(const char *dir) { wide_walk(dir, 4); }
 static void t_wide_walkmax(const char *dir) { wide_walk(dir, WIDE_E_MAX); }
@@ -736,7 +869,7 @@ int main(int argc, char **argv)
     struct { const char *name; void (*fn)(const char *); } mtests[] = {
         {"mp10", t_mp10}, {"fixtures", t_fixtures}, {"keys", t_keys},
         {"patches", t_patches}, {"walk-in", t_walk_in}, {"scroll ring", t_scroll_ring},
-        {"wide rule", t_wide_rule}, {"wide walk 0", t_wide_walk0}, {"wide walk 4", t_wide_walk4}, {"wide walk max", t_wide_walkmax},
+        {"wide rule", t_wide_rule}, {"wide walk 0", t_wide_walk0}, {"wide walk 4", t_wide_walk4}, {"wide walk max", t_wide_walkmax}, {"wide edges", t_wide_edges}, {"wide anim", t_wide_anim},
     };
     for (size_t i = 0; i < sizeof mtests / sizeof mtests[0]; i++) {
         int before = fails;

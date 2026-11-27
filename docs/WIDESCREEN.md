@@ -1,9 +1,10 @@
 # Widescreen mode: design study (issue #126)
 
-Status: steps 0-4 are implemented (section 8: the 16:10 view of the whole ring, `--wide` / `W` / `wide=`,
-presentation only, 8.1: the two zoom-out levels of `Z`, 8.2: the ring's width as a runtime value, and 8.3: that
-value settable per map, up to 62 columns, behind a debug-only switch); steps 5-9 (the wide sim exposed and drawn,
-16:9) are not.  The study's citations are to `main` at 7ecb412.
+Status: steps 0-5 and the render half of 6 are implemented (section 8: the 16:10 view of the whole ring, `--wide` /
+`W` / `wide=`, 8.1: the two zoom-out levels of `Z`, 8.2: the ring's width as a runtime value, 8.3: that value
+settable per map, and 8.4: the wide view runs the wide simulation, a 70-column ring whose view is the 62-column
+zoom-out 2 picture, all of it live); steps 7-9 (boss-room polish, aggro scaling, settings / touch / web texture)
+are not.  The study's citations are to `main` at 7ecb412.
 `port/x.c:N` is the port; four-digit hex addresses are fight.bin (`disasm/overlays/fight.asm`)
 unless a file is named (gfmcga = `disasm/overlays/gfmcga.asm`).
 
@@ -405,7 +406,7 @@ the file with W off is shown as "off".
 | normal | 0 | 36 x 18 | 384 x 200 | 1.60 (16:10) | all | none |
 | cropped | 1 | 36 x 18 | the same, stone frame cropped | | all | none |
 | zoom-out 1 | 2 | 36 x 24 | 384 x 248 | 1.29 | all 36 x 24 | none |
-| zoom-out 2 | 3 | 62 x 28 | 592 x 280 | 1.76 (about 16:9) | the 36 ring columns x 28 rows | 13 columns each side |
+| zoom-out 2 | 3 | 62 x 28 | 592 x 280 | 1.76 (about 16:9) | the 36 ring columns x 28 rows (all 62 with the wide simulation, 8.4) | 13 columns each side (none with the wide simulation) |
 
 Why these sizes.  The frame is `96 + 8 * cols` wide (48 px stone each side) and `56 + 8 * rows` high (14 px
 strip above, the 42 px HUD panel below), shown at a pixel shape of 1.2:1.  At 36 columns, 16:10 is exactly 18
@@ -434,7 +435,7 @@ animation are ring state); the same is true of the water and lava in the extra r
 animation pass covers the 18 window rows).  These columns are shaded by a quarter (x 3/4 in the RGB, `shade_scenery`
 in `main.c`): the unshaded picture invited the reading that an empty stretch of rock beside the hero is where
 enemies *could* be, and at 13 columns a side that is a third of the picture; the step in brightness shows where the live
-world ends, and it is slight enough not to spoil the scenery.  **Steps 3-5 (a wider ring) make these columns live**:
+world ends, and it is slight enough not to spoil the scenery.  **Steps 3-5 (a wider ring) make these columns live** (done, 8.4):
 the live span then follows the ring width, and `render_live_span` (the shaded band's edge) is the one place that
 changes.  A map narrower than the view (`lo + hi + 28 > width`, none of the cavern maps, only the 42-column MP90)
 falls back to zoom-out 1.
@@ -559,7 +560,7 @@ sanitizer report after the one fix below (they diverge from the oracle from the 
 One latent UB surfaced there and is fixed without changing any output: `render.c`'s E900 overlap array formed
 `&ff[u * cols + sc]` for a sprite left of the view (`sc` -2..-4) on the view's top row before testing `sc`.
 
-**What E > 0 still gets wrong (step 5 and on).**  Nothing below is reachable without the debug switch.
+**What E > 0 still got wrong after step 4** (all fixed or decided in step 5, 8.4).  Nothing below was reachable without the debug switch.
 1. The picture: the renderer still draws the 28-column window at ring columns 4..31 (`sc + 4`, `SCREEN_COLS`), and
    the wide view's `lo` / `hi` are still counted from that window, so the hero, pinned at screen column 12 + E, is
    drawn E columns right of centre (at E 13 at the right edge, column 25) and the right part of the live ring is
@@ -577,3 +578,102 @@ One latent UB surfaced there and is fixed without changing any output: `render.c
    instead is a choice for step 7's map-load rule, as is the transition into and out of boss rooms.
 5. Aggro ranges are unchanged (2.1 row 5): enemies newly live in the extra columns patrol but attack only from
    their old reach.
+
+### 8.4 Step 5: the wide view runs the wide simulation (and the render half of step 6)
+
+**What the player gets.**  With `W` on (or `--wide`, `wide=1`; MCGA only, never under `--trace`, `--headless` or a
+harness run) every cavern map is entered with `E` = `WIDE_E_MAX` = 17, clamped to what the map takes, and every zoom
+level is a window onto that live ring, centred on the hero as before: normal and cropped 36 x 18, zoom-out 1 36 x 24,
+zoom-out 2 62 x 28.  `Z` never touches the simulation (no refill, no RNG change); it only changes how much of the
+ring is shown.  In zoom-out 2 nothing is scenery any more: enemies walk, turn and shoot across the whole picture,
+lifts and platforms move, doors are drawn, water and lava animate, and shots fly to its edges.  The 3/4 dimming
+(`shade_scenery`, main.c) is driven by `render_live_span`, so it now shades only columns that really are past the
+ring: a map that takes a smaller E, or a cavern entered before `W` was pressed.  With `W` off the game is the
+original, byte for byte.
+
+**Why 17 and not 13.**  Step 4 sized the ring so that the zoom-out 2 picture (62 columns) *is* the ring (E 13).
+That makes the picture live, but it puts every ring-edge rule in plain sight: respawns happen at ring columns 1, 2
+and `view_cols + 4` .. `ring_w - 2`, a column scrolled in arrives with its records at the ring's last column,
+`ai_step` stops enemies at 2 / `ring_w - 2`, a platform is drawn only up to `ring_w - 3` and erased past it, door
+arches are clipped at the ends.  The original hides all of that in the 4 columns each side its window does not show.
+E 17 gives the same structure one level out: `VIEW_COLS_OF(17)` = 62 is exactly the zoom-out 2 picture, and the ring
+(70 columns) keeps 4 hidden columns each side of it.  So the respawn band is off screen at every zoom level, nothing
+pops in at the edge (it walks or scrolls in), and the spawn band is "just outside the live picture" as the original's
+is.  `RING_STRIDE_MAX` is 70 (4480 bytes per ring); every helper of step 3 already takes the stride from E, so the
+sim needed no new code for it.
+
+**Per-map E: a clamp, not a fallback.**  `game_wide_for_map` now gives a map that is too narrow for the request the
+largest E it takes, `WIDE_E_FOR_W(width)` = (width - 41) / 2 (the step-4 margin `WIDE_MIN_MAP_W(E)` = 36 + 2E + 5 is
+kept).  At E 17 that is **MP84 11** (64 columns) and **MP62 16** (73); every other cavern map takes 17; the boss maps
+and the boss room MP90 take 0 by rule (section 3).  `map_widths` prints the table.  A map with E < 17 shows the
+columns past its ring as scenery in zoom-out 2, dimmed (MP84: 2 a side; MP62: none, its 68-column ring covers the
+62 with 3 columns to spare on the left and 3 on the right, one of which is in its spawn band).
+
+**The renderer, re-based on E** (`render.c`).  Screen cell 0 of the renderer is now ring column `RC0` = 4 + E (it was
+4): the 28 columns its "window" means are the middle 28 of the ring's view, and the hero, pinned at sim column
+12 + E, is drawn at the renderer's column 12, so every view (lo / hi) is laid out around him exactly as at E 0.
+Every ring-to-screen expression goes through `RC0` (background tiles, the map read past the ring, enemies and their
+E900 overlap rules, shots, spell sprites, the smooth fixture pass, the scenery fixtures) and every hero /
+blade / swing-picture column subtracts E.  `render_live_span` is "the ring's columns", whatever E and the view.  The
+320-wide frame (`render_frame`: the walk-in, the encounter card, the dissolve, W off with a wide ring) is the middle
+28 columns, so the walk-in now ends where the hero is drawn (step 4's snap is gone) and the spell-7 burst is centred
+on him.  `smooth.c`'s `pos_of` accepts the whole ring (`view_cols + 3`).  One step-2 slip fixed on the way: the
+half-way swing picture's shots (`draw_shots_mid`) were placed `lo` columns left of their cell in the wide views.
+
+**Rows.**  Activity is by column, so the extra rows were already live; three row rules of the sim still meant the
+original window's 18 rows.  With E > 0 they mean the zoom-out 2 picture's rows -5 .. 22 (`view_row0` /
+`view_rows`, physics.h), whatever the zoom level: the spawn band's row test (953B: refused within 2 rows above and 4
+below the view), the shots' row kill (8388: a shot leaving the view's rows dies, as one leaving the window does) and
+the 315C cell animation (now 62 x 28 cells, row-major from row -5).  E 0 is unchanged.
+
+**W mid-cavern: next map entry.**  The ring is fixed per map (every ring column in the game -- camera, records,
+shots, fixtures, arches -- is in its geometry), so `W` sets the request (`wide_sim_e` in main.c: 17 with the wide
+view on in MCGA, else 0; `ZEL_RING_EXTRA` still overrides it) and the next `game_place` applies it: a door, a cave
+mouth, a death's restart, a state load's re-entry.  Pressed in a cavern whose ring is the other one, the flash reads
+*WIDE ON - FULL WIDTH: NEXT AREA*.  Until then the view shows what the ring has: W on in an E 0 cavern is step 2's
+view (zoom-out 2 shades 13 columns a side), W off in an E 17 cavern draws the middle 28 columns of the wide ring in
+the 320 frame.  Deterministic, nothing is refilled under the player's feet; refilling at once was rejected because
+it would have to re-home the live records, shots and fixtures mid-frame.
+
+**Boss rooms, saves, the engine paths.**  Boss maps and rooms keep E 0 (section 3), so entering one from a wide
+cavern is a map entry to the original ring and the room is drawn in the 320 frame as before; leaving it re-enters a
+cavern at the requested E.  A state saved in a boss room is version 1 (E 0) and loads in a wide run; a state saved in
+a wide cavern is version 2 (8.3) and keeps its E.  `--trace`, `--headless`, `--screenshot` and the harness force the
+wide view off, so they run E 0; `ZEL_RING_EXTRA` with `--trace` is still forced to 0.
+
+**Tests** (`make test` 2905 assertions).  `test_combat` `wide ai`: every class of all 8 AI overlays on a flat map,
+the hero standing.  (1) Placed 6 columns either side of the hero, each plays frame for frame the same at E 0 and E 17
+(position, facing, phase, HP, its shots in map coordinates; 60 frames, cut where the E 0 run reaches its ring's edge):
+every hero-relative constant really is on `hero_rcol(g)`.  (2) Placed 22 columns away (outside the original ring,
+inside the wide view) it acts at E 17 whenever its class acts 14 columns away at E 0 -- all overlays pass; in the
+extra columns enemies moved in 44 of the 78 placements and shot in 16 (6 of the 8 overlays fire there: EAI1 has no
+shooter and EAI4's did not fire in this setup at any distance) -- and at E 0 it stays dormant and untouched.  `test_physics` `wide edges`: MP10's
+door arches placed at ring columns 2, 4, `ring_w - 1`, `ring_w + 1`, `ring_w + 3` at E 0 and 17 (every arch cell
+inside the ring is the template's, nothing wraps to the other edge), and its moving C platforms started at ring
+column 1 and `ring_w - 4` and run 40 frames (they move, their cells are where the record says whenever on the ring,
+no copy is left behind by the 81BE erase); `wide anim`: one cavern-5 water step changes exactly the 28 x 18 window
+at E 0 and the 62 x 28 view at E 17; `wide rule`: the clamp, MP84 11, MP62 16.  `test_smooth` `wide ring`: at E 0,
+11 and 17 every zoom level shows ring column 4 + E + (view cell - lo) and the map past the ring (none at 17, 2 a side
+at 11, 13 at 0), the live span is exactly the ring, the 320 frame is the middle 28 columns, E 0's and E 17's normal
+views of the same hero position are byte-identical, and `pos_of` reaches the whole ring.
+
+**Verified** on a droplet against `main` (2a92d52):
+* W off: the port's `--trace` of all 85 scenarios with their PNGs (50680) byte-identical (`cmp`, `trace_eq.py`), and
+  the same with `ZEL_RING_EXTRA=0`; `make test` 2905 / 14 binaries; `make verify` green.
+* E 17 (a droplet-only build that lets `--trace` take `ZEL_RING_EXTRA` and composes the wide picture at all four zoom
+  levels every frame), ASan + UBSan, all 85 scenarios: no sanitizer report.  The same build checked for pop-in in the
+  zoom-out 2 view (an object drawn this frame well inside the picture that was not drawn the frame before): none from
+  a respawn or a scroll; the flagged lines were records created next to the hero (drops of a kill) and, in the boss
+  rooms (E 0), the bosses' own parts.
+* Boss rooms: `state_roundtrip.sh` at E 17 on crab_fight and paguro_return: every state saved in the boss room (CRAB,
+  ZEL2) reloads and replays the rest of the run identically, including the way out into a wide cavern and back to
+  town; states saved in a wide cavern are version 2 and refused by `--trace`, by design.  (The `music_*` fields
+  differ after any reload on `main` too: not this step.)
+* Pictures of 9 caverns at every zoom level with the wide sim, a frame-by-frame walk in zoom-out 2, and the web build
+  (emsdk 3.1.64) in headless Chrome in MP10 at zoom-out 2 / normal / zoom-out 1, no console errors.
+
+**Known gaps.**  (1) Aggro ranges are the original's (2.1 row 5, step 8): an enemy 20 columns out patrols and shoots
+straight ahead but only chases from its old reach.  (2) MP84 runs E 11 and MP62 E 16, so their zoom-out 2 shows 2 /
+0 columns of scenery and the hidden spawn margin is partly inside the picture there.  (3) `W` mid-cavern applies at
+the next map entry.  (4) Shots in the half-way swing picture above the window's top row are not redrawn (cosmetic,
+one half-frame).  (5) The town, the boss rooms and the 320 screens are unchanged (steps 7, 9).

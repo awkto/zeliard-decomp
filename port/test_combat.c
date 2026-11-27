@@ -830,6 +830,102 @@ static void t_overlay_run(void)
     }
 }
 
+/* ------------------------------------------------ the wide ring's enemies (#126 step 5)
+ * Every AI overlay, every class, on the flat map with the hero standing still.
+ *  1. Invariance: an enemy the same number of map columns from the hero behaves the same with the original ring
+ *     (E 0) and the widest (E 17) -- position, facing, phase, hit points and its shots, in map coordinates,
+ *     frame for frame -- until the E 0 run reaches one of its ring's edges (then the original's edge rules
+ *     differ, as they must).  Every hero-relative constant (0x11 and its encodings) is on hero_rcol(g).
+ *  2. Live extra columns: placed 22 columns left or right of the hero (outside the original ring, inside the
+ *     wide ring's 62-column view) it acts at E 17 -- moves, turns, animates or shoots -- whenever the same class
+ *     acts 14 columns from the hero in the original ring (a sleeper that waits for the hero to come within its
+ *     unchanged aggro range does neither), and at E 0 it is dormant and untouched, as before. */
+typedef struct { int moved, turned, anim, shot, edge_at, n; uint32_t h[80]; } WideRun;
+static void wide_ai_run(AiOverlay *ov, int e, int dx, int cls, int frames, WideRun *wr)
+{
+    memset(wr, 0, sizeof *wr);
+    wr->edge_at = frames;
+    game_init(&G, &tmap, &ttiles);
+    G.present = present; G.ai = ov;
+    G.wide_req = (uint8_t)e;
+    game_place(&G, 48, 10, 0);
+    G.nobj = 0;
+    G.hp = G.max_hp = 9999;
+    game_first_frame(&G);
+    MapObj *o = put_enemy(48 + dx, 11, cls, dx < 0);
+    o->hp = 10;
+    const uint16_t c0 = o->col; const uint8_t r0 = o->row, h0 = o->hit & 0x80, p0 = o->phase;
+    const int w = G.map->width;
+    for (int f = 0; f < frames && f < 80; f++) {
+        step(0, 0);
+        uint32_t h = 2166136261u;
+#define HM(v) (h = (h ^ (uint32_t)(v)) * 16777619u)
+        HM(o->col); HM(o->row); HM(o->hit & 0x80); HM(o->phase); HM(o->type); HM(o->hp); HM(G.hp);
+        for (int i = 0; i <= MAX_SHOTS; i++) {
+            const Shot *sh = &G.shots[i];
+            if (sh->col == 0xFF) break;
+            if (!sh->col) continue;
+            wr->shot = 1;
+            HM((G.scroll_col + sh->col) % w); HM(sh->row);
+            if (e == 0 && (sh->col < 5 || sh->col > 30) && wr->edge_at == frames) wr->edge_at = f;
+        }
+#undef HM
+        wr->h[f] = h; wr->n = f + 1;
+        if (o->col != c0 || o->row != r0) wr->moved = 1;
+        if ((o->hit & 0x80) != h0) wr->turned = 1;
+        if (o->phase != p0) wr->anim = 1;
+        if (e == 0 && o->rcol != 0xFF && (o->rcol < 4 || o->rcol > 31) && wr->edge_at == frames) wr->edge_at = f;
+    }
+    if (e == 0 && dx && (dx > 17 || dx < -16)) {        /* the control: outside the original ring, dormant and untouched */
+        wr->anim = o->rcol != 0xFF || o->col != c0 || o->row != r0 || (o->hit & 0x80) != h0 || o->phase != p0;
+    }
+}
+
+static void t_wide_ai(void)
+{
+    static const struct { int idx, n; const char *name; } OV[8] = {
+        {0, 4, "EAI1"}, {2, 6, "EAI2"}, {4, 4, "EAI3"}, {6, 5, "EAI4"}, {8, 5, "EAI5"}, {10, 5, "EAI6"}, {12, 5, "EAI7"}, {14, 5, "EAI8"},
+    };
+    flat_map();
+    for (int i = 0; i < 8; i++) {
+        static AiOverlay o;
+        if (ai_load(&o, G_DIR, OV[i].idx)) { CHECK(0, "%s loads", OV[i].name); continue; }
+        int inv_bad = 0, inv_short = 0, live = 0, want = 0, dormant_bad = 0, moved = 0, turned = 0, shot = 0, fshot = 0;
+        for (int c = 0; c < OV[i].n; c++) {
+            static const int DX[2] = { -6, 6 };
+            for (int k = 0; k < 2; k++) {
+                WideRun a, b;
+                wide_ai_run(&o, 0, DX[k], c, 60, &a);
+                wide_ai_run(&o, WIDE_E_MAX, DX[k], c, 60, &b);
+                int f = 0;
+                while (f < a.edge_at && f < a.n && a.h[f] == b.h[f]) f++;
+                if (f < a.edge_at && f < a.n) { inv_bad++; fprintf(stderr, "  (%s class %d dx %d: E 0 and E %d differ at frame %d, edge at %d)\n", OV[i].name, c, DX[k], WIDE_E_MAX, f, a.edge_at); }
+                if (a.edge_at < 10) inv_short++;
+                shot |= a.shot;
+            }
+            static const int FAR[2] = { -22, 22 }, NEAR[2] = { -14, 14 };
+            for (int k = 0; k < 2; k++) {
+                WideRun a, b, ref;
+                wide_ai_run(&o, 0, NEAR[k], c, 60, &ref);
+                wide_ai_run(&o, WIDE_E_MAX, FAR[k], c, 60, &b);
+                wide_ai_run(&o, 0, FAR[k], c, 60, &a);
+                int acts = b.moved || b.turned || b.anim || b.shot;
+                if (ref.moved || ref.turned || ref.anim || ref.shot) { want++; live += acts; }
+                moved += b.moved; turned += b.turned; fshot += b.shot;
+                if (a.anim) dormant_bad++;
+            }
+        }
+        CHECK(inv_bad == 0, "%s: all %d classes, 6 columns either side: E 0 and E %d play the same (%d differ, %d hit the E 0 edge within 10 frames)",
+              OV[i].name, OV[i].n, WIDE_E_MAX, inv_bad, inv_short);
+        CHECK(want > 0 && live == want, "%s: an enemy 22 columns from the hero (the extra columns) acts at E %d: %d of the %d placements whose class acts 14 columns away at E 0",
+              OV[i].name, WIDE_E_MAX, live, want);
+        CHECK(dormant_bad == 0, "%s: ...and at E 0 it is out of the ring, dormant and untouched (%d not)", OV[i].name, dormant_bad);
+        fprintf(stderr, "  (%s: in the extra columns %d of %d placements moved, %d turned, %d shot; within 6 columns shots %s)\n", OV[i].name, moved, 2 * OV[i].n, turned, fshot, shot ? "seen" : "none");
+        ai_unload(&o);
+    }
+    G.ai = &ovl;
+}
+
 /* docs/FIGHT.md §7: a tall (2x4) enemy uses two consecutive records; 94FF now
  * spawns both halves. */
 static void t_tall_spawn(void)
@@ -998,7 +1094,7 @@ int main(int argc, char **argv)
         {"eai1 tables", t_tables}, {"damage", t_damage}, {"contact", t_contact}, {"contact scan", t_contact_scan}, {"death frames", t_death_frames},
         {"sword", t_sword}, {"sword render", t_sword_render}, {"drops", t_drop}, {"items", t_items}, {"bat wake", t_bat_wake}, {"frog hop", t_frog_hop},
         {"shots", t_shots}, {"magic", t_magic}, {"orbs", t_orbs}, {"sound", t_sound},
-        {"eai tables", t_overlays}, {"eai run", t_overlay_run}, {"tall spawn", t_tall_spawn},
+        {"eai tables", t_overlays}, {"eai run", t_overlay_run}, {"tall spawn", t_tall_spawn}, {"wide ai", t_wide_ai},
         {"hud", t_hud}, {"pulse", t_pulse},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {

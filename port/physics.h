@@ -13,8 +13,9 @@
  * reads a width literal: the sim goes through ring_w(g), hero_rcol(g),
  * edge_hi(g, k) etc. below, which give the original's constants back while E
  * is 0.  E is Game.wide, set at every map entry (game_place) from the
- * requested Game.wide_req by game_wide_for_map(): 0 unless a debug run asks
- * for more (step 4: the mode is not exposed to players yet). */
+ * requested Game.wide_req by game_wide_for_map(): 0 unless the player's wide
+ * view asks for it (step 5: WIDE_E_MAX, the map's largest E) or a debug run
+ * (ZEL_RING_EXTRA) does. */
 #define RING_H    64
 #define RING_W_OF(e)       (36 + 2 * (e))         /* the ring stride: 0x24 */
 #define VIEW_COLS_OF(e)    (28 + 2 * (e))         /* screen columns: 0x1C */
@@ -24,22 +25,27 @@
 /* E000 as the original lays it out: 2304 bytes of stride 36.  The trace keeps
  * this layout (it never sees a wide ring, §5); the savestate writes it for E 0. */
 #define RING_SIZE_ORIG     (RING_W_ORIG * RING_H)
-/* The widest E: 13 columns each side, the 62-column ring that makes the wide
- * view's zoom-out 2 (62 columns, §8.1) live to its edges. */
-#define WIDE_E_MAX         13
-/* A map takes E only if it is at least this wide; otherwise (and in boss maps
- * and rooms) it falls back to E = 0.  The `+ 5` keeps the door arches'
+/* The widest E: 17 columns each side, a 70-column ring whose *view*
+ * (VIEW_COLS_OF(17) = 62) is the wide view's zoom-out 2 (62 columns, §8.1):
+ * so that picture is live to its edges and the ring keeps the original's 4
+ * hidden columns each side beyond it, where the ring edge rules live (the
+ * spawn band, the ai_step / fixture / door-arch edges, a column scrolling in),
+ * all off screen as in the original (§8.4). */
+#define WIDE_E_MAX         17
+/* A map takes E only if it is at least this wide; a narrower one takes the
+ * largest E it can (WIDE_E_FOR_W), boss maps and rooms take 0.  The `+ 5` keeps the door arches'
  * "off the ring" test (78DD/7981: ring column > ring_w + 3) unambiguous: a
  * column one left of the ring must not wrap round to look like one on its
  * right, the same margin the original has on its narrowest map (MP90, 42 = 36 + 6). */
 #define WIDE_MIN_MAP_W(e)  (RING_W_OF(e) + 5)
+#define WIDE_E_FOR_W(w)    ((w) < WIDE_MIN_MAP_W(0) ? 0 : ((w) - WIDE_MIN_MAP_W(0)) / 2)
 /* the widest stride the storage holds; the live part is ring_size(g) */
 #define RING_STRIDE_MAX    RING_W_OF(WIDE_E_MAX)
 #define RING_CAP           (RING_STRIDE_MAX * RING_H)
 #define SCREEN_COLS 28
 _Static_assert(RING_W_OF(0) == 36 && RING_SIZE_ORIG == 2304 && VIEW_COLS_OF(0) == 28 && VIEW_COLS_OF(0) == SCREEN_COLS &&
                HERO_COL_OF(0) == 0x0C && HERO_RCOL_OF(0) == 0x11 && RING_W_OF(0) - 1 == 0x23 &&
-               VIEW_COLS_OF(0) + 4 == 0x20 && RING_W_OF(0) <= RING_STRIDE_MAX && RING_STRIDE_MAX == 62 &&
+               VIEW_COLS_OF(0) + 4 == 0x20 && RING_W_OF(0) <= RING_STRIDE_MAX && RING_STRIDE_MAX == 70 &&
                WIDE_MIN_MAP_W(0) <= 42,
                "#126: the default (E = 0) ring geometry is the original's");
 #define SCREEN_ROWS 19
@@ -354,7 +360,7 @@ struct Game {
 
     /* port side */
     uint8_t  wide;                  /* #126 E: the columns the ring has on each side beyond the original's, for this map (ring_extra) */
-    uint8_t  wide_req;              /* the E asked for (a debug run: ZEL_RING_EXTRA); game_place derives `wide` from it per map */
+    uint8_t  wide_req;              /* the E asked for (the wide view: WIDE_E_MAX; a debug run: ZEL_RING_EXTRA); game_place derives `wide` from it per map */
     uint8_t  dirs;                  /* INT 61h AL: current direction bits */
     unsigned frame_no;              /* rendered frames */
     unsigned hazard_frames;         /* frames spent on hazard tiles (damage is stubbed) */
@@ -421,8 +427,8 @@ void game_run_walk_in(Game *g);            /* play out a started walk-in now (a 
 void game_start_walk_in(Game *g, int face_left);
 
 /* ---------------------------------------------- ring geometry (#126 steps 3, 4)
- * E = ring_extra(g) = Game.wide, 0 unless a debug run asks for more, so each
- * helper is the original's constant by default.  Edges are counted from the
+ * E = ring_extra(g) = Game.wide, 0 unless the wide view (or a debug run) asks
+ * for more, so each helper is the original's constant by default.  Edges are counted from the
  * right on the live stride: edge_hi(g, 1) = 0x23 (the last column), 2 = 0x22,
  * 3 = 0x21, 4 = 0x20.  The left edges (1, 2, 3) do not move.  Ring deltas are
  * ring_delta(g, dr, dc), so a column -1 still lands in the previous row as the
@@ -436,6 +442,15 @@ static inline int view_cols(const Game *g)   { return VIEW_COLS_OF(ring_extra(g)
 static inline int hero_col(const Game *g)    { return HERO_COL_OF(ring_extra(g)); }
 static inline int hero_rcol(const Game *g)   { return HERO_RCOL_OF(ring_extra(g)); }
 static inline int ring_delta(const Game *g, int dr, int dc) { return dr * ring_w(g) + dc; }
+/* The rows the sim treats as "on screen" (#126 step 5).  The original's are the window's 18 (rows 0..0x11 from
+ * scroll_row: the spawn band's row test, the shots' row kill, the 315C cell animation).  A wide ring's view is the
+ * zoom-out 2 picture, which shows WIDE_VIEW_RT rows above the window and WIDE_VIEW_RB below it (render_zoom_view),
+ * so with E > 0 those rows count too: nothing respawns in them and water animates in them, whatever zoom level is
+ * on (the zoom level never changes the simulation). */
+#define WIDE_VIEW_RT 5
+#define WIDE_VIEW_RB 5
+static inline int view_row0(const Game *g)   { return ring_extra(g) ? -WIDE_VIEW_RT : 0; }
+static inline int view_rows(const Game *g)   { return 0x12 + (ring_extra(g) ? WIDE_VIEW_RT + WIDE_VIEW_RB : 0); }
 
 /* The byte a ring read at an unwrapped index sees.  game_ring_index() is not
  * wrapped (6D6E), so a shot in ring row 63 past the last column reads past the
@@ -456,8 +471,9 @@ static inline uint8_t ring_peek(const Game *g, int p)
     if (p < n) return g->ring[p];
     return ((const uint8_t *)g)[offsetof(Game, ring) + RING_CAP + (size_t)(p - n)];
 }
-/* the E this map runs with: the request, or 0 in a boss map / boss room or a
- * map narrower than WIDE_MIN_MAP_W(E) (§2.9, §7 risk 4) */
+/* the E this map runs with: the request clamped to what the map's width takes
+ * (WIDE_E_FOR_W: MP84 at 64 columns takes 11, MP62 at 73 takes 16), or 0 in a
+ * boss map / boss room (§2.9, §7 risk 4, §8.4) */
 int  game_wide_for_map(const Game *g, const Map *m);
 
 #endif

@@ -868,6 +868,90 @@ static void t_zoomout(void)
     free(g);
 }
 
+/* ------------------------------------------------- the wide ring's views (#126 step 5) */
+/* With E > 0 the ring is 36 + 2E columns and the renderer's screen cell 0 is ring column 4 + E: every view is
+ * laid out around the hero's pin exactly as at E = 0, it just has more ring under it.  The map is coded 1..3 by
+ * column and the ring 4..6, so each pixel says which column it came from and whether from the ring or the map. */
+static void t_widering(void)
+{
+    printf("wide ring       ");
+    static Map m; static Tileset t; Game *g = new_game(&m, &t);
+    static uint8_t w[RENDER_WIDE_MAX_W * RENDER_WIDE_MAX_H], a[RENDER_WIDE_MAX_W * RENDER_WIDE_MAX_H];
+    for (int v = 1; v < 8; v++) {
+        t.present[v] = 1;
+        for (int r = 0; r < 8; r++) for (int c = 0; c < 8; c++) t.cell[v].px[r][c] = (uint8_t)(v * 16 + (c == 0 ? 1 : 2));
+    }
+    for (int c = 0; c < 100; c++) for (int r = 0; r < MAP_ROWS; r++) m.grid[c][r] = (uint8_t)(1 + c % 3);
+    static const int ES[3] = { 0, 11, WIDE_E_MAX };
+    for (int k = 0; k < 3; k++) {
+        const int e = ES[k];
+        g->wide = (uint8_t)e; g->scroll_col = 10; g->scroll_row = 0; g->hero_scr_col = (uint8_t)hero_col(g); g->hero_scr_row = 6;
+        memset(g->ring, 0, sizeof g->ring); memset(g->bg_ring, 0, sizeof g->bg_ring);
+        for (int r = 0; r < RING_H; r++) for (int c = 0; c < ring_w(g); c++)
+            g->bg_ring[r * ring_w(g) + c] = g->ring[r * ring_w(g) + c] = (uint8_t)(4 + (g->scroll_col + c) % 100 % 3);
+        int ok = 1, scen = 0, lspan = 1;
+        for (int l = 0; l < ZOOM_LEVELS; l++) {
+            RenderView v = render_zoom_view(l);
+            const int W = render_view_width(&v), cols = SCREEN_COLS + v.lo + v.hi;
+            if (render_frame_view(w, g, NULL, &v) != 1) { ok = 0; continue; }
+            int x0, x1;
+            render_live_span(g, &v, &x0, &x1, NULL, NULL);
+            for (int sr = -v.rt; sr < 18 + v.rb; sr++) {
+                const int y = PF_Y + (sr + v.rt) * 8 + 3;
+                for (int u = 0; u < cols; u++) {
+                    const int rc = u - v.lo + 4 + e, mc = ((g->scroll_col + rc) % 100 + 100) % 100;
+                    const int live = rc >= 0 && rc < ring_w(g);
+                    const int code = live ? 4 + mc % 3 : 1 + mc % 3;
+                    if (w[y * W + PF_X + u * 8 + 3] != (uint8_t)(code * 16 + 2)) ok = 0;
+                    if (!live && sr == 0) scen++;
+                    const int x = PF_X + u * 8;
+                    if (live != (x >= x0 && x < x1)) lspan = 0;
+                }
+            }
+        }
+        ck(ok, "E %d: every zoom level shows ring column 4 + E + (view cell - lo), the map past the ring", e);
+        ck(lspan, "E %d: the live span is exactly the ring's columns", e);
+        ck(e == WIDE_E_MAX ? scen == 0 : e == 11 ? scen == 4 : scen == 26,
+           "E %d: scenery columns (zoom-out 2: %d; none at the widest, 2 a side at E 11, 13 a side at E 0)", e, scen);
+        /* the 320-wide frame (the walk-in, the card, the narrow view) is the middle 28 columns of the view */
+        static uint8_t f320[FB_W * FB_H];
+        render_frame(f320, g, NULL);
+        ok = 1;
+        for (int sc = 0; sc < SCREEN_COLS; sc++) {
+            const int rc = sc + 4 + e, mc = (g->scroll_col + rc) % 100;
+            if (f320[(PF_Y + 3) * FB_W + PF_X + sc * 8 + 3] != (uint8_t)((4 + mc % 3) * 16 + 2)) ok = 0;
+        }
+        ck(ok, "E %d: the 320-wide frame shows ring columns %d..%d, the hero's pin %d at screen column 12", e, 4 + e, 31 + e, hero_col(g));
+    }
+    {   /* same map column under the hero: the normal views of E 0 and the widest are the same picture */
+        RenderView v0 = render_zoom_view(ZOOM_NORMAL);
+        g->wide = 0; g->scroll_col = 30; g->hero_scr_col = (uint8_t)hero_col(g);
+        for (int r = 0; r < RING_H; r++) for (int c = 0; c < ring_w(g); c++)
+            g->bg_ring[r * ring_w(g) + c] = g->ring[r * ring_w(g) + c] = m.grid[(g->scroll_col + c) % 100][r];
+        render_frame_view(a, g, NULL, &v0);
+        g->wide = WIDE_E_MAX; g->scroll_col = 30 - WIDE_E_MAX; g->hero_scr_col = (uint8_t)hero_col(g);
+        for (int r = 0; r < RING_H; r++) for (int c = 0; c < ring_w(g); c++)
+            g->bg_ring[r * ring_w(g) + c] = g->ring[r * ring_w(g) + c] = m.grid[(g->scroll_col + c) % 100][r];
+        render_frame_view(w, g, NULL, &v0);
+        ck(memcmp(a, w, (size_t)render_view_width(&v0) * render_view_height(&v0)) == 0, "the hero's map column the same: E 0's and E %d's normal wide views are byte-identical", WIDE_E_MAX);
+    }
+    {   /* the smooth slide follows anything in the ring at any E (pos_of) */
+        Smooth s; smooth_reset(&s);
+        g->wide = WIDE_E_MAX; memset(g->ring, 0, sizeof g->ring); g->nobj = 0;
+        put_obj(g, 0, ring_w(g) - 3, 5, 1);
+        put_obj(g, 1, 2, 6, 1);
+        smooth_step(&s, g);
+        int ok_w = s.obj[0].ok && s.obj[1].ok;
+        g->wide = 0; memset(g->ring, 0, sizeof g->ring); g->nobj = 0;
+        put_obj(g, 0, 40, 5, 1);
+        smooth_step(&s, g);
+        ck(ok_w && !s.obj[0].ok, "pos_of: ring columns 2 and %d are in reach at E %d, column 40 is not at E 0", RING_W_OF(WIDE_E_MAX) - 3, WIDE_E_MAX);
+        g->nobj = 0;
+    }
+    g->wide = 0;
+    free(g);
+}
+
 int main(void)
 {
     t_math();    printf("ok\n");
@@ -877,6 +961,7 @@ int main(void)
     t_render();  printf("ok\n");
     t_wide();    printf("ok\n");
     t_zoomout(); printf("ok\n");
+    t_widering(); printf("ok\n");
     t_fixtures(); printf("ok\n");
     t_town_steps();  printf("ok\n");
     t_town_render(); printf("ok\n");
